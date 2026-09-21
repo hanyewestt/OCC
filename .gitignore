@@ -23,3 +23,8 @@
 hs_err_pid*
 replay_pid*
 infra/local/.env
+
+# Local Gradle and IDE files
+**/.gradle/
+**/.idea/
+**/build/
