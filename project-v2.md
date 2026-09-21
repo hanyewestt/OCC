@@ -1,4 +1,5 @@
-# OCC Project Vision and Delivery Plan
+# OCC Project Vision and Delivery Plan 
+## (not agreed upon and subject to more changes)
 
 ## 1. Vision
 
