@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: ingestion
+  datasource:
+    url: jdbc:postgresql://localhost:5432/occ
+    username: occ_ingestion
+    password: ${OCC_INGESTION_DB_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    default-schema: ingestion
+    create-schemas: false
+    locations: classpath:db/migration
+
+datamall:
+  base-url: "https://datamall2.mytransport.sg/ltaodataservice"
+  account-key: ${DATAMALL_API_KEY:mock_key}
