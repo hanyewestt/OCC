@@ -1,0 +1,493 @@
+{
+  "scenario_id": "route190-normal",
+  "description": "Weekday AM peak, no disruption.",
+  "service_id": "190",
+  "operator": "SBST",
+  "direction_id": 1,
+  "service_date": "2026-09-28",
+  "window": {
+    "start": "2026-09-28T07:30:00+08:00",
+    "end": "2026-09-28T08:30:00+08:00"
+  },
+  "seed": 190,
+  "route_profile": {
+    "planned_headway_s": 600,
+    "bunching_threshold_s": 300.0,
+    "gap_threshold_s": 900.0,
+    "consecutive_polls": 2,
+    "max_hold_s": 120,
+    "control_stops": [
+      "04229",
+      "09037",
+      "40239",
+      "44241"
+    ],
+    "monitored_stops": [
+      "44251",
+      "40229",
+      "09047",
+      "08057",
+      "04149"
+    ]
+  },
+  "fleet": [
+    {
+      "bus_plate": "SBS7482Y",
+      "vehicle_type": "DD",
+      "bus_captain_id": "BC-190-01",
+      "trip_id": "190-1-0630",
+      "scheduled_dispatch": "2026-09-28T06:30:00+08:00",
+      "actual_dispatch": "2026-09-28T06:29:57+08:00"
+    },
+    {
+      "bus_plate": "SBS6933U",
+      "vehicle_type": "DD",
+      "bus_captain_id": "BC-190-02",
+      "trip_id": "190-1-0640",
+      "scheduled_dispatch": "2026-09-28T06:40:00+08:00",
+      "actual_dispatch": "2026-09-28T06:39:44+08:00"
+    },
+    {
+      "bus_plate": "SBS5472P",
+      "vehicle_type": "DD",
+      "bus_captain_id": "BC-190-03",
+      "trip_id": "190-1-0650",
+      "scheduled_dispatch": "2026-09-28T06:50:00+08:00",
+      "actual_dispatch": "2026-09-28T06:50:15+08:00"
+    },
+    {
+      "bus_plate": "SBS9852A",
+      "vehicle_type": "DD",
+      "bus_captain_id": "BC-190-04",
+      "trip_id": "190-1-0700",
+      "scheduled_dispatch": "2026-09-28T07:00:00+08:00",
+      "actual_dispatch": "2026-09-28T06:59:57+08:00"
+    },
+    {
+      "bus_plate": "SBS2608K",
+      "vehicle_type": "DD",
+      "bus_captain_id": "BC-190-05",
+      "trip_id": "190-1-0710",
+      "scheduled_dispatch": "2026-09-28T07:10:00+08:00",
+      "actual_dispatch": "2026-09-28T07:09:43+08:00"
+    },
+    {
+      "bus_plate": "SBS8365X",
+      "vehicle_type": "DD",
+      "bus_captain_id": "BC-190-06",
+      "trip_id": "190-1-0720",
+      "scheduled_dispatch": "2026-09-28T07:20:00+08:00",
+      "actual_dispatch": "2026-09-28T07:19:57+08:00"
+    },
+    {
+      "bus_plate": "SBS8027Y",
+      "vehicle_type": "DD",
+      "bus_captain_id": "BC-190-07",
+      "trip_id": "190-1-0730",
+      "scheduled_dispatch": "2026-09-28T07:30:00+08:00",
+      "actual_dispatch": "2026-09-28T07:30:15+08:00"
+    },
+    {
+      "bus_plate": "SBS5898U",
+      "vehicle_type": "DD",
+      "bus_captain_id": "BC-190-08",
+      "trip_id": "190-1-0740",
+      "scheduled_dispatch": "2026-09-28T07:40:00+08:00",
+      "actual_dispatch": "2026-09-28T07:39:50+08:00"
+    },
+    {
+      "bus_plate": "SBS8205A",
+      "vehicle_type": "DD",
+      "bus_captain_id": "BC-190-09",
+      "trip_id": "190-1-0750",
+      "scheduled_dispatch": "2026-09-28T07:50:00+08:00",
+      "actual_dispatch": "2026-09-28T07:50:04+08:00"
+    },
+    {
+      "bus_plate": "SBS2968X",
+      "vehicle_type": "DD",
+      "bus_captain_id": "BC-190-10",
+      "trip_id": "190-1-0800",
+      "scheduled_dispatch": "2026-09-28T08:00:00+08:00",
+      "actual_dispatch": "2026-09-28T08:00:09+08:00"
+    },
+    {
+      "bus_plate": "SBS1433D",
+      "vehicle_type": "DD",
+      "bus_captain_id": "BC-190-11",
+      "trip_id": "190-1-0810",
+      "scheduled_dispatch": "2026-09-28T08:10:00+08:00",
+      "actual_dispatch": "2026-09-28T08:09:49+08:00"
+    },
+    {
+      "bus_plate": "SBS8230B",
+      "vehicle_type": "DD",
+      "bus_captain_id": "BC-190-12",
+      "trip_id": "190-1-0820",
+      "scheduled_dispatch": "2026-09-28T08:20:00+08:00",
+      "actual_dispatch": "2026-09-28T08:19:42+08:00"
+    }
+  ],
+  "events": [],
+  "expected_detection": null,
+  "reference_directives": null,
+  "applied_holds": [],
+  "metrics": {
+    "passenger_wait_minutes": 8436,
+    "passengers_left_behind": 0,
+    "telemetry_rows": 474,
+    "arrival_snapshots": 305
+  },
+  "headway_profile": [
+    {
+      "bus_plate": "SBS8027Y",
+      "headway_to_bus_ahead_s": [
+        {
+          "stop_sequence": 1,
+          "stop_code": "44009",
+          "seconds": 618
+        },
+        {
+          "stop_sequence": 2,
+          "stop_code": "44539",
+          "seconds": 623
+        },
+        {
+          "stop_sequence": 3,
+          "stop_code": "44399",
+          "seconds": 639
+        },
+        {
+          "stop_sequence": 4,
+          "stop_code": "44299",
+          "seconds": 628
+        },
+        {
+          "stop_sequence": 5,
+          "stop_code": "44289",
+          "seconds": 626
+        },
+        {
+          "stop_sequence": 6,
+          "stop_code": "44279",
+          "seconds": 631
+        },
+        {
+          "stop_sequence": 7,
+          "stop_code": "44141",
+          "seconds": 642
+        },
+        {
+          "stop_sequence": 8,
+          "stop_code": "44251",
+          "seconds": 657
+        },
+        {
+          "stop_sequence": 9,
+          "stop_code": "44241",
+          "seconds": 678
+        },
+        {
+          "stop_sequence": 10,
+          "stop_code": "44231",
+          "seconds": 673
+        },
+        {
+          "stop_sequence": 11,
+          "stop_code": "44261",
+          "seconds": 664
+        },
+        {
+          "stop_sequence": 12,
+          "stop_code": "40239",
+          "seconds": 621
+        },
+        {
+          "stop_sequence": 13,
+          "stop_code": "40229",
+          "seconds": 601
+        },
+        {
+          "stop_sequence": 14,
+          "stop_code": "40219",
+          "seconds": 595
+        },
+        {
+          "stop_sequence": 15,
+          "stop_code": "40209",
+          "seconds": 572
+        },
+        {
+          "stop_sequence": 16,
+          "stop_code": "40199",
+          "seconds": 590
+        },
+        {
+          "stop_sequence": 17,
+          "stop_code": "09219",
+          "seconds": 542
+        },
+        {
+          "stop_sequence": 18,
+          "stop_code": "09047",
+          "seconds": 550
+        },
+        {
+          "stop_sequence": 19,
+          "stop_code": "09037",
+          "seconds": 481
+        },
+        {
+          "stop_sequence": 20,
+          "stop_code": "08138",
+          "seconds": 438
+        },
+        {
+          "stop_sequence": 21,
+          "stop_code": "08057",
+          "seconds": 419
+        },
+        {
+          "stop_sequence": 22,
+          "stop_code": "08069",
+          "seconds": 464
+        },
+        {
+          "stop_sequence": 23,
+          "stop_code": "04159",
+          "seconds": 470
+        },
+        {
+          "stop_sequence": 24,
+          "stop_code": "04149",
+          "seconds": 480
+        },
+        {
+          "stop_sequence": 25,
+          "stop_code": "04229",
+          "seconds": 472
+        },
+        {
+          "stop_sequence": 26,
+          "stop_code": "04239",
+          "seconds": 469
+        },
+        {
+          "stop_sequence": 27,
+          "stop_code": "05059",
+          "seconds": 459
+        },
+        {
+          "stop_sequence": 28,
+          "stop_code": "05049",
+          "seconds": 473
+        },
+        {
+          "stop_sequence": 29,
+          "stop_code": "05039",
+          "seconds": 481
+        },
+        {
+          "stop_sequence": 30,
+          "stop_code": "05019",
+          "seconds": 468
+        },
+        {
+          "stop_sequence": 31,
+          "stop_code": "05069",
+          "seconds": 454
+        },
+        {
+          "stop_sequence": 32,
+          "stop_code": "10011",
+          "seconds": 422
+        },
+        {
+          "stop_sequence": 33,
+          "stop_code": "10041",
+          "seconds": 427
+        },
+        {
+          "stop_sequence": 34,
+          "stop_code": "10499",
+          "seconds": 413
+        }
+      ]
+    },
+    {
+      "bus_plate": "SBS5898U",
+      "headway_to_bus_ahead_s": [
+        {
+          "stop_sequence": 1,
+          "stop_code": "44009",
+          "seconds": 575
+        },
+        {
+          "stop_sequence": 2,
+          "stop_code": "44539",
+          "seconds": 553
+        },
+        {
+          "stop_sequence": 3,
+          "stop_code": "44399",
+          "seconds": 566
+        },
+        {
+          "stop_sequence": 4,
+          "stop_code": "44299",
+          "seconds": 571
+        },
+        {
+          "stop_sequence": 5,
+          "stop_code": "44289",
+          "seconds": 570
+        },
+        {
+          "stop_sequence": 6,
+          "stop_code": "44279",
+          "seconds": 558
+        },
+        {
+          "stop_sequence": 7,
+          "stop_code": "44141",
+          "seconds": 553
+        },
+        {
+          "stop_sequence": 8,
+          "stop_code": "44251",
+          "seconds": 539
+        },
+        {
+          "stop_sequence": 9,
+          "stop_code": "44241",
+          "seconds": 503
+        },
+        {
+          "stop_sequence": 10,
+          "stop_code": "44231",
+          "seconds": 516
+        },
+        {
+          "stop_sequence": 11,
+          "stop_code": "44261",
+          "seconds": 460
+        },
+        {
+          "stop_sequence": 12,
+          "stop_code": "40239",
+          "seconds": 472
+        },
+        {
+          "stop_sequence": 13,
+          "stop_code": "40229",
+          "seconds": 489
+        },
+        {
+          "stop_sequence": 14,
+          "stop_code": "40219",
+          "seconds": 497
+        },
+        {
+          "stop_sequence": 15,
+          "stop_code": "40209",
+          "seconds": 514
+        },
+        {
+          "stop_sequence": 16,
+          "stop_code": "40199",
+          "seconds": 477
+        },
+        {
+          "stop_sequence": 17,
+          "stop_code": "09219",
+          "seconds": 497
+        },
+        {
+          "stop_sequence": 18,
+          "stop_code": "09047",
+          "seconds": 483
+        },
+        {
+          "stop_sequence": 19,
+          "stop_code": "09037",
+          "seconds": 530
+        },
+        {
+          "stop_sequence": 20,
+          "stop_code": "08138",
+          "seconds": 560
+        },
+        {
+          "stop_sequence": 21,
+          "stop_code": "08057",
+          "seconds": 561
+        },
+        {
+          "stop_sequence": 22,
+          "stop_code": "08069",
+          "seconds": 532
+        },
+        {
+          "stop_sequence": 23,
+          "stop_code": "04159",
+          "seconds": 526
+        },
+        {
+          "stop_sequence": 24,
+          "stop_code": "04149",
+          "seconds": 510
+        },
+        {
+          "stop_sequence": 25,
+          "stop_code": "04229",
+          "seconds": 508
+        },
+        {
+          "stop_sequence": 26,
+          "stop_code": "04239",
+          "seconds": 524
+        },
+        {
+          "stop_sequence": 27,
+          "stop_code": "05059",
+          "seconds": 520
+        },
+        {
+          "stop_sequence": 28,
+          "stop_code": "05049",
+          "seconds": 498
+        },
+        {
+          "stop_sequence": 29,
+          "stop_code": "05039",
+          "seconds": 509
+        },
+        {
+          "stop_sequence": 30,
+          "stop_code": "05019",
+          "seconds": 509
+        },
+        {
+          "stop_sequence": 31,
+          "stop_code": "05069",
+          "seconds": 511
+        },
+        {
+          "stop_sequence": 32,
+          "stop_code": "10011",
+          "seconds": 535
+        },
+        {
+          "stop_sequence": 33,
+          "stop_code": "10041",
+          "seconds": 517
+        },
+        {
+          "stop_sequence": 34,
+          "stop_code": "10499",
+          "seconds": 524
+        }
+      ]
+    }
+  ]
+}
