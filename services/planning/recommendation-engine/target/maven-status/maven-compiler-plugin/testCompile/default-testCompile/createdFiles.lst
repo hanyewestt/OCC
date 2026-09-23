@@ -1,1 +1,2 @@
 com\csd\occ\planning\recommendationengine\domain\BunchingRecommendationPolicyTest.class
+com\csd\occ\planning\recommendationengine\infrastructure\fixture\ClasspathBunchingMitigationContextAdapterTest.class

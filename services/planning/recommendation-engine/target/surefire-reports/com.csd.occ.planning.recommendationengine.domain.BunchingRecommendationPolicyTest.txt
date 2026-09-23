@@ -1,4 +1,4 @@
 -------------------------------------------------------------------------------
 Test set: com.csd.occ.planning.recommendationengine.domain.BunchingRecommendationPolicyTest
 -------------------------------------------------------------------------------
-Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.187 s -- in com.csd.occ.planning.recommendationengine.domain.BunchingRecommendationPolicyTest
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.234 s -- in com.csd.occ.planning.recommendationengine.domain.BunchingRecommendationPolicyTest
