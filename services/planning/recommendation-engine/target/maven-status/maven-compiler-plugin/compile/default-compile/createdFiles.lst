@@ -1,8 +1,10 @@
 com\csd\occ\planning\recommendationengine\domain\ConfirmedBunchingEvent.class
 com\csd\occ\planning\recommendationengine\domain\BunchingEventStatus.class
+com\csd\occ\planning\recommendationengine\domain\BunchingRecommendationPolicy.class
 com\csd\occ\planning\recommendationengine\RecommendationEngineApplication.class
 com\csd\occ\planning\recommendationengine\domain\RecommendationStatus.class
 com\csd\occ\planning\recommendationengine\domain\ValidatedMitigationRecommendation.class
+com\csd\occ\planning\recommendationengine\domain\BunchingRecommendationPolicy$1.class
 com\csd\occ\planning\recommendationengine\domain\CrowdSafetyStatus.class
 com\csd\occ\planning\recommendationengine\domain\IncidentType.class
 com\csd\occ\planning\recommendationengine\domain\FollowingBusState.class
