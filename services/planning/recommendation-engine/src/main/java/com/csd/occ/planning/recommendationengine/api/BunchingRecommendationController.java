@@ -1,0 +1,112 @@
+package com.csd.occ.planning.recommendationengine.api;
+
+import com.csd.occ.planning.recommendationengine.api.dto.BunchingRecommendationResponse;
+import com.csd.occ.planning.recommendationengine.api.dto.CreateBunchingRecommendationRequest;
+import com.csd.occ.planning.recommendationengine.api.error.NoActionableRecommendationException;
+import com.csd.occ.planning.recommendationengine.domain.BunchingRecommendationService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import jakarta.validation.Valid;
+import java.util.UUID;
+import org.springframework.http.MediaType;
+import org.springframework.http.ProblemDetail;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@Validated
+@RestController
+@RequestMapping("/internal/v1/bunching-recommendations")
+public class BunchingRecommendationController {
+
+    private final BunchingRecommendationService recommendations;
+
+    public BunchingRecommendationController(BunchingRecommendationService recommendations) {
+        this.recommendations = recommendations;
+    }
+
+    @Operation(
+            operationId = "createBunchingRecommendation",
+            summary = "Create one validated bus-bunching mitigation recommendation",
+            description = "Consumes a confirmed simulated bunching event and root-cause diagnosis. "
+                    + "Observation-only evidence and inputs without validated fixture context do not produce an action.",
+            tags = "Bunching recommendations")
+    @io.swagger.v3.oas.annotations.parameters.RequestBody(
+            required = true,
+            content = @Content(
+                    mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = CreateBunchingRecommendationRequest.class),
+                    examples = @ExampleObject(
+                            name = "confirmedBunching",
+                            value = """
+                                    {
+                                      "requestId": "6e2f6b21-9c43-4c17-93c5-10b2d820b9a7",
+                                      "classification": "SIMULATION",
+                                      "bunchingEvent": {
+                                        "bunchingEventId": "c5934f15-4a65-4e94-87ea-a5a64a7dd4c1",
+                                        "serviceId": "190",
+                                        "directionId": 1,
+                                        "monitoredStopCode": "44531",
+                                        "status": "CONFIRMED",
+                                        "expectedHeadwaySeconds": 600,
+                                        "observedHeadwaySeconds": [180, 210],
+                                        "firstConfirmedAt": "2026-09-22T10:02:00Z",
+                                        "evidenceIds": ["arrival-observation-101", "arrival-observation-102"]
+                                      },
+                                      "diagnosis": {
+                                        "diagnosisId": "f2b8d1b5-c24c-48bb-8a66-bff7be1e9e73",
+                                        "likelyCause": "Downstream boarding delay caused the following bus to close the gap.",
+                                        "confidence": 0.82,
+                                        "evidenceIds": ["diagnosis-evidence-001"],
+                                        "limitations": ["Vehicle location is unavailable."]
+                                      }
+                                    }
+                                    """)))
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "One validated recommendation",
+                    content = @Content(
+                            mediaType = MediaType.APPLICATION_JSON_VALUE,
+                            schema = @Schema(implementation = BunchingRecommendationResponse.class))),
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "Malformed request, invalid field, or missing idempotency key",
+                    content = @Content(
+                            mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                            schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(
+                    responseCode = "422",
+                    description = "The evidence cannot produce a validated actionable recommendation",
+                    content = @Content(
+                            mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                            schema = @Schema(implementation = ProblemDetail.class)))
+    })
+    @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+    public BunchingRecommendationResponse create(
+            @Parameter(
+                    description = "UUID identifying this idempotent recommendation attempt",
+                    required = true,
+                    example = "f07c921a-bd3b-4a97-8b17-a384ef1269a7")
+            @RequestHeader("Idempotency-Key") UUID idempotencyKey,
+            @Valid @RequestBody CreateBunchingRecommendationRequest request) {
+        var recommendation = recommendations.recommend(
+                        idempotencyKey,
+                        request.classification(),
+                        request.bunchingEvent().toDomain(),
+                        request.diagnosis().toDomain())
+                .orElseThrow(() -> new NoActionableRecommendationException(
+                        "No validated mitigation is available for this event and operational context."));
+
+        return BunchingRecommendationResponse.from(
+                request.requestId(), request.classification(), recommendation);
+    }
+}

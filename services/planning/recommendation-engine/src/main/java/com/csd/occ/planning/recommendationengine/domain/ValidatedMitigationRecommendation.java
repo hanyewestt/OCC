@@ -12,6 +12,7 @@ public record ValidatedMitigationRecommendation(
         String targetBusReference,
         String controlStopCode,
         int adjustmentSeconds,
+        RecommendationExplanation explanation,
         SimulatedImpactEstimate expectedImpact,
         List<String> evidenceIds) {
 
@@ -25,6 +26,7 @@ public record ValidatedMitigationRecommendation(
         if (adjustmentSeconds < 1 || adjustmentSeconds > 120) {
             throw new IllegalArgumentException("adjustmentSeconds must be between one and 120");
         }
+        Objects.requireNonNull(explanation, "explanation is required");
         Objects.requireNonNull(expectedImpact, "expectedImpact is required");
         evidenceIds = List.copyOf(evidenceIds);
         if (evidenceIds.isEmpty()) {

@@ -8,6 +8,7 @@ import com.csd.occ.planning.recommendationengine.domain.BunchingRecommendationSe
 import com.csd.occ.planning.recommendationengine.domain.BunchingRootCauseDiagnosis;
 import com.csd.occ.planning.recommendationengine.domain.ConfirmedBunchingEvent;
 import com.csd.occ.planning.recommendationengine.domain.MitigationType;
+import com.csd.occ.planning.recommendationengine.domain.SourceClassification;
 import com.csd.occ.planning.recommendationengine.infrastructure.config.RecommendationFixtureProperties;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -31,6 +32,7 @@ class ClasspathBunchingMitigationContextAdapterTest {
 
         var recommendation = service.recommend(
                 UUID.fromString("f07c921a-bd3b-4a97-8b17-a384ef1269a7"),
+                SourceClassification.SIMULATION,
                 confirmedEvent(),
                 diagnosis());
 

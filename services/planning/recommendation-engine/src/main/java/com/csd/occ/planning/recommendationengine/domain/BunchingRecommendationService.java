@@ -20,15 +20,18 @@ public class BunchingRecommendationService {
 
     public Optional<ValidatedMitigationRecommendation> recommend(
             UUID recommendationId,
+            SourceClassification classification,
             ConfirmedBunchingEvent event,
             BunchingRootCauseDiagnosis diagnosis) {
         Objects.requireNonNull(recommendationId, "recommendationId is required");
+        Objects.requireNonNull(classification, "classification is required");
         Objects.requireNonNull(event, "event is required");
         Objects.requireNonNull(diagnosis, "diagnosis is required");
 
         return mitigationContext.findFor(event)
                 .flatMap(inputs -> policy.evaluate(
                         recommendationId,
+                        classification,
                         event,
                         diagnosis,
                         inputs.context(),

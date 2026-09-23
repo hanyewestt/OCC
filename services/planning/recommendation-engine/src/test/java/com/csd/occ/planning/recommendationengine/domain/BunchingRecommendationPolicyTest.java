@@ -21,6 +21,7 @@ class BunchingRecommendationPolicyTest {
     void readyToDepartBusReceivesValidatedHold() {
         Optional<ValidatedMitigationRecommendation> result = policy.evaluate(
                 RECOMMENDATION_ID,
+                SourceClassification.SIMULATION,
                 confirmedEvent(),
                 diagnosis(),
                 validatedContext(FollowingBusState.READY_TO_DEPART, 90, 120),
@@ -41,6 +42,7 @@ class BunchingRecommendationPolicyTest {
     void boardingBusReceivesValidatedDwellAdjustment() {
         Optional<ValidatedMitigationRecommendation> result = policy.evaluate(
                 RECOMMENDATION_ID,
+                SourceClassification.SIMULATION,
                 confirmedEvent(),
                 diagnosis(),
                 validatedContext(FollowingBusState.BOARDING_AT_CONTROL_STOP, 90, 75),
@@ -64,7 +66,8 @@ class BunchingRecommendationPolicyTest {
                 MitigationValidationStatus.VALIDATED,
                 List.of("validation-001"));
 
-        assertThat(policy.evaluate(RECOMMENDATION_ID, confirmedEvent(), diagnosis(), context, impact()))
+        assertThat(policy.evaluate(RECOMMENDATION_ID, SourceClassification.SIMULATION,
+                confirmedEvent(), diagnosis(), context, impact()))
                 .isEmpty();
     }
 
@@ -80,7 +83,8 @@ class BunchingRecommendationPolicyTest {
                 MitigationValidationStatus.REJECTED,
                 List.of("validation-001"));
 
-        assertThat(policy.evaluate(RECOMMENDATION_ID, confirmedEvent(), diagnosis(), context, impact()))
+        assertThat(policy.evaluate(RECOMMENDATION_ID, SourceClassification.SIMULATION,
+                confirmedEvent(), diagnosis(), context, impact()))
                 .isEmpty();
     }
 
@@ -97,7 +101,7 @@ class BunchingRecommendationPolicyTest {
                 Instant.parse("2026-09-22T10:02:00Z"),
                 List.of("arrival-observation-101", "arrival-observation-102"));
 
-        assertThat(policy.evaluate(RECOMMENDATION_ID, event, diagnosis(),
+        assertThat(policy.evaluate(RECOMMENDATION_ID, SourceClassification.SIMULATION, event, diagnosis(),
                 validatedContext(FollowingBusState.READY_TO_DEPART, 90, 120), impact()))
                 .isEmpty();
     }
@@ -106,6 +110,7 @@ class BunchingRecommendationPolicyTest {
     void adjustmentNeverExceedsAbsoluteLimit() {
         Optional<ValidatedMitigationRecommendation> result = policy.evaluate(
                 RECOMMENDATION_ID,
+                SourceClassification.SIMULATION,
                 confirmedEvent(),
                 diagnosis(),
                 validatedContext(FollowingBusState.READY_TO_DEPART, 300, 300),
@@ -128,7 +133,15 @@ class BunchingRecommendationPolicyTest {
                 Instant.parse("2026-09-22T10:02:00Z"),
                 List.of("arrival-observation-101", "arrival-observation-102"));
 
-        assertThat(policy.evaluate(RECOMMENDATION_ID, event, diagnosis(),
+        assertThat(policy.evaluate(RECOMMENDATION_ID, SourceClassification.SIMULATION, event, diagnosis(),
+                validatedContext(FollowingBusState.READY_TO_DEPART, 90, 120), impact()))
+                .isEmpty();
+    }
+
+    @Test
+    void observationOnlyEvidenceProducesNoAction() {
+        assertThat(policy.evaluate(RECOMMENDATION_ID, SourceClassification.OBSERVATION_ONLY,
+                confirmedEvent(), diagnosis(),
                 validatedContext(FollowingBusState.READY_TO_DEPART, 90, 120), impact()))
                 .isEmpty();
     }

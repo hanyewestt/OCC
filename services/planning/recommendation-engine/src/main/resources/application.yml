@@ -19,3 +19,9 @@ occ:
   recommendation:
     fixture:
       location: classpath:fixtures/bunching-mitigation-context.json
+
+springdoc:
+  api-docs:
+    version: OPENAPI_3_1
+  swagger-ui:
+    persist-authorization: false
