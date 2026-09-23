@@ -28,3 +28,6 @@ infra/local/.env
 **/.gradle/
 **/.idea/
 **/build/
+
+# Recommendation engine Maven build output
+/services/planning/recommendation-engine/target/
