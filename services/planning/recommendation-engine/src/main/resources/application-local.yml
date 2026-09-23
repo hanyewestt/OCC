@@ -1,0 +1,3 @@
+logging:
+  level:
+    com.csd.occ.planning.recommendationengine: DEBUG
