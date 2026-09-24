@@ -137,8 +137,11 @@ public class BusArrivalService {
             observation.setDestinationCode(prediction.destinationCode());
             observation.setMonitored(prediction.monitored());
             observation.setVehicleType(prediction.vehicleType());
-            observation.setFetchedAt(now);
-            observation.setIngestedAt(now);
+            // A normalized row is evidence derived from this exact raw snapshot.
+            // Keep their timestamps identical so downstream consumers can verify
+            // the provenance relationship without relying on clock timing.
+            observation.setFetchedAt(raw.getFetchedAt());
+            observation.setIngestedAt(raw.getIngestedAt());
             observation.setRecordChecksum(sha256(String.join("|", target.getStopCode(), prediction.serviceId(),
                     String.valueOf(prediction.visitOrder()), String.valueOf(prediction.estimatedArrivalAt()),
                     String.valueOf(prediction.visitNumber()), String.valueOf(prediction.originCode()),

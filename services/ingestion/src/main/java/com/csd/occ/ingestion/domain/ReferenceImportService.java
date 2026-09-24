@@ -20,7 +20,13 @@ public class ReferenceImportService {
         this.topology = topology;
     }
 
-    public ReferenceTopologyPort.ReferenceTopologyVersion refresh() {
+    /**
+     * The startup runner and the polling scheduler may both request an import while
+     * the application is booting. Serialize those requests so a second import sees
+     * the topology activated by the first instead of inserting the same candidate
+     * version concurrently.
+     */
+    public synchronized ReferenceTopologyPort.ReferenceTopologyVersion refresh() {
         BusReferencePort.BusReferenceData sourceData = source.fetch();
         BusReferencePort.BusReferenceData data = completeServices(sourceData);
         return topology.replaceIfChanged(data, checksum(data));
