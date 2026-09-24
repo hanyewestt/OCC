@@ -4,79 +4,172 @@ Java 25, Spring Boot 4.1.1, Maven and PostgreSQL 18. Follows
 `docs/CONVENTIONS.md`, the Sprint 1 plan and `01-bus-data-polling.md`.
 `project-v2.md` is not a requirement source.
 
-## Implemented flow
+## Contents
+
+- [Scope and data flow](#scope-and-data-flow)
+- [Database schemas](#database-schemas)
+- [Detection rules](#detection-rules)
+   - [Mapping and evidence rules](#mapping-and-evidence-rules)
+   - [Processing, retries and idempotency](#processing-retries-and-idempotency)
+- [Persistence and audit evidence](#persistence-and-audit-evidence)
+- [Alert trigger (WQAP-38)](#alert-trigger-wqap-38)
+- [File guide](#file-guide)
+   - [Application and domain](#application-and-domain)
+   - [Infrastructure](#infrastructure)
+   - [Database migrations](#database-migrations)
+   - [Tests and fixtures](#tests-and-fixtures)
+- [Deployment setup](#deployment-setup)
+- [Verification and remaining scope](#verification-and-remaining-scope)
+
+## Scope and data flow
+
+This service consumes stored ingestion data. It does not call DataMall, require an
+API key, or write to ingestion's normalized tables. The scheduled consumer reads the
+database every second by default, preferring normalized arrival rows. When only raw
+JSON is available, it maps that stored response in memory.
 
 ```text
-Stored successful ingestion snapshot (PostgreSQL)
-  → read-only ingestion views
-  → normalized ArrivalSnapshot
-  → deterministic BunchingPolicy
-  → transactional bunching.bunching_observation audit record
+DataMall poll
+   → ingestion.raw_observation and ingestion.bus_arrival_observation
+   → read-only ingestion views
+   → ArrivalSnapshot
+   → BunchingPolicy
+   → bunching.bunching_observation
+   → alert state/event transition when appropriate
 ```
 
-The scheduled consumer reads the database every second by default. It makes
-no DataMall/API requests and needs no API key. It prefers existing normalized rows.
-When ingestion only has raw JSON (the current poller), it maps the stored response
-in memory; it does not write into ingestion's normalized table.
+## Database schemas
 
-A batch processes up to 100 observations by default. Successful recording is the
-checkpoint, rather than a high-water timestamp: restart, retry and late poll commits
-cannot skip unrecorded input. Each source observation commits independently. Duplicate
-consumers are safe through the audit table's primary key. Incomplete normalized
-batches and transient failures receive a persisted 30-second cooldown in
-`bunching.source_retry`. The query skips retries until due, then orders them by
-their deadline alongside fresh observations' fetch times. This prevents the oldest
-failed batch from blocking every later observation. Deadlines survive restarts;
-concurrent updates cannot shorten them. Failure to persist a deadline fails the
-cycle visibly. Completed/rejected inputs are excluded even if retry metadata remains.
-Malformed observations are recorded
-in `bunching.source_rejection` with safe reason codes and do not block later input.
-Failures to read the source views are logged and retried. Scheduler logs contain
-counts and failed observation IDs, never payloads or database exception text.
+The detector uses two PostgreSQL schemas with separate ownership:
 
-## Detection and mapping
+| Schema | Owner | Purpose |
+| --- | --- | --- |
+| `ingestion` | Ingestion service | Stores provider poll runs, raw DataMall responses, normalized arrival rows, feed health, polling targets and route topology. The detector reads two views from this schema. |
+| `bunching` | Bunching detector | Stores immutable evaluation evidence, retry/rejection history and alert state/events. The detector writes here. |
+
+The ingestion service owns the source tables. Migration V005 adds these read-only
+views for the detector:
+
+- `ingestion.bunching_snapshot` selects successful DataMall stop observations and
+   exposes the original `payload` plus normalized arrivals grouped into one JSON array.
+- `ingestion.bunching_route_direction` exposes active route topology, including
+   service, operator, direction, origin, destination and stops. It is used to resolve
+   direction without guessing.
+
+The views do not store or improve arrival data. They are a narrow read contract:
+the detector can read only the data needed for analysis and does not need write
+access to ingestion tables. V005 adds them without modifying existing ingestion
+tables.
+
+The detector schema contains:
+
+- `bunching.bunching_observation`: one immutable evaluation per source observation,
+   including the threshold, rule version, result count and full JSON evidence.
+- `bunching.source_retry`: the next time an incomplete or transiently failed source
+   should be attempted.
+- `bunching.source_rejection`: the quarantine record for malformed or unsupported
+   source input.
+- `bunching.source_processing_audit`: append-only rejection and deferral history,
+   retained independently from source telemetry.
+- `bunching.alert_state`: the current open/closed episode for each service, stop and
+   direction.
+- `bunching.alert_event`: durable `OPENED` and `CLEARED` transitions, including the
+   evidence and source provenance used for the transition.
+
+Deleting old ingestion telemetry does not delete detector evidence: the detector
+audit tables deliberately do not use foreign keys to the short-lived ingestion data.
+
+## Detection rules
+
+1. Ingestion polls DataMall and stores a successful raw response and, when available,
+   normalized rows in the `ingestion` schema.
+2. `BunchingSchedule` wakes the consumer. `BunchingConsumptionService` selects an
+   eligible source observation, skipping completed, rejected and not-yet-due retries.
+3. `PostgresStoredArrivalAdapter` reads the two ingestion views. `StoredArrivalMapper`
+   prefers normalized rows and otherwise parses the stored raw response into the same
+   `ArrivalSnapshot` shape.
+4. `BunchingPolicy` validates freshness, arrival slots, estimates and direction. It
+   groups arrivals by service, stop and direction, sorts their estimated times, and
+   calculates adjacent headways:
+
+   ```text
+   headway = later estimated arrival - earlier estimated arrival
+   bunching = headway < configured threshold
+   ```
+
+   The default threshold is 90 seconds; exactly 90 seconds is not bunching. Unknown
+   direction, ambiguous topology, stale/future snapshots, missing estimates and
+   invalid slot sequences produce insufficient evidence instead of a false alert.
+5. `BunchingRecordingService` persists the evaluation and evidence once per source
+   observation. A new evaluation then calls the alert port in the same transaction.
+6. `PostgresBunchingAlertAdapter` locks group state in stable order, opens one episode
+   for new bunching, clears it only on fresh normal evidence, and records the durable
+   event. PostgreSQL sends only the event UUID as a commit-time notification.
+
+The detector therefore reports a successful bunching evaluation in
+`bunching.bunching_observation` when `bunched_group_count > 0`. An active alert is
+visible in `bunching.alert_state` when `active_alert_id` is not null.
+
+### Mapping and evidence rules
 
 The policy groups arrivals by service, mapped direction and stop, sorts estimated
-arrival times and computes adjacent gaps without rounding. Bunching is strictly
-`gap < threshold`; the default is 90 seconds, so exactly 90 seconds is normal.
-
-`threshold` is supplied to the policy and recording service. Runtime configuration
-can change it on restart; a future controller setting can provide it without
-rewriting the rule. There is no controller settings UI or endpoint yet.
+arrival times and computes adjacent gaps without rounding. `threshold` is supplied
+to the policy and recording service. Runtime configuration can change it on restart;
+a future controller setting can provide it without rewriting the rule. There is no
+controller settings UI or endpoint yet.
 
 Snapshots preserve source-observation and poll-run IDs, original fetch time and
 available topology version. Optional fields represent unknown direction or missing
 estimates. A topology version may be absent for raw input; no ID is fabricated.
 
-For raw responses, direction is accepted only when exactly one active imported
-route matches service, operator, origin, destination and monitored stop. A repeated
-stop in a route or a visit other than the first is conservatively unsupported and
-produces unknown direction. Missing/ambiguous topology produces
-`INSUFFICIENT_EVIDENCE`; it never assigns direction 1 by default. The existing
-poll-target seeder does not import topology, so deployments without imported route
-reference rows will record insufficient evidence until topology is available.
+For raw responses, direction is accepted only when exactly one active imported route
+matches service, operator, origin, destination and monitored stop. A repeated stop in
+a route or a visit other than the first is conservatively unsupported and produces
+unknown direction. Missing or ambiguous topology produces `INSUFFICIENT_EVIDENCE`;
+it never assigns direction 1 by default. The existing poll-target seeder does not
+import topology, so deployments without imported route reference rows record
+insufficient evidence until topology is available.
 
 `NextBus`, `NextBus2` and `NextBus3` map to arrival slots 1, 2 and 3. DataMall's
 `VisitNumber` is the vehicle's visit to the stop, not the arrival slot or direction.
 See the [official DataMall API guide](https://datamall.lta.gov.sg/content/dam/datamall/datasets/LTA_DataMall_API_User_Guide.pdf).
 An empty trailing slot does not invalidate two available estimates. Shared validation
-before either mapping rejects missing leading/interior slots rather than joining
-across them. Raw-slot evidence IDs are
-stable derived UUIDs scoped to the source observation; they are not vehicle IDs.
+before either mapping rejects missing leading or interior slots rather than joining
+across them. Raw-slot evidence IDs are stable derived UUIDs scoped to the source
+observation; they are not vehicle IDs.
 
-Stale/future snapshots, duplicate slots/IDs, missing estimates and
-unknown direction never produce bunching. At the exact freshness deadline a
-snapshot is stale. Empty successful snapshots retain empty evaluations rather than
-claiming that all routes are normal. The caller supplies time; tests use a fixed Clock.
+Stale/future snapshots, duplicate slots/IDs, missing estimates and unknown direction
+never produce bunching. At the exact freshness deadline a snapshot is stale. Empty
+successful snapshots retain empty evaluations rather than claiming that all routes
+are normal. The caller supplies time; tests use a fixed Clock.
 
 Rule `absolute-headway-v2` skips adjacent pairs containing expired estimates instead
-of rejecting the entire group. A fresh snapshot at −1, +60 and +120 seconds therefore
+of rejecting the entire group. A fresh snapshot at -1, +60 and +120 seconds therefore
 retains the 60-second gap between slots 2 and 3. If no usable pair remains, it records
 insufficient evidence (`PAST_ARRIVAL`); an estimate exactly at evaluation time remains
 usable. Missing-slot and duplicate validations are unchanged. Existing v1 audit
 records are preserved; new observations use v2.
 
-## Persistence and retry semantics
+### Processing, retries and idempotency
+
+A batch processes up to 100 observations by default. Successful recording is the
+checkpoint, rather than a high-water timestamp: restart, retry and late poll commits
+cannot skip unrecorded input. Each source observation commits independently. Duplicate
+consumers are safe through the audit table's primary key.
+
+Incomplete normalized batches and transient failures receive a persisted 30-second
+cooldown in `bunching.source_retry`. The query skips retries until due, then orders
+them by their deadline alongside fresh observations' fetch times. This prevents the
+oldest failed batch from blocking every later observation. Deadlines survive restarts;
+concurrent updates cannot shorten them. Failure to persist a deadline fails the cycle
+visibly. Completed/rejected inputs are excluded even if retry metadata remains.
+
+Malformed observations are recorded in `bunching.source_rejection` with safe reason
+codes and do not block later input. Failures to read the source views are logged and
+retried. Scheduler logs contain counts and failed observation IDs, never payloads or
+database exception text.
+
+## Persistence and audit evidence
 
 `bunching.bunching_observation` retains one immutable evaluation per raw source ID:
 
@@ -94,10 +187,108 @@ records are preserved; new observations use v2.
 
 `ON CONFLICT DO NOTHING` handles concurrent retries. A retry returns the original
 record, even after configuration changes. New thresholds apply to new observations;
-old evidence is never silently recomputed. Source UUIDs deliberately have no
-cross-schema foreign keys, so telemetry cleanup does not erase audit evidence.
-No audit cleanup job is introduced. Snapshot deduplication does not replace
-incident-level clearing or alert suppression across different polls.
+old evidence is never silently recomputed. Snapshot deduplication does not replace
+incident-level clearing or alert suppression across different polls. No audit cleanup
+job is introduced.
+
+## Alert trigger (WQAP-38)
+
+The recorder calls `BunchingAlertPort` only for newly recorded evaluations. Evaluation,
+alert state and alert event share one transaction. Failure rolls them all back so the
+existing retry path can retry the source without losing its alert.
+
+`bunching.alert_state` holds `service_id`, `stop_code`, `direction_id`,
+`last_fetched_at` and nullable `active_alert_id`. Stable row-lock ordering serializes
+concurrent snapshots. A newer BUNCHING result opens an episode once; NORMAL clears it;
+another BUNCHING result can open a new episode. Insufficient evidence preserves an
+episode; missing groups/silence never imply recovery. Stale/future inputs do not
+advance the watermark. Equal fetch times use the first committed result; older/equal
+inputs cannot revise it. These alerts identify route/stop/direction, not physical buses.
+
+`bunching.alert_event` retains `id`, `alert_id`, `action` (OPENED/CLEARED), `actor`,
+`classification`, `service_id`, `stop_code`, `direction_id`, `raw_observation_id`,
+`poll_run_id`, `fetched_at`, `triggered_at` and full evaluation `evidence`. It has
+independent retention and no source-telemetry foreign keys. Unique episode/action
+constraints prevent repeated transition events. Apply V6 before running the new code;
+previous evaluations are not retrospectively turned into alerts.
+
+After commit, PostgreSQL publishes the event UUID on `bunching_alert`. A trusted
+backend subscriber can `LISTEN bunching_alert` and fetch the matching event:
+
+```sql
+LISTEN bunching_alert;
+SELECT * FROM bunching.alert_event ORDER BY triggered_at, id;
+```
+
+Notifications are wake-ups, not durable delivery. A reconnecting subscriber must
+reconcile retained events and deduplicate event IDs; timestamp-only cursors can miss
+late commits. No frontend database access, subscriber/acknowledgement service or
+authenticated alert HTTP endpoint is added in this increment. Those belong to the
+controller integration; no credentials or payloads are placed in notifications.
+
+The default one-second consumer interval reduces trigger wait time. Local tests assert
+under five seconds from a stored observation through a scheduled consumer run to a
+PostgreSQL notification, and from direct detection to notification. This is not
+bus-event-to-screen latency: ingestion polls once per minute, and backlogs, database
+contention, larger configured intervals and outages can exceed five seconds.
+
+## File guide
+
+### Application and domain
+
+| File | Responsibility |
+| --- | --- |
+| `src/main/java/com/csd/occ/bunching/BunchingApplication.java` | Spring Boot entry point and configuration-properties scanning. |
+| `domain/ArrivalSnapshot.java` | Immutable detector input containing source provenance, fetch time, topology and arrivals. |
+| `domain/BunchingPolicy.java` | Pure validation, grouping, headway calculation and bunching classification. |
+| `domain/BunchingEvaluation.java` | Immutable result containing group outcomes, gaps, reasons and settings. |
+| `domain/BunchingRecordingService.java` | Coordinates evaluation persistence and alert triggering in one transaction. |
+| `domain/BunchingObservation.java` | JPA mapping for the immutable evaluation audit row. |
+| `domain/BunchingObservationRepository.java` | Idempotent insert and retrieval of evaluation records. |
+| `domain/RecordedBunching.java` | Return value identifying the persisted evaluation and whether it was new. |
+| `domain/BunchingAlertPolicy.java` | Pure rules for opening, clearing and preserving alert episodes. |
+| `domain/BunchingAlertPort.java` | Domain contract for transactional alert transitions. |
+| `domain/BunchingEvidencePort.java` | Domain contract for encoding evaluation evidence. |
+| `domain/StoredArrivalPort.java` | Domain contract for reading, rejecting and retrying stored inputs. |
+| `domain/BunchingConsumptionService.java` | Processes bounded input batches and handles retry, rejection and quarantine outcomes. |
+| `domain/InvalidArrivalException.java` | Safe failure used for malformed or unsupported source data. |
+| `domain/PendingArrivalException.java` | Signals incomplete normalization that should be retried. |
+
+### Infrastructure
+
+| File | Responsibility |
+| --- | --- |
+| `infrastructure/ingestion/PostgresStoredArrivalAdapter.java` | Reads ingestion views and persists retry, rejection and processing-audit state. |
+| `infrastructure/ingestion/StoredArrivalMapper.java` | Maps normalized rows or raw DataMall JSON into validated domain snapshots. |
+| `infrastructure/postgres/PostgresBunchingAlertAdapter.java` | Persists alert state/events and emits commit-time PostgreSQL notifications. |
+| `infrastructure/jackson/JacksonBunchingEvidenceAdapter.java` | Serializes complete evaluation evidence to JSONB. |
+| `infrastructure/scheduling/BunchingSchedule.java` | Runs the stored-input consumer on its configured interval. |
+| `infrastructure/config/BunchingProperties.java` | Validates threshold, freshness, interval, batch size and consumer settings. |
+| `infrastructure/config/BunchingConfig.java` | Creates the configured policy and UTC clock beans. |
+
+### Database migrations
+
+| File | Creates or changes |
+| --- | --- |
+| `db/migration/V1__create_bunching_observation.sql` | Evaluation evidence table and indexes. |
+| `db/migration/V2__support_stored_arrival_consumption.sql` | Allows topology version to be unknown for raw stored input. |
+| `db/migration/V3__schedule_source_retries.sql` | Retry queue for incomplete or transiently failed inputs. |
+| `db/migration/V4__identify_audit_actor_and_action.sql` | Actor and action columns on evaluation audit rows. |
+| `db/migration/V5__audit_source_processing_failures.sql` | Append-only rejection and deferral audit history. |
+| `db/migration/V6__create_alert_trigger.sql` | Current alert state and durable alert transition events. |
+
+### Tests and fixtures
+
+| File | Coverage |
+| --- | --- |
+| `src/test/java/com/csd/occ/bunching/domain/BunchingPolicyTest.java` | Pure headway, grouping, freshness, slot and evidence rules. |
+| `src/test/java/com/csd/occ/bunching/infrastructure/config/BunchingPropertiesTest.java` | Invalid configuration and boundary validation. |
+| `src/test/java/com/csd/occ/bunching/infrastructure/ingestion/StoredArrivalMapperTest.java` | Raw/normalized mapping, slots and direction resolution. |
+| `src/test/java/com/csd/occ/bunching/integration/BunchingRecordingIT.java` | Evaluation persistence, idempotency, rollback and evidence retention. |
+| `src/test/java/com/csd/occ/bunching/integration/BunchingAlertIT.java` | Alert lifecycle, concurrency, retention, rollback and notification latency. |
+| `src/test/java/com/csd/occ/bunching/integration/StoredArrivalDetectionIT.java` | Ingestion-view consumption, retries, rejection, permissions and end-to-end detection. |
+| `src/test/resources/db/bunching-schema.sql` | Disposable detector schema for integration tests. |
+| `src/test/resources/db/ingestion-schema.sql` | Disposable ingestion schema and source views for integration tests. |
 
 ## Deployment setup
 
@@ -177,46 +368,5 @@ mock HTTP-to-audit proof runs in the [ingestion integration tests](../ingestion/
 using the actual poller and detector code. A real-provider/deployment smoke run remains.
 Production alert delivery/latency, operational incident clearing, WQAP-39 UI and
 stable vehicle identity remain outside this increment. No operational directives
-or AI calls are initiated; results remain observation-only.
-
-## Alert trigger (WQAP-38)
-
-The recorder calls `BunchingAlertPort` only for newly recorded evaluations. Evaluation,
-alert state and alert event share one transaction. Failure rolls them all back so
-the existing retry path can retry the source without losing its alert.
-
-`bunching.alert_state` holds `service_id`, `stop_code`, `direction_id`,
-`last_fetched_at` and nullable `active_alert_id`. Stable row-lock ordering serializes
-concurrent snapshots. A newer BUNCHING result opens an episode once; NORMAL clears
-it; another BUNCHING result can open a new episode. Insufficient evidence preserves
-an episode; missing groups/silence never imply recovery. Stale/future inputs do not
-advance the watermark. Equal fetch times use the first committed result; older/equal
-inputs cannot revise it. These alerts identify route/stop/direction, not physical buses.
-
-`bunching.alert_event` retains `id`, `alert_id`, `action` (OPENED/CLEARED), `actor`,
-`classification`, `service_id`, `stop_code`, `direction_id`, `raw_observation_id`,
-`poll_run_id`, `fetched_at`, `triggered_at` and full evaluation `evidence`. It has
-independent retention and no source-telemetry foreign keys. Unique episode/action
-constraints prevent repeated transition events. Apply V6 before running the new
-code; previous evaluations are not retrospectively turned into alerts.
-
-After commit, PostgreSQL publishes the event UUID on `bunching_alert`. A trusted
-backend subscriber can `LISTEN bunching_alert` and fetch the matching event:
-
-```sql
-LISTEN bunching_alert;
-SELECT * FROM bunching.alert_event ORDER BY triggered_at, id;
-```
-
-Notifications are wake-ups, not durable delivery. A reconnecting subscriber must
-reconcile retained events and deduplicate event IDs; timestamp-only cursors can miss
-late commits. No frontend database access, subscriber/acknowledgement service or
-authenticated alert HTTP endpoint is added in this increment. Those belong to the
-controller integration; no credentials or payloads are placed in notifications.
-
-The default one-second consumer interval reduces trigger wait time. Local tests
-assert under five seconds from a stored observation through a scheduled consumer
-run to a PostgreSQL notification, and from direct detection to notification.
-This is not bus-event-to-screen latency: ingestion polls once per minute, and
-backlogs, database contention, larger configured intervals and outages can exceed
-five seconds. Deployment/load testing and WQAP-39 delivery measurement remain.
+or AI calls are initiated; results remain observation-only. Deployment/load testing
+and WQAP-39 delivery measurement remain.
