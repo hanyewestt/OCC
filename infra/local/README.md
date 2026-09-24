@@ -48,6 +48,18 @@ done
 
 ## What each service needs in `application.yml`
 
+The optional bunching service uses its own `bunching` schema and `occ_bunching`
+role. Set `OCC_BUNCHING_DB_PASSWORD` in `.env`; `02_bunching_schema.sh` provisions
+them on a fresh volume. For an existing volume, recreate the container with
+`docker compose -f infra/local/compose.yaml up -d postgres` to load the new
+environment, then run `docker compose -f infra/local/compose.yaml exec -T postgres bash /docker-entrypoint-initdb.d/02_bunching_schema.sh`.
+This script is idempotent and preserves existing data and role passwords; no
+volume reset is necessary. After applying ingestion migration V005, run
+`docker compose -f infra/local/compose.yaml exec -T postgres bash /docker-entrypoint-initdb.d/03_bunching_read_grants.sh`.
+This separately grants read-only access to ingestion's two bunching contract views,
+not its underlying tables. No ingestion write permissions are granted.
+See `services/bus-bunching-detection/README.md` for service configuration.
+
 ```yaml
 spring:
   datasource:
