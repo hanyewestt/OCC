@@ -1,25 +1,29 @@
 package com.csd.occ.ingestion.integration;
 
-import com.csd.occ.ingestion.domain.ArrivalPollingService;
-import com.csd.occ.ingestion.domain.ArrivalTelemetryPort;
+import com.csd.occ.ingestion.domain.BusArrivalService;
+import com.csd.occ.ingestion.infrastructure.config.BusArrivalSchedule;
+import com.csd.occ.ingestion.infrastructure.datamall.DataMallAdapter;
+import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
-import sg.edu.smu.occ.ingestion.IngestionApplication;
+import org.testcontainers.utility.MountableFile;
+import com.csd.occ.ingestion.IngestionApplication;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest(classes = IngestionApplication.class, properties = {
-        "spring.main.web-application-type=none", "spring.datasource.password=synthetic-only",
-        "datamall.account-key=synthetic-only", "occ.ingestion.seed-enabled=false",
-        "occ.ingestion.arrival.enabled=false", "occ.ingestion.arrival.account-key=synthetic-only",
-        "occ.ingestion.arrival.stale-after-seconds=120"
+        "spring.main.web-application-type=none", "spring.datasource.password=synthetic-ingestion",
+        "occ.datamall.account-key=synthetic-only", "occ.ingestion.import-reference-on-startup=false",
+        "occ.ingestion.seed-targets-on-startup=false"
 })
 @Testcontainers(disabledWithoutDocker = true)
 class IngestionWiringIT {
@@ -27,23 +31,29 @@ class IngestionWiringIT {
     @ServiceConnection
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer(
             DockerImageName.parse("postgis/postgis:18-3.6").asCompatibleSubstituteFor("postgres"))
-            .withInitScript("db/audit-schema.sql");
+            .withDatabaseName("occ").withUsername("occ_admin").withPassword("synthetic-admin")
+            .withEnv("OCC_INGESTION_DB_PASSWORD", "synthetic-ingestion")
+            .withEnv("OCC_OPERATIONS_DB_PASSWORD", "synthetic-operations")
+            .withEnv("OCC_PLANNING_DB_PASSWORD", "synthetic-planning")
+            .withCopyFileToContainer(MountableFile.forHostPath(Path.of(
+                    "../../infra/local/postgres/init/01_schemas_and_roles.sh").toAbsolutePath()),
+                    "/docker-entrypoint-initdb.d/01_schemas_and_roles.sh");
 
-    private final ArrivalPollingService polling;
-    private final ArrivalTelemetryPort telemetry;
+    @MockitoBean DataMallAdapter dataMall;
+    @MockitoBean BusArrivalSchedule schedule;
+    private final BusArrivalService polling;
     private final JdbcTemplate jdbc;
 
     @Autowired
-    IngestionWiringIT(ArrivalPollingService polling, ArrivalTelemetryPort telemetry, JdbcTemplate jdbc) {
+    IngestionWiringIT(BusArrivalService polling, JdbcTemplate jdbc) {
         this.polling = polling;
-        this.telemetry = telemetry;
         this.jdbc = jdbc;
     }
 
     @Test
-    void productionApplicationDiscoversPollingBeansAndAppliesAuditMigration() {
+    void productionApplicationUsesTheExistingPollingServiceAndAppliesTheBunchingContract() {
         assertNotNull(polling);
-        assertTrue(telemetry.targets().isEmpty());
-        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM ingestion.telemetry_audit", Integer.class));
+        assertTrue(jdbc.queryForObject("SELECT EXISTS (SELECT FROM pg_views WHERE schemaname = 'ingestion' "
+                + "AND viewname = 'bunching_snapshot')", Boolean.class));
     }
 }

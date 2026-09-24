@@ -1,3 +1,0 @@
-CREATE EXTENSION IF NOT EXISTS postgis;
-CREATE SCHEMA ingestion;
-CREATE SCHEMA bunching;

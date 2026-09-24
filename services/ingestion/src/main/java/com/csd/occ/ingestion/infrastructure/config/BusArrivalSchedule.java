@@ -25,7 +25,7 @@ public class BusArrivalSchedule {
         this.targets = targets;
     }
 
-    @Scheduled(fixedRate = 60000)
+    @Scheduled(fixedRate = 60000, initialDelay = 60000)
     public void poll() {
         if (topology.activeVersion().isEmpty() && !restoreReferenceTopology()) return;
         arrivals.poll();
