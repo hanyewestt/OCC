@@ -44,7 +44,7 @@ Fill in its passwords and DataMall key using unquoted values.
 
 The wrapper downloads Maven on first use. Stop the app with Ctrl+C; PostgreSQL stays running.
 
-The Compose command starts the database and dashboard only; ingestion is a local Maven process and must be started separately with the command above. Docker Desktop's Docker Engine must be running before using Compose.
+The Compose command starts the database and dashboard only. To start PostgreSQL, ingestion, and bus-bunching detection together, run `bash scripts/start-local.sh` from the repository root. Press Ctrl+C to stop both Java services; PostgreSQL stays running. Docker Desktop's Docker Engine must be running before using Compose.
 
 The `local` profile automatically reads the root `.env`. Maven sets the working directory to `services/ingestion`. Set the same working directory and active profile `local` in IDE run configurations. If you already have a database, skip Compose and set `OCC_INGESTION_DB_URL` in `.env`. An existing `SPRING_DATASOURCE_URL` override also takes precedence over the default URL.
 

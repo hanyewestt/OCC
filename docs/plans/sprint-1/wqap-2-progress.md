@@ -83,7 +83,7 @@ retained events and PostgreSQL notifications for future integration.
 
 ### To run the implemented backend locally or in deployment
 
-- [ ] Apply the service migrations, including ingestion V005/V006 and detector V1–V6, then provision the required roles/read-view grants. Applied migrations must not be edited.
+- [ ] Apply the service migrations, including ingestion V005–V007 and detector V1–V6, then provision the required roles/read-view grants. Applied migrations must not be edited.
 - [ ] Configure database credentials, DataMall or mock URL/key, polling limits and service startup.
 - [ ] Choose `OCC_INGESTION_STALE_AFTER_SECONDS` and align `OCC_BUNCHING_STALE_AFTER`.
 - [ ] Populate matching route topology. The existing seeder only creates polling targets; synthetic topology and mock arrivals can support a local backend run.

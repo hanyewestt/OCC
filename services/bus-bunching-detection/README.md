@@ -47,7 +47,7 @@ The detector uses two PostgreSQL schemas with separate ownership:
 | `ingestion` | Ingestion service | Stores provider poll runs, raw DataMall responses, normalized arrival rows, feed health, polling targets and route topology. The detector reads two views from this schema. |
 | `bunching` | Bunching detector | Stores immutable evaluation evidence, retry/rejection history and alert state/events. The detector writes here. |
 
-The ingestion service owns the source tables. Migration V005 adds these read-only
+The ingestion service owns the source tables. Migration V007 adds these read-only
 views for the detector:
 
 - `ingestion.bunching_snapshot` selects successful DataMall stop observations and
@@ -58,7 +58,7 @@ views for the detector:
 
 The views do not store or improve arrival data. They are a narrow read contract:
 the detector can read only the data needed for analysis and does not need write
-access to ingestion tables. V005 adds them without modifying existing ingestion
+access to ingestion tables. V007 adds them without modifying existing ingestion
 tables.
 
 The detector schema contains:
@@ -292,10 +292,10 @@ contention, larger configured intervals and outages can exceed five seconds.
 
 ## Deployment setup
 
-1. Apply ingestion's migrations through V005. This adds the read-only contracts
+1. Apply ingestion's migrations through V007. This adds the read-only contracts
    `ingestion.bunching_snapshot` and `ingestion.bunching_route_direction` without
    modifying existing migrations. Follow the ingestion service's migration process.
-2. Set `OCC_BUNCHING_DB_PASSWORD` in the uncommitted `infra/local/.env`.
+2. Set `OCC_BUNCHING_DB_PASSWORD` in the uncommitted repository-root `.env`.
 3. From the repository root, provision the bunching schema and view permissions:
 
 ```sh
@@ -306,7 +306,7 @@ docker compose -f infra/local/compose.yaml exec -T postgres bash /docker-entrypo
 
 The scripts preserve existing data and passwords. Do not reset the volume.
 Fresh-volume initialization precedes service migrations, so rerun the grants
-script after ingestion V005. The bunching role can SELECT the two views, but cannot
+script after ingestion V007. The bunching role can SELECT the two views, but cannot
 read underlying ingestion tables or modify ingestion data. This explicit read-view
 contract is the narrow cross-service database integration; ownership remains isolated.
 
