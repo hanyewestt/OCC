@@ -14,7 +14,7 @@
 
     WQAP-24 implementation: configurable strict `<90s` default headway policy,
     database-backed consumption of successful stored arrivals, and repeatable
-    PostgreSQL integration tests. The read contract is ingestion migration V005;
+    PostgreSQL integration tests. The read contract is ingestion migration V007;
     no DataMall calls are made by the detector. See
     [service setup and verification](../../../services/bus-bunching-detection/README.md).
     WQAP-38 now persists opening/clearing alert events with the evaluation and emits

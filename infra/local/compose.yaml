@@ -28,6 +28,7 @@ services:
       OCC_INGESTION_DB_PASSWORD: ${OCC_INGESTION_DB_PASSWORD:?set in root .env}
       OCC_OPERATIONS_DB_PASSWORD: ${OCC_OPERATIONS_DB_PASSWORD:?set in root .env}
       OCC_PLANNING_DB_PASSWORD: ${OCC_PLANNING_DB_PASSWORD:?set in root .env}
+      OCC_BUNCHING_DB_PASSWORD: ${OCC_BUNCHING_DB_PASSWORD:?set in root .env}
       TZ: UTC
       PGTZ: UTC
     ports:

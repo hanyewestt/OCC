@@ -8,6 +8,16 @@
       "MaintenanceDB": "occ",
       "Username": "occ_ingestion",
       "SSLMode": "prefer"
+    },
+    "2": {
+      "Name": "OCC Bunching",
+      "Group": "OCC Local",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "occ",
+      "Username": "occ_bunching",
+      "Password": "change-me",
+      "SSLMode": "prefer"
     }
   }
 }
