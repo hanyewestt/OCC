@@ -31,6 +31,8 @@ services:
       OCC_INGESTION_DB_PASSWORD: ${OCC_INGESTION_DB_PASSWORD:?set in infra/local/.env}
       OCC_OPERATIONS_DB_PASSWORD: ${OCC_OPERATIONS_DB_PASSWORD:?set in infra/local/.env}
       OCC_PLANNING_DB_PASSWORD: ${OCC_PLANNING_DB_PASSWORD:?set in infra/local/.env}
+      # Optional until the bunching service is enabled; no cross-schema access is granted.
+      OCC_BUNCHING_DB_PASSWORD: ${OCC_BUNCHING_DB_PASSWORD:-}
       TZ: UTC
       PGTZ: UTC
     ports:
