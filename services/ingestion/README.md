@@ -1,64 +1,70 @@
 # OCC Ingestion Service
 
-## Overview
-This service is responsible for polling Bus Arrival predictions and logging them (the "retrospective data" for analytics and ML).
+Polls DataMall bus arrivals and records observations for analytics. Requires Java 25, PostgreSQL with the `ingestion` schema and `occ_ingestion` account, and a valid DataMall key.
 
-## Requirements
-- Java 25
-- Docker Desktop with WSL integration enabled
-- PostgreSQL database (running locally via Docker Compose at localhost:5432)
-- LTA DataMall API Key
+## Run only ingestion
 
-## First-time setup
-
-From the repository root in PowerShell:
+From the repository root:
 
 ```powershell
-Copy-Item infra\local\.env.example infra\local\.env
-docker compose -f infra\local\compose.yaml up -d
+cd services/ingestion
+.\mvnw.cmd spring-boot:run '-Dspring-boot.run.profiles=local'
 ```
 
-The database password in `infra/local/.env` is local-only. Do not commit that file.
+On macOS/Linux use `./mvnw spring-boot:run -Dspring-boot.run.profiles=local`. A global Maven installation is optional; the wrapper downloads Maven on first use.
 
-Set the DataMall key in the same PowerShell window. Keep it out of Git:
+The `local` profile imports `../../.env`, the repository's single local configuration file. Create it from the root `.env.example` if needed. Relevant values are:
+
+```dotenv
+OCC_INGESTION_DB_PASSWORD=your-database-password
+DATAMALL_API_KEY=your-datamall-key
+```
+
+Use unquoted values, without `export`. The default local URL uses `POSTGRES_PORT` (5432) and `POSTGRES_DB` (occ). Override it with `OCC_INGESTION_DB_URL` or `SPRING_DATASOURCE_URL` for an existing external database. The password must match the account already created in that database.
+
+PostgreSQL must be running before the app starts. To start the shared local database, run this from the repository root:
 
 ```powershell
-$env:DATAMALL_API_KEY = "your-real-api-key"
+docker compose --env-file .env -f infra/local/compose.yaml up -d
 ```
 
-## Running from PowerShell
+This does not start operations or planning. See [database setup](../../infra/local/README.md).
 
-The Gradle wrapper is the recommended option and does not require Gradle to be installed globally:
+## IDE and deployment
+
+Import `pom.xml` as a Maven project. Run `com.csd.occ.ingestion.IngestionApplication` with the `local` profile and working directory `services/ingestion`.
+
+Without the `local` profile, the app does not read the root `.env`; supply deployment configuration through environment variables. Custom properties use `occ.datamall.*`. The DataMall API key remains supplied through `DATAMALL_API_KEY`.
 
 ```powershell
-cd services\ingestion
-$env:OCC_INGESTION_DB_PASSWORD = ((Get-Content ..\..\infra\local\.env | Where-Object { $_ -like "OCC_INGESTION_DB_PASSWORD=*" }) -split "=", 2)[1].Trim()
-.\gradlew.bat bootRun
+.\mvnw.cmd verify
+docker build -t occ-ingestion .
 ```
 
-If the API key is stored in `.env`, add this line first:
+Build the JAR before building the image. The Dockerfile copies only the packaged JAR, not local credentials. Runtime database and API credentials must be provided separately.
 
-```env
-DATAMALL_API_KEY=your-real-api-key
-```
+## Startup behavior and API
 
-Then load it with:
+Flyway applies pending ingestion migrations, then Hibernate validates entity mappings. Startup imports versioned DataMall bus stops, services and route topology. It then creates only the missing polling targets for `occ.ingestion.monitored-services` (190 and 972 by default). `BusArrivalSchedule` polls each enabled stop every minute. Each successful poll keeps the original response in `raw_observation`, writes one normalized row per service and NextBus position to `bus_arrival_observation`, and updates `feed_status`. Retention removes raw and normalized observations after `occ.ingestion.retention` (24 hours by default); logs remain on the terminal.
 
-```powershell
-$env:DATAMALL_API_KEY = ((Get-Content ..\..\infra\local\.env | Where-Object { $_ -like "DATAMALL_API_KEY=*" }) -split "=", 2)[1].Trim()
-```
+If the active reference topology is absent, the scheduler first retries the reference import and target seeding. If that import fails, it skips the poll cycle without sending per-stop arrival requests; the terminal log records the single import failure.
 
-Alternatively, open the `services/ingestion` folder in IntelliJ IDEA, set `OCC_INGESTION_DB_PASSWORD` and `DATAMALL_API_KEY` in the `IngestionApplication` run configuration, and run the main class.
+With the service running, browse the interactive API at http://localhost:8080/swagger-ui.html. These read-only endpoints return paginated envelopes except feed status and reference topology:
 
-On later runs, start the database if needed and run the application again:
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/v1/arrivals?stopCode=&serviceId=&page=&size=` | Latest complete per-stop arrival snapshot |
+| `GET /api/v1/arrivals/history?stopCode=&serviceId=&from=&to=&page=&size=` | Retained normalized observation history |
+| `GET /api/v1/feed-status` | Poll freshness and failures by stop |
+| `GET /api/v1/poll-runs?page=&size=` | Poll audit runs |
+| `GET /api/v1/reference-topology` | Active static reference-data version |
+| `GET /api/v1/bus-routes?page=&size=` | Bus services and operators in the active reference topology |
+| `GET /api/v1/bus-routes/{serviceId}` | Ordered bus stops for every direction of a bus service |
+| `GET /api/v1/bus-stops?page=&size=` | Bus stops in the active reference topology |
+| `GET /api/v1/bus-stops/{stopCode}` | One bus stop by stop code |
 
-```powershell
-docker compose -f infra\local\compose.yaml up -d
-cd services\ingestion
-.\gradlew.bat bootRun
-```
+The machine-readable OpenAPI document is at `/v3/api-docs`.
 
-## Data Seeding
-On startup, if the `poll_target` table is empty, the `InitSeeder` will automatically connect to DataMall's `BusRoutes` endpoint to dynamically discover all stops for routes **190** and **972** and insert them into the target list. 
+A missing or invalid DataMall key can produce request errors even if the application starts. Stop the app with Ctrl+C.
 
-Every minute, `BusArrivalPoller` fetches the arrivals for these stops and writes to `poll_run` and `raw_observation`. Stop the application with `Ctrl+C`.
+Tests use fake DataMall responses and synthetic configuration, never the root `.env`. They do not prove live DataMall availability.

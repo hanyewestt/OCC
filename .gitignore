@@ -31,3 +31,11 @@ infra/local/.env
 
 # Recommendation engine Maven build output
 /services/planning/recommendation-engine/target/
+
+
+# Local configuration and generated output
+.env
+.env.*
+!.env.example
+**/target/
+**/bin/
