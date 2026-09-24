@@ -39,3 +39,4 @@ infra/local/.env
 !.env.example
 **/target/
 **/bin/
+.vscode/settings.json
