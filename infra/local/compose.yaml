@@ -1,11 +1,10 @@
 # infra/local/compose.yaml
 #
-# Week 1 local environment — database only for now. Plan 1 adds Caddy,
-# Operations, Ingestion and Planning services to this file on Day 1/Day 4.
+# Local database and optional pgAdmin dashboard (--profile tools).
 #
 # Usage (from repo root):
-#   cp infra/local/.env.example infra/local/.env      # then edit passwords
-#   docker compose -f infra/local/compose.yaml up -d
+#   cp .env.example .env      # then edit passwords
+#   docker compose --env-file .env -f infra/local/compose.yaml up -d
 #
 # Everything in postgres/init runs ONCE, on the first start of an empty
 # volume. It creates the three schemas and three application users.
@@ -19,20 +18,16 @@ services:
     image: postgis/postgis:18-3.6
     container_name: occ-postgres
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
       # Superuser used ONLY by the init scripts and by developers for psql.
       # Services never connect as this user.
       POSTGRES_DB: ${POSTGRES_DB:-occ}
       POSTGRES_USER: ${POSTGRES_USER:-occ_admin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in infra/local/.env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in root .env}
       # Per-schema application users, consumed by postgres/init/01_schemas_and_roles.sh
-      OCC_INGESTION_DB_PASSWORD: ${OCC_INGESTION_DB_PASSWORD:?set in infra/local/.env}
-      OCC_OPERATIONS_DB_PASSWORD: ${OCC_OPERATIONS_DB_PASSWORD:?set in infra/local/.env}
-      OCC_PLANNING_DB_PASSWORD: ${OCC_PLANNING_DB_PASSWORD:?set in infra/local/.env}
-      # Optional until the bunching service is enabled; no cross-schema access is granted.
-      OCC_BUNCHING_DB_PASSWORD: ${OCC_BUNCHING_DB_PASSWORD:-}
+      OCC_INGESTION_DB_PASSWORD: ${OCC_INGESTION_DB_PASSWORD:?set in root .env}
+      OCC_OPERATIONS_DB_PASSWORD: ${OCC_OPERATIONS_DB_PASSWORD:?set in root .env}
+      OCC_PLANNING_DB_PASSWORD: ${OCC_PLANNING_DB_PASSWORD:?set in root .env}
       TZ: UTC
       PGTZ: UTC
     ports:
@@ -49,5 +44,24 @@ services:
       retries: 12
       start_period: 10s
 
+  pgadmin:
+    image: dpage/pgadmin4:9.18
+    container_name: occ-pgadmin
+    profiles: [tools]
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?set in root .env}
+      PGADMIN_DISABLE_POSTFIX: "true"
+    ports:
+      - "127.0.0.1:${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - occ_pgadmin:/var/lib/pgadmin
+      - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   occ_pgdata:
+  occ_pgadmin:

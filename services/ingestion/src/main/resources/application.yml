@@ -2,8 +2,8 @@ spring:
   application:
     name: ingestion
   datasource:
-    url: jdbc:postgresql://localhost:5432/occ
-    username: occ_ingestion
+    url: ${OCC_INGESTION_DB_URL:jdbc:postgresql://localhost:5432/occ}
+    username: ${OCC_INGESTION_DB_USERNAME:occ_ingestion}
     password: ${OCC_INGESTION_DB_PASSWORD}
   jpa:
     hibernate:
@@ -13,23 +13,17 @@ spring:
     default-schema: ingestion
     create-schemas: false
     locations: classpath:db/migration
-
-datamall:
-  base-url: ${DATAMALL_BASE_URL:https://datamall2.mytransport.sg/ltaodataservice}
-  account-key: ${DATAMALL_API_KEY}
+springdoc:
+  api-docs:
+    version: OPENAPI_3_1
 
 occ:
+  datamall:
+    base-url: "https://datamall2.mytransport.sg/ltaodataservice"
+    account-key: ${DATAMALL_API_KEY:mock_key}
   ingestion:
-    recovery-enabled: ${OCC_INGESTION_RECOVERY_ENABLED:true}
-    scheduling:
-      max-concurrent-requests: ${OCC_INGESTION_MAX_CONCURRENT_REQUESTS:8}
-      max-starts-per-second: ${OCC_INGESTION_MAX_STARTS_PER_SECOND:1}
-    seed-enabled: ${OCC_INGESTION_SEED_ENABLED:true}
-    arrival:
-      enabled: ${OCC_INGESTION_ARRIVAL_ENABLED:true}
-      base-url: ${DATAMALL_BASE_URL:https://datamall2.mytransport.sg/ltaodataservice}
-      account-key: ${DATAMALL_API_KEY}
-      timeout: 10s
-      lease: 45s
-      max-response-bytes: 1048576
-      stale-after-seconds: ${OCC_INGESTION_STALE_AFTER_SECONDS}
+    monitored-services: ["190", "972"]
+    stale-after-seconds: 180
+    retention: 24h
+    import-reference-on-startup: true
+    seed-targets-on-startup: true
