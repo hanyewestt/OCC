@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "OCC Ingestion",
+      "Group": "OCC Local",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "occ",
+      "Username": "occ_ingestion",
+      "SSLMode": "prefer"
+    }
+  }
+}

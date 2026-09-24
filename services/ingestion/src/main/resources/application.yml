@@ -2,8 +2,8 @@ spring:
   application:
     name: ingestion
   datasource:
-    url: jdbc:postgresql://localhost:5432/occ
-    username: occ_ingestion
+    url: ${OCC_INGESTION_DB_URL:jdbc:postgresql://localhost:5432/occ}
+    username: ${OCC_INGESTION_DB_USERNAME:occ_ingestion}
     password: ${OCC_INGESTION_DB_PASSWORD}
   jpa:
     hibernate:
@@ -13,7 +13,17 @@ spring:
     default-schema: ingestion
     create-schemas: false
     locations: classpath:db/migration
+springdoc:
+  api-docs:
+    version: OPENAPI_3_1
 
-datamall:
-  base-url: "https://datamall2.mytransport.sg/ltaodataservice"
-  account-key: ${DATAMALL_API_KEY:mock_key}
+occ:
+  datamall:
+    base-url: "https://datamall2.mytransport.sg/ltaodataservice"
+    account-key: ${DATAMALL_API_KEY:mock_key}
+  ingestion:
+    monitored-services: ["190", "972"]
+    stale-after-seconds: 180
+    retention: 24h
+    import-reference-on-startup: true
+    seed-targets-on-startup: true
