@@ -1,0 +1,21 @@
+package com.csd.occ.ingestion.domain;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import com.csd.occ.ingestion.domain.PollRun;
+import java.util.UUID;
+import java.util.Optional;
+import java.time.Instant;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+
+public interface PollRunRepository extends JpaRepository<PollRun, UUID> {
+    Optional<PollRun> findByIdempotencyKey(String idempotencyKey);
+
+    @Modifying
+    @Query(value = """
+            delete from ingestion.poll_run run
+            where run.completed_at < :cutoff
+              and not exists (select 1 from ingestion.raw_observation raw where raw.poll_run_id = run.id)
+            """, nativeQuery = true)
+    int deleteCompletedWithoutRawBefore(Instant cutoff);
+}

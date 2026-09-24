@@ -28,3 +28,10 @@ infra/local/.env
 **/.gradle/
 **/.idea/
 **/build/
+
+# Local configuration and generated output
+.env
+.env.*
+!.env.example
+**/target/
+**/bin/

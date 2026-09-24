@@ -174,6 +174,16 @@ Bind config to these, never `@Value` on a field.
 
 ---
 
+### Local configuration and build entry points
+
+Use the Maven wrapper in each runnable service (`mvnw` / `mvnw.cmd`), pinned by `.mvn/wrapper/maven-wrapper.properties`. Build with `./mvnw verify` or `.\mvnw.cmd verify`.
+
+Local development uses one ignored repository-root `.env`, documented by the root `.env.example`. `application-local.yml` imports `optional:file:../../.env[.properties]`; run with the `local` profile and the service directory as working directory. Use unquoted values compatible with both Java properties and Compose. Do not put the local import in the default deployment configuration.
+
+Run the canonical Compose file from the root with `docker compose --env-file .env -f infra/local/compose.yaml up -d`. Explicitly map only required database variables into PostgreSQL. Deployment supplies each service's own environment variables rather than the shared local file.
+
+Scheduling and startup callbacks belong in `infrastructure/config`; they delegate to domain services. Domain services access external systems through ports implemented by provider adapters.
+
 ## 5. API conventions
 
 - Public endpoints: `/api/v1/...`. Service-to-service: `/internal/v1/...`. Version in the path, always.
