@@ -33,8 +33,19 @@ dependencies {
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
-    testImplementation("org.testcontainers:junit-jupiter")
-    testImplementation("org.testcontainers:postgresql")
+    testImplementation("org.testcontainers:testcontainers-junit-jupiter")
+    testImplementation("org.testcontainers:testcontainers-postgresql")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+// Keep ingestion's existing Gradle build (previously agreed). The detector remains an independent Maven service.
+// Compile the actual detector sources only in tests to verify the cross-service database contract without copying code.
+sourceSets.test {
+    java.srcDir("../bus-bunching-detection/src/main/java")
+}
+
+tasks.processTestResources {
+    from("../bus-bunching-detection/src/main/resources/db/migration") { into("bunching-migration") }
 }
 
 tasks.withType<Test> {
