@@ -4,26 +4,45 @@ An agentic dispatch and incident mitigation system for Singapore public bus oper
 
 ## Local quick start
 
-Install Java 25 and start Docker Desktop. From the repository root in PowerShell:
+Install Java 25 and start Docker Desktop. From the repository root, create `.env` only if it does not already exist:
 
-1. Copy `.env.example` to `.env` only if `.env` does not already exist. Fill in the passwords and DataMall key using unquoted values.
-2. Start PostgreSQL and pgAdmin together, then wait for PostgreSQL to be healthy:
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+```
+
+```bash
+[ -f .env ] || cp .env.example .env
+```
+
+Fill in its passwords and DataMall key using unquoted values.
+
+1. Start PostgreSQL and pgAdmin together, then wait for PostgreSQL to be healthy:
 
    ```powershell
    docker compose --env-file .env -f infra/local/compose.yaml --profile tools up -d
    docker compose --env-file .env -f infra/local/compose.yaml ps
    ```
 
+   ```bash
+   docker compose --env-file .env -f infra/local/compose.yaml --profile tools up -d
+   docker compose --env-file .env -f infra/local/compose.yaml ps
+   ```
+
    This starts `occ-postgres` and `occ-pgadmin`. Open pgAdmin at http://localhost:5050.
 
-3. Start only ingestion:
+2. Start only ingestion:
 
    ```powershell
    cd services/ingestion
    .\mvnw.cmd spring-boot:run '-Dspring-boot.run.profiles=local'
    ```
 
-On macOS/Linux, use `./mvnw spring-boot:run -Dspring-boot.run.profiles=local`. The wrapper downloads Maven on first use. Stop the app with Ctrl+C; PostgreSQL stays running.
+   ```bash
+   cd services/ingestion
+   ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+   ```
+
+The wrapper downloads Maven on first use. Stop the app with Ctrl+C; PostgreSQL stays running.
 
 The Compose command starts the database and dashboard only; ingestion is a local Maven process and must be started separately with the command above. Docker Desktop's Docker Engine must be running before using Compose.
 
@@ -51,6 +70,11 @@ Compose receives only the database variables explicitly listed in its `environme
 ```powershell
 cd services/ingestion
 .\mvnw.cmd verify
+```
+
+```bash
+cd services/ingestion
+./mvnw verify
 ```
 
 Tests use synthetic configuration. Docker-backed integration tests skip when Docker is unavailable. See [ingestion instructions](services/ingestion/README.md), [database operations](infra/local/README.md), and [code conventions](docs/CONVENTIONS.md).

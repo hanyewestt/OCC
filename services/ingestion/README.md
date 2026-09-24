@@ -11,7 +11,12 @@ cd services/ingestion
 .\mvnw.cmd spring-boot:run '-Dspring-boot.run.profiles=local'
 ```
 
-On macOS/Linux use `./mvnw spring-boot:run -Dspring-boot.run.profiles=local`. A global Maven installation is optional; the wrapper downloads Maven on first use.
+```bash
+cd services/ingestion
+./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+```
+
+A global Maven installation is optional; the wrapper downloads Maven on first use.
 
 The `local` profile imports `../../.env`, the repository's single local configuration file. Create it from the root `.env.example` if needed. Relevant values are:
 
@@ -28,6 +33,10 @@ PostgreSQL must be running before the app starts. To start the shared local data
 docker compose --env-file .env -f infra/local/compose.yaml up -d
 ```
 
+```bash
+docker compose --env-file .env -f infra/local/compose.yaml up -d
+```
+
 This does not start operations or planning. See [database setup](../../infra/local/README.md).
 
 ## IDE and deployment
@@ -38,6 +47,11 @@ Without the `local` profile, the app does not read the root `.env`; supply deplo
 
 ```powershell
 .\mvnw.cmd verify
+docker build -t occ-ingestion .
+```
+
+```bash
+./mvnw verify
 docker build -t occ-ingestion .
 ```
 

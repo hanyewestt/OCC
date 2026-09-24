@@ -7,6 +7,13 @@ This is the only local Compose setup. It runs PostgreSQL 18 with PostGIS 3.6, on
 Create the root `.env` from `.env.example` if it does not exist, then fill in its values.
 
 ```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+docker compose --env-file .env -f infra/local/compose.yaml up -d
+docker compose --env-file .env -f infra/local/compose.yaml ps
+```
+
+```bash
+[ -f .env ] || cp .env.example .env
 docker compose --env-file .env -f infra/local/compose.yaml up -d
 docker compose --env-file .env -f infra/local/compose.yaml ps
 ```
@@ -21,13 +28,25 @@ Set `PGADMIN_DEFAULT_EMAIL`, `PGADMIN_DEFAULT_PASSWORD` and optionally `PGADMIN_
 docker compose --env-file .env -f infra/local/compose.yaml --profile tools up -d pgadmin
 ```
 
+```bash
+docker compose --env-file .env -f infra/local/compose.yaml --profile tools up -d pgadmin
+```
+
 Open http://localhost:5050 and log in with `PGADMIN_DEFAULT_EMAIL` and `PGADMIN_DEFAULT_PASSWORD`. The dashboard is bound to this computer's loopback interface.
 
 Expand **OCC Local → OCC Ingestion** and enter `OCC_INGESTION_DB_PASSWORD` from the root `.env` when prompted. Then open **Databases → occ → Schemas → ingestion → Tables**. Right-click a table and select **View/Edit Data → First 100 Rows**.
 
 The preconfigured connection uses Docker's `postgres` hostname and internal port 5432. If you override the database name, update the connection's Maintenance database in pgAdmin. Dashboard settings persist in a separate volume. Initial login settings and server definitions apply on first initialization; changing their source files does not reset an existing dashboard account.
 
-To stop just the dashboard: `docker compose --env-file .env -f infra/local/compose.yaml stop pgadmin`.
+To stop just the dashboard:
+
+```powershell
+docker compose --env-file .env -f infra/local/compose.yaml stop pgadmin
+```
+
+```bash
+docker compose --env-file .env -f infra/local/compose.yaml stop pgadmin
+```
 
 ## Initialization versus migrations
 
@@ -40,6 +59,12 @@ Editing the initialization script or changing passwords in `.env` does not updat
 ## Inspect and stop
 
 ```powershell
+docker exec occ-postgres psql -U occ_admin -d occ -c '\dn'
+docker exec occ-postgres psql -U occ_admin -d occ -c 'select postgis_version();'
+docker compose --env-file .env -f infra/local/compose.yaml stop
+```
+
+```bash
 docker exec occ-postgres psql -U occ_admin -d occ -c '\dn'
 docker exec occ-postgres psql -U occ_admin -d occ -c 'select postgis_version();'
 docker compose --env-file .env -f infra/local/compose.yaml stop
