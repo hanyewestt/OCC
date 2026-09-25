@@ -36,6 +36,31 @@ public interface BusArrivalObservationRepository extends JpaRepository<BusArriva
     Page<CurrentBusArrivalView> findCurrent(@Param("stopCode") String stopCode,
             @Param("serviceId") String serviceId, Pageable pageable);
 
+    @Query(value = """
+            select id as id, raw_observation_id as rawObservationId,
+                   stop_code as stopCode, service_id as serviceId,
+                   direction_id as directionId, visit_order as visitOrder,
+                   estimated_arrival_at as estimatedArrivalAt,
+                   latitude as latitude, longitude as longitude,
+                   fetched_at as fetchedAt
+            from ingestion.current_bus_arrival
+            where (:serviceId is null or service_id = :serviceId)
+              and monitored is true
+              and latitude between -90 and 90 and latitude <> 0
+              and longitude between -180 and 180 and longitude <> 0
+              and fetched_at <= :now
+            order by service_id, stop_code, visit_order, id
+            """, countQuery = """
+            select count(*) from ingestion.current_bus_arrival
+            where (:serviceId is null or service_id = :serviceId)
+              and monitored is true
+              and latitude between -90 and 90 and latitude <> 0
+              and longitude between -180 and 180 and longitude <> 0
+              and fetched_at <= :now
+            """, nativeQuery = true)
+    Page<CurrentBusArrivalView> findMapPositions(@Param("serviceId") String serviceId,
+            @Param("now") Instant now, Pageable pageable);
+
     @Query("""
             select observation from BusArrivalObservation observation
             where (:stopCode is null or observation.stopCode = :stopCode)

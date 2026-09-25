@@ -7,6 +7,7 @@ import java.util.UUID;
 /** Read-only projection of the latest complete arrival snapshot for a stop. */
 public interface CurrentBusArrivalView {
     UUID getId();
+    UUID getRawObservationId();
     String getStopCode();
     String getServiceId();
     String getOperator();

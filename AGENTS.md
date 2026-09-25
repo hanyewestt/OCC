@@ -49,6 +49,20 @@
 
 - When an API changes, regenerate and update its OpenAPI contract to match the implementation.
 
+## Fleet Identity and Demo Scenarios
+
+- Follow [docs/architecture/hybrid-fleet-demo.md](docs/architecture/hybrid-fleet-demo.md)
+  when working on bus maps, vehicle identity, demo injection, bunching scenarios,
+  assignments, or directives.
+- DataMall arrival slots and coordinates are observations, not verified vehicle
+  identities or plate numbers. Keep observed arrivals, inferred tracks, and
+  prototype-owned demo vehicles distinct in storage, APIs, and the UI.
+- Issue prototype directives only to stable demo vehicle-and-driver assignments.
+  Never infer a driver or dispatch target from a live arrival slot or track.
+- Keep injected buses and any captured live baseline inside an explicitly started,
+  versioned simulation run. Do not write injected data into ingestion telemetry or
+  let live observations silently trigger planning or execution.
+
 ## References
 
 - [The Twelve-Factor App: Config](https://12factor.net/config)

@@ -92,6 +92,7 @@ With the service running, browse the interactive API at `http://localhost:<OCC_I
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/v1/arrivals?stopCode=&serviceId=&page=&size=` | Latest complete per-stop arrival snapshot |
+| `GET /api/v1/map/observed-buses?serviceId=&page=&size=` | Latest source-monitored arrival positions with usable coordinates, freshness, and unverified identity labels for a map |
 | `GET /api/v1/arrivals/history?stopCode=&serviceId=&from=&to=&page=&size=` | Retained normalized observation history |
 | `GET /api/v1/feed-status` | Poll freshness and failures by stop |
 | `GET /api/v1/poll-runs?page=&size=` | Poll audit runs |
@@ -102,6 +103,12 @@ With the service running, browse the interactive API at `http://localhost:<OCC_I
 | `GET /api/v1/bus-stops/{stopCode}` | One bus stop by stop code |
 
 The machine-readable OpenAPI document is at `/v3/api-docs`.
+
+Map items are individual DataMall arrival observations, not identified vehicles.
+The endpoint omits unmonitored predictions, zero or invalid coordinates, and
+future-dated fetches. It reports stale positions explicitly; a client must not
+display stale positions as current buses. It does not deduplicate observations
+across stops or assign plates, tracks, or drivers.
 
 To export the runtime-generated contract to a file, start ingestion and run this
 from `services/ingestion` in another terminal:

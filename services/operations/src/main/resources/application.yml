@@ -1,0 +1,30 @@
+spring:
+  application:
+    name: operations
+  datasource:
+    url: ${OCC_OPERATIONS_DB_URL}
+    username: ${OCC_OPERATIONS_DB_USERNAME:occ_operations}
+    password: ${OCC_OPERATIONS_DB_PASSWORD}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: ${OCC_OPERATIONS_JPA_DDL_AUTO:validate}
+  flyway:
+    default-schema: operations
+    create-schemas: false
+    locations: classpath:db/migration
+server:
+  port: ${OCC_OPERATIONS_INTERNAL_PORT:8002}
+springdoc:
+  api-docs:
+    version: OPENAPI_3_1
+    enabled: ${OCC_OPERATIONS_API_DOCS_ENABLED:false}
+  swagger-ui:
+    enabled: ${OCC_OPERATIONS_SWAGGER_UI_ENABLED:false}
+occ:
+  cognito:
+    issuer-uri: ${OCC_COGNITO_ISSUER_URI}
+    app-client-id: ${OCC_COGNITO_APP_CLIENT_ID}
+  demo-fleet:
+    default-page-size: ${OCC_DEMO_FLEET_DEFAULT_PAGE_SIZE:50}
+    max-page-size: ${OCC_DEMO_FLEET_MAX_PAGE_SIZE:200}

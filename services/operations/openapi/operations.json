@@ -1,0 +1,438 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OCC Operations API",
+    "description": "Prototype-owned draft demo vehicles and assignments.",
+    "version": "v1"
+  },
+  "servers": [
+    {
+      "url": "http://localhost",
+      "description": "Generated server url"
+    }
+  ],
+  "paths": {
+    "/api/v1/demo-runs": {
+      "post": {
+        "tags": [
+          "Demo fleet"
+        ],
+        "summary": "Create a draft simulated run",
+        "operationId": "createDemoRun",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDemoRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Draft created",
+            "headers": {
+              "Location": {
+                "description": "URI of the new run",
+                "style": "simple"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoRunResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid service or direction",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/demo-runs/{runId}/vehicles": {
+      "get": {
+        "tags": [
+          "Demo fleet"
+        ],
+        "summary": "List a run's demo vehicles and assignments",
+        "operationId": "listDemoVehicles",
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "Items per page; omitted uses the configured default and values above the configured maximum are rejected",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Invalid page or page size",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Demo fleet"
+        ],
+        "summary": "Place a demo vehicle and assign a demo driver",
+        "operationId": "placeDemoVehicle",
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaceDemoVehicleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Vehicle and assignment created",
+            "headers": {
+              "Location": {
+                "description": "URI of the new vehicle",
+                "style": "simple"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoVehicleResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Run is not a draft, or label/plate already exists",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/demo-runs/{runId}": {
+      "get": {
+        "tags": [
+          "Demo fleet"
+        ],
+        "summary": "Get a draft simulated run",
+        "operationId": "getDemoRun",
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoRunResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/demo-runs/{runId}/vehicles/{vehicleId}": {
+      "get": {
+        "tags": [
+          "Demo fleet"
+        ],
+        "summary": "Get one demo vehicle and assignment",
+        "operationId": "getDemoVehicle",
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "vehicleId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoVehicleResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CreateDemoRunRequest": {
+        "type": "object",
+        "properties": {
+          "serviceId": {
+            "type": "string",
+            "maxLength": 20,
+            "minLength": 0
+          },
+          "directionId": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "serviceId"
+        ]
+      },
+      "DemoRunResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "serviceId": {
+            "type": "string"
+          },
+          "directionId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "status": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "classification": {
+            "type": "string"
+          }
+        }
+      },
+      "ProblemDetail": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "instance": {
+            "type": "string",
+            "format": "uri"
+          },
+          "properties": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        }
+      },
+      "PlaceDemoVehicleRequest": {
+        "type": "object",
+        "properties": {
+          "displayLabel": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 0
+          },
+          "syntheticPlate": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional synthetic identifier; must start with DEMO-",
+            "pattern": "DEMO-[A-Z0-9-]{1,15}"
+          },
+          "latitude": {
+            "type": "number",
+            "maximum": 90,
+            "minimum": -90
+          },
+          "longitude": {
+            "type": "number",
+            "maximum": 180,
+            "minimum": -180
+          },
+          "driverDisplayName": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 0
+          }
+        },
+        "required": [
+          "displayLabel",
+          "driverDisplayName",
+          "latitude",
+          "longitude"
+        ]
+      },
+      "DemoVehicleResponse": {
+        "type": "object",
+        "properties": {
+          "assignmentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "runId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "vehicleId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "driverId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "displayLabel": {
+            "type": "string"
+          },
+          "syntheticPlate": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "driverDisplayName": {
+            "type": "string"
+          },
+          "latitude": {
+            "type": "number"
+          },
+          "longitude": {
+            "type": "number"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "classification": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  }
+}

@@ -31,6 +31,7 @@ docker compose --env-file .env -f infra/local/compose.yaml ps
 | Component | Host address |
 | --- | --- |
 | Ingestion API and Swagger UI | `http://localhost:6767/swagger-ui.html` |
+| Operations demo API (optional `demo` profile) | `http://localhost:6768/swagger-ui.html` |
 | PostgreSQL | `localhost:5432` |
 | pgAdmin | `http://localhost:6700` |
 | Application logs | See the commands below |
@@ -57,6 +58,18 @@ docker compose --env-file .env -f infra/local/compose.yaml --profile tools up -d
 ```bash
 docker compose --env-file .env -f infra/local/compose.yaml --profile tools up -d pgadmin
 ```
+
+## Start the draft demo fleet API
+
+Set `OCC_COGNITO_ISSUER_URI` and `OCC_COGNITO_APP_CLIENT_ID` in `.env` for your
+Cognito user pool and app client, then run:
+
+```powershell
+docker compose --env-file .env -f infra/local/compose.yaml --profile demo up -d --build operations
+```
+
+The Operations API creates draft simulated vehicles and assignments only. It
+does not yet capture live observations or issue driver directives.
 
 ## Stop
 

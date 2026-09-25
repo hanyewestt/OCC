@@ -398,6 +398,149 @@
           }
         }
       }
+    },
+    "/internal/v1/arrival-snapshots": {
+      "get": {
+        "tags": [
+          "Bunching ingestion"
+        ],
+        "summary": "List normalized snapshots for bunching",
+        "operationId": "listBunchingArrivalSnapshots",
+        "parameters": [
+          {
+            "name": "afterSequence",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BunchingSnapshotPageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/arrival-snapshots/{rawObservationId}": {
+      "get": {
+        "tags": [
+          "Bunching ingestion"
+        ],
+        "summary": "Get one normalized snapshot for retry",
+        "operationId": "getBunchingArrivalSnapshot",
+        "parameters": [
+          {
+            "name": "rawObservationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BunchingSnapshotResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/map/observed-buses": {
+      "get": {
+        "tags": [
+          "Ingestion"
+        ],
+        "summary": "List usable DataMall arrival positions for a map",
+        "description": "Returns source-monitored arrival slots with usable coordinates from each target's latest successful poll. Each item is an observation, not a verified vehicle identity. Stale items must not be presented as current bus positions. No plate, driver, or inferred track is returned.",
+        "operationId": "listObservedBusPositions",
+        "parameters": [
+          {
+            "name": "serviceId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated unverified arrival positions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservedBusPositionPageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid pagination parameters",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -772,6 +915,217 @@
           "totalPages": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "BunchingArrivalResponse": {
+        "type": "object",
+        "properties": {
+          "observationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "referenceVersionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "stopCode": {
+            "type": "string"
+          },
+          "serviceId": {
+            "type": "string"
+          },
+          "directionId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "visitOrder": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "estimatedArrivalAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "originCode": {
+            "type": "string"
+          },
+          "destinationCode": {
+            "type": "string"
+          },
+          "latitude": {
+            "type": "number"
+          },
+          "longitude": {
+            "type": "number"
+          }
+        }
+      },
+      "BunchingSnapshotPageResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BunchingSnapshotResponse"
+            }
+          },
+          "nextSequence": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "BunchingSnapshotResponse": {
+        "type": "object",
+        "properties": {
+          "sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "rawObservationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pollRunId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sourceKey": {
+            "type": "string"
+          },
+          "fetchedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "normalizationState": {
+            "type": "string"
+          },
+          "arrivals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BunchingArrivalResponse"
+            }
+          }
+        }
+      },
+      "ProblemDetail": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "instance": {
+            "type": "string",
+            "format": "uri"
+          },
+          "properties": {
+            "type": "object",
+            "additionalProperties": {}
+          }
+        }
+      },
+      "ObservedBusPositionPageResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ObservedBusPositionResponse"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalItems": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "totalPages": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "size",
+          "totalItems",
+          "totalPages"
+        ]
+      },
+      "ObservedBusPositionResponse": {
+        "type": "object",
+        "description": "One DataMall arrival position. It does not identify a physical bus or driver.",
+        "properties": {
+          "observationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "rawObservationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "stopCode": {
+            "type": "string"
+          },
+          "serviceId": {
+            "type": "string"
+          },
+          "directionId": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "visitOrder": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "estimatedArrivalAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "latitude": {
+            "type": "number"
+          },
+          "longitude": {
+            "type": "number"
+          },
+          "fetchedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "classification": {
+            "type": "string",
+            "example": "OBSERVATION_ONLY"
+          },
+          "identityStatus": {
+            "type": "string",
+            "example": "UNVERIFIED"
           }
         }
       }

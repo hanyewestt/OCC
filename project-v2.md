@@ -5,7 +5,7 @@
 
 The Operations Control Centre (OCC) is a simulation-first, event-driven bus-operations decision-support system. It accepts versioned, admin-authored scenarios rather than depending on one hard-coded disruption. Each scenario may combine train incidents or disruptions, bus-stop closures, road closures, and simulated bus-bunching events.
 
-The system uses read-only LTA DataMall data and other selected authoritative, versioned reference datasets to ground the simulation in real services, directions, stops, rail topology, and passenger-volume baselines. Enabled live DataMall feeds remain visible in an observation-only dashboard but do not trigger planning or change simulated outcomes in the MVP. Services 190 and 972 are the initial active route profiles, and the former DT1-DT10 closure is retained as one seeded example fixture rather than the application's fixed operating scenario.
+The system uses read-only LTA DataMall data and other selected authoritative, versioned reference datasets to ground the simulation in real services, directions, stops, rail topology, and passenger-volume baselines. Enabled live DataMall feeds remain visible in an observation-only dashboard and do not automatically trigger planning or change a running simulation. A controller may explicitly capture a versioned observation snapshot as the baseline of a controlled demo run and inject prototype-owned vehicles with known demo drivers; see [the hybrid fleet demo design](docs/architecture/hybrid-fleet-demo.md). Services 190 and 972 are the initial active route profiles, and the former DT1-DT10 closure is retained as one seeded example fixture rather than the application's fixed operating scenario.
 
 Deterministic services resolve affected configured routes, calculate a no-action demand and impact baseline, rank routes and stops, simulate candidate consequences, validate resources and routes, and enforce every state change. One reusable route-worker implementation is scheduled for resolved planning-eligible routes in ranked batches, with at most three workers executing concurrently and explicit omissions when quota or deadline prevents full coverage. The manager receives the resulting proposal list and recommends a coordinated response. The LLM can interpret, advise, and propose; it cannot select affected routes, calculate demand, reserve a bus, dispatch a driver, publish an announcement, or alter operational records directly.
 
@@ -21,7 +21,7 @@ The project demonstrates whether a hierarchical multi-agent workflow can produce
 - A deterministic affected-route resolver operating only on active, validated route profiles in the MVP.
 - Deterministic stop ranking by projected unmet passenger demand and waiting time.
 - Read-only DataMall route, stop, and historical-demand data plus versioned authoritative rail-topology reference data.
-- Live DataMall ingestion into PostgreSQL for an observation-only dashboard; live observations do not affect simulation results in the MVP.
+- Live DataMall ingestion into PostgreSQL for an observation-only dashboard, with an explicit, pinned observation capture available as a baseline for a controlled demo simulation.
 - Replayable scenario execution for reliable demonstrations and testing.
 - AI-generated, schema-valid change assessments grounded in current and previous evidence snapshots.
 - Passenger-demand forecasting from versioned historical datasets, route profiles, and declared scenario parameters.
@@ -49,7 +49,7 @@ The project demonstrates whether a hierarchical multi-agent workflow can produce
 - Real-world unapproved dispatch.
 - Whole-network route resolution or planning over routes without an active, validated admin-managed profile.
 - A separately coded agent per service; all routes use the same reusable worker implementation.
-- Live DataMall observations initiating planning or altering simulation outcomes.
+- Live DataMall observations automatically initiating planning or changing a running simulation.
 - Manual additions to or removals from a resolver result.
 - Temporary replacement stops or bus diversions for a bus-stop closure.
 - Safety certification of generated detours or operational instructions.
@@ -169,7 +169,7 @@ The initial set is:
 | Passenger Volume by Origin-Destination Train Stations | Historical movement baseline | Import when a new source file is published |
 | Passenger Volume by Bus Stop / OD | Required historical baseline for configured bus-stop closures and road-closure route impact | Import when a new source file is published |
 
-Bus Arrival v3 is stop-scoped and returns only the next approaching buses. Polling is limited to monitored stops referenced by active route profiles. It must not be described as whole-fleet tracking. In the MVP, no live observation changes scenario demand, affected-route resolution, simulation state, or planning output.
+Bus Arrival v3 is stop-scoped and returns only the next approaching buses. Polling is limited to monitored stops referenced by active route profiles. It must not be described as whole-fleet tracking or authoritative vehicle identification. A live observation cannot automatically change scenario demand, affected-route resolution, simulation state, or planning output. An explicitly captured and versioned observation snapshot may seed a controlled demo run, as described in [the hybrid fleet demo design](docs/architecture/hybrid-fleet-demo.md).
 
 Flood Alerts are deferred and are not part of the initial ingestion workload. They may be added later as a separate observation connector without changing the simulation engine.
 
@@ -177,10 +177,10 @@ Preserve both train-alert source records. Deduplicate only at the canonical inci
 
 ### Simulation and observation separation
 
-- `SIMULATION`: a versioned admin-authored scenario supplies every disruption, demand input, simulated arrival, vehicle state, and action.
-- `OBSERVATION_ONLY`: enabled live DataMall feeds are displayed with source timestamps, freshness, and failures but cannot initiate planning or influence a simulation in the MVP.
+- `SIMULATION`: a versioned scenario supplies the disruptions, demand inputs, simulated arrivals, vehicle state, and actions. A controller may explicitly pin selected live observations as an immutable baseline before a controlled run begins; injected vehicles and later state remain simulated.
+- `OBSERVATION_ONLY`: enabled live DataMall feeds are displayed with source timestamps, freshness, and failures. They cannot automatically initiate planning or mutate a running simulation.
 
-Every incident, forecast, simulation, proposal, and UI view displays its classification. Simulated records must never be presented as live source observations, and observation records must never be attached to a simulation input snapshot in the MVP.
+Every incident, forecast, simulation, proposal, and UI view displays its classification. Simulated records must never be presented as live source observations. Explicitly captured observation IDs retain their provenance inside a separately classified simulation input; live polls never become injected records or silently update the run.
 
 ### Polling behaviour
 
@@ -366,7 +366,7 @@ Each simulation result records its demand variant, coefficient-set version, hist
 
 Bus bunching is evaluated separately for each bus service, direction, visit where relevant, and monitored stop. Buses from different services are never classified as bunched merely because they arrive together.
 
-For one valid arrival snapshot, sort the predicted arrival times for the next buses belonging to the same service and mapped direction. Planning uses the explicit simulated timings in the scenario; live Bus Arrival snapshots may run the same detector for observation-only display but cannot initiate planning:
+For one valid arrival snapshot, sort the predicted arrival times for the next buses belonging to the same service and mapped direction. Planning uses explicit timings in a versioned scenario, including a pinned live baseline when a controller intentionally starts a hybrid demo. Live Bus Arrival snapshots may run the detector for observation-only display but cannot automatically initiate planning:
 
 \[
 e_1 \leq e_2 \leq e_3
@@ -388,7 +388,7 @@ The initial MVP rule is:
 
 Confirm `BUNCHING` only when the short-headway condition appears in two consecutive valid one-minute observations. A following headway of at least \(1.50H_{r,d,p}\) increases severity because it indicates a likely service gap, but it is not required to identify bunching. Store the thresholds, expected-headway source, observation IDs, calculated headways, formula version, first-seen time, last-seen time, and state with every event.
 
-This is local detection at configured stops using the next approaching buses; it is not whole-network fleet tracking. A live observation-only result can generate a dashboard warning but cannot create a planning incident or directive. In the simulation, the following bus may receive a controller-approved hold or dwell adjustment at a designated control stop, subject to the 120-second and crowd-safety limits. The system never recommends speeding to correct bunching.
+This is local detection at configured stops using the next approaching buses; it is not whole-network fleet tracking. A live observation-only result can generate a dashboard warning but cannot itself create a planning incident or directive. In a hybrid demo, observed buses may be shown as context, but only an unambiguously assigned demo bus may receive a controller-approved hold or dwell adjustment at a designated control stop, subject to the 120-second and crowd-safety limits. The system never recommends speeding to correct bunching.
 
 Gemini may explain a confirmed event or compare responses, but it cannot decide whether bunching occurred, change the thresholds, or identify buses from ambiguous observations.
 
@@ -616,6 +616,13 @@ Recommended entities:
 - `operations.affected_route_candidate`
 - `operations.stop_impact_ranking`
 
+An observation-only map projection may maintain temporary inferred tracks outside
+the prototype fleet roster. These tracks have confidence, ambiguity, expiry, and
+source-observation links, but no verified plate or driver. A demo vehicle and its
+driver assignment have stable prototype-owned IDs and belong to a versioned
+simulation run. A directive targets the assignment, never an inferred track or
+DataMall arrival slot. See [the hybrid fleet demo design](docs/architecture/hybrid-fleet-demo.md).
+
 A dispatch allocates a compatible bus-and-driver pair. The MVP roster only records a driver's scheduled window, depot, role/status, and availability. It does not calculate legal rest compliance or generate schedules.
 
 Protected route-profile CRUD includes create, read, update-by-new-version, activate, deactivate, and validation for operational profile data, rail-transfer mappings, alternative-stop mappings, and intervention rules. Imported service, direction, stop, and rail topology is read-only. Protected scenario CRUD includes create, read, update-by-new-version, deactivate, validate, and start-run operations. Records referenced by a run are immutable and cannot be destructively deleted.
@@ -808,6 +815,9 @@ Local development may use an uncommitted environment file containing developer-s
 ### Controller interface
 
 - Clearly separated simulation and observation-only DataMall panels with feed-freshness indicators.
+- A map of available stop-scoped observations with uncertainty labels, plus a
+  visibly distinct simulation overlay for injected demo vehicles. An explicit
+  capture/start action pins any live baseline used by a demo run.
 - Active scenario events, deterministic affected-route results, inclusion/exclusion reasons, and profile/topology versions.
 - Ranked affected stops with projected unmet demand and waiting time.
 - Service-and-direction-specific bunching warnings with observed and expected headways, severity, freshness, and supporting stop observations.
@@ -983,7 +993,9 @@ Ownership does not mean isolation. API contracts are reviewed together, and all 
 - Repeated source observations are idempotent.
 - Raw and normalised records can be traced to the same poll.
 - Telemetry older than 24 hours is removed by the retention job without deleting retained simulation snapshots, audit records, or imported historical datasets.
-- Live DataMall records are visibly observation-only and cannot trigger planning or change a simulation result.
+- Live DataMall records are visibly observation-only and cannot automatically
+  trigger planning or change a running simulation. An explicit baseline capture
+  retains source IDs and creates an immutable, separately classified demo input.
 - Imported bus and rail topology is versioned, browsable, and read-only through the application.
 - An admin can create a 15-minute-to-four-hour scenario containing one or more supported events; only a bunching event directly identifies its subject service and direction.
 - A used scenario or route-profile edit creates a new immutable version; an old run remains exactly reproducible.
@@ -1020,6 +1032,9 @@ Ownership does not mean isolation. API contracts are reviewed together, and all 
 - The expected headway, `0.50` candidate threshold, `1.50` service-gap severity threshold, two-observation confirmation rule, formula version, and evidence IDs are persisted.
 - Missing, stale, or directionally ambiguous observations return `INSUFFICIENT_EVIDENCE` and cannot trigger a directive.
 - A confirmed simulated bunching event may propose holding or adjusting dwell only for the following mapped bus at a designated control stop, subject to the 120-second and crowd-safety rules.
+- Injected demo buses keep stable IDs and demo driver assignments even when
+  observed arrival order changes; inferred live tracks have no plate or directive
+  target. A hybrid demo cannot execute an action whose target is a live track.
 - Gemini cannot classify bunching or change its deterministic thresholds.
 
 ### Agents
@@ -1107,6 +1122,6 @@ The MVP resolver considers only active, validated admin-managed route profiles. 
 
 ## 18. Project outcome
 
-The completed project should demonstrate an admin-defined multi-event scenario moving through immutable snapshotting, deterministic affected-route resolution, no-action demand and impact forecasting, route and stop ranking, configurable-route candidate simulation, ranked worker batching, manager coordination, deterministic validation, resource allocation, controller or policy execution, driver notification, and audit. DataMall live feeds remain a clearly separated observation-only capability.
+The completed project should demonstrate an admin-defined multi-event scenario moving through immutable snapshotting, deterministic affected-route resolution, no-action demand and impact forecasting, route and stop ranking, configurable-route candidate simulation, ranked worker batching, manager coordination, deterministic validation, resource allocation, controller or policy execution, driver notification, and audit. DataMall live feeds remain a clearly separated observation-only capability; a controller may explicitly pin selected observations as the immutable baseline of a controlled demo run.
 
 Success is a reliable and explainable configurable-route simulation prototype under resource contention, demonstrated initially with Services 190 and 972. It is not a claim of whole-network readiness or real-world autonomous bus control.

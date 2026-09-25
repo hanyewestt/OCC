@@ -122,6 +122,30 @@ services:
       bunching-read-grants:
         condition: service_completed_successfully
 
+  operations:
+    profiles: [demo]
+    image: occ-operations:local
+    build:
+      context: ../../services/operations
+    restart: unless-stopped
+    environment:
+      OCC_OPERATIONS_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}
+      OCC_OPERATIONS_DB_USERNAME: ${OCC_OPERATIONS_DB_USERNAME:-occ_operations}
+      OCC_OPERATIONS_DB_PASSWORD: ${OCC_OPERATIONS_DB_PASSWORD:?set in root .env}
+      OCC_OPERATIONS_INTERNAL_PORT: ${OCC_OPERATIONS_INTERNAL_PORT:-8002}
+      OCC_OPERATIONS_JPA_DDL_AUTO: ${OCC_OPERATIONS_JPA_DDL_AUTO:-validate}
+      OCC_OPERATIONS_API_DOCS_ENABLED: ${OCC_OPERATIONS_API_DOCS_ENABLED:-false}
+      OCC_OPERATIONS_SWAGGER_UI_ENABLED: ${OCC_OPERATIONS_SWAGGER_UI_ENABLED:-false}
+      OCC_COGNITO_ISSUER_URI: ${OCC_COGNITO_ISSUER_URI:?set to your Cognito pool issuer}
+      OCC_COGNITO_APP_CLIENT_ID: ${OCC_COGNITO_APP_CLIENT_ID:?set to your Cognito app client ID}
+      OCC_DEMO_FLEET_DEFAULT_PAGE_SIZE: ${OCC_DEMO_FLEET_DEFAULT_PAGE_SIZE:-50}
+      OCC_DEMO_FLEET_MAX_PAGE_SIZE: ${OCC_DEMO_FLEET_MAX_PAGE_SIZE:-200}
+    ports:
+      - "${OCC_OPERATIONS_PORT:-6768}:${OCC_OPERATIONS_INTERNAL_PORT:-8002}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   pgadmin:
     image: dpage/pgadmin4:9.18
     container_name: occ-pgadmin

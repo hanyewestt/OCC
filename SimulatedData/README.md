@@ -23,7 +23,11 @@ The live DataMall Bus Arrival feed has no vehicle identity: it can show that
 "the 1st and 2nd 190 at stop 44251 are 3 minutes apart", but not *which* bus
 to instruct. `project-v2.md` §6 therefore limits live data to dashboard
 warnings; directives are only issued to simulated buses that are unambiguously
-identified. This folder is that simulated fleet.
+identified. This folder is a self-contained synthetic fixture. Its plates and
+drivers are invented test data, never identities assigned to DataMall arrivals.
+The planned hybrid map can pin real observations as context and inject a demo bus
+with a stable assignment; it does not turn a live arrival slot into an identified
+vehicle. See [the hybrid fleet demo design](../docs/architecture/hybrid-fleet-demo.md).
 
 ## Layout
 
