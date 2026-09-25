@@ -32,6 +32,8 @@ public class RawObservation {
     private Instant ingestedAt;
     private Integer httpStatus;
     private String classification;
+    @Column(insertable = false, updatable = false)
+    private Long feedSequence;
 
     // Getters and setters
     public UUID getId() { return id; }
@@ -58,4 +60,5 @@ public class RawObservation {
     public void setHttpStatus(Integer httpStatus) { this.httpStatus = httpStatus; }
     public String getClassification() { return classification; }
     public void setClassification(String classification) { this.classification = classification; }
+    public Long getFeedSequence() { return feedSequence; }
 }

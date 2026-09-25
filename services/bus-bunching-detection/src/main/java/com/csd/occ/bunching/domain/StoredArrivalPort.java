@@ -10,6 +10,8 @@ public interface StoredArrivalPort {
     ArrivalSnapshot snapshot(UUID rawObservationId);
     void reject(UUID rawObservationId, Instant rejectedAt, String reason);
     void defer(UUID rawObservationId, Instant failedAt, Instant nextAttemptAt, RetryReason reason);
+    void complete(UUID rawObservationId);
+    void acknowledge(UUID rawObservationId);
 
     enum RetryReason { NORMALIZATION_PENDING, PROCESSING_FAILED }
 }

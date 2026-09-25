@@ -6,13 +6,15 @@ import java.time.Duration;
 import java.util.Objects;
 
 @ConfigurationProperties("occ.bunching")
-public record BunchingProperties(Duration threshold, Duration staleAfter, Duration pollInterval, int batchSize) {
+public record BunchingProperties(Duration threshold, Duration staleAfter, Duration pollInterval, int batchSize,
+                                 java.net.URI ingestionBaseUrl) {
     public BunchingProperties {
         positive(threshold, "threshold");
         positive(staleAfter, "stale-after");
         positive(pollInterval, "poll-interval");
         if (pollInterval.toMillis() < 1) throw new IllegalArgumentException("poll-interval must be at least 1ms");
         if (batchSize < 1 || batchSize > 1000) throw new IllegalArgumentException("batch-size must be 1..1000");
+        Objects.requireNonNull(ingestionBaseUrl, "ingestion-base-url");
     }
 
     private static void positive(Duration value, String name) {

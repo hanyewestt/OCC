@@ -23,15 +23,13 @@ Java 25, Spring Boot 4.1.1, Maven and PostgreSQL 18. Follows
 
 ## Scope and data flow
 
-This service consumes stored ingestion data. It does not call DataMall, require an
-API key, or write to ingestion's normalized tables. The scheduled consumer reads the
-database every second by default, preferring normalized arrival rows. When only raw
-JSON is available, it maps that stored response in memory.
+This service consumes normalized ingestion snapshots over the ingestion service's
+internal HTTP API. It does not call DataMall, require an API key, or connect to the
+ingestion database.
 
 ```text
 DataMall poll
-   → ingestion.raw_observation and ingestion.bus_arrival_observation
-   → read-only ingestion views
+   → ingestion internal snapshot API
    → ArrivalSnapshot
    → BunchingPolicy
    → bunching.bunching_observation
@@ -44,22 +42,11 @@ The detector uses two PostgreSQL schemas with separate ownership:
 
 | Schema | Owner | Purpose |
 | --- | --- | --- |
-| `ingestion` | Ingestion service | Stores provider poll runs, raw DataMall responses, normalized arrival rows, feed health, polling targets and route topology. The detector reads two views from this schema. |
+| `ingestion` | Ingestion service | Stores provider poll runs, raw DataMall responses, normalized arrival rows, feed health, polling targets and route topology. It exposes snapshots through an internal API. |
 | `bunching` | Bunching detector | Stores immutable evaluation evidence, retry/rejection history and alert state/events. The detector writes here. |
 
-The ingestion service owns the source tables. Migration V007 adds these read-only
-views for the detector:
-
-- `ingestion.bunching_snapshot` selects successful DataMall stop observations and
-   exposes the original `payload` plus normalized arrivals grouped into one JSON array.
-- `ingestion.bunching_route_direction` exposes active route topology, including
-   service, operator, direction, origin, destination and stops. It is used to resolve
-   direction without guessing.
-
-The views do not store or improve arrival data. They are a narrow read contract:
-the detector can read only the data needed for analysis and does not need write
-access to ingestion tables. V007 adds them without modifying existing ingestion
-tables.
+The ingestion service owns its source tables. Its internal snapshot API is the only
+cross-service read contract. The detector has no ingestion database credentials.
 
 The detector schema contains:
 
@@ -85,9 +72,8 @@ audit tables deliberately do not use foreign keys to the short-lived ingestion d
    normalized rows in the `ingestion` schema.
 2. `BunchingSchedule` wakes the consumer. `BunchingConsumptionService` selects an
    eligible source observation, skipping completed, rejected and not-yet-due retries.
-3. `PostgresStoredArrivalAdapter` reads the two ingestion views. `StoredArrivalMapper`
-   prefers normalized rows and otherwise parses the stored raw response into the same
-   `ArrivalSnapshot` shape.
+3. `HttpStoredArrivalAdapter` reads normalized snapshots from ingestion and tracks a
+   durable local feed cursor plus retry/rejection state.
 4. `BunchingPolicy` validates freshness, arrival slots, estimates and direction. It
    groups arrivals by service, stop and direction, sorts their estimated times, and
    calculates adjacent headways:
@@ -102,7 +88,7 @@ audit tables deliberately do not use foreign keys to the short-lived ingestion d
    invalid slot sequences produce insufficient evidence instead of a false alert.
 5. `BunchingRecordingService` persists the evaluation and evidence once per source
    observation. A new evaluation then calls the alert port in the same transaction.
-6. `PostgresBunchingAlertAdapter` locks group state in stable order, opens one episode
+6. `JpaBunchingAlertAdapter` locks group state in stable order, opens one episode
    for new bunching, clears it only on fresh normal evidence, and records the durable
    event. PostgreSQL sends only the event UUID as a commit-time notification.
 
@@ -258,9 +244,8 @@ contention, larger configured intervals and outages can exceed five seconds.
 
 | File | Responsibility |
 | --- | --- |
-| `infrastructure/ingestion/PostgresStoredArrivalAdapter.java` | Reads ingestion views and persists retry, rejection and processing-audit state. |
-| `infrastructure/ingestion/StoredArrivalMapper.java` | Maps normalized rows or raw DataMall JSON into validated domain snapshots. |
-| `infrastructure/postgres/PostgresBunchingAlertAdapter.java` | Persists alert state/events and emits commit-time PostgreSQL notifications. |
+| `infrastructure/ingestion/HttpStoredArrivalAdapter.java` | Reads the ingestion HTTP feed and persists local retry, rejection, cursor and processing-audit state through JPA repositories. |
+| `infrastructure/postgres/JpaBunchingAlertAdapter.java` | Persists alert state/events and emits commit-time PostgreSQL notifications through JPA repositories. |
 | `infrastructure/jackson/JacksonBunchingEvidenceAdapter.java` | Serializes complete evaluation evidence to JSONB. |
 | `infrastructure/scheduling/BunchingSchedule.java` | Runs the stored-input consumer on its configured interval. |
 | `infrastructure/config/BunchingProperties.java` | Validates threshold, freshness, interval, batch size and consumer settings. |
@@ -276,6 +261,7 @@ contention, larger configured intervals and outages can exceed five seconds.
 | `db/migration/V4__identify_audit_actor_and_action.sql` | Actor and action columns on evaluation audit rows. |
 | `db/migration/V5__audit_source_processing_failures.sql` | Append-only rejection and deferral audit history. |
 | `db/migration/V6__create_alert_trigger.sql` | Current alert state and durable alert transition events. |
+| `db/migration/V7__add_ingestion_feed_cursor.sql` | Durable cursor for the ingestion HTTP feed. |
 
 ### Tests and fixtures
 
@@ -283,32 +269,25 @@ contention, larger configured intervals and outages can exceed five seconds.
 | --- | --- |
 | `src/test/java/com/csd/occ/bunching/domain/BunchingPolicyTest.java` | Pure headway, grouping, freshness, slot and evidence rules. |
 | `src/test/java/com/csd/occ/bunching/infrastructure/config/BunchingPropertiesTest.java` | Invalid configuration and boundary validation. |
-| `src/test/java/com/csd/occ/bunching/infrastructure/ingestion/StoredArrivalMapperTest.java` | Raw/normalized mapping, slots and direction resolution. |
 | `src/test/java/com/csd/occ/bunching/integration/BunchingRecordingIT.java` | Evaluation persistence, idempotency, rollback and evidence retention. |
 | `src/test/java/com/csd/occ/bunching/integration/BunchingAlertIT.java` | Alert lifecycle, concurrency, retention, rollback and notification latency. |
-| `src/test/java/com/csd/occ/bunching/integration/StoredArrivalDetectionIT.java` | Ingestion-view consumption, retries, rejection, permissions and end-to-end detection. |
 | `src/test/resources/db/bunching-schema.sql` | Disposable detector schema for integration tests. |
-| `src/test/resources/db/ingestion-schema.sql` | Disposable ingestion schema and source views for integration tests. |
 
 ## Deployment setup
 
-1. Apply ingestion's migrations through V007. This adds the read-only contracts
-   `ingestion.bunching_snapshot` and `ingestion.bunching_route_direction` without
-   modifying existing migrations. Follow the ingestion service's migration process.
+1. Apply ingestion's migrations through V008. This adds the durable internal feed
+   sequence without modifying existing migrations. Follow the ingestion service's migration process.
 2. Set `OCC_BUNCHING_DB_PASSWORD` in the uncommitted repository-root `.env`.
-3. From the repository root, provision the bunching schema and view permissions:
+3. From the repository root, provision the bunching schema:
 
 ```sh
 docker compose -f infra/local/compose.yaml up -d postgres
 docker compose -f infra/local/compose.yaml exec -T postgres bash /docker-entrypoint-initdb.d/02_bunching_schema.sh
-docker compose -f infra/local/compose.yaml exec -T postgres bash /docker-entrypoint-initdb.d/03_bunching_read_grants.sh
 ```
 
 The scripts preserve existing data and passwords. Do not reset the volume.
-Fresh-volume initialization precedes service migrations, so rerun the grants
-script after ingestion V007. The bunching role can SELECT the two views, but cannot
-read underlying ingestion tables or modify ingestion data. This explicit read-view
-contract is the narrow cross-service database integration; ownership remains isolated.
+The bunching role owns only its own schema. The ingestion service owns and protects
+its data behind the internal HTTP contract.
 
 4. Supply these environment variables to the bunching process:
 
@@ -316,18 +295,26 @@ contract is the narrow cross-service database integration; ownership remains iso
 OCC_BUNCHING_DB_URL=jdbc:postgresql://localhost:5432/occ
 OCC_BUNCHING_DB_USER=occ_bunching
 OCC_BUNCHING_DB_PASSWORD=<your local password>
+OCC_INGESTION_PUBLIC_URL=http://localhost:<OCC_INGESTION_PORT>
 OCC_BUNCHING_STALE_AFTER=<duration aligned with ingestion freshness policy>
 ```
+
+For local Maven or IDE runs, activate the `local` profile. It imports the
+repository-root `.env`; deployment must instead provide the variables through its
+environment or secret store. Compose supplies `OCC_INGESTION_INTERNAL_URL` as
+`http://ingestion:<OCC_INGESTION_INTERNAL_PORT>`, which takes precedence over the
+public URL so service traffic remains private.
 
 For example, use `120s` for a local demo freshness limit; it is not a hard-coded
 operational rule. Optional settings are `OCC_BUNCHING_THRESHOLD` (90s),
 `OCC_BUNCHING_POLL_INTERVAL` (1s), `OCC_BUNCHING_BATCH_SIZE` (100), and
 `OCC_BUNCHING_CONSUMER_ENABLED` (true). Invalid durations or batch sizes fail startup.
 
-5. From this service directory, run `mvn spring-boot:run`, or `mvn package` followed
+5. From this service directory, run `mvn spring-boot:run -Dspring-boot.run.profiles=local`, or `mvn package` followed
    by `java -jar target/bus-bunching-detection-0.0.1-SNAPSHOT.jar`. Flyway creates the
    service's own tables, including V3 retry scheduling, V4 evaluation actor/action,
-   V5 processing-failure audit history and V6 alert state/events; Hibernate never mutates the schema.
+   V5 processing-failure audit history, V6 alert state/events and V7 feed cursor;
+   Hibernate never mutates the schema.
 
 For inspection, connect as the appropriate database owner and query:
 

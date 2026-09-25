@@ -2,28 +2,30 @@ spring:
   application:
     name: ingestion
   datasource:
-    url: ${OCC_INGESTION_DB_URL:jdbc:postgresql://localhost:5432/occ}
+    url: ${SPRING_DATASOURCE_URL:${OCC_INGESTION_DB_URL}}
     username: ${OCC_INGESTION_DB_USERNAME:occ_ingestion}
     password: ${OCC_INGESTION_DB_PASSWORD}
   jpa:
     hibernate:
-      ddl-auto: validate
+      ddl-auto: ${OCC_INGESTION_JPA_DDL_AUTO:validate}
   flyway:
-    enabled: true
+    enabled: ${OCC_INGESTION_FLYWAY_ENABLED:true}
     default-schema: ingestion
     create-schemas: false
     locations: classpath:db/migration
+server:
+  port: ${OCC_INGESTION_INTERNAL_PORT:8080}
 springdoc:
   api-docs:
     version: OPENAPI_3_1
 
 occ:
   datamall:
-    base-url: "https://datamall2.mytransport.sg/ltaodataservice"
+    base-url: ${OCC_DATAMALL_BASE_URL:${DATAMALL_BASE_URL:https://datamall2.mytransport.sg/ltaodataservice}}
     account-key: ${DATAMALL_API_KEY:mock_key}
   ingestion:
-    monitored-services: ["190", "972"]
-    stale-after-seconds: 180
-    retention: 24h
-    import-reference-on-startup: true
-    seed-targets-on-startup: true
+    monitored-services: ${OCC_INGESTION_MONITORED_SERVICES:190,972}
+    stale-after-seconds: ${OCC_INGESTION_STALE_AFTER_SECONDS:180}
+    retention: ${OCC_INGESTION_RETENTION:24h}
+    import-reference-on-startup: ${OCC_INGESTION_IMPORT_REFERENCE_ON_STARTUP:true}
+    seed-targets-on-startup: ${OCC_INGESTION_SEED_TARGETS_ON_STARTUP:true}

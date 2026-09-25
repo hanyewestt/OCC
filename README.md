@@ -4,7 +4,7 @@ An agentic dispatch and incident mitigation system for Singapore public bus oper
 
 ## Local quick start
 
-Install Java 25 and start Docker Desktop. From the repository root, create `.env` only if it does not already exist:
+Start Docker Desktop. Java and Maven are not required on the host for the Compose workflow. From the repository root, create `.env` only if it does not already exist:
 
 ```powershell
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
@@ -14,45 +14,37 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 [ -f .env ] || cp .env.example .env
 ```
 
-Fill in its passwords and DataMall key using unquoted values.
+Fill in its passwords and DataMall key using unquoted values, then build and start the complete stack:
 
-1. Start PostgreSQL and pgAdmin together, then wait for PostgreSQL to be healthy:
+```powershell
+docker compose --env-file .env -f infra/local/compose.yaml up --build -d
+docker compose --env-file .env -f infra/local/compose.yaml ps
+```
 
-   ```powershell
-   docker compose --env-file .env -f infra/local/compose.yaml --profile tools up -d
-   docker compose --env-file .env -f infra/local/compose.yaml ps
-   ```
+```bash
+docker compose --env-file .env -f infra/local/compose.yaml up --build -d
+docker compose --env-file .env -f infra/local/compose.yaml ps
+```
 
-   ```bash
-   docker compose --env-file .env -f infra/local/compose.yaml --profile tools up -d
-   docker compose --env-file .env -f infra/local/compose.yaml ps
-   ```
+This starts PostgreSQL, applies database bootstrap and Flyway migrations, starts ingestion, grants the detector its read-only ingestion views, and starts bus-bunching detection. Open the ingestion API at `http://localhost:<OCC_INGESTION_PORT>/swagger-ui.html` (the default is `8080`). `OCC_INGESTION_PORT` is the published host port; Compose services use the private `ingestion:<OCC_INGESTION_INTERNAL_PORT>` endpoint instead.
 
-   This starts `occ-postgres` and `occ-pgadmin`. Open pgAdmin at http://localhost:5050.
+To include pgAdmin, add `--profile tools` to `up`; then open http://localhost:5050. To follow all application logs:
 
-2. Start only ingestion:
+```powershell
+docker compose --env-file .env -f infra/local/compose.yaml logs -f ingestion bus-bunching-detection
+```
 
-   ```powershell
-   cd services/ingestion
-   .\mvnw.cmd spring-boot:run '-Dspring-boot.run.profiles=local'
-   ```
+```bash
+docker compose --env-file .env -f infra/local/compose.yaml logs -f ingestion bus-bunching-detection
+```
 
-   ```bash
-   cd services/ingestion
-   ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
-   ```
-
-The wrapper downloads Maven on first use. Stop the app with Ctrl+C; PostgreSQL stays running.
-
-The Compose command starts the database and dashboard only. To start PostgreSQL, ingestion, and bus-bunching detection together, run `bash scripts/start-local.sh` from the repository root. Press Ctrl+C to stop both Java services; PostgreSQL stays running. Docker Desktop's Docker Engine must be running before using Compose.
-
-The `local` profile automatically reads the root `.env`. Maven sets the working directory to `services/ingestion`. Set the same working directory and active profile `local` in IDE run configurations. If you already have a database, skip Compose and set `OCC_INGESTION_DB_URL` in `.env`. An existing `SPRING_DATASOURCE_URL` override also takes precedence over the default URL.
+Stop the containers with `docker compose --env-file .env -f infra/local/compose.yaml down`. The database volume is retained unless `-v` is explicitly supplied.
 
 ## Repository structure
 
 | Location | Responsibility |
 | --- | --- |
-| `infra/local/compose.yaml` | The single local container setup: PostgreSQL/PostGIS |
+| `infra/local/compose.yaml` | The complete local stack: PostgreSQL/PostGIS, ingestion, bus-bunching detection, and optional pgAdmin |
 | `infra/local/postgres/init/` | Initial creation of accounts, schema namespaces and PostGIS |
 | `services/ingestion/` | Runnable Spring Boot app; owns ingestion tables and DataMall polling |
 | `services/operations/` | Operations migration scaffolding; not yet a runnable app |
@@ -64,6 +56,13 @@ The `local` profile automatically reads the root `.env`. Maven sets the working 
 One database (`occ`) contains the `ingestion`, `operations` and `planning` schemas. Each has its own application account. Bootstrap creates empty namespaces; each service runs its own Flyway migrations to create and evolve its tables. Hibernate validates mappings without changing tables.
 
 Compose receives only the database variables explicitly listed in its `environment` section. The DataMall key is not passed to PostgreSQL. Deployment injects each application's own configuration; the local `.env` is not packaged in the JAR or container image.
+
+`/.env.example` is the centralized inventory of local runtime configuration. Copy it
+to the ignored `/.env` and configure both services there. Ingestion and bunching
+load that file only with their `local` profile; deployment supplies the same values
+through its environment or secret store. `SPRING_DATASOURCE_URL` remains accepted
+by ingestion for Spring Boot compatibility, but new local configuration should use
+`OCC_INGESTION_DB_URL`.
 
 ## Build and verification
 

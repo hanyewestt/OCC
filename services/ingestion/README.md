@@ -63,7 +63,31 @@ Flyway applies pending ingestion migrations, then Hibernate validates entity map
 
 If the active reference topology is absent, the scheduler first retries the reference import and target seeding. If that import fails, it skips the poll cycle without sending per-stop arrival requests; the terminal log records the single import failure.
 
-With the service running, browse the interactive API at http://localhost:8080/swagger-ui.html. These read-only endpoints return paginated envelopes except feed status and reference topology:
+### Polling coverage and bus-bunching coverage
+
+Ingestion, rather than the bus-bunching detector, decides which stops are covered.
+The setting is `occ.ingestion.monitored-services`, configured locally through the
+`OCC_INGESTION_MONITORED_SERVICES` environment variable. Its default is `190,972`:
+
+```dotenv
+# Comma-separated DataMall service IDs. Ingestion polls every imported route stop
+# served by at least one configured service; bunching consumes every resulting snapshot.
+OCC_INGESTION_MONITORED_SERVICES=190,972
+```
+
+At startup, ingestion imports the reference topology and creates missing enabled
+`ingestion.poll_target` rows for the distinct stops on those services. The scheduler
+then polls each enabled target once per minute. The bunching service consumes all
+new normalized snapshots from that target set through ingestion's internal API; it
+does not maintain a separate stop or service allow-list.
+
+To broaden coverage, add service IDs to the comma-separated variable and restart
+ingestion. Target seeding is additive: it creates missing targets but deliberately
+does not disable or remove targets previously created for a service that is later
+removed from the setting. Disable or remove those `ingestion.poll_target` rows
+through an explicit operational change when reducing coverage.
+
+With the service running, browse the interactive API at `http://localhost:<OCC_INGESTION_PORT>/swagger-ui.html` (default `8080`). These read-only endpoints return paginated envelopes except feed status and reference topology:
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -78,6 +102,21 @@ With the service running, browse the interactive API at http://localhost:8080/sw
 | `GET /api/v1/bus-stops/{stopCode}` | One bus stop by stop code |
 
 The machine-readable OpenAPI document is at `/v3/api-docs`.
+
+To export the runtime-generated contract to a file, start ingestion and run this
+from `services/ingestion` in another terminal:
+
+```powershell
+.\mvnw.cmd -Popenapi org.springdoc:springdoc-openapi-maven-plugin:1.5:generate
+```
+
+```bash
+./mvnw -Popenapi org.springdoc:springdoc-openapi-maven-plugin:1.5:generate
+```
+
+This writes `openapi/polling-ingestion.json` beside the service `pom.xml`. The export
+uses the same running application endpoint as Swagger UI, so it includes the
+actual controllers, DTOs, annotations and active Spring configuration.
 
 A missing or invalid DataMall key can produce request errors even if the application starts. Stop the app with Ctrl+C.
 

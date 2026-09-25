@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -27,7 +28,7 @@ class BusArrivalServiceTest {
     @Test
     void successfulPollPreservesObservationAndMinuteBucket() {
         when(targets.findAll()).thenReturn(List.of(target(true)));
-        when(arrivals.arrivalsAt("44009")).thenReturn(snapshot());
+        when(arrivals.arrivalsAt("44009", "190")).thenReturn(snapshot());
         when(topology.activeVersion()).thenReturn(java.util.Optional.of(
                 new ReferenceTopologyPort.ReferenceTopologyVersion(java.util.UUID.randomUUID(), "checksum")));
         when(configuration.staleAfterSeconds()).thenReturn(180);
@@ -56,6 +57,17 @@ class BusArrivalServiceTest {
     }
 
     @Test
+    void legacyStopOnlyTargetsDoNotCallProviderOrWriteRows() {
+        PollTarget legacyTarget = target(true);
+        legacyTarget.setServiceId(null);
+        when(targets.findAll()).thenReturn(List.of(legacyTarget));
+
+        service.poll();
+
+        verifyNoInteractions(arrivals, runs, observations, normalized, feedStatuses);
+    }
+
+    @Test
     void missingTopologySkipsAllProviderAndPersistenceWork() {
         when(targets.findAll()).thenReturn(List.of(target(true)));
         when(topology.activeVersion()).thenReturn(java.util.Optional.empty());
@@ -69,7 +81,7 @@ class BusArrivalServiceTest {
         when(topology.activeVersion()).thenReturn(java.util.Optional.of(
                 new ReferenceTopologyPort.ReferenceTopologyVersion(java.util.UUID.randomUUID(), "checksum")));
         when(configuration.staleAfterSeconds()).thenReturn(180);
-        when(arrivals.arrivalsAt("44009")).thenThrow(new IllegalStateException("synthetic failure"));
+        when(arrivals.arrivalsAt("44009", "190")).thenThrow(new IllegalStateException("synthetic failure"));
         service.poll();
         verifyNoInteractions(observations, normalized);
         ArgumentCaptor<PollRun> captured = ArgumentCaptor.forClass(PollRun.class);
@@ -78,8 +90,32 @@ class BusArrivalServiceTest {
         assertThat(captured.getValue().getCompletedAt()).isEqualTo(now);
     }
 
+    @Test
+    void successfulPollStoresOnlyConfiguredServices() {
+        when(targets.findAll()).thenReturn(List.of(target(true)));
+        when(arrivals.arrivalsAt("44009", "190")).thenReturn(new BusArrivalSnapshot(200, "{}", List.of(
+                prediction("190"), prediction("972"), prediction("999")), List.of()));
+        when(topology.activeVersion()).thenReturn(java.util.Optional.of(
+                new ReferenceTopologyPort.ReferenceTopologyVersion(java.util.UUID.randomUUID(), "checksum")));
+        when(configuration.monitoredServices()).thenReturn(List.of("190", "972"));
+        when(configuration.staleAfterSeconds()).thenReturn(180);
+
+        service.poll();
+
+        verify(normalized).saveAll(argThat(values -> {
+            assertThat(values).extracting(BusArrivalObservation::getServiceId)
+                    .containsExactly("190", "972");
+            return true;
+        }));
+    }
+
     private BusArrivalSnapshot snapshot() {
         return new BusArrivalSnapshot(200, "{}", List.of(), List.of());
+    }
+
+    private BusArrivalPrediction prediction(String serviceId) {
+        return new BusArrivalPrediction(serviceId, "SBST", 1, 1, "44009", "45009", now, true,
+                BigDecimal.valueOf(1.3), BigDecimal.valueOf(103.8), 1, "SEA", "WAB", "DD");
     }
 
     private PollTarget target(boolean enabled) {
@@ -87,6 +123,7 @@ class BusArrivalServiceTest {
         target.setSource("DATAMALL");
         target.setScopeKey("stop:44009");
         target.setStopCode("44009");
+        target.setServiceId("190");
         target.setEnabled(enabled);
         return target;
     }

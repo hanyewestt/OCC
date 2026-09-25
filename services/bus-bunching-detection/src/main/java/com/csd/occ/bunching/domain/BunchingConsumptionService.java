@@ -33,6 +33,7 @@ public class BunchingConsumptionService {
                     var result = recording.record(source.snapshot(id), threshold, staleAfter);
                     if (result.outcome() == RecordedBunching.Outcome.RECORDED) recorded++;
                     else duplicates++;
+                    source.complete(id);
                 } catch (InvalidArrivalException invalid) {
                     source.reject(id, clock.instant(), invalid.getMessage());
                     rejected++;

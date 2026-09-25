@@ -1,0 +1,4 @@
+# Maven and IDE runs use services/bus-bunching-detection as their working directory.
+spring:
+  config:
+    import: "optional:file:../../.env[.properties]"
