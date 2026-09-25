@@ -25,7 +25,9 @@ class HttpRouteReferenceAdapterTest {
         var route = new HttpRouteReferenceAdapter(builder.build()).route("190").orElseThrow();
 
         assertThat(route.directions()).hasSize(1);
+        assertThat(route.directions().getFirst().operator()).isEqualTo("SBST");
         assertThat(route.directions().getFirst().stops().getFirst().stopCode()).isEqualTo("44251");
+        assertThat(route.directions().getFirst().stops().getFirst().stopSequence()).isEqualTo(12);
         server.verify();
     }
 }

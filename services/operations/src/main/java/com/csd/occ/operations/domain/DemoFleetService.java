@@ -3,6 +3,7 @@ package com.csd.occ.operations.domain;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -47,6 +48,20 @@ public class DemoFleetService {
         return runs.findById(id).orElseThrow(DemoRunNotFoundException::new);
     }
 
+    @Transactional(readOnly = true)
+    public DemoRoute routeForRun(UUID runId) {
+        DemoRun run = runs.findById(runId).orElseThrow(DemoRunNotFoundException::new);
+        var reference = routeReference.route(run.getServiceId())
+                .orElseThrow(() -> new DemoRunConflictException("Selected service is absent from active route topology"));
+        List<RouteReferencePort.Direction> directions = reference.directions().stream()
+                .filter(direction -> direction.directionId() == run.getDirectionId())
+                .toList();
+        if (directions.isEmpty()) {
+            throw new DemoRunConflictException("Selected direction is absent from active route topology");
+        }
+        return new DemoRoute(run, directions);
+    }
+
     @Transactional
     public Placement place(UUID runId, String displayLabel, String syntheticPlate,
             BigDecimal latitude, BigDecimal longitude, String driverDisplayName) {
@@ -89,4 +104,5 @@ public class DemoFleetService {
     }
 
     public record Placement(DemoAssignment assignment, DemoVehicle vehicle, DemoDriver driver) { }
+    public record DemoRoute(DemoRun run, List<RouteReferencePort.Direction> directions) { }
 }

@@ -2,6 +2,9 @@ package com.csd.occ.operations.api;
 
 import com.csd.occ.operations.api.dto.CreateDemoRunRequest;
 import com.csd.occ.operations.api.dto.DemoRunResponse;
+import com.csd.occ.operations.api.dto.DemoRouteResponse;
+import com.csd.occ.operations.api.dto.DemoRouteSequenceResponse;
+import com.csd.occ.operations.api.dto.DemoRouteStopResponse;
 import com.csd.occ.operations.api.dto.DemoVehiclePageResponse;
 import com.csd.occ.operations.api.dto.DemoVehicleResponse;
 import com.csd.occ.operations.api.dto.PlaceDemoVehicleRequest;
@@ -69,6 +72,29 @@ public class DemoFleetController {
     @PreAuthorize("hasAnyRole('ADMIN','CONTROLLER')")
     @Operation(operationId = "getDemoRun", summary = "Get a draft simulated run")
     public DemoRunResponse run(@PathVariable UUID runId) { return response(fleet.run(runId)); }
+
+    @GetMapping("/{runId}/route")
+    @PreAuthorize("hasAnyRole('ADMIN','CONTROLLER')")
+    @Operation(operationId = "getDemoRunRoute", summary = "Get stop sequences for a draft map",
+            description = "Returns the selected direction from Ingestion's active reference topology. "
+                    + "Connecting stop points is only a schematic; it is not a verified driven road path.")
+    @ApiResponse(responseCode = "200", description = "Selected route stop sequences",
+            content = @Content(schema = @Schema(implementation = DemoRouteResponse.class)))
+    @ApiResponse(responseCode = "404", description = "Demo run does not exist",
+            content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "409", description = "Selected route is absent from active reference topology",
+            content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "503", description = "Ingestion route topology is unavailable",
+            content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
+    public DemoRouteResponse route(@PathVariable UUID runId) {
+        var selected = fleet.routeForRun(runId);
+        return new DemoRouteResponse(runId, selected.run().getServiceId(), selected.run().getDirectionId(),
+                "STOP_TO_STOP_SCHEMATIC", "SIMULATION", selected.directions().stream()
+                        .map(direction -> new DemoRouteSequenceResponse(direction.operator(), direction.stops().stream()
+                                .map(stop -> new DemoRouteStopResponse(stop.stopCode(), stop.stopSequence(),
+                                        stop.latitude(), stop.longitude())).toList()))
+                        .toList());
+    }
 
     @PostMapping(value = "/{runId}/vehicles", consumes = MediaType.APPLICATION_JSON_VALUE)
     @PreAuthorize("hasAnyRole('ADMIN','CONTROLLER')")

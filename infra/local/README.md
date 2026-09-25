@@ -32,6 +32,7 @@ docker compose --env-file .env -f infra/local/compose.yaml ps
 | --- | --- |
 | Ingestion API and Swagger UI | `http://localhost:6767/swagger-ui.html` |
 | Operations demo API (optional `demo` profile) | `http://localhost:6768/swagger-ui.html` |
+| Draft demo map (optional `demo` profile) | `http://localhost:6768/demo-map.html` |
 | PostgreSQL | `localhost:5432` |
 | pgAdmin | `http://localhost:6700` |
 | Application logs | See the commands below |

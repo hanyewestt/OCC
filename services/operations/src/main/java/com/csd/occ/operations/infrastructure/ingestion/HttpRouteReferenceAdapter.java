@@ -29,9 +29,11 @@ public class HttpRouteReferenceAdapter implements RouteReferencePort {
             }
             List<Direction> directions = response.operators().stream()
                     .filter(operator -> operator.directions() != null)
-                    .flatMap(operator -> operator.directions().stream())
-                    .map(direction -> new Direction(direction.directionId(), direction.stops().stream()
-                            .map(stop -> new Stop(stop.stopCode(), stop.latitude(), stop.longitude())).toList()))
+                    .flatMap(operator -> operator.directions().stream()
+                            .map(direction -> new Direction(operator.operator(), direction.directionId(),
+                                    direction.stops().stream()
+                                            .map(stop -> new Stop(stop.stopCode(), stop.stopSequence(),
+                                                    stop.latitude(), stop.longitude())).toList())))
                     .toList();
             return Optional.of(new Route(response.serviceId(), directions));
         } catch (HttpClientErrorException.NotFound ignored) {
@@ -42,7 +44,7 @@ public class HttpRouteReferenceAdapter implements RouteReferencePort {
     }
 
     private record RouteResponse(String serviceId, List<OperatorResponse> operators) { }
-    private record OperatorResponse(List<DirectionResponse> directions) { }
+    private record OperatorResponse(String operator, List<DirectionResponse> directions) { }
     private record DirectionResponse(int directionId, List<StopResponse> stops) { }
-    private record StopResponse(String stopCode, BigDecimal latitude, BigDecimal longitude) { }
+    private record StopResponse(String stopCode, int stopSequence, BigDecimal latitude, BigDecimal longitude) { }
 }

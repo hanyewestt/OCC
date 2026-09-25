@@ -31,6 +31,7 @@ these endpoints. The authenticated token subject is recorded as run creator.
 | --- | --- |
 | `POST /api/v1/demo-runs` | Create a draft for one service and direction |
 | `GET /api/v1/demo-runs/{runId}` | Read a draft |
+| `GET /api/v1/demo-runs/{runId}/route` | Read ordered stops for the selected direction |
 | `POST /api/v1/demo-runs/{runId}/vehicles` | Create a stable demo vehicle, demo driver and assignment together |
 | `GET /api/v1/demo-runs/{runId}/vehicles` | Paginated assigned vehicles |
 | `GET /api/v1/demo-runs/{runId}/vehicles/{vehicleId}` | One assignment |
@@ -61,6 +62,17 @@ is added. The API does not present a draft as an active simulated trip. A duplic
 label or plate within a run returns `409` and cannot create another assignment.
 If the reference API is unavailable, creation returns `503` rather than accepting
 an unverified position. `OCC_OPERATIONS_INGESTION_TIMEOUT` controls its timeout.
+
+## View the draft map
+
+Open `http://localhost:6768/demo-map.html`. Enter a Cognito `ADMIN` or
+`CONTROLLER` access token, create a service/direction run, and place labelled demo
+buses at route stops. You can also load a run created through Swagger UI by ID.
+The token stays in page memory and is cleared on reload. The page loads the
+protected route endpoint and paginated vehicle list;
+it does not need live buses, third-party map tiles, or a DataMall response. It
+draws straight stop-to-stop lines as a **schematic**, not a verified driven path.
+Only prototype-owned vehicles are shown, clearly marked as simulation.
 
 ## Verification
 

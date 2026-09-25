@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OCC Demo Fleet Map</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #173047; background: #f3f6f8; }
+    body { margin: 0; }
+    header { background: #102b40; color: white; padding: 1.2rem max(1rem, calc((100vw - 1150px)/2)); }
+    header h1 { margin: 0 0 .3rem; font-size: 1.5rem; }
+    header p { margin: 0; color: #c6d5df; }
+    main { max-width: 1150px; margin: 1.2rem auto; padding: 0 1rem; }
+    .notice { background: #e8f1fb; border-left: 4px solid #3979a8; padding: .8rem 1rem; margin-bottom: 1rem; }
+    form { display: flex; flex-wrap: wrap; gap: .8rem; align-items: end; margin-bottom: 1rem; }
+    label { display: grid; gap: .25rem; font-weight: 650; flex: 1 1 260px; }
+    input { font: inherit; padding: .6rem; border: 1px solid #a7bac6; border-radius: 4px; min-width: 0; }
+    button { font: inherit; padding: .65rem 1rem; border: 0; border-radius: 4px; background: #17679a; color: white; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: wait; }
+    #status { min-height: 1.5rem; margin: .4rem 0; }
+    #status.error { color: #9c2632; }
+    .panel { background: white; border: 1px solid #d6e0e6; border-radius: 8px; overflow: hidden; }
+    .map-wrap { overflow: auto; }
+    svg { display: block; width: 100%; min-width: 550px; background: #f7fafb; }
+    .grid { stroke: #e2ebef; stroke-width: 1; }
+    .route { fill: none; stroke: #4c94a8; stroke-width: 2.5; stroke-linejoin: round; }
+    .stop { fill: white; stroke: #37798e; stroke-width: 1.5; }
+    .bus { fill: #a43ac2; stroke: white; stroke-width: 3; }
+    .bus-label { fill: #622178; font-size: 16px; font-weight: 700; paint-order: stroke; stroke: white; stroke-width: 4px; }
+    .legend { display: flex; gap: 1.4rem; padding: .8rem 1rem; border-top: 1px solid #d6e0e6; flex-wrap: wrap; }
+    .legend span::before { content: "●"; margin-right: .4rem; }
+    .legend .route-key::before { color: #4c94a8; }
+    .legend .bus-key::before { color: #a43ac2; }
+    .details { padding: 1rem; }
+    .details h2 { margin: 0 0 .5rem; font-size: 1.1rem; }
+    .details ul { margin: .4rem 0 0; padding-left: 1.3rem; }
+    .details li { margin: .35rem 0; }
+    .muted { color: #5a6e7a; }
+    .actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+    .action-panel { background: white; border: 1px solid #d6e0e6; border-radius: 8px; padding: 1rem; }
+    .action-panel h2 { font-size: 1.05rem; margin: 0 0 .7rem; }
+    .action-panel form { margin: 0; }
+    select { font: inherit; padding: .6rem; border: 1px solid #a7bac6; border-radius: 4px; width: 100%; }
+  </style>
+</head>
+<body>
+  <header><h1>OCC demo fleet map</h1><p>Draft simulation · stop-based schematic</p></header>
+  <main>
+    <div class="notice">This view draws straight lines between imported bus stops. It is not a road route, live fleet track, or driver dispatch view. Purple markers are prototype-owned demo vehicles.</div>
+    <form id="load-form">
+      <label>Demo run ID<input id="run-id" required autocomplete="off" placeholder="UUID from the create demo run response"></label>
+      <label>Cognito access token<input id="token" required type="password" autocomplete="off" placeholder="ADMIN or CONTROLLER access token"></label>
+      <button id="load-button" type="submit">Load map</button>
+    </form>
+    <div class="actions">
+      <section class="action-panel">
+        <h2>Create a draft run</h2>
+        <form id="create-form">
+          <label>Bus service<input id="service-id" required maxlength="20" value="190"></label>
+          <label>Direction<input id="direction-id" required type="number" min="1" value="1"></label>
+          <button id="create-button" type="submit">Create and load</button>
+        </form>
+      </section>
+      <section class="action-panel">
+        <h2>Place a demo bus at a route stop</h2>
+        <form id="place-form">
+          <label>Display label<input id="display-label" required maxlength="80" placeholder="Bus B"></label>
+          <label>Synthetic plate (optional)<input id="synthetic-plate" pattern="DEMO-[A-Z0-9-]{1,15}" placeholder="DEMO-190-B"></label>
+          <label>Demo driver<input id="driver-name" required maxlength="100" placeholder="Demo Driver 02"></label>
+          <label>Route stop<select id="stop-select" required disabled><option value="">Load or create a run first</option></select></label>
+          <button id="place-button" type="submit" disabled>Place simulated bus</button>
+        </form>
+      </section>
+    </div>
+    <p id="status" role="status" aria-live="polite">Enter an access token, then create a run or load an existing run.</p>
+    <div class="panel">
+      <div class="map-wrap"><svg id="map" viewBox="0 0 1000 640" role="img" aria-label="Schematic route and demo vehicles"></svg></div>
+      <div class="legend"><span class="route-key">Imported stop sequence</span><span class="bus-key">Simulated vehicle</span></div>
+      <div class="details"><h2 id="details-title">No run loaded</h2><div id="details-body" class="muted">No live buses are required for this view.</div></div>
+    </div>
+  </main>
+  <script>
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.getElementById('map');
+    const status = document.getElementById('status');
+    const button = document.getElementById('load-button');
+    const createButton = document.getElementById('create-button');
+    const placeButton = document.getElementById('place-button');
+    const stopSelect = document.getElementById('stop-select');
+    const runInput = document.getElementById('run-id');
+    const tokenInput = document.getElementById('token');
+    const params = new URLSearchParams(location.search);
+    if (params.has('runId')) runInput.value = params.get('runId');
+    let activeRunId = null;
+    let selectableStops = [];
+
+    function element(name, attributes = {}) {
+      const node = document.createElementNS(ns, name);
+      for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
+      return node;
+    }
+
+    function validPoint(point) {
+      return Number.isFinite(Number(point.latitude)) && Number.isFinite(Number(point.longitude))
+        && point.latitude !== null && point.longitude !== null;
+    }
+
+    async function requestJson(path, token, method = 'GET', body = null) {
+      const response = await fetch(path, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        body: body ? JSON.stringify(body) : null,
+        cache: 'no-store'
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.detail || `${response.status} ${response.statusText}`);
+      return result;
+    }
+
+    function token() {
+      const value = tokenInput.value.trim();
+      if (!value) throw new Error('Enter a Cognito access token.');
+      return value;
+    }
+
+    function showError(error) {
+      status.className = 'error';
+      status.textContent = error.message;
+    }
+
+    async function loadVehicles(runId, token) {
+      const vehicles = [];
+      let page = 0;
+      let totalPages;
+      do {
+        const result = await requestJson(`/api/v1/demo-runs/${runId}/vehicles?page=${page}`, token);
+        vehicles.push(...result.items);
+        totalPages = result.totalPages;
+        page += 1;
+      } while (page < totalPages);
+      return vehicles;
+    }
+
+    function draw(route, vehicles) {
+      svg.replaceChildren();
+      const sequences = route.sequences.map(sequence => ({
+        operator: sequence.operator,
+        stops: sequence.stops.filter(validPoint)
+      }));
+      selectableStops = sequences.flatMap(sequence => sequence.stops.map(stop => ({
+        ...stop, operator: sequence.operator
+      })));
+      stopSelect.replaceChildren();
+      selectableStops.forEach((stop, index) => {
+        const option = document.createElement('option');
+        option.value = String(index);
+        option.textContent = `${stop.operator} · ${stop.stopSequence} · ${stop.stopCode}`;
+        stopSelect.append(option);
+      });
+      stopSelect.disabled = selectableStops.length === 0;
+      placeButton.disabled = selectableStops.length === 0;
+      const plottedVehicles = vehicles.filter(validPoint);
+      const points = [...sequences.flatMap(sequence => sequence.stops), ...plottedVehicles];
+      if (points.length === 0) throw new Error('The selected route has no usable stop coordinates.');
+      const meanLatitude = points.reduce((sum, point) => sum + Number(point.latitude), 0) / points.length;
+      const longitudeFactor = Math.cos(meanLatitude * Math.PI / 180);
+      const xs = points.map(point => Number(point.longitude) * longitudeFactor);
+      const ys = points.map(point => Number(point.latitude));
+      const centerX = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const centerY = (Math.min(...ys) + Math.max(...ys)) / 2;
+      const spanX = Math.max(Math.max(...xs) - Math.min(...xs), 0.002);
+      const spanY = Math.max(Math.max(...ys) - Math.min(...ys), 0.002);
+      const scale = Math.min(860 / spanX, 510 / spanY);
+      const project = point => ({
+        x: 500 + (Number(point.longitude) * longitudeFactor - centerX) * scale,
+        y: 320 - (Number(point.latitude) - centerY) * scale
+      });
+      for (let x = 100; x <= 900; x += 100) svg.append(element('line', { x1: x, y1: 0, x2: x, y2: 640, class: 'grid' }));
+      for (let y = 100; y <= 600; y += 100) svg.append(element('line', { x1: 0, y1: y, x2: 1000, y2: y, class: 'grid' }));
+      for (const sequence of sequences) {
+        if (sequence.stops.length > 1) {
+          svg.append(element('polyline', {
+            points: sequence.stops.map(stop => { const p = project(stop); return `${p.x},${p.y}`; }).join(' '),
+            class: 'route'
+          }));
+        }
+        for (const stop of sequence.stops) {
+          const p = project(stop);
+          const marker = element('circle', { cx: p.x, cy: p.y, r: 3.5, class: 'stop' });
+          const title = element('title');
+          title.textContent = `${sequence.operator} · stop ${stop.stopSequence} · ${stop.stopCode}`;
+          marker.append(title);
+          svg.append(marker);
+        }
+      }
+      for (const vehicle of plottedVehicles) {
+        const p = project(vehicle);
+        const marker = element('circle', { cx: p.x, cy: p.y, r: 10, class: 'bus' });
+        const title = element('title');
+        title.textContent = `${vehicle.displayLabel} · SIMULATION · ${vehicle.driverDisplayName}`;
+        marker.append(title);
+        svg.append(marker);
+        const label = element('text', { x: p.x + 15, y: p.y + 5, class: 'bus-label' });
+        label.textContent = vehicle.displayLabel;
+        svg.append(label);
+      }
+      document.getElementById('details-title').textContent = `Service ${route.serviceId} · direction ${route.directionId}`;
+      const body = document.getElementById('details-body');
+      body.replaceChildren();
+      const summary = document.createElement('p');
+      summary.textContent = `${sequences.reduce((sum, sequence) => sum + sequence.stops.length, 0)} route stops · ${vehicles.length} simulated vehicles · ${route.routeKind}`;
+      body.append(summary);
+      const list = document.createElement('ul');
+      for (const vehicle of vehicles) {
+        const item = document.createElement('li');
+        item.textContent = `${vehicle.displayLabel} (${vehicle.syntheticPlate || 'no synthetic plate'}) · ${vehicle.driverDisplayName} · ${vehicle.latitude}, ${vehicle.longitude}`;
+        list.append(item);
+      }
+      body.append(list);
+    }
+
+    async function loadMap(runId) {
+      const accessToken = token();
+      if (!/^[0-9a-fA-F-]{36}$/.test(runId)) {
+        throw new Error('Enter a valid demo run UUID.');
+      }
+      button.disabled = true;
+      status.className = '';
+      status.textContent = 'Loading route and demo vehicles…';
+      try {
+        const [route, vehicles] = await Promise.all([
+          requestJson(`/api/v1/demo-runs/${runId}/route`, accessToken), loadVehicles(runId, accessToken)
+        ]);
+        draw(route, vehicles);
+        activeRunId = runId;
+        runInput.value = runId;
+        status.textContent = `Loaded draft simulation ${runId}. No live bus observations were used.`;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    document.getElementById('load-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      try { await loadMap(runInput.value.trim()); } catch (error) { showError(error); }
+    });
+
+    document.getElementById('create-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      createButton.disabled = true;
+      status.className = '';
+      status.textContent = 'Creating draft run…';
+      try {
+        const run = await requestJson('/api/v1/demo-runs', token(), 'POST', {
+          serviceId: document.getElementById('service-id').value.trim(),
+          directionId: Number(document.getElementById('direction-id').value)
+        });
+        await loadMap(run.id);
+      } catch (error) {
+        showError(error);
+      } finally {
+        createButton.disabled = false;
+      }
+    });
+
+    document.getElementById('place-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      placeButton.disabled = true;
+      status.className = '';
+      status.textContent = 'Placing simulated bus…';
+      try {
+        if (!activeRunId) throw new Error('Load or create a run first.');
+        const stop = selectableStops[Number(stopSelect.value)];
+        if (!stop) throw new Error('Select a route stop.');
+        const syntheticPlate = document.getElementById('synthetic-plate').value.trim();
+        await requestJson(`/api/v1/demo-runs/${activeRunId}/vehicles`, token(), 'POST', {
+          displayLabel: document.getElementById('display-label').value.trim(),
+          syntheticPlate: syntheticPlate || null,
+          driverDisplayName: document.getElementById('driver-name').value.trim(),
+          latitude: stop.latitude,
+          longitude: stop.longitude
+        });
+        await loadMap(activeRunId);
+      } catch (error) {
+        showError(error);
+      } finally {
+        placeButton.disabled = selectableStops.length === 0;
+      }
+    });
+  </script>
+</body>
+</html>

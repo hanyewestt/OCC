@@ -8,6 +8,6 @@ public interface RouteReferencePort {
     Optional<Route> route(String serviceId);
 
     record Route(String serviceId, List<Direction> directions) { }
-    record Direction(int directionId, List<Stop> stops) { }
-    record Stop(String stopCode, BigDecimal latitude, BigDecimal longitude) { }
+    record Direction(String operator, int directionId, List<Stop> stops) { }
+    record Stop(String stopCode, int stopSequence, BigDecimal latitude, BigDecimal longitude) { }
 }

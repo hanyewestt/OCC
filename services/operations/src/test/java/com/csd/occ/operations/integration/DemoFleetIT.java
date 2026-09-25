@@ -64,8 +64,8 @@ class DemoFleetIT {
     @BeforeEach
     void routeIsAvailableWithoutLiveBusArrivals() {
         when(routeReference.route("190")).thenReturn(Optional.of(new RouteReferencePort.Route("190",
-                List.of(new RouteReferencePort.Direction(1, List.of(
-                        new RouteReferencePort.Stop("44251", new BigDecimal("1.3786545"),
+                List.of(new RouteReferencePort.Direction("SMRT", 1, List.of(
+                        new RouteReferencePort.Stop("44251", 8, new BigDecimal("1.3786545"),
                                 new BigDecimal("103.7584354"))))))));
     }
 
@@ -89,6 +89,18 @@ class DemoFleetIT {
                 .andExpect(jsonPath("$.classification").value("SIMULATION"))
                 .andReturn().getResponse().getContentAsString();
         String runId = JsonPath.read(runBody, "$.id");
+        mvc.perform(get("/api/v1/demo-runs/{runId}/route", runId))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/demo-runs/{runId}/route", runId)
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_DRIVER"))))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/demo-runs/{runId}/route", runId)
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.routeKind").value("STOP_TO_STOP_SCHEMATIC"))
+                .andExpect(jsonPath("$.classification").value("SIMULATION"))
+                .andExpect(jsonPath("$.sequences[0].operator").value("SMRT"))
+                .andExpect(jsonPath("$.sequences[0].stops[0].stopCode").value("44251"));
         String placement = """
                 {"displayLabel":"Bus B","syntheticPlate":"DEMO-190-B",
                  "latitude":1.3786545,"longitude":103.7584354,
@@ -140,10 +152,12 @@ class DemoFleetIT {
 
     @Test
     void openApiDescribesTheProtectedDemoFleetEndpoints() throws Exception {
+        mvc.perform(get("/demo-map.html"))
+                .andExpect(status().isOk());
         String document = mvc.perform(get("/v3/api-docs"))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
-        assertThat(document).contains("/api/v1/demo-runs", "placeDemoVehicle", "bearerAuth",
+        assertThat(document).contains("/api/v1/demo-runs", "getDemoRunRoute", "placeDemoVehicle", "bearerAuth",
                 "DemoVehicleResponse");
         Files.createDirectories(Path.of("target"));
         Files.writeString(Path.of("target", "generated-openapi.json"), document);

@@ -296,6 +296,74 @@
           }
         ]
       }
+    },
+    "/api/v1/demo-runs/{runId}/route": {
+      "get": {
+        "tags": [
+          "Demo fleet"
+        ],
+        "summary": "Get stop sequences for a draft map",
+        "description": "Returns the selected direction from Ingestion's active reference topology. Connecting stop points is only a schematic; it is not a verified driven road path.",
+        "operationId": "getDemoRunRoute",
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Selected route stop sequences",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoRouteResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Demo run does not exist",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Selected route is absent from active reference topology",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Ingestion route topology is unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -453,6 +521,72 @@
           },
           "classification": {
             "type": "string"
+          }
+        }
+      },
+      "DemoRouteResponse": {
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "serviceId": {
+            "type": "string"
+          },
+          "directionId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "routeKind": {
+            "type": "string"
+          },
+          "classification": {
+            "type": "string"
+          },
+          "sequences": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DemoRouteSequenceResponse"
+            }
+          }
+        }
+      },
+      "DemoRouteSequenceResponse": {
+        "type": "object",
+        "properties": {
+          "operator": {
+            "type": "string"
+          },
+          "stops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DemoRouteStopResponse"
+            }
+          }
+        }
+      },
+      "DemoRouteStopResponse": {
+        "type": "object",
+        "properties": {
+          "stopCode": {
+            "type": "string"
+          },
+          "stopSequence": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "latitude": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "longitude": {
+            "type": [
+              "number",
+              "null"
+            ]
           }
         }
       }
