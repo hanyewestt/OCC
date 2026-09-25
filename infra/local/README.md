@@ -8,7 +8,7 @@
 
 ## Start everything
 
-Run from the repository root.
+Run from the repository root `yourfolders/OCC/`.
 
 **PowerShell**
 
@@ -38,10 +38,10 @@ docker compose --env-file .env -f infra/local/compose.yaml ps
 To follow application logs:
 
 **PowerShell**
-**Bash**
 ```powershell
 docker compose --env-file .env -f infra/local/compose.yaml logs -f ingestion bus-bunching-detection
 ```
+**Bash**
 
 ```bash
 docker compose --env-file .env -f infra/local/compose.yaml logs -f ingestion bus-bunching-detection
@@ -49,10 +49,10 @@ docker compose --env-file .env -f infra/local/compose.yaml logs -f ingestion bus
 
 ## Start optional pgAdmin
 **PowerShell**
-**Bash**
 ```powershell
 docker compose --env-file .env -f infra/local/compose.yaml --profile tools up -d pgadmin
 ```
+**Bash**
 
 ```bash
 docker compose --env-file .env -f infra/local/compose.yaml --profile tools up -d pgadmin
@@ -61,17 +61,19 @@ docker compose --env-file .env -f infra/local/compose.yaml --profile tools up -d
 ## Stop
 
 Stop the main stack and optional pgAdmin while preserving all local data:
+
 **PowerShell**
-**Bash**
 ```powershell
 docker compose --env-file .env -f infra/local/compose.yaml stop
 ```
+**Bash**
 
 ```bash
 docker compose --env-file .env -f infra/local/compose.yaml stop
 ```
 
-To stop only pgAdmin:
+**To stop only pgAdmin:**
+
 **PowerShell**
 ```powershell
 docker compose --env-file .env -f infra/local/compose.yaml stop pgadmin
@@ -97,6 +99,7 @@ docker compose --env-file .env -f infra/local/compose.yaml up -d --build --force
 
 Delete containers, images created by Compose, and all named volumes for a completely
 fresh local database. This permanently deletes local OCC data:
+
 **PowerShell**
 ```powershell
 docker compose --env-file .env -f infra/local/compose.yaml down -v --rmi local --remove-orphans
