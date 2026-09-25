@@ -79,6 +79,21 @@ With the service running, browse the interactive API at http://localhost:8080/sw
 
 The machine-readable OpenAPI document is at `/v3/api-docs`.
 
+To export the runtime-generated contract to a file, start ingestion and run this
+from `services/ingestion` in another terminal:
+
+```powershell
+.\mvnw.cmd -Popenapi org.springdoc:springdoc-openapi-maven-plugin:1.5:generate
+```
+
+```bash
+./mvnw -Popenapi org.springdoc:springdoc-openapi-maven-plugin:1.5:generate
+```
+
+This writes `openapi/polling-ingestion.json` beside the service `pom.xml`. The export
+uses the same running application endpoint as Swagger UI, so it includes the
+actual controllers, DTOs, annotations and active Spring configuration.
+
 A missing or invalid DataMall key can produce request errors even if the application starts. Stop the app with Ctrl+C.
 
 Tests use fake DataMall responses and synthetic configuration, never the root `.env`. They do not prove live DataMall availability.

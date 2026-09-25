@@ -1,7 +1,11 @@
 package com.csd.occ.ingestion.api.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.math.BigDecimal;
 
-public record BusRouteStopResponse(String stopCode, String roadName, String description, BigDecimal latitude,
-                                   BigDecimal longitude, int stopSequence, BigDecimal distanceKm) {
+@Schema(requiredProperties = {"stopCode", "roadName", "description", "latitude", "longitude", "stopSequence", "distanceKm"})
+public record BusRouteStopResponse(String stopCode, @Schema(nullable = true) String roadName,
+                                   @Schema(nullable = true) String description, @Schema(nullable = true) BigDecimal latitude,
+                                   @Schema(nullable = true) BigDecimal longitude, int stopSequence,
+                                   @Schema(nullable = true) BigDecimal distanceKm) {
 }

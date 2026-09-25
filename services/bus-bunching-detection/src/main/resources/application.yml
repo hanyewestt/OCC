@@ -22,9 +22,9 @@ spring:
 
 occ:
   bunching:
-    consumer-enabled: ${OCC_BUNCHING_CONSUMER_ENABLED:true}
-    threshold: ${OCC_BUNCHING_THRESHOLD:90s}
+    consumer-enabled: ${OCC_BUNCHING_CONSUMER_ENABLED}
+    threshold: ${OCC_BUNCHING_THRESHOLD}
     # Required deployment choice: align with ingestion's configured freshness policy.
     stale-after: ${OCC_BUNCHING_STALE_AFTER}
-    poll-interval: ${OCC_BUNCHING_POLL_INTERVAL:1s}
-    batch-size: ${OCC_BUNCHING_BATCH_SIZE:100}
+    poll-interval: ${OCC_BUNCHING_POLL_INTERVAL}
+    batch-size: ${OCC_BUNCHING_BATCH_SIZE}
