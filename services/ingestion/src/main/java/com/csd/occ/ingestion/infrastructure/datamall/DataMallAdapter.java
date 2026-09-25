@@ -20,6 +20,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
 @Component
 public class DataMallAdapter implements BusArrivalPort, BusReferencePort {
@@ -33,8 +34,14 @@ public class DataMallAdapter implements BusArrivalPort, BusReferencePort {
     }
 
     @Override
-    public BusArrivalSnapshot arrivalsAt(String stopCode) {
-        ResponseEntity<String> response = get("/v3/BusArrival?BusStopCode=" + stopCode);
+    public BusArrivalSnapshot arrivalsAt(String stopCode, String serviceId) {
+        String path = UriComponentsBuilder.fromPath("/v3/BusArrival")
+                .queryParam("BusStopCode", stopCode)
+                .queryParam("ServiceNo", serviceId)
+                .build()
+                .encode()
+                .toUriString();
+        ResponseEntity<String> response = get(path);
         String payload = response.getBody();
         if (!response.getStatusCode().is2xxSuccessful() || payload == null) {
             return new BusArrivalSnapshot(response.getStatusCode().value(), payload, List.of(), List.of());

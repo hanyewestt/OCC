@@ -39,10 +39,10 @@ class DataMallAdapterTest {
     void arrivalsPreserveRawResponseAndAuthenticationHeader() {
         AtomicReference<MockRestServiceServer> server = new AtomicReference<>();
         DataMallAdapter adapter = adapter(server);
-        server.get().expect(requestTo("https://example.test/v3/BusArrival?BusStopCode=44009"))
+        server.get().expect(requestTo("https://example.test/v3/BusArrival?BusStopCode=44009&ServiceNo=190"))
                 .andExpect(header("AccountKey", "synthetic-key"))
                 .andRespond(withSuccess("{\"Services\":[]}", MediaType.APPLICATION_JSON));
-        var response = adapter.arrivalsAt("44009");
+        var response = adapter.arrivalsAt("44009", "190");
         assertThat(response.httpStatus()).isEqualTo(200);
         assertThat(response.payload()).isEqualTo("{\"Services\":[]}");
         server.get().verify();

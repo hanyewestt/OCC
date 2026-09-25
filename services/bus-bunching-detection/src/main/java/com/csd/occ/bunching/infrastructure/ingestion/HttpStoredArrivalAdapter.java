@@ -91,6 +91,7 @@ public class HttpStoredArrivalAdapter implements StoredArrivalPort {
             rejections.save(new SourceRejection(id, rejectedAt, reason));
             audit.save(new SourceProcessingAudit(id, rejectedAt, "SOURCE_REJECTED", reason, null));
         }
+        retries.deleteById(id);
         acknowledge(id);
     }
 
@@ -100,6 +101,13 @@ public class HttpStoredArrivalAdapter implements StoredArrivalPort {
         retries.findById(id).ifPresentOrElse(retry -> retry.deferUntil(nextAttemptAt),
                 () -> retries.save(new SourceRetry(id, nextAttemptAt)));
         audit.save(new SourceProcessingAudit(id, failedAt, "SOURCE_DEFERRED", reason.name(), nextAttemptAt));
+        acknowledge(id);
+    }
+
+    @Override
+    @Transactional
+    public void complete(UUID id) {
+        retries.deleteById(id);
         acknowledge(id);
     }
 

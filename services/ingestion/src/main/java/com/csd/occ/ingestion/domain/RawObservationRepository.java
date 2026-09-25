@@ -17,7 +17,8 @@ public interface RawObservationRepository extends JpaRepository<RawObservation, 
     @Query("""
             select raw from RawObservation raw join PollRun run on run.id = raw.pollRunId
             where raw.feedSequence > :afterSequence and raw.source = 'DATAMALL'
-              and raw.sourceKey like 'stop:%' and raw.classification = 'OBSERVATION_ONLY'
+              and (raw.sourceKey like 'stop:%' or raw.sourceKey like 'service:%:stop:%')
+              and raw.classification = 'OBSERVATION_ONLY'
               and raw.httpStatus between 200 and 299 and run.outcome = 'SUCCESS'
             order by raw.feedSequence
             """)
@@ -25,7 +26,8 @@ public interface RawObservationRepository extends JpaRepository<RawObservation, 
 
     @Query("""
             select raw from RawObservation raw join PollRun run on run.id = raw.pollRunId
-            where raw.id = :id and raw.source = 'DATAMALL' and raw.sourceKey like 'stop:%'
+            where raw.id = :id and raw.source = 'DATAMALL'
+              and (raw.sourceKey like 'stop:%' or raw.sourceKey like 'service:%:stop:%')
               and raw.classification = 'OBSERVATION_ONLY' and raw.httpStatus between 200 and 299
               and run.outcome = 'SUCCESS'
             """)

@@ -1,15 +1,13 @@
 # infra/local/compose.yaml
 #
-# Local database and optional pgAdmin dashboard (--profile tools).
+# Complete local OCC stack and optional pgAdmin dashboard (--profile tools).
 #
 # Usage (from repo root):
 #   cp .env.example .env      # then edit passwords
 #   docker compose --env-file .env -f infra/local/compose.yaml up -d
 #
-# Everything in postgres/init runs ONCE, on the first start of an empty
-# volume. It creates the three schemas and three application users.
-# It does NOT create tables — each service owns its tables via Flyway
-# (services/<name>/src/main/resources/db/migration).
+# Application containers communicate over the Compose network by service name.
+# Only published ports are reachable through the host.
 
 services:
   postgres:
@@ -45,6 +43,85 @@ services:
       retries: 12
       start_period: 10s
 
+  bunching-schema-init:
+    image: postgis/postgis:18-3.6
+    restart: "no"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-occ}
+      POSTGRES_USER: ${POSTGRES_USER:-occ_admin}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set in root .env}
+      PGHOST: postgres
+      OCC_BUNCHING_DB_PASSWORD: ${OCC_BUNCHING_DB_PASSWORD:?set in root .env}
+    volumes:
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    command: ["bash", "/docker-entrypoint-initdb.d/02_bunching_schema.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  ingestion:
+    image: occ-ingestion:local
+    build:
+      context: ../../services/ingestion
+    restart: unless-stopped
+    environment:
+      OCC_INGESTION_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}
+      OCC_INGESTION_DB_USERNAME: ${OCC_INGESTION_DB_USERNAME:-occ_ingestion}
+      OCC_INGESTION_DB_PASSWORD: ${OCC_INGESTION_DB_PASSWORD:?set in root .env}
+      OCC_INGESTION_INTERNAL_PORT: ${OCC_INGESTION_INTERNAL_PORT:-8080}
+      OCC_INGESTION_MONITORED_SERVICES: ${OCC_INGESTION_MONITORED_SERVICES:-190,972}
+      OCC_INGESTION_STALE_AFTER_SECONDS: ${OCC_INGESTION_STALE_AFTER_SECONDS:-180}
+      OCC_INGESTION_RETENTION: ${OCC_INGESTION_RETENTION:-24h}
+      OCC_INGESTION_IMPORT_REFERENCE_ON_STARTUP: ${OCC_INGESTION_IMPORT_REFERENCE_ON_STARTUP:-true}
+      OCC_INGESTION_SEED_TARGETS_ON_STARTUP: ${OCC_INGESTION_SEED_TARGETS_ON_STARTUP:-true}
+      OCC_INGESTION_FLYWAY_ENABLED: ${OCC_INGESTION_FLYWAY_ENABLED:-true}
+      OCC_INGESTION_JPA_DDL_AUTO: ${OCC_INGESTION_JPA_DDL_AUTO:-validate}
+      OCC_DATAMALL_BASE_URL: ${OCC_DATAMALL_BASE_URL:-https://datamall2.mytransport.sg/ltaodataservice}
+      DATAMALL_API_KEY: ${DATAMALL_API_KEY:?set in root .env}
+    ports:
+      - "${OCC_INGESTION_PORT:-8080}:${OCC_INGESTION_INTERNAL_PORT:-8080}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  bunching-read-grants:
+    image: postgis/postgis:18-3.6
+    restart: "no"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-occ}
+      POSTGRES_USER: ${POSTGRES_USER:-occ_admin}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set in root .env}
+      PGHOST: postgres
+      OCC_COMPOSE_STARTUP_TIMEOUT_SECONDS: ${OCC_COMPOSE_STARTUP_TIMEOUT_SECONDS:-180}
+    volumes:
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - ./postgres/wait_and_grant_bunching_views.sh:/usr/local/bin/wait_and_grant_bunching_views.sh:ro
+    command: ["bash", "/usr/local/bin/wait_and_grant_bunching_views.sh"]
+    depends_on:
+      bunching-schema-init:
+        condition: service_completed_successfully
+      ingestion:
+        condition: service_started
+
+  bus-bunching-detection:
+    image: occ-bus-bunching-detection:local
+    build:
+      context: ../../services/bus-bunching-detection
+    restart: unless-stopped
+    environment:
+      OCC_BUNCHING_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}
+      OCC_BUNCHING_DB_USER: ${OCC_BUNCHING_DB_USER:-occ_bunching}
+      OCC_BUNCHING_DB_PASSWORD: ${OCC_BUNCHING_DB_PASSWORD:?set in root .env}
+      OCC_BUNCHING_STALE_AFTER: ${OCC_BUNCHING_STALE_AFTER:-180s}
+      OCC_BUNCHING_POLL_INTERVAL: ${OCC_BUNCHING_POLL_INTERVAL:-1s}
+      OCC_BUNCHING_BATCH_SIZE: ${OCC_BUNCHING_BATCH_SIZE:-100}
+      OCC_BUNCHING_THRESHOLD: ${OCC_BUNCHING_THRESHOLD:-90s}
+      OCC_BUNCHING_CONSUMER_ENABLED: ${OCC_BUNCHING_CONSUMER_ENABLED:-true}
+      OCC_INGESTION_INTERNAL_URL: http://ingestion:${OCC_INGESTION_INTERNAL_PORT:-8080}
+    depends_on:
+      bunching-read-grants:
+        condition: service_completed_successfully
+
   pgadmin:
     image: dpage/pgadmin4:9.18
     container_name: occ-pgadmin
@@ -55,7 +132,7 @@ services:
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?set in root .env}
       PGADMIN_DISABLE_POSTFIX: "true"
     ports:
-      - "127.0.0.1:${PGADMIN_PORT:-5050}:80"
+      - "${PGADMIN_PORT:-6700}:80"
     volumes:
       - occ_pgadmin:/var/lib/pgadmin
       - ./pgadmin/servers.json:/pgadmin4/servers.json:ro

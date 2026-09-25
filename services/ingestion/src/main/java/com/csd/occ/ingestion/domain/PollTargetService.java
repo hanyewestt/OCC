@@ -2,6 +2,7 @@ package com.csd.occ.ingestion.domain;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.List;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,20 +28,26 @@ public class PollTargetService {
         ReferenceTopologyPort.ReferenceTopologyVersion version = topology.activeVersion()
                 .orElseThrow(() -> new IllegalStateException("No active bus reference topology is available"));
         log.info("Seeding poll targets for configured services...");
-        Set<String> stops = Set.copyOf(topology.stopsForServices(version.id(), configuration.monitoredServices()));
-        for (String stopCode : stops) {
-            PollTargetId id = new PollTargetId("DATAMALL", "stop:" + stopCode);
-            if (targets.existsById(id)) continue;
-            PollTarget target = new PollTarget();
-            target.setSource("DATAMALL");
-            target.setScopeKey("stop:" + stopCode);
-            target.setStopCode(stopCode);
-            target.setEnabled(true);
-            target.setPollIntervalSeconds(60);
-            target.setCreatedAt(Instant.now(clock));
-            target.setUpdatedAt(Instant.now(clock));
-            targets.save(target);
+        int targetCount = 0;
+        for (String serviceId : configuration.monitoredServices()) {
+            Set<String> stops = Set.copyOf(topology.stopsForServices(version.id(), List.of(serviceId)));
+            for (String stopCode : stops) {
+                String scopeKey = "service:" + serviceId + ":stop:" + stopCode;
+                PollTargetId id = new PollTargetId("DATAMALL", scopeKey);
+                if (targets.existsById(id)) continue;
+                PollTarget target = new PollTarget();
+                target.setSource("DATAMALL");
+                target.setScopeKey(scopeKey);
+                target.setStopCode(stopCode);
+                target.setServiceId(serviceId);
+                target.setEnabled(true);
+                target.setPollIntervalSeconds(60);
+                target.setCreatedAt(Instant.now(clock));
+                target.setUpdatedAt(Instant.now(clock));
+                targets.save(target);
+                targetCount++;
+            }
         }
-        log.info("Seeding complete. Saved {} targets.", stops.size());
+        log.info("Seeding complete. Saved {} targets.", targetCount);
     }
 }

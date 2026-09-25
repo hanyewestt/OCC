@@ -295,16 +295,22 @@ its data behind the internal HTTP contract.
 OCC_BUNCHING_DB_URL=jdbc:postgresql://localhost:5432/occ
 OCC_BUNCHING_DB_USER=occ_bunching
 OCC_BUNCHING_DB_PASSWORD=<your local password>
-OCC_INGESTION_BASE_URL=http://localhost:8080
+OCC_INGESTION_PUBLIC_URL=http://localhost:<OCC_INGESTION_PORT>
 OCC_BUNCHING_STALE_AFTER=<duration aligned with ingestion freshness policy>
 ```
+
+For local Maven or IDE runs, activate the `local` profile. It imports the
+repository-root `.env`; deployment must instead provide the variables through its
+environment or secret store. Compose supplies `OCC_INGESTION_INTERNAL_URL` as
+`http://ingestion:<OCC_INGESTION_INTERNAL_PORT>`, which takes precedence over the
+public URL so service traffic remains private.
 
 For example, use `120s` for a local demo freshness limit; it is not a hard-coded
 operational rule. Optional settings are `OCC_BUNCHING_THRESHOLD` (90s),
 `OCC_BUNCHING_POLL_INTERVAL` (1s), `OCC_BUNCHING_BATCH_SIZE` (100), and
 `OCC_BUNCHING_CONSUMER_ENABLED` (true). Invalid durations or batch sizes fail startup.
 
-5. From this service directory, run `mvn spring-boot:run`, or `mvn package` followed
+5. From this service directory, run `mvn spring-boot:run -Dspring-boot.run.profiles=local`, or `mvn package` followed
    by `java -jar target/bus-bunching-detection-0.0.1-SNAPSHOT.jar`. Flyway creates the
    service's own tables, including V3 retry scheduling, V4 evaluation actor/action,
    V5 processing-failure audit history, V6 alert state/events and V7 feed cursor;

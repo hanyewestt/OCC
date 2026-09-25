@@ -18,6 +18,8 @@ public class PollTarget {
     private String scopeKey;
     
     private String stopCode;
+    // Nullable only for disabled pre-service-filter targets retained by migration V009.
+    private String serviceId;
     private Boolean enabled;
     private Integer pollIntervalSeconds;
     private Instant createdAt;
@@ -30,6 +32,8 @@ public class PollTarget {
     public void setScopeKey(String scopeKey) { this.scopeKey = scopeKey; }
     public String getStopCode() { return stopCode; }
     public void setStopCode(String stopCode) { this.stopCode = stopCode; }
+    public String getServiceId() { return serviceId; }
+    public void setServiceId(String serviceId) { this.serviceId = serviceId; }
     public Boolean getEnabled() { return enabled; }
     public void setEnabled(Boolean enabled) { this.enabled = enabled; }
     public Integer getPollIntervalSeconds() { return pollIntervalSeconds; }

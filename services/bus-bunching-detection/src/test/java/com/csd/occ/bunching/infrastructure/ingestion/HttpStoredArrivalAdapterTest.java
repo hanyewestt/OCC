@@ -3,6 +3,7 @@ package com.csd.occ.bunching.infrastructure.ingestion;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
@@ -19,6 +20,22 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 class HttpStoredArrivalAdapterTest {
+    @Test
+    void terminalOutcomesRemoveAnExistingRetry() {
+        SourceRetryRepository retries = mock(SourceRetryRepository.class);
+        HttpStoredArrivalAdapter adapter = new HttpStoredArrivalAdapter(RestClient.create(),
+                mock(IngestionFeedCursorRepository.class), retries, mock(SourceRejectionRepository.class),
+                mock(SourceProcessingAuditRepository.class), mock(BunchingObservationRepository.class));
+        UUID completed = UUID.randomUUID();
+        UUID rejected = UUID.randomUUID();
+
+        adapter.complete(completed);
+        adapter.reject(rejected, Instant.parse("2026-09-25T00:00:00Z"), "INVALID_SNAPSHOT");
+
+        verify(retries).deleteById(completed);
+        verify(retries).deleteById(rejected);
+    }
+
     @Test
     void mapsTheIngestionSnapshotContractIntoDetectorInput() {
         UUID raw = UUID.randomUUID();

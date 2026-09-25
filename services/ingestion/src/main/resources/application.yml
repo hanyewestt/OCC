@@ -2,24 +2,26 @@ spring:
   application:
     name: ingestion
   datasource:
-    url: ${OCC_INGESTION_DB_URL:jdbc:postgresql://localhost:5432/occ}
+    url: ${SPRING_DATASOURCE_URL:${OCC_INGESTION_DB_URL}}
     username: ${OCC_INGESTION_DB_USERNAME:occ_ingestion}
     password: ${OCC_INGESTION_DB_PASSWORD}
   jpa:
     hibernate:
-      ddl-auto: validate
+      ddl-auto: ${OCC_INGESTION_JPA_DDL_AUTO:validate}
   flyway:
-    enabled: true
+    enabled: ${OCC_INGESTION_FLYWAY_ENABLED:true}
     default-schema: ingestion
     create-schemas: false
     locations: classpath:db/migration
+server:
+  port: ${OCC_INGESTION_INTERNAL_PORT:8080}
 springdoc:
   api-docs:
     version: OPENAPI_3_1
 
 occ:
   datamall:
-    base-url: ${DATAMALL_BASE_URL:https://datamall2.mytransport.sg/ltaodataservice}
+    base-url: ${OCC_DATAMALL_BASE_URL:${DATAMALL_BASE_URL:https://datamall2.mytransport.sg/ltaodataservice}}
     account-key: ${DATAMALL_API_KEY:mock_key}
   ingestion:
     monitored-services: ${OCC_INGESTION_MONITORED_SERVICES:190,972}
