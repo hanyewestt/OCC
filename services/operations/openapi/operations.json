@@ -47,7 +47,17 @@
             }
           },
           "400": {
-            "description": "Invalid service or direction",
+            "description": "Invalid service or direction in active route topology",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Ingestion route topology is unavailable",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -168,6 +178,26 @@
           },
           "409": {
             "description": "Run is not a draft, or label/plate already exists",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid vehicle input or position outside selected route's stop proximity",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Ingestion route topology is unavailable",
             "content": {
               "application/problem+json": {
                 "schema": {

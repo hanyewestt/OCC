@@ -8,10 +8,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.csd.occ.operations.OperationsApplication;
+import com.csd.occ.operations.domain.RouteReferencePort;
 import com.jayway.jsonpath.JsonPath;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import static org.mockito.Mockito.when;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -31,6 +37,7 @@ import org.testcontainers.utility.MountableFile;
 @SpringBootTest(classes = OperationsApplication.class, properties = {
         "occ.cognito.issuer-uri=https://issuer.example.test",
         "occ.cognito.app-client-id=synthetic-client",
+        "occ.ingestion-topology.base-url=http://ingestion.test",
         "spring.datasource.password=synthetic-operations",
         "springdoc.api-docs.enabled=true"
 })
@@ -52,6 +59,15 @@ class DemoFleetIT {
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
     @MockitoBean JwtDecoder decoder;
+    @MockitoBean RouteReferencePort routeReference;
+
+    @BeforeEach
+    void routeIsAvailableWithoutLiveBusArrivals() {
+        when(routeReference.route("190")).thenReturn(Optional.of(new RouteReferencePort.Route("190",
+                List.of(new RouteReferencePort.Direction(1, List.of(
+                        new RouteReferencePort.Stop("44251", new BigDecimal("1.3786545"),
+                                new BigDecimal("103.7584354"))))))));
+    }
 
     @Test
     void controllerCanCreateADraftAndAssignedVehicleButDriverCannot() throws Exception {
@@ -102,10 +118,24 @@ class DemoFleetIT {
                         .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
                         .contentType(MediaType.APPLICATION_JSON).content(placement))
                 .andExpect(status().isConflict());
+        mvc.perform(post("/api/v1/demo-runs/{runId}/vehicles", runId)
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(placement.replace("1.3786545", "1.2800000")))
+                .andExpect(status().isBadRequest());
 
         assertThat(jdbc.queryForObject("select count(*) from operations.demo_assignment", Long.class)).isEqualTo(1L);
         assertThat(jdbc.queryForObject("select created_by_sub from operations.demo_run where id = ?::uuid",
                 String.class, runId)).isEqualTo("controller-1");
+    }
+
+    @Test
+    void unknownDirectionCannotCreateADemoRun() throws Exception {
+        mvc.perform(post("/api/v1/demo-runs")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"serviceId\":\"190\",\"directionId\":9}"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

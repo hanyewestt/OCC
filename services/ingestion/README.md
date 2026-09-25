@@ -87,7 +87,7 @@ does not disable or remove targets previously created for a service that is late
 removed from the setting. Disable or remove those `ingestion.poll_target` rows
 through an explicit operational change when reducing coverage.
 
-With the service running, browse the interactive API at `http://localhost:<OCC_INGESTION_PORT>/swagger-ui.html` (default `8080`). These read-only endpoints return paginated envelopes except feed status and reference topology:
+With the service running, browse the interactive API at `http://localhost:<OCC_INGESTION_PORT>/swagger-ui.html` (default host port `6767`; the container listens on `8001`). These read-only endpoints return paginated envelopes except feed status and reference topology:
 
 | Endpoint | Purpose |
 | --- | --- |

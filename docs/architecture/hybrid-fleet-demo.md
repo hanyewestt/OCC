@@ -9,7 +9,8 @@ stable vehicles and drivers for simulated directives, without claiming that
 DataMall identifies or tracks the operator's fleet. Ingestion now exposes a
 read-only `/api/v1/map/observed-buses` feed of usable, unverified positions.
 Operations now stores draft demo runs, vehicles, drivers, and assignments behind
-role-protected endpoints. Track inference, observation capture, route validation,
+role-protected endpoints and checks service, direction, and proximity to an
+imported route stop. Track inference, observation capture, driven-path validation,
 simulation execution, the map UI, and driver delivery remain planned work.
 
 Bus Arrival v3 is scoped to polled stops and the next approaching buses. Its

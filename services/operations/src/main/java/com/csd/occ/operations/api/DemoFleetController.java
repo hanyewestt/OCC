@@ -55,7 +55,9 @@ public class DemoFleetController {
     @ApiResponse(responseCode = "201", description = "Draft created",
             headers = @Header(name = "Location", description = "URI of the new run"),
             content = @Content(schema = @Schema(implementation = DemoRunResponse.class)))
-    @ApiResponse(responseCode = "400", description = "Invalid service or direction",
+    @ApiResponse(responseCode = "400", description = "Invalid service or direction in active route topology",
+            content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "503", description = "Ingestion route topology is unavailable",
             content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
     public ResponseEntity<DemoRunResponse> createRun(@Valid @RequestBody CreateDemoRunRequest request,
             Authentication actor) {
@@ -75,6 +77,10 @@ public class DemoFleetController {
             headers = @Header(name = "Location", description = "URI of the new vehicle"),
             content = @Content(schema = @Schema(implementation = DemoVehicleResponse.class)))
     @ApiResponse(responseCode = "409", description = "Run is not a draft, or label/plate already exists",
+            content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "400", description = "Invalid vehicle input or position outside selected route's stop proximity",
+            content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "503", description = "Ingestion route topology is unavailable",
             content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
     public ResponseEntity<DemoVehicleResponse> place(@PathVariable UUID runId,
             @Valid @RequestBody PlaceDemoVehicleRequest request) {

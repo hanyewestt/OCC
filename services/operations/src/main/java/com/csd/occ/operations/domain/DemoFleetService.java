@@ -15,19 +15,29 @@ public class DemoFleetService {
     private final DemoVehicleRepository vehicles;
     private final DemoDriverRepository drivers;
     private final DemoAssignmentRepository assignments;
+    private final RouteReferencePort routeReference;
+    private final DemoRoutePolicy routePolicy;
     private final Clock clock;
 
     public DemoFleetService(DemoRunRepository runs, DemoVehicleRepository vehicles,
-            DemoDriverRepository drivers, DemoAssignmentRepository assignments, Clock clock) {
+            DemoDriverRepository drivers, DemoAssignmentRepository assignments,
+            RouteReferencePort routeReference, DemoRoutePolicy routePolicy, Clock clock) {
         this.runs = runs;
         this.vehicles = vehicles;
         this.drivers = drivers;
         this.assignments = assignments;
+        this.routeReference = routeReference;
+        this.routePolicy = routePolicy;
         this.clock = clock;
     }
 
     @Transactional
     public DemoRun createRun(String serviceId, int directionId, String actorSub) {
+        var route = routeReference.route(serviceId)
+                .orElseThrow(() -> new InvalidDemoRouteException("Service is absent from active route topology"));
+        if (!routePolicy.hasDirection(route, directionId)) {
+            throw new InvalidDemoRouteException("Direction is absent from active route topology");
+        }
         DemoRun run = new DemoRun(UUID.randomUUID(), serviceId, directionId, actorSub, Instant.now(clock));
         return runs.save(run);
     }
@@ -43,6 +53,11 @@ public class DemoFleetService {
         DemoRun run = runs.findById(runId).orElseThrow(DemoRunNotFoundException::new);
         if (!"DRAFT".equals(run.getStatus())) {
             throw new DemoRunConflictException("Vehicles may be added only to a draft demo run");
+        }
+        var route = routeReference.route(run.getServiceId())
+                .orElseThrow(() -> new InvalidDemoRouteException("Service is absent from active route topology"));
+        if (!routePolicy.isNearRouteStop(route, run.getDirectionId(), latitude, longitude)) {
+            throw new InvalidDemoRouteException("Demo position must be near a stop on the selected direction");
         }
         Instant now = Instant.now(clock);
         DemoVehicle vehicle = vehicles.save(new DemoVehicle(UUID.randomUUID(), runId, displayLabel,

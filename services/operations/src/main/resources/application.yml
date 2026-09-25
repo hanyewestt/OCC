@@ -28,3 +28,8 @@ occ:
   demo-fleet:
     default-page-size: ${OCC_DEMO_FLEET_DEFAULT_PAGE_SIZE:50}
     max-page-size: ${OCC_DEMO_FLEET_MAX_PAGE_SIZE:200}
+  demo-route:
+    max-stop-distance-meters: ${OCC_DEMO_ROUTE_MAX_STOP_DISTANCE_METERS:250}
+  ingestion-topology:
+    base-url: ${OCC_INGESTION_INTERNAL_URL:${OCC_INGESTION_PUBLIC_URL}}
+    timeout: ${OCC_OPERATIONS_INGESTION_TIMEOUT:5s}

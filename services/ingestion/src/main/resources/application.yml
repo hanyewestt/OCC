@@ -14,7 +14,7 @@ spring:
     create-schemas: false
     locations: classpath:db/migration
 server:
-  port: ${OCC_INGESTION_INTERNAL_PORT:8080}
+  port: ${OCC_INGESTION_INTERNAL_PORT:8001}
 springdoc:
   api-docs:
     version: OPENAPI_3_1

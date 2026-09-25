@@ -28,4 +28,4 @@ occ:
     stale-after: ${OCC_BUNCHING_STALE_AFTER:120s}
     poll-interval: ${OCC_BUNCHING_POLL_INTERVAL:1s}
     batch-size: ${OCC_BUNCHING_BATCH_SIZE:100}
-    ingestion-base-url: ${OCC_INGESTION_INTERNAL_URL:${OCC_INGESTION_PUBLIC_URL:http://localhost:${OCC_INGESTION_PORT:8080}}}
+    ingestion-base-url: ${OCC_INGESTION_INTERNAL_URL:${OCC_INGESTION_PUBLIC_URL:http://localhost:${OCC_INGESTION_PORT:6767}}}
