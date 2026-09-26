@@ -14,6 +14,7 @@
     main { max-width: 1150px; margin: 1.2rem auto; padding: 0 1rem; }
     .notice { background: #e8f1fb; border-left: 4px solid #3979a8; padding: .8rem 1rem; margin-bottom: 1rem; }
     form { display: flex; flex-wrap: wrap; gap: .8rem; align-items: end; margin-bottom: 1rem; }
+    [hidden] { display: none !important; }
     label { display: grid; gap: .25rem; font-weight: 650; flex: 1 1 260px; }
     input { font: inherit; padding: .6rem; border: 1px solid #a7bac6; border-radius: 4px; min-width: 0; }
     button { font: inherit; padding: .65rem 1rem; border: 0; border-radius: 4px; background: #17679a; color: white; cursor: pointer; }
@@ -53,7 +54,7 @@
       <div class="details"><h2 id="details-title">No demo overlay loaded</h2><div id="details-body" class="muted">Live observations are shown above. Create a demo run below to add simulated buses.</div></div>
     </div>
 
-    <label>Cognito access token (only for the demo overlay)<input id="token" required type="password" autocomplete="off" placeholder="ADMIN or CONTROLLER access token"></label>
+    <label id="token-label" hidden>Cognito access token (only for the demo overlay)<input id="token" type="password" autocomplete="off" placeholder="ADMIN or CONTROLLER access token"></label>
     <p class="muted">For your first demo, choose a service and direction below and click Create and load. A run is a saved scenario containing your simulated buses and drivers.</p>
     <div class="actions">
       <section class="action-panel">
@@ -82,7 +83,7 @@
         <button id="load-button" type="submit">Load saved run</button>
       </form>
     </details>
-    <p id="status" role="status" aria-live="polite">Enter an access token, then create a run or load an existing run.</p>
+    <p id="status" role="status" aria-live="polite">Create a run or load an existing run.</p>
   </main>
   <script src="/vendor/leaflet/leaflet.js"></script>
   <script>
@@ -91,6 +92,7 @@
     const demoLayer = L.layerGroup().addTo(map);
     const routeLayer = L.layerGroup().addTo(map);
     const liveStatus = document.getElementById('live-status');
+    let cognitoEnabled = null;
     let liveBusy = false;
     let liveFitted = false;
     const status = document.getElementById('status');
@@ -123,6 +125,8 @@
     }
 
     function token() {
+      if (cognitoEnabled === null) throw new Error('Map settings are still loading. Try again shortly.');
+      if (!cognitoEnabled) return '';
       const value = tokenInput.value.trim();
       if (!value) throw new Error('Enter a Cognito access token.');
       return value;
@@ -235,6 +239,10 @@
       event.preventDefault(); liveFitted = false; refreshLive();
     });
     requestJson('/api/v1/map/settings').then(settings => {
+      cognitoEnabled = settings.cognitoEnabled;
+      document.getElementById('token-label').hidden = !cognitoEnabled;
+      tokenInput.required = cognitoEnabled;
+      status.textContent = cognitoEnabled ? 'Enter an access token, then create a run or load an existing run.' : 'Login is disabled. Create a run or load an existing run.';
       const attribution = document.createElement('a');
       attribution.href = settings.attributionUrl;
       attribution.textContent = settings.attributionText;

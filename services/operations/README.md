@@ -11,8 +11,8 @@ driven-path validation, simulation execution, and driver delivery remain to be b
 
 The service uses Java 25, PostgreSQL and Flyway. Run Ingestion first and import
 its route reference topology. Set the root `.env` values for the Operations
-database, `OCC_COGNITO_ISSUER_URI`, and
-`OCC_COGNITO_APP_CLIENT_ID`. From this directory:
+database. Login is disabled by default (`OCC_COGNITO_ENABLED=false`).
+Cognito settings are optional until authentication is enabled. From this directory:
 
 ```powershell
 .\mvnw.cmd spring-boot:run '-Dspring-boot.run.profiles=local'
@@ -20,7 +20,11 @@ database, `OCC_COGNITO_ISSUER_URI`, and
 
 For Compose, use `--profile demo` with `infra/local/compose.yaml`. The service
 listens on host port `6768` by default. `/v3/api-docs` and `/swagger-ui.html`
-describe the API when enabled. Business API requests need a Cognito bearer token. `ADMIN` and `CONTROLLER`
+describe the API when enabled. With `OCC_COGNITO_ENABLED=false`, draft runs and
+vehicle placement require no login; creators are recorded as `prototype-local`.
+Set `OCC_COGNITO_ENABLED=true`, `OCC_COGNITO_ISSUER_URI`, and
+`OCC_COGNITO_APP_CLIENT_ID` to restore Cognito authentication. In that mode,
+business API requests need a Cognito bearer token. `ADMIN` and `CONTROLLER`
 groups can create/read draft runs and vehicles. Tokens must be Cognito access
 tokens for the configured app client. A `DRIVER` token cannot access
 these endpoints. The authenticated token subject is recorded as run creator.
@@ -73,13 +77,12 @@ reads stored Ingestion observations every `OCC_MAP_REFRESH_INTERVAL` (default
 hidden, and a failed refresh clears live markers. Co-located observations share
 a popup; this does not infer vehicle identity or deduplicate across stops.
 
-For the purple demo overlay, enter a Cognito `ADMIN` or
-`CONTROLLER` access token, create a service/direction run, and place labelled demo
+For the purple demo overlay, create a service/direction run and place labelled demo
 buses at route stops. You can also load a run created through Swagger UI by ID.
 The run ID is generated automatically when you create a scenario; it is needed
 only to reopen a saved scenario later.
 The token stays in page memory and is cleared on reload. The page loads the
-protected route endpoint and paginated vehicle list. Demo runs remain independent
+draft route endpoint and paginated vehicle list. Demo runs remain independent
 of live observations. Dashed route lines connect stop coordinates rather than
 showing a verified driven path. The Leaflet 1.9.4 library is vendored locally;
 the browser fetches visible map tiles from `OCC_MAP_TILE_URL`, with attribution
@@ -90,7 +93,7 @@ deployments: https://operations.osmfoundation.org/policies/tiles/.
 
 The read-only endpoints `GET /api/v1/map/settings` and
 `GET /api/v1/map/observed-buses?serviceId=&page=&size=` are anonymous, matching
-Ingestion's public observation API. Demo mutations remain role-protected.
+Ingestion's public observation API. Demo mutations require roles only when `OCC_COGNITO_ENABLED=true`.
 
 ## Verification
 

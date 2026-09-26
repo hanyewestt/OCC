@@ -16,9 +16,9 @@ public class OperationsConfig {
         return properties.settings();
     }
     @Bean
-    MapSettings mapSettings(MapProperties properties) {
+    MapSettings mapSettings(MapProperties properties, CognitoProperties cognito) {
         return new MapSettings(properties.tileUrl(), properties.attributionText(),
-                properties.attributionUrl().toString(), properties.refreshInterval().toMillis());
+                properties.attributionUrl().toString(), properties.refreshInterval().toMillis(), cognito.enabled());
     }
     @Bean
     Clock clock() { return Clock.systemUTC(); }

@@ -38,6 +38,7 @@ import org.testcontainers.utility.MountableFile;
 @SpringBootTest(classes = OperationsApplication.class, properties = {
         "occ.cognito.issuer-uri=https://issuer.example.test",
         "occ.cognito.app-client-id=synthetic-client",
+        "occ.cognito.enabled=true",
         "occ.ingestion-topology.base-url=http://ingestion.test",
         "spring.datasource.password=synthetic-operations",
         "springdoc.api-docs.enabled=true"

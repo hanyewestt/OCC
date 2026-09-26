@@ -17,7 +17,6 @@ import io.swagger.v3.oas.annotations.headers.Header;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
-import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
@@ -42,7 +41,6 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping(value = "/api/v1/demo-runs", produces = MediaType.APPLICATION_JSON_VALUE)
 @Tag(name = "Demo fleet")
-@SecurityRequirement(name = "bearerAuth")
 public class DemoFleetController {
     private final DemoFleetService fleet;
     private final DemoFleetPagePolicy pagePolicy;
@@ -53,7 +51,7 @@ public class DemoFleetController {
     }
 
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
-    @PreAuthorize("hasAnyRole('ADMIN','CONTROLLER')")
+    @PreAuthorize("@demoFleetAccess.allowed(authentication)")
     @Operation(operationId = "createDemoRun", summary = "Create a draft simulated run")
     @ApiResponse(responseCode = "201", description = "Draft created",
             headers = @Header(name = "Location", description = "URI of the new run"),
@@ -64,17 +62,17 @@ public class DemoFleetController {
             content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
     public ResponseEntity<DemoRunResponse> createRun(@Valid @RequestBody CreateDemoRunRequest request,
             Authentication actor) {
-        DemoRun run = fleet.createRun(request.serviceId().trim(), request.directionId(), actor.getName());
+        DemoRun run = fleet.createRun(request.serviceId().trim(), request.directionId(), actor == null ? "prototype-local" : actor.getName());
         return ResponseEntity.created(URI.create("/api/v1/demo-runs/" + run.getId())).body(response(run));
     }
 
     @GetMapping("/{runId}")
-    @PreAuthorize("hasAnyRole('ADMIN','CONTROLLER')")
+    @PreAuthorize("@demoFleetAccess.allowed(authentication)")
     @Operation(operationId = "getDemoRun", summary = "Get a draft simulated run")
     public DemoRunResponse run(@PathVariable UUID runId) { return response(fleet.run(runId)); }
 
     @GetMapping("/{runId}/route")
-    @PreAuthorize("hasAnyRole('ADMIN','CONTROLLER')")
+    @PreAuthorize("@demoFleetAccess.allowed(authentication)")
     @Operation(operationId = "getDemoRunRoute", summary = "Get stop sequences for a draft map",
             description = "Returns the selected direction from Ingestion's active reference topology. "
                     + "Connecting stop points is only a schematic; it is not a verified driven road path.")
@@ -97,7 +95,7 @@ public class DemoFleetController {
     }
 
     @PostMapping(value = "/{runId}/vehicles", consumes = MediaType.APPLICATION_JSON_VALUE)
-    @PreAuthorize("hasAnyRole('ADMIN','CONTROLLER')")
+    @PreAuthorize("@demoFleetAccess.allowed(authentication)")
     @Operation(operationId = "placeDemoVehicle", summary = "Place a demo vehicle and assign a demo driver")
     @ApiResponse(responseCode = "201", description = "Vehicle and assignment created",
             headers = @Header(name = "Location", description = "URI of the new vehicle"),
@@ -117,7 +115,7 @@ public class DemoFleetController {
     }
 
     @GetMapping("/{runId}/vehicles")
-    @PreAuthorize("hasAnyRole('ADMIN','CONTROLLER')")
+    @PreAuthorize("@demoFleetAccess.allowed(authentication)")
     @Operation(operationId = "listDemoVehicles", summary = "List a run's demo vehicles and assignments")
     @ApiResponse(responseCode = "400", description = "Invalid page or page size",
             content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
@@ -135,7 +133,7 @@ public class DemoFleetController {
     }
 
     @GetMapping("/{runId}/vehicles/{vehicleId}")
-    @PreAuthorize("hasAnyRole('ADMIN','CONTROLLER')")
+    @PreAuthorize("@demoFleetAccess.allowed(authentication)")
     @Operation(operationId = "getDemoVehicle", summary = "Get one demo vehicle and assignment")
     public DemoVehicleResponse vehicle(@PathVariable UUID runId, @PathVariable UUID vehicleId) {
         return response(fleet.placement(runId, vehicleId));

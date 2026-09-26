@@ -44,8 +44,9 @@ occ:
     attribution-url: ${OCC_MAP_ATTRIBUTION_URL:https://www.openstreetmap.org/copyright}
     refresh-interval: ${OCC_MAP_REFRESH_INTERVAL:60s}
   cognito:
-    issuer-uri: ${OCC_COGNITO_ISSUER_URI}
-    app-client-id: ${OCC_COGNITO_APP_CLIENT_ID}
+    enabled: ${OCC_COGNITO_ENABLED:false}
+    issuer-uri: ${OCC_COGNITO_ISSUER_URI:}
+    app-client-id: ${OCC_COGNITO_APP_CLIENT_ID:}
   demo-fleet:
     default-page-size: ${OCC_DEMO_FLEET_DEFAULT_PAGE_SIZE:50}
     max-page-size: ${OCC_DEMO_FLEET_MAX_PAGE_SIZE:200}

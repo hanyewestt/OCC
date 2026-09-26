@@ -67,11 +67,7 @@
             }
           }
         },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
+        "security": []
       }
     },
     "/api/v1/demo-runs/{runId}/vehicles": {
@@ -126,11 +122,7 @@
             }
           }
         },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
+        "security": []
       },
       "post": {
         "tags": [
@@ -207,11 +199,7 @@
             }
           }
         },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
+        "security": []
       }
     },
     "/api/v1/map/settings": {
@@ -401,11 +389,7 @@
             }
           }
         },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
+        "security": []
       }
     },
     "/api/v1/demo-runs/{runId}/vehicles/{vehicleId}": {
@@ -447,11 +431,7 @@
             }
           }
         },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
+        "security": []
       }
     },
     "/api/v1/demo-runs/{runId}/route": {
@@ -515,11 +495,7 @@
             }
           }
         },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
+        "security": []
       }
     }
   },
@@ -696,6 +672,9 @@
           "refreshIntervalMs": {
             "type": "integer",
             "format": "int64"
+          },
+          "cognitoEnabled": {
+            "type": "boolean"
           }
         }
       },

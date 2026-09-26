@@ -9,7 +9,7 @@ stable vehicles and drivers for simulated directives, without claiming that
 DataMall identifies or tracks the operator's fleet. Ingestion now exposes a
 read-only `/api/v1/map/observed-buses` feed of usable, unverified positions.
 Operations now stores draft demo runs, vehicles, drivers, and assignments behind
-role-protected endpoints and checks service, direction, and proximity to an
+draft endpoints (login disabled during development; optional Cognito roles) and checks service, direction, and proximity to an
 imported route stop. A simple draft map shows the imported stop sequence and
 prototype-owned vehicles alongside a separate live observation layer on a
 geographic basemap. The live layer never changes a demo run. Persistent inferred tracks now link compatible observations with evidence IDs,

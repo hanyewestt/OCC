@@ -23,6 +23,7 @@ import org.springframework.security.web.SecurityFilterChain;
 @EnableMethodSecurity
 public class OperationsSecurityConfig {
     @Bean
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name = "occ.cognito.enabled", havingValue = "true")
     JwtDecoder jwtDecoder(CognitoProperties properties) {
         NimbusJwtDecoder decoder = (NimbusJwtDecoder) JwtDecoders.fromIssuerLocation(properties.issuerUri().toString());
         decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
@@ -33,14 +34,18 @@ public class OperationsSecurityConfig {
 
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http,
-            Converter<Jwt, AbstractAuthenticationToken> converter) throws Exception {
+            Converter<Jwt, AbstractAuthenticationToken> converter, CognitoProperties properties) throws Exception {
         http.csrf(csrf -> csrf.disable())
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .authorizeHttpRequests(requests -> requests
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
+        if (properties.enabled()) {
+            http.authorizeHttpRequests(requests -> requests
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html",
                                 "/demo-map.html", "/vendor/leaflet/**", "/api/v1/map/**").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(jwt -> jwt.jwtAuthenticationConverter(converter)));
+        } else {
+            http.authorizeHttpRequests(requests -> requests.anyRequest().permitAll());
+        }
         return http.build();
     }
 

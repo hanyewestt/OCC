@@ -4,12 +4,12 @@ import java.net.URI;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties("occ.cognito")
-public record CognitoProperties(URI issuerUri, String appClientId) {
+public record CognitoProperties(boolean enabled, URI issuerUri, String appClientId) {
     public CognitoProperties {
-        if (issuerUri == null || !"https".equalsIgnoreCase(issuerUri.getScheme())) {
+        if (enabled && (issuerUri == null || !"https".equalsIgnoreCase(issuerUri.getScheme()))) {
             throw new IllegalArgumentException("Cognito issuer URI must use HTTPS");
         }
-        if (appClientId == null || appClientId.isBlank()) {
+        if (enabled && (appClientId == null || appClientId.isBlank())) {
             throw new IllegalArgumentException("Cognito app client ID is required");
         }
     }
