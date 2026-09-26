@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.csd.occ.operations.OperationsApplication;
 import com.csd.occ.operations.domain.LiveMapPort;
+import com.csd.occ.operations.domain.MapReferencePort;
 import com.csd.occ.operations.domain.RouteReferencePort;
 import com.jayway.jsonpath.JsonPath;
 import java.math.BigDecimal;
@@ -52,6 +53,25 @@ class AnonymousDemoFleetIT {
     @Autowired JdbcTemplate jdbc;
     @MockitoBean RouteReferencePort routes;
     @MockitoBean LiveMapPort live;
+    @MockitoBean MapReferencePort mapReference;
+
+    @Test void mapSelectionsAndArrivalsAreAvailableWithoutLogin() throws Exception {
+        var stop = new MapReferencePort.Stop("44251", "Demo Road", "Demo Stop", new BigDecimal("1.37"), new BigDecimal("103.76"), 1);
+        when(mapReference.services(0, 50)).thenReturn(new MapReferencePort.ServicePage(
+                List.of(new MapReferencePort.Service("190", "SMRT", "TRUNK")), 0, 50, 1, 1));
+        when(mapReference.route("190")).thenReturn(new MapReferencePort.Route("190", List.of(
+                new MapReferencePort.Operator("SMRT", List.of(new MapReferencePort.Direction(1, List.of(stop)))))));
+        when(mapReference.arrivals("190", "44251", 0, 50)).thenReturn(new MapReferencePort.ArrivalPage(
+                List.of(new MapReferencePort.Arrival("44251", "190", null, 1,
+                        java.time.Instant.parse("2026-09-26T08:10:00Z"), java.time.Instant.parse("2026-09-26T08:00:00Z"), 5L)), 0, 50, 1, 1));
+        mvc.perform(get("/api/v1/map/services")).andExpect(status().isOk()).andExpect(jsonPath("$.items[0].serviceId").value("190"));
+        mvc.perform(get("/api/v1/map/routes/190")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.operators[0].directions[0].stops[0].description").value("Demo Stop"));
+        mvc.perform(get("/api/v1/map/arrivals").param("serviceId", "190").param("stopCode", "44251"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].estimatedArrivalAt").value("2026-09-26T08:10:00Z"));
+        mvc.perform(get("/api/v1/map/services").param("size", "201")).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/map/arrivals").param("serviceId", "190")).andExpect(status().isBadRequest());
+    }
 
     @Test void draftLifecycleNeedsNeitherTokenNorCognitoConfiguration() throws Exception {
         when(routes.route("190")).thenReturn(Optional.of(new RouteReferencePort.Route("190",List.of(

@@ -98,9 +98,11 @@ class DemoFleetIT {
         when(liveMap.observations(null,0,200)).thenReturn(new LiveMapPort.Page(List.of(close1,close2),0,200,2,1));
         inference.refresh();
         assertThat(inference.current("190").getFirst().getStatus()).isEqualTo("AMBIGUOUS");
+        assertThat(inference.current("190")).hasSize(2);
+        assertThat(inference.current("190")).extracting(com.csd.occ.operations.domain.InferredVehicleTrack::getId).doesNotContain(id);
         assertThat(inference.evidence(id)).hasSize(3);
         when(liveMap.observations(null,0,200)).thenReturn(new LiveMapPort.Page(List.of(),0,200,0,0));
-        jdbc.update("update operations.inferred_vehicle_track set last_seen_at = ? where id = ?",java.sql.Timestamp.from(now.minusSeconds(301)),id);
+        jdbc.update("update operations.inferred_vehicle_track set last_seen_at = ?",java.sql.Timestamp.from(now.minusSeconds(301)));
         inference.refresh();
         assertThat(inference.current("190")).isEmpty();
         assertThat(jdbc.queryForObject("select status from operations.inferred_vehicle_track where id = ?",String.class,id)).isEqualTo("EXPIRED");
@@ -109,6 +111,42 @@ class DemoFleetIT {
     private LiveMapPort.Observation trackObservation(String stop,String lon,java.time.Instant time) {
         return new LiveMapPort.Observation(java.util.UUID.randomUUID(),stop,"190",1,1,time.plusSeconds(300),
                 new BigDecimal("1.35"),new BigDecimal(lon),time,false);
+    }
+
+    @Test void sharedStopEtasKeepLeaderAndFollowerIdsWhenAnchorStopsChange() {
+        jdbc.update("delete from operations.inferred_observation_link");
+        jdbc.update("delete from operations.inferred_vehicle_track");
+        jdbc.update("delete from operations.inferred_track_frame");
+        when(routeReference.route("190")).thenReturn(Optional.of(new RouteReferencePort.Route("190", List.of(
+                new RouteReferencePort.Direction("SMRT",1,List.of(
+                        new RouteReferencePort.Stop("A",1,new BigDecimal("1.35"),new BigDecimal("103.80")),
+                        new RouteReferencePort.Stop("B",2,new BigDecimal("1.35"),new BigDecimal("103.82"))))))));
+        var now=java.time.Instant.now();
+        var initial=List.of(etaObservation("A","103.805",now.minusSeconds(70),now.plusSeconds(120)),
+                etaObservation("B","103.8051",now.minusSeconds(69),now.plusSeconds(160)),
+                etaObservation("A","103.803",now.minusSeconds(70),now.plusSeconds(600)),
+                etaObservation("B","103.8031",now.minusSeconds(69),now.plusSeconds(640)));
+        when(liveMap.observations(null,0,200)).thenReturn(new LiveMapPort.Page(initial,0,200,4,1));
+        inference.refresh();
+        var first=inference.current("190");
+        assertThat(first).hasSize(2);
+        var leader=first.stream().filter(t -> t.getLongitude()>103.804).findFirst().orElseThrow().getId();
+        var follower=first.stream().filter(t -> t.getLongitude()<103.804).findFirst().orElseThrow().getId();
+        var moved=List.of(etaObservation("A","103.810",now.minusSeconds(10),now.plusSeconds(135)),
+                etaObservation("A","103.805",now.minusSeconds(10),now.plusSeconds(620)));
+        when(liveMap.observations(null,0,200)).thenReturn(new LiveMapPort.Page(moved,0,200,2,1));
+        inference.refresh();
+        var updated=inference.current("190");
+        assertThat(updated).hasSize(2).allMatch(t -> t.getStatus().equals("ACTIVE"));
+        assertThat(updated.stream().filter(t -> t.getId().equals(leader)).findFirst().orElseThrow().getLongitude()).isEqualTo(103.810);
+        assertThat(updated.stream().filter(t -> t.getId().equals(follower)).findFirst().orElseThrow().getLongitude()).isEqualTo(103.805);
+        inference.refresh();
+        assertThat(inference.current("190")).hasSize(2).allMatch(t -> t.getConfirmations()==2);
+    }
+
+    private LiveMapPort.Observation etaObservation(String stop,String lon,java.time.Instant source,java.time.Instant eta) {
+        return new LiveMapPort.Observation(java.util.UUID.randomUUID(),stop,"190",1,1,eta,
+                new BigDecimal("1.35"),new BigDecimal(lon),source,false);
     }
 
     @BeforeEach

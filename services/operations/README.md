@@ -103,7 +103,9 @@ account is used in tests.
 
 ## Inferred live bus tracks
 
-The live map defaults to `/api/v1/map/inferred-tracks` (anonymous, paginated).
+The live map defaults to raw observations (`OCC_MAP_RAW_OBSERVATIONS_DEFAULT=true`).
+Uncheck the raw-observation toggle to inspect experimental inferred tracks from
+`/api/v1/map/inferred-tracks` (anonymous, paginated).
 Operations periodically reads Ingestion's existing feed; no extra DataMall calls.
 Persistent `inferred_vehicle_track` and `inferred_observation_link` records retain
 temporary UUID identities and source evidence. Labels are not real plates.
@@ -112,7 +114,8 @@ Coordinates are projected onto imported stop-to-stop route geometry. A known
 direction (provided or inferred from unique stop membership) and a unique stop visit
 are required. Compatible cross-stop observations
 are clustered; two arrival slots at one stop are never clustered together.
-Movement, timing and same-stop ETA continuity constrain identity matches. Competing
+Movement, timing and ETA continuity at all shared reporting stops constrain identity
+matches. Clear best matches are assigned before weaker alternatives; competing
 identities or candidates mark tracks AMBIGUOUS. Initial identities are PROVISIONAL,
 then ACTIVE after evidence from a later source time. Confidence is a heuristic
 score, not a probability. Tracks cannot receive directives or demo assignments.
@@ -126,10 +129,21 @@ inspectable. Stale tracks are hidden, unmatched tracks expire, and old rows are
 purged after retention. PostgreSQL serializes projection writers. Demo buses,
 drivers and assignments remain separate.
 
+`inferred_track_frame` and its member table persist the exact marker identities for
+the latest processed source frame per service. Current positions use original GPS
+coordinates; historical hypotheses are excluded from the map even before expiry.
+Frame observations must be within `OCC_TRACK_INFERENCE_CLUSTER_TIME_WINDOW` of the
+service's newest source fetch. Failed/stale target polls cannot seed trailing ghost
+positions. Shared-stop ETA evidence is retained with each observation link; it can
+distinguish a follower reaching the leader's previous position even when the chosen
+anchor stop changes. This improves matching rules but is not a calibrated validation
+of vehicle identity. Exact co-location still cannot establish uniqueness.
+
 Configuration (also listed in root `.env.example`):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `OCC_MAP_RAW_OBSERVATIONS_DEFAULT` | `true` | Show raw source observations initially; false opts into experimental track display. |
 | `OCC_TRACK_INFERENCE_ENABLED` | `true` | Enable persistent track inference. |
 | `OCC_TRACK_INFERENCE_INTERVAL` | `60s` | Delay between projection refreshes; no extra DataMall calls. |
 | `OCC_TRACK_INFERENCE_INITIAL_DELAY` | `5s` | Startup delay. |
@@ -145,3 +159,9 @@ Configuration (also listed in root `.env.example`):
 | `OCC_TRACK_INFERENCE_ETA_TOLERANCE` | `90s` | Maximum same-stop ETA change. |
 | `OCC_TRACK_INFERENCE_PAGE_SIZE` | `200` | Upstream observation page size, 1 to 200. |
 | `OCC_TRACK_INFERENCE_MAX_PAGES` | `20` | Abort above this limit to avoid partial evidence. |
+
+### Live map selection and stop arrivals
+
+The live and draft service selectors use the imported route catalogue. Direction options come from each service’s route and show its destination stop. Live route stops are displayed without requiring a demo run. Hover over a stop for a compact summary of stored next arrivals for the selected service, including predictions that have no GPS position. Each prediction shows the source fetch time; past predictions are labelled instead of displayed as due. Stops outside the configured ingestion polling scope may have no predictions. Selecting a direction excludes unknown-direction observations at stops shared by both directions.
+
+Anonymous read endpoints: `/api/v1/map/services` (paginated), `/api/v1/map/routes/{serviceId}`, and `/api/v1/map/arrivals?serviceId=190&stopCode=44251` (paginated). These proxy the stored Ingestion reference and arrival data and do not trigger extra DataMall polling.

@@ -5,7 +5,8 @@ import java.net.URI;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties("occ.map")
-public record MapProperties(String tileUrl, String attributionText, URI attributionUrl, Duration refreshInterval) {
+public record MapProperties(String tileUrl, String attributionText, URI attributionUrl, Duration refreshInterval,
+        boolean rawObservationsDefault) {
     public MapProperties {
         if (tileUrl == null || !tileUrl.startsWith("https://") || attributionText == null
                 || attributionUrl == null || refreshInterval == null || refreshInterval.toMillis() < 1000) {

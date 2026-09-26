@@ -39,6 +39,7 @@ occ:
     page-size: ${OCC_TRACK_INFERENCE_PAGE_SIZE:200}
     max-pages: ${OCC_TRACK_INFERENCE_MAX_PAGES:20}
   map:
+    raw-observations-default: ${OCC_MAP_RAW_OBSERVATIONS_DEFAULT:true}
     tile-url: ${OCC_MAP_TILE_URL:https://tile.openstreetmap.org/{z}/{x}/{y}.png}
     attribution-text: ${OCC_MAP_ATTRIBUTION_TEXT:© OpenStreetMap contributors}
     attribution-url: ${OCC_MAP_ATTRIBUTION_URL:https://www.openstreetmap.org/copyright}

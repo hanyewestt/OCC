@@ -23,7 +23,7 @@ public class InferredTrackController {
     public InferredTrackController(TrackInferenceService inference, DemoFleetPagePolicy pages) { this.inference=inference; this.pages=pages; }
     @GetMapping("/api/v1/map/inferred-tracks")
     @Operation(operationId = "getInferredVehicleTracks", summary = "Read current inferred bus tracks",
-            description = "Temporary identity hypotheses from DataMall observations. Confidence is a heuristic score, not a probability. Stale and expired tracks are omitted. Tracks cannot receive directives.")
+            description = "Temporary identity hypotheses belonging to each service's latest processed observation frame. Confidence is a heuristic score, not a probability. Historical, stale and expired positions are omitted. Tracks cannot receive directives.")
     @ApiResponse(responseCode = "200", description = "Current inferred track page", content = @Content(schema = @Schema(implementation = InferredTrackPageResponse.class)))
     @ApiResponse(responseCode = "400", description = "Invalid paging", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
     public InferredTrackPageResponse tracks(@RequestParam(required = false) String serviceId,

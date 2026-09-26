@@ -96,6 +96,28 @@ public class TrackInferencePolicy {
         return Optional.of(Math.abs(movement));
     }
 
+    public Optional<Double> matchScore(InferredVehicleTrack track, Candidate candidate, List<InferredObservationLink> history) {
+        var movementScore = matchScore(track, candidate);
+        if (movementScore.isEmpty()) return movementScore;
+        // Compare each common stop with its most recent linked ETA, not arrival-slot order.
+        var latest = new java.util.HashMap<String, InferredObservationLink>();
+        history.stream().filter(link -> link.getStopCode()!=null && link.getEstimatedArrivalAt()!=null)
+                .forEach(link -> latest.merge(link.getStopCode(), link,
+                        (a,b) -> a.getFetchedAt().isAfter(b.getFetchedAt()) ? a : b));
+        var differences = new ArrayList<Double>();
+        for (var observation : candidate.evidence()) {
+            var previous = latest.get(observation.stopCode());
+            if (previous == null || observation.estimatedArrivalAt() == null) continue;
+            double seconds = Duration.between(previous.getEstimatedArrivalAt(), observation.estimatedArrivalAt()).abs().toMillis()/1000.0;
+            if (seconds > settings.etaTolerance().toMillis()/1000.0) return Optional.empty();
+            differences.add(seconds);
+        }
+        if (differences.isEmpty()) return movementScore;
+        // ETA continuity dominates proximity when there is shared-stop evidence.
+        return Optional.of(differences.stream().mapToDouble(Double::doubleValue).average().orElseThrow()
+                * settings.maxSpeedMetersPerSecond() + movementScore.get() * .1);
+    }
+
     public static double meters(double lat1, double lon1, double lat2, double lon2) {
         // Mean Earth radius is a physical constant, not an operational threshold.
         double a = Math.pow(Math.sin(Math.toRadians(lat2-lat1)/2), 2)

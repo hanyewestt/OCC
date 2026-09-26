@@ -27,7 +27,7 @@ public class LiveMapController {
     @GetMapping("/settings")
     @Operation(operationId = "getMapSettings", summary = "Read public map display settings")
     public MapSettingsResponse settings() {
-        return new MapSettingsResponse(settings.tileUrl(), settings.attributionText(), settings.attributionUrl(), settings.refreshIntervalMs(), settings.cognitoEnabled());
+        return new MapSettingsResponse(settings.tileUrl(), settings.attributionText(), settings.attributionUrl(), settings.refreshIntervalMs(), settings.cognitoEnabled(), settings.rawObservationsDefault());
     }
     @GetMapping("/observed-buses")
     @Operation(operationId = "getLiveMapObservations", summary = "Read unverified DataMall positions",

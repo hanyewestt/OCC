@@ -29,6 +29,10 @@
     .legend .route-key::before { color: #4c94a8; }
     .legend .bus-key::before { color: #a43ac2; }
     .legend .ambiguous-key::before { color: #d87913; }
+    .bus-stop-icon { background: none; border: none; }
+    .bus-stop-icon svg { display: block; filter: drop-shadow(0 1px 2px #0005); }
+    .leaflet-tooltip.stop-tooltip { width: max-content; min-width: 220px; max-width: 280px; white-space: normal; line-height: 1.4; }
+    .leaflet-tooltip.bus-tooltip { width: max-content; min-width: 220px; max-width: 280px; white-space: normal; line-height: 1.4; }
     .details { padding: 1rem; }
     .details h2 { margin: 0 0 .5rem; font-size: 1.1rem; }
     .details ul { margin: .4rem 0 0; padding-left: 1.3rem; }
@@ -44,13 +48,13 @@
 <body>
   <header><h1>OCC live bus map</h1><p>DataMall observations and optional demo overlay</p></header>
   <main>
-    <div class="notice">Blue markers are inferred bus tracks with temporary labels. Orange tracks have ambiguous identity. Purple markers are your simulated buses. Route lines connect stop points and do not represent a verified road path.</div>
-    <form id="live-form"><label>Live bus service<input id="live-service" maxlength="20" value="190" placeholder="Leave blank for all monitored services"></label><button type="submit">Refresh live map</button></form>
+    <div class="notice">Blue markers show DataMall positions. Raw observations are the default. Inferred tracks are experimental; orange means uncertain identity. Purple markers are simulated buses. Route lines connect stop points and do not represent a verified road path.</div>
+    <form id="live-form"><label>Live bus service<select id="live-service" disabled><option value="190">Loading services…</option></select></label><label>Live direction<select id="live-direction"><option value="">Both directions</option></select></label><button type="submit">Refresh live map</button></form>
     <label style="display:flex;gap:.5rem;align-items:center;font-weight:400"><input id="raw-observations" type="checkbox">Show raw observations instead of inferred tracks</label>
     <p id="live-status" role="status" aria-live="polite">Loading live observations…</p><p id="basemap-status" class="muted"></p>
     <div class="panel">
       <div id="map" aria-label="Live observations and demo vehicles on a geographic map"></div>
-      <div class="legend"><span class="live-key">Inferred track · temporary identity</span><span class="ambiguous-key">Ambiguous track</span><span class="route-key">Imported stop sequence</span><span class="bus-key">Simulated vehicle</span></div>
+      <div class="legend"><span class="live-key">Inferred track · temporary identity</span><span class="ambiguous-key">Ambiguous track</span><span class="route-key">Bus stop</span><span class="bus-key">Simulated vehicle</span></div>
       <div class="details"><h2 id="details-title">No demo overlay loaded</h2><div id="details-body" class="muted">Live observations are shown above. Create a demo run below to add simulated buses.</div></div>
     </div>
 
@@ -60,8 +64,8 @@
       <section class="action-panel">
         <h2>Create a draft run</h2>
         <form id="create-form">
-          <label>Bus service<input id="service-id" required maxlength="20" value="190"></label>
-          <label>Direction<input id="direction-id" required type="number" min="1" value="1"></label>
+          <label>Bus service<select id="service-id" required disabled></select></label>
+          <label>Direction<select id="direction-id" required disabled></select></label>
           <button id="create-button" type="submit">Create and load</button>
         </form>
       </section>
@@ -88,6 +92,18 @@
   <script src="/vendor/leaflet/leaflet.js"></script>
   <script>
     const map = L.map('map').setView([1.35, 103.82], 12);
+    const stopLayer = L.layerGroup().addTo(map);
+    let liveRoute = null;
+    let selectionVersion = 0;
+    const routeCache = new Map();
+    const liveService = document.getElementById("live-service");
+    const liveDirection = document.getElementById("live-direction");
+    const draftService = document.getElementById("service-id");
+    const draftDirection = document.getElementById("direction-id");
+    const busStopIcon = L.divIcon({
+      className: 'bus-stop-icon', iconSize: [22, 28], iconAnchor: [11, 28], popupAnchor: [0, -25],
+      html: '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="28" viewBox="0 0 22 28" aria-hidden="true"><path d="M11 19v8" stroke="#244f62" stroke-width="3"/><rect x="2" y="1" width="18" height="20" rx="3" fill="#fff" stroke="#244f62" stroke-width="2"/><rect x="6" y="5" width="10" height="11" rx="2" fill="#244f62"/><path d="M7 7h8v4H7z" fill="#fff"/><circle cx="8" cy="14" r="1" fill="#fff"/><circle cx="14" cy="14" r="1" fill="#fff"/><path d="M7 16v2m8-2v2" stroke="#244f62" stroke-width="2"/></svg>'
+    });
     const liveLayer = L.layerGroup().addTo(map);
     const demoLayer = L.layerGroup().addTo(map);
     const routeLayer = L.layerGroup().addTo(map);
@@ -160,8 +176,141 @@
       return box;
     }
 
+    async function allPages(path) {
+      const items = [];
+      let page = 0, totalPages;
+      do {
+        const result = await requestJson(path + (path.includes('?') ? '&' : '?') + 'page=' + page);
+        items.push(...result.items); totalPages = result.totalPages; page++;
+      } while (page < totalPages);
+      return items;
+    }
+
+    async function routeFor(service) {
+      if (!routeCache.has(service)) routeCache.set(service, await requestJson('/api/v1/map/routes/' + encodeURIComponent(service)));
+      return routeCache.get(service);
+    }
+
+    function directions(route, select, both) {
+      const previous = select.value;
+      select.replaceChildren();
+      if (both) select.add(new Option('Both directions', ''));
+      const choices = new Map();
+      for (const operator of route.operators) for (const direction of operator.directions) {
+        const last = direction.stops.at(-1);
+        choices.set(direction.directionId, 'Direction ' + direction.directionId + ' → ' + (last?.description || last?.stopCode || 'terminus'));
+      }
+      for (const [id, label] of choices) select.add(new Option(label, id));
+      if ([...select.options].some(option => option.value === previous)) select.value = previous;
+      select.disabled = choices.size === 0;
+    }
+
+    async function stopArrivals(stop, direction, service, box) {
+      const heading = (stop.description || 'Bus stop') + ' · ' + stop.stopCode;
+      box.replaceChildren(popup([heading, 'Service ' + service + ' · Direction ' + direction, 'Loading arrivals…']));
+      try {
+        const items = await allPages('/api/v1/map/arrivals?serviceId=' + encodeURIComponent(service) + '&stopCode=' + encodeURIComponent(stop.stopCode));
+        const relevant = items.filter(item => item.directionId == null || item.directionId === direction);
+        const times = relevant.sort((a,b) => (a.estimatedArrivalAt || '').localeCompare(b.estimatedArrivalAt || '')).map(item => {
+          const minutes = item.estimatedArrivalAt ? Math.ceil((Date.parse(item.estimatedArrivalAt) - Date.now()) / 60000) : null;
+          return minutes === null ? 'ETA unknown' : minutes < 0 ? 'Past ETA' : minutes === 0 ? 'Due' : minutes + ' min';
+        });
+        const lines = [heading, 'Service ' + service + ' · Direction ' + direction,
+          times.length ? 'Arrivals: ' + times.join(' · ') : 'No arrival data'];
+        if (relevant.length) {
+          const fetched = [...new Set(relevant.map(item => item.fetchedAt))].sort();
+          const format = value => new Date(value).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+          lines.push('Updated ' + format(fetched[0]) + (fetched.length > 1 ? '–' + format(fetched.at(-1)) : ''));
+          if (relevant.some(item => item.directionId == null)) {
+            const memberships = new Set(liveRoute?.operators.flatMap(operator => operator.directions)
+              .filter(value => value.stops.some(value => value.stopCode === stop.stopCode)).map(value => value.directionId));
+            if (memberships.size > 1) lines.push('Shared stop · direction uncertain');
+          }
+        }
+        box.replaceChildren(popup(lines));
+      } catch (error) { box.replaceChildren(popup([heading, 'Arrivals unavailable'])); }
+    }
+
+    function stopMarker(stop, direction, service, layer) {
+      const box = popup([stop.stopCode + ' · ' + (stop.description || 'Bus stop'),
+        'Service ' + service + ' · Direction ' + direction, 'Loading arrivals…']);
+      const marker = L.marker([stop.latitude, stop.longitude], {icon: busStopIcon})
+        .bindTooltip(box, {className: 'stop-tooltip', direction: 'auto', opacity: 1}).addTo(layer);
+      let loading = false;
+      marker.on('tooltipopen', async () => {
+        if (loading) return;
+        loading = true;
+        try { await stopArrivals(stop, direction, service, box); marker.setTooltipContent(box); }
+        finally { loading = false; }
+      });
+      return marker;
+    }
+
+    function drawLiveStops() {
+      stopLayer.clearLayers();
+      const selected = liveDirection.value;
+      const service = liveService.value;
+      for (const operator of liveRoute.operators) for (const direction of operator.directions) {
+        if (selected && direction.directionId !== Number(selected)) continue;
+        const stops = direction.stops.filter(validPoint);
+        if (stops.length > 1) L.polyline(stops.map(stop => [stop.latitude, stop.longitude]), {color: '#4c94a8', weight: 2, dashArray: '5 7'}).addTo(stopLayer);
+        for (const stop of stops) {
+          stopMarker(stop, direction.directionId, service, stopLayer);
+        }
+      }
+    }
+
+    function fitSelectedRoute() {
+      const points = liveRoute.operators.flatMap(operator => operator.directions)
+        .filter(direction => !liveDirection.value || direction.directionId === Number(liveDirection.value))
+        .flatMap(direction => direction.stops).filter(validPoint);
+      if (points.length && !activeRunId) {
+        map.fitBounds(points.map(point => [point.latitude, point.longitude]), {padding: [35,35], maxZoom: 15});
+        liveFitted = true;
+      }
+    }
+
+    function selectedDirection(item) {
+      if (!liveDirection.value) return true;
+      if (item.directionId != null) return item.directionId === Number(liveDirection.value);
+      const memberships = new Set(liveRoute.operators.flatMap(operator => operator.directions)
+        .filter(direction => direction.stops.some(stop => stop.stopCode === item.stopCode)).map(direction => direction.directionId));
+      return memberships.size === 1 && memberships.has(Number(liveDirection.value));
+    }
+
+    async function changeLiveService() {
+      const version = ++selectionVersion;
+      liveLayer.clearLayers(); stopLayer.clearLayers(); liveRoute = null;
+      try {
+        const route = await routeFor(liveService.value);
+        if (version !== selectionVersion) return;
+        liveRoute = route; directions(route, liveDirection, true); drawLiveStops();
+        liveFitted = false; fitSelectedRoute(); await refreshLive();
+      } catch (error) { liveStatus.textContent = 'Route unavailable: ' + error.message; }
+    }
+
+    async function loadSelections() {
+      const services = await allPages('/api/v1/map/services');
+      const ids = [...new Set(services.map(service => service.serviceId))].sort((a,b) => a.localeCompare(b, undefined, {numeric: true}));
+      for (const select of [liveService, draftService]) {
+        select.replaceChildren(...ids.map(id => new Option(id, id)));
+        if (ids.includes('190')) select.value = '190';
+        select.disabled = ids.length === 0;
+      }
+      if (!ids.length) throw new Error('No imported bus routes available.');
+      directions(await routeFor(draftService.value), draftDirection, false);
+      await changeLiveService();
+    }
+    liveService.addEventListener('change', changeLiveService);
+    liveDirection.addEventListener('change', () => { selectionVersion++; drawLiveStops(); liveFitted = false; fitSelectedRoute(); refreshLive(); });
+    draftService.addEventListener('change', async () => {
+      draftDirection.disabled = true;
+      try { directions(await routeFor(draftService.value), draftDirection, false); } catch (error) { showError(error); }
+    });
+
     async function refreshLive() {
-      if (liveBusy) return;
+      if (liveBusy || !liveRoute) return;
+      const version = selectionVersion;
       liveBusy = true;
       try {
         const service = document.getElementById('live-service').value.trim();
@@ -176,21 +325,17 @@
           totalPages = result.totalPages;
           page++;
         } while (page < totalPages);
+        if (version !== selectionVersion) return;
         liveLayer.clearLayers();
-        const fresh = items.filter(item => !item.stale && validPoint(item));
+        const fresh = items.filter(item => !item.stale && validPoint(item) && selectedDirection(item));
         if (!raw) {
           for (const item of fresh) {
             L.circleMarker([item.latitude, item.longitude], { radius: 8, color: '#ffffff', weight: 2,
               fillColor: item.status === 'AMBIGUOUS' ? '#d87913' : '#1678d2', fillOpacity: .9 })
-              .bindPopup(popup([item.displayLabel + ' · INFERRED identity',
+              .bindTooltip(popup([item.displayLabel + ' · inferred identity',
                 'Direction ' + item.directionId + ' · ' + item.status,
-                'Confidence score ' + Math.round(item.confidence * 100) + '% (heuristic)',
-                'Last seen ' + new Date(item.lastSeenAt).toLocaleString(),
-                item.observationIds.length + ' linked observations · ' + item.confirmations + ' source-time confirmations',
-                'Approximate route progress ' + Math.round(item.routeProgressMeters) + ' m',
-                'Track ID ' + item.trackId, 'Recent evidence IDs: ' + item.observationIds.slice(-5).join(', '),
-                'No real plate or driver is known; directives unavailable']))
-              .bindTooltip(popup([item.displayLabel]), { direction: 'right' }).addTo(liveLayer);
+                'Updated ' + new Date(item.lastSeenAt).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})]),
+                {className: 'bus-tooltip', direction: 'auto'} ).addTo(liveLayer);
           }
           const newest = fresh.map(item => item.lastSeenAt).sort().at(-1);
           liveStatus.textContent = fresh.length
@@ -213,16 +358,15 @@
         for (const group of groups.values()) {
           const item = group[0];
           L.circleMarker([item.latitude, item.longitude], { radius: 7, color: '#ffffff', weight: 2, fillColor: '#1678d2', fillOpacity: .9 })
-            .bindPopup(popup(group.flatMap(value => [
-              'Service ' + value.serviceId + ' · live observation · identity UNVERIFIED',
-              'Stop ' + value.stopCode + ' · direction ' + (value.directionId ?? 'unknown'),
-              'Fetched ' + new Date(value.fetchedAt).toLocaleString(),
-              'ETA ' + (value.estimatedArrivalAt ? new Date(value.estimatedArrivalAt).toLocaleTimeString() : 'unknown')
-            ]))).bindTooltip(group.length + ' observation(s) at this position').addTo(liveLayer);
+            .bindTooltip(popup([
+              'Service ' + item.serviceId + ' · live position',
+              group.length + ' observations · identity unverified',
+              'Updated ' + new Date(group.map(value => value.fetchedAt).sort().at(-1)).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})
+            ]), {className: 'bus-tooltip', direction: 'auto'}).addTo(liveLayer);
         }
         const newest = fresh.map(item => item.fetchedAt).sort().at(-1);
         liveStatus.textContent = fresh.length
-          ? fresh.length + ' current observations · ' + groups.size + ' positions · latest source fetch ' + new Date(newest).toLocaleString() + '. Observations may represent the same bus at several stops.'
+          ? fresh.length + ' current observations · ' + groups.size + ' positions · latest source fetch ' + new Date(newest).toLocaleString() + '. Observations may represent the same bus at several stops. With a direction selected, observations at shared stops with unknown direction are omitted.'
           : 'No current live positions for this selection. Buses may not be operating, or DataMall may have no usable GPS positions. ' + items.filter(item => item.stale).length + ' stale observations hidden.';
         if (!liveFitted && fresh.length && !activeRunId) {
           map.fitBounds(fresh.map(item => [item.latitude, item.longitude]), { padding: [35, 35], maxZoom: 15 });
@@ -231,7 +375,7 @@
       } catch (error) {
         liveLayer.clearLayers();
         liveStatus.textContent = 'Live feed unavailable: ' + error.message + '. Live markers cleared.';
-      } finally { liveBusy = false; }
+      } finally { liveBusy = false; if (version !== selectionVersion && liveRoute) refreshLive(); }
     }
 
     document.getElementById('raw-observations').addEventListener('change', () => { liveFitted = false; refreshLive(); });
@@ -239,6 +383,7 @@
       event.preventDefault(); liveFitted = false; refreshLive();
     });
     requestJson('/api/v1/map/settings').then(settings => {
+      document.getElementById('raw-observations').checked = settings.rawObservationsDefault;
       cognitoEnabled = settings.cognitoEnabled;
       document.getElementById('token-label').hidden = !cognitoEnabled;
       tokenInput.required = cognitoEnabled;
@@ -250,7 +395,7 @@
       attribution.rel = 'noopener';
       const tiles = L.tileLayer(settings.tileUrl, { maxZoom: 19, attribution: attribution.outerHTML }).addTo(map);
       tiles.on('tileerror', () => { document.getElementById('basemap-status').textContent = 'Some background map tiles could not load. Check your internet connection.'; });
-      refreshLive();
+      loadSelections().catch(error => { liveStatus.textContent = 'Service selection unavailable: ' + error.message; });
       setInterval(() => { if (!document.hidden) refreshLive(); }, settings.refreshIntervalMs);
     }).catch(error => { liveStatus.textContent = 'Map settings unavailable: ' + error.message; });
 
@@ -270,13 +415,16 @@
       for (const sequence of route.sequences) {
         const stops = sequence.stops.filter(validPoint);
         if (stops.length > 1) L.polyline(stops.map(stop => [stop.latitude, stop.longitude]), { color: '#4c94a8', weight: 2, dashArray: '5 7' }).addTo(routeLayer);
-        for (const stop of stops) L.circleMarker([stop.latitude, stop.longitude], { radius: 3, color: '#37798e', fillColor: 'white', fillOpacity: 1 })
-          .bindPopup(popup(['Stop ' + stop.stopCode, sequence.operator + ' · sequence ' + stop.stopSequence])).addTo(routeLayer);
+        for (const stop of stops) {
+          const reference = routeCache.get(route.serviceId)?.operators.flatMap(operator => operator.directions)
+            .filter(direction => direction.directionId === route.directionId)
+            .flatMap(direction => direction.stops).find(value => value.stopCode === stop.stopCode);
+          stopMarker({...stop, description: reference?.description}, route.directionId, route.serviceId, routeLayer);
+        }
       }
       for (const vehicle of vehicles.filter(validPoint)) {
         L.circleMarker([vehicle.latitude, vehicle.longitude], { radius: 10, color: 'white', weight: 3, fillColor: '#a43ac2', fillOpacity: 1 })
-          .bindPopup(popup([vehicle.displayLabel + ' · SIMULATION', vehicle.syntheticPlate || 'No synthetic plate', vehicle.driverDisplayName]))
-          .bindTooltip(popup([vehicle.displayLabel]), { permanent: true, direction: 'right' }).addTo(demoLayer);
+          .bindTooltip(popup([vehicle.displayLabel + ' · SIMULATION', vehicle.syntheticPlate || 'No synthetic plate', vehicle.driverDisplayName]), {className: 'bus-tooltip', direction: 'auto'}).addTo(demoLayer);
       }
       const points = [...selectableStops, ...vehicles.filter(validPoint)];
       if (points.length) map.fitBounds(points.map(point => [point.latitude, point.longitude]), { padding: [35, 35], maxZoom: 15 });
