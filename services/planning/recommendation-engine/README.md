@@ -32,17 +32,19 @@ The service currently provides:
 - deterministic candidate validation with explicit rejection reasons;
 - deterministic candidate/fallback orchestration that preflights eligibility
   before any provider call;
+- a conditionally registered Gemini adapter using Spring AI 2.0.1 and
+  provider-native structured output;
 - a multi-stage Docker image running as a non-root user.
 
 The repository configuration and local database provisioning have been applied
 and verified. The Maven wrapper resolves Maven 3.9.11, `clean verify` passes
-all 43 tests, and the PostgreSQL integration suite applies the migration and
+all 49 tests, and the PostgreSQL integration suite applies the migration and
 exercises persistence using only the `occ_recommendation` role.
 
 The following work is not implemented yet:
 
 - WQAP-3 delivery to this endpoint;
-- a Gemini/Spring AI provider adapter and model audit records;
+- model invocation and candidate-validation audit records;
 - an Operations service adapter; and
 - `STANDBY_DISPATCH` behavior.
 
@@ -267,7 +269,7 @@ From `services/planning/recommendation-engine` run:
 ./mvnw.cmd clean verify
 ```
 
-The current suite contains 43 tests:
+The current suite contains 49 tests:
 
 | Test area | Count | Coverage |
 |---|---:|---|
@@ -276,6 +278,7 @@ The current suite contains 43 tests:
 | AI candidate contract | 4 | Permitted actions, required text and adjustment limits |
 | AI candidate validation | 8 | Source, event, safety, target, action and adjustment constraints |
 | Candidate/fallback orchestration | 8 | Disabled, unavailable, accepted, empty, rejected, mismatched, failed and non-actionable paths |
+| Gemini configuration and adapter | 6 | Typed settings, secret redaction, model options, native schema and domain conversion |
 | Fixture adapter | 2 | Known and unknown fixture lookup |
 | Full application integration | 8 | Configuration default, Flyway, audit persistence, replay, conflict, rejection and OpenAPI |
 
@@ -302,6 +305,20 @@ The process listens on `8002` by default. The `local` profile imports the
 repository-root `.env`, including the private database password. Host-native
 runs use `jdbc:postgresql://localhost:5432/occ` and `occ_recommendation` by
 default; all settings remain overridable through environment variables.
+
+Gemini remains opt-in. For a local provider call, set these values only in the
+ignored repository-root `.env`:
+
+```properties
+OCC_RECOMMENDATION_AI_ENABLED=true
+OCC_RECOMMENDATION_GEMINI_API_KEY=<your-private-google-ai-studio-key>
+```
+
+When the flag is `false`, no Gemini client or adapter bean is created and no API
+key is required. When the flag is `true`, startup rejects a missing, blank or
+`change-me` key. Shared environments should keep the flag disabled until model
+audit persistence is implemented. Automated tests use a mocked Spring AI model
+and never make a billable Gemini request.
 
 - Health: `http://localhost:8002/actuator/health`
 - Swagger UI: `http://localhost:8002/swagger-ui.html`
@@ -388,6 +405,12 @@ The current configuration is deliberately small:
 | Internal/process port | `${OCC_RECOMMENDATION_INTERNAL_PORT:8002}` |
 | Fixture location | `${OCC_RECOMMENDATION_FIXTURE_LOCATION:classpath:fixtures/bunching-mitigation-context.json}` |
 | AI candidate generation | `${OCC_RECOMMENDATION_AI_ENABLED:false}` |
+| Gemini API key | `OCC_RECOMMENDATION_GEMINI_API_KEY` (required secret only when AI is enabled) |
+| Gemini model | `${OCC_RECOMMENDATION_GEMINI_MODEL:gemini-2.5-flash}` |
+| Gemini temperature | `${OCC_RECOMMENDATION_GEMINI_TEMPERATURE:0.0}` |
+| Gemini output limit | `${OCC_RECOMMENDATION_GEMINI_MAX_OUTPUT_TOKENS:512}` |
+| Gemini request timeout | `${OCC_RECOMMENDATION_GEMINI_REQUEST_TIMEOUT:30s}` |
+| Gemini total HTTP attempts | `${OCC_RECOMMENDATION_GEMINI_RETRY_ATTEMPTS:2}` |
 | Database URL | `${OCC_RECOMMENDATION_DB_URL:jdbc:postgresql://localhost:5432/occ}` |
 | Database username | `${OCC_RECOMMENDATION_DB_USERNAME:occ_recommendation}` |
 | Database password | `OCC_RECOMMENDATION_DB_PASSWORD` (required secret) |
@@ -473,8 +496,8 @@ publishes or consumes a finalized cross-service contract.
 
 ## Phase 7 boundary
 
-Gemini/Spring AI is intended for Phase 7, but model output must not bypass the
-deterministic safety policy. The intended boundary is:
+Gemini/Spring AI is integrated for Phase 7, but model output must not bypass the
+deterministic safety policy. The boundary is:
 
 1. Gemini proposes structured mitigation candidates or explanation content.
 2. Schema validation rejects malformed model output.
@@ -488,7 +511,7 @@ Durable request/recommendation persistence is now implemented. Phase 7 must add
 model-specific prompt, schema-version, latency, usage and validation audit data
 before enabling nondeterministic model calls.
 
-Phase 7 Steps 1 through 4 are implemented:
+Phase 7 Steps 1 through 5 are implemented:
 
 - `MitigationCandidateGeneratorPort` defines a provider-neutral generation
   boundary using current event, diagnosis and validated mitigation context;
@@ -510,15 +533,21 @@ Phase 7 Steps 1 through 4 are implemented:
 - disabled generation, a missing provider, empty output, rejected or mismatched
   candidates, and provider failures all return the unchanged deterministic
   recommendation;
+- `GeminiMitigationCandidateAdapter` sends only the current event, diagnosis and
+  validated context through Spring AI and requests one provider-native
+  JSON-Schema-constrained candidate;
+- Gemini is registered only when `OCC_RECOMMENDATION_AI_ENABLED=true`; its API
+  key, model, temperature, output limit, timeout and retry attempts are bound
+  through typed configuration, and the key is redacted from configuration text;
 - recommendation IDs, statuses, classifications, impact estimates, safety
   decisions and evidence remain owned by deterministic code; and
 - `OCC_RECOMMENDATION_AI_ENABLED` defaults to `false`.
 
-The live flow now contains the guarded orchestration boundary, but no provider
-adapter is registered yet. Setting the flag to `true` therefore remains safe:
-the service detects that no provider is available and returns the deterministic
-recommendation. Existing HTTP behavior does not become nondeterministic until a
-provider adapter is added in a later Phase 7 step.
+The live flow now contains both guarded orchestration and the Gemini adapter.
+With the flag disabled, HTTP behavior remains fully deterministic. With the flag
+enabled and a valid key, Gemini proposes a structured candidate; malformed,
+unsafe or mismatched output and provider failures fall back to the deterministic
+recommendation. Durable model-call audit data is the next required Phase 7 step.
 
 ## Guidance for contributors and AI agents
 

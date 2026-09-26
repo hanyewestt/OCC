@@ -29,6 +29,13 @@ occ:
   recommendation:
     ai:
       enabled: ${OCC_RECOMMENDATION_AI_ENABLED:false}
+      gemini:
+        api-key: ${OCC_RECOMMENDATION_GEMINI_API_KEY:}
+        model: ${OCC_RECOMMENDATION_GEMINI_MODEL:gemini-2.5-flash}
+        temperature: ${OCC_RECOMMENDATION_GEMINI_TEMPERATURE:0.0}
+        max-output-tokens: ${OCC_RECOMMENDATION_GEMINI_MAX_OUTPUT_TOKENS:512}
+        request-timeout: ${OCC_RECOMMENDATION_GEMINI_REQUEST_TIMEOUT:30s}
+        retry-attempts: ${OCC_RECOMMENDATION_GEMINI_RETRY_ATTEMPTS:2}
     fixture:
       location: ${OCC_RECOMMENDATION_FIXTURE_LOCATION:classpath:fixtures/bunching-mitigation-context.json}
 

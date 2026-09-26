@@ -3,11 +3,14 @@ package com.csd.occ.planning.recommendationengine.integration;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.csd.occ.planning.recommendationengine.infrastructure.config.RecommendationAiProperties;
+import com.csd.occ.planning.recommendationengine.infrastructure.config.RecommendationGeminiProperties;
+import com.csd.occ.planning.recommendationengine.infrastructure.gemini.GeminiMitigationCandidateAdapter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.core.io.ClassPathResource;
@@ -57,6 +60,12 @@ class BunchingRecommendationFlowIT {
     @Autowired
     private RecommendationAiProperties aiProperties;
 
+    @Autowired
+    private RecommendationGeminiProperties geminiProperties;
+
+    @Autowired
+    private ApplicationContext applicationContext;
+
     @BeforeEach
     void clearRecommendationRecords() {
         jdbc.update("DELETE FROM recommendation.recommendation_record");
@@ -65,6 +74,8 @@ class BunchingRecommendationFlowIT {
     @Test
     void aiCandidateGenerationIsDisabledByDefault() {
         assertThat(aiProperties.enabled()).isFalse();
+        assertThat(geminiProperties.model()).isEqualTo("gemini-2.5-flash");
+        assertThat(applicationContext.getBeansOfType(GeminiMitigationCandidateAdapter.class)).isEmpty();
     }
 
     @Test
