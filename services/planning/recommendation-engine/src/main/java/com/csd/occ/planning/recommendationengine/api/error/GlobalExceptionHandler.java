@@ -1,5 +1,6 @@
 package com.csd.occ.planning.recommendationengine.api.error;
 
+import com.csd.occ.planning.recommendationengine.domain.IdempotencyConflictException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.util.List;
@@ -56,6 +57,18 @@ public class GlobalExceptionHandler {
                 "No actionable recommendation",
                 exception.getMessage(),
                 "urn:occ:problem:no-actionable-recommendation",
+                request);
+    }
+
+    @ExceptionHandler(IdempotencyConflictException.class)
+    ProblemDetail handleIdempotencyConflict(
+            IdempotencyConflictException exception,
+            HttpServletRequest request) {
+        return problem(
+                HttpStatus.CONFLICT,
+                "Idempotency conflict",
+                exception.getMessage(),
+                "urn:occ:problem:idempotency-conflict",
                 request);
     }
 

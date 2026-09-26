@@ -147,8 +147,14 @@ services:
     environment:
       OCC_RECOMMENDATION_INTERNAL_PORT: ${OCC_RECOMMENDATION_INTERNAL_PORT:-8002}
       OCC_RECOMMENDATION_FIXTURE_LOCATION: ${OCC_RECOMMENDATION_FIXTURE_LOCATION:-classpath:fixtures/bunching-mitigation-context.json}
+      OCC_RECOMMENDATION_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}
+      OCC_RECOMMENDATION_DB_USERNAME: ${OCC_RECOMMENDATION_DB_USERNAME:-occ_recommendation}
+      OCC_RECOMMENDATION_DB_PASSWORD: ${OCC_RECOMMENDATION_DB_PASSWORD:?set in root .env}
     ports:
       - "${OCC_RECOMMENDATION_PORT:-6768}:${OCC_RECOMMENDATION_INTERNAL_PORT:-8002}"
+    depends_on:
+      recommendation-schema-init:
+        condition: service_completed_successfully
 
   pgadmin:
     image: dpage/pgadmin4:9.18

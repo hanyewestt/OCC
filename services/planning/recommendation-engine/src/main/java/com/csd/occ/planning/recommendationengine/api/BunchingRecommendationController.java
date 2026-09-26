@@ -3,7 +3,7 @@ package com.csd.occ.planning.recommendationengine.api;
 import com.csd.occ.planning.recommendationengine.api.dto.BunchingRecommendationResponse;
 import com.csd.occ.planning.recommendationengine.api.dto.CreateBunchingRecommendationRequest;
 import com.csd.occ.planning.recommendationengine.api.error.NoActionableRecommendationException;
-import com.csd.occ.planning.recommendationengine.domain.BunchingRecommendationService;
+import com.csd.occ.planning.recommendationengine.domain.DurableBunchingRecommendationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -27,10 +27,14 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/internal/v1/bunching-recommendations")
 public class BunchingRecommendationController {
 
-    private final BunchingRecommendationService recommendations;
+    private final DurableBunchingRecommendationService recommendations;
+    private final RecommendationRequestFingerprint fingerprints;
 
-    public BunchingRecommendationController(BunchingRecommendationService recommendations) {
+    public BunchingRecommendationController(
+            DurableBunchingRecommendationService recommendations,
+            RecommendationRequestFingerprint fingerprints) {
         this.recommendations = recommendations;
+        this.fingerprints = fingerprints;
     }
 
     @Operation(
@@ -88,18 +92,27 @@ public class BunchingRecommendationController {
                     description = "The evidence cannot produce a validated actionable recommendation",
                     content = @Content(
                             mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                            schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(
+                    responseCode = "409",
+                    description = "The idempotency key was already used with different request content",
+                    content = @Content(
+                            mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                             schema = @Schema(implementation = ProblemDetail.class)))
     })
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public BunchingRecommendationResponse create(
             @Parameter(
-                    description = "UUID identifying this idempotent recommendation attempt",
+                    description = "UUID identifying this recommendation attempt. Reusing the key with the same "
+                            + "request returns the stored response; reuse with different content returns 409.",
                     required = true,
                     example = "f07c921a-bd3b-4a97-8b17-a384ef1269a7")
             @RequestHeader("Idempotency-Key") UUID idempotencyKey,
             @Valid @RequestBody CreateBunchingRecommendationRequest request) {
         var recommendation = recommendations.recommend(
                         idempotencyKey,
+                        fingerprints.fingerprint(request),
+                        request.requestId(),
                         request.classification(),
                         request.bunchingEvent().toDomain(),
                         request.diagnosis().toDomain())
@@ -107,6 +120,8 @@ public class BunchingRecommendationController {
                         "No validated mitigation is available for this event and operational context."));
 
         return BunchingRecommendationResponse.from(
-                request.requestId(), request.classification(), recommendation);
+                recommendation.requestId(),
+                recommendation.classification(),
+                recommendation.recommendation());
     }
 }

@@ -23,15 +23,20 @@ The service currently provides:
 - `HOLD` and `DWELL_ADJUSTMENT` policy support;
 - RFC 9457-style problem responses;
 - generated OpenAPI documentation;
-- unit, MVC, fixture-adapter, and full application integration tests; and
+- unit, MVC, fixture-adapter, and full application integration tests;
 - a Maven 3.9.11 wrapper and repository-standard environment configuration;
 - a dedicated `recommendation` PostgreSQL schema owned by `occ_recommendation`;
+- Flyway-managed recommendation audit records and durable idempotency;
 - a multi-stage Docker image running as a non-root user.
+
+The repository configuration and local database provisioning have been applied
+and verified. The Maven wrapper resolves Maven 3.9.11, `clean verify` passes
+all 22 tests, and the PostgreSQL integration suite applies the migration and
+exercises persistence using only the `occ_recommendation` role.
 
 The following work is not implemented yet:
 
 - WQAP-3 delivery to this endpoint;
-- PostgreSQL persistence and durable idempotency;
 - Gemini/Spring AI candidate generation and model audit records;
 - an Operations service adapter; and
 - `STANDBY_DISPATCH` behavior.
@@ -76,11 +81,12 @@ Content-Type: application/json
 Idempotency-Key: <UUID>
 ```
 
-The caller must provide a UUID `Idempotency-Key`. At present, this UUID becomes
-the recommendation ID and makes deterministic repeated calls produce the same
-identifier. The service does **not** yet persist the original request or
-response. Durable replay and rejection of the same key with different content
-must be added before nondeterministic model output is enabled.
+The caller must provide a UUID `Idempotency-Key`. This UUID becomes the
+recommendation ID. The service stores the validated request fingerprint and
+recommendation before returning success. Reusing the key with the same request
+returns the original stored response; reusing it with different request content
+returns `409 Conflict`. Requests that produce no actionable recommendation are
+not stored.
 
 The complete Route 190 example request is maintained at
 [`src/test/resources/fixtures/requests/confirmed-bunching-recommendation.json`](src/test/resources/fixtures/requests/confirmed-bunching-recommendation.json).
@@ -174,6 +180,7 @@ cause, confidence, trade-offs and limitations, and the combined evidence IDs.
 | Status | Meaning |
 |---|---|
 | `400 Bad Request` | Missing idempotency key, malformed JSON, unsupported enum value, or failed field validation. |
+| `409 Conflict` | The idempotency key already belongs to a different validated request. |
 | `422 Unprocessable Content` | The input is valid but cannot produce a validated actionable recommendation. |
 
 Examples of `422` conditions include:
@@ -255,14 +262,14 @@ From `services/planning/recommendation-engine` run:
 ./mvnw.cmd clean verify
 ```
 
-The current suite contains 19 tests:
+The current suite contains 22 tests:
 
 | Test area | Count | Coverage |
 |---|---:|---|
-| Controller MVC | 4 | Success, validation, missing header and unavailable action |
+| Controller MVC | 5 | Success, validation, missing header, unavailable action and idempotency conflict |
 | Domain policy | 8 | Action choice, limits and rejection rules |
 | Fixture adapter | 2 | Known and unknown fixture lookup |
-| Full application integration | 5 | Fixture flow, repeatability, rejection and OpenAPI |
+| Full application integration | 7 | Flyway, audit persistence, replay, conflict, rejection and OpenAPI |
 
 `./mvnw.cmd clean verify` runs both Surefire unit tests and the Failsafe integration
 test ending in `IT`.
@@ -276,9 +283,17 @@ $env:SPRING_PROFILES_ACTIVE = "local"
 ./mvnw.cmd spring-boot:run
 ```
 
+PostgreSQL and the recommendation schema must already be running. From the
+repository root, provision them first with:
+
+```powershell
+docker compose --env-file .env -f infra/local/compose.yaml up -d postgres recommendation-schema-init
+```
+
 The process listens on `8002` by default. The `local` profile imports the
-repository-root `.env`; all settings also remain overridable through normal
-environment variables.
+repository-root `.env`, including the private database password. Host-native
+runs use `jdbc:postgresql://localhost:5432/occ` and `occ_recommendation` by
+default; all settings remain overridable through environment variables.
 
 - Health: `http://localhost:8002/actuator/health`
 - Swagger UI: `http://localhost:8002/swagger-ui.html`
@@ -305,8 +320,11 @@ Build from the service directory:
 
 ```powershell
 docker build -t occ-recommendation-engine:local .
-docker run --rm -p 6768:8002 occ-recommendation-engine:local
 ```
+
+The application requires PostgreSQL at startup. Use the Compose command below
+for a runnable container; a standalone `docker run` must explicitly provide a
+reachable database URL, username and password.
 
 The image uses a Maven build stage, a Java 25 runtime, and the non-root user
 `10001`. Its `.dockerignore` excludes Git metadata and Maven build output from
@@ -341,13 +359,15 @@ src/main/java/com/csd/occ/planning/recommendationengine/
 ├── domain/                  Policy, service and domain records
 └── infrastructure/
     ├── config/              Spring and OpenAPI configuration
-    └── fixture/             Classpath mitigation-context adapter
+    ├── fixture/             Classpath mitigation-context adapter
+    └── persistence/         JDBC recommendation-record adapter
 ```
 
-The domain depends on the `BunchingMitigationContextPort`. The classpath fixture
-adapter is its current implementation. A future Operations service or database
-adapter can implement the same boundary without moving operational concerns into
-the policy.
+The domain depends on `BunchingMitigationContextPort` for validated operational
+inputs and `RecommendationRecordPort` for durable audit records. The classpath
+fixture and JDBC implementations remain infrastructure adapters. A future
+Operations service adapter can replace the fixture without moving operational
+concerns into the policy.
 
 ## Configuration today
 
@@ -359,7 +379,10 @@ The current configuration is deliberately small:
 | Public Compose port | `${OCC_RECOMMENDATION_PORT:6768}` |
 | Internal/process port | `${OCC_RECOMMENDATION_INTERNAL_PORT:8002}` |
 | Fixture location | `${OCC_RECOMMENDATION_FIXTURE_LOCATION:classpath:fixtures/bunching-mitigation-context.json}` |
-| Schema initialization password | `OCC_RECOMMENDATION_DB_PASSWORD` (required secret) |
+| Database URL | `${OCC_RECOMMENDATION_DB_URL:jdbc:postgresql://localhost:5432/occ}` |
+| Database username | `${OCC_RECOMMENDATION_DB_USERNAME:occ_recommendation}` |
+| Database password | `OCC_RECOMMENDATION_DB_PASSWORD` (required secret) |
+| Flyway schema | `recommendation` |
 | Health endpoints | `health`, `info` |
 
 These variables are inventoried in the repository-root `.env.example`. The
@@ -380,11 +403,48 @@ schema, revokes public schema access, sets the role's search path to
 rerun against an existing local volume and does not reset data or change an
 existing role's password.
 
-The application remains stateless at this milestone: it has no database driver,
-does not connect as `occ_recommendation`, and does not create tables yet. The
-next persistence task will add Flyway migrations and database-backed durable
-idempotency. Those tables and migrations must be owned only by this service;
-other services must integrate through its API instead of mutating the schema.
+The application connects as `occ_recommendation`. Flyway migration
+`V001__create_recommendation_record.sql` creates the singular
+`recommendation_record` table and supporting indexes. Each successful action
+stores indexed event, diagnosis and mitigation identifiers together with:
+
+- the SHA-256 fingerprint of the validated API request;
+- the complete validated request as JSON;
+- the fixture-backed mitigation context and applied constraints as JSON;
+- the complete validated recommendation as JSON;
+- combined evidence IDs, rationale, status and creation time.
+
+The unique idempotency-key constraint and `INSERT ... ON CONFLICT DO NOTHING`
+make concurrent duplicate handling database-backed. Other services must
+integrate through this API instead of reading or mutating the schema directly.
+
+### Local database verification
+
+With Docker Desktop running and a private
+`OCC_RECOMMENDATION_DB_PASSWORD` in the ignored repository-root `.env`, the
+local Compose stack was provisioned on PostgreSQL port `5432`. The schema-init
+job was run more than once to confirm that it can safely provision an existing
+database volume. The following properties were verified:
+
+- database: `occ`;
+- schema: `recommendation`;
+- schema owner and login: `occ_recommendation`;
+- `occ_recommendation` is not a PostgreSQL superuser and cannot create roles or
+  databases;
+- the role's default search path is `recommendation, public` and timezone is
+  UTC;
+- `PUBLIC` has no privileges on the `recommendation` schema; and
+- authenticated connections as `occ_recommendation` can create and roll back a
+  temporary table in its own schema.
+
+The earlier temporary probe table was rolled back. The only application-owned
+table is now `recommendation_record`, created through Flyway rather than the
+role/schema initialization script.
+
+The documented Route 190 request was also verified against the local Compose
+service: the initial call created one record, an identical retry returned the
+same response, different content with the same key returned `409`, and the
+stored response remained available after restarting the application container.
 
 ## WQAP-3 integration status
 
@@ -415,8 +475,9 @@ deterministic safety policy. The intended boundary is:
 5. Model, prompt/schema version, latency, usage, evidence and validation outcome
    are persisted for audit and replay.
 
-Durable idempotency and model-audit persistence must be implemented in the
-confirmed `recommendation` schema before enabling nondeterministic model calls.
+Durable request/recommendation persistence is now implemented. Phase 7 must add
+model-specific prompt, schema-version, latency, usage and validation audit data
+before enabling nondeterministic model calls.
 
 ## Guidance for contributors and AI agents
 

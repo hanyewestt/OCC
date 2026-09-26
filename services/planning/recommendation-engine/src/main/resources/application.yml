@@ -1,6 +1,16 @@
 spring:
   application:
     name: recommendation-engine
+  datasource:
+    url: ${OCC_RECOMMENDATION_DB_URL:jdbc:postgresql://localhost:5432/occ}
+    username: ${OCC_RECOMMENDATION_DB_USERNAME:occ_recommendation}
+    password: ${OCC_RECOMMENDATION_DB_PASSWORD}
+    hikari:
+      transaction-isolation: TRANSACTION_READ_COMMITTED
+  flyway:
+    default-schema: recommendation
+    create-schemas: false
+    locations: classpath:db/migration
 
 server:
   port: ${OCC_RECOMMENDATION_INTERNAL_PORT:8002}

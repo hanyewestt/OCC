@@ -28,6 +28,20 @@ public class BunchingRecommendationService {
         Objects.requireNonNull(event, "event is required");
         Objects.requireNonNull(diagnosis, "diagnosis is required");
 
+        return evaluate(recommendationId, classification, event, diagnosis)
+                .map(BunchingRecommendationDecision::recommendation);
+    }
+
+    public Optional<BunchingRecommendationDecision> evaluate(
+            UUID recommendationId,
+            SourceClassification classification,
+            ConfirmedBunchingEvent event,
+            BunchingRootCauseDiagnosis diagnosis) {
+        Objects.requireNonNull(recommendationId, "recommendationId is required");
+        Objects.requireNonNull(classification, "classification is required");
+        Objects.requireNonNull(event, "event is required");
+        Objects.requireNonNull(diagnosis, "diagnosis is required");
+
         return mitigationContext.findFor(event)
                 .flatMap(inputs -> policy.evaluate(
                         recommendationId,
@@ -35,6 +49,9 @@ public class BunchingRecommendationService {
                         event,
                         diagnosis,
                         inputs.context(),
-                        inputs.impact()));
+                        inputs.impact())
+                        .map(recommendation -> new BunchingRecommendationDecision(
+                                recommendation,
+                                inputs.context())));
     }
 }
