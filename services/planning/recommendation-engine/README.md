@@ -27,17 +27,21 @@ The service currently provides:
 - a Maven 3.9.11 wrapper and repository-standard environment configuration;
 - a dedicated `recommendation` PostgreSQL schema owned by `occ_recommendation`;
 - Flyway-managed recommendation audit records and durable idempotency;
+- a provider-neutral AI candidate-generation port and strict candidate contract,
+  disabled by default;
+- deterministic candidate validation with explicit rejection reasons;
 - a multi-stage Docker image running as a non-root user.
 
 The repository configuration and local database provisioning have been applied
 and verified. The Maven wrapper resolves Maven 3.9.11, `clean verify` passes
-all 22 tests, and the PostgreSQL integration suite applies the migration and
+all 35 tests, and the PostgreSQL integration suite applies the migration and
 exercises persistence using only the `occ_recommendation` role.
 
 The following work is not implemented yet:
 
 - WQAP-3 delivery to this endpoint;
-- Gemini/Spring AI candidate generation and model audit records;
+- a Gemini/Spring AI provider adapter, candidate/fallback orchestration, and
+  model audit records;
 - an Operations service adapter; and
 - `STANDBY_DISPATCH` behavior.
 
@@ -262,14 +266,16 @@ From `services/planning/recommendation-engine` run:
 ./mvnw.cmd clean verify
 ```
 
-The current suite contains 22 tests:
+The current suite contains 35 tests:
 
 | Test area | Count | Coverage |
 |---|---:|---|
 | Controller MVC | 5 | Success, validation, missing header, unavailable action and idempotency conflict |
 | Domain policy | 8 | Action choice, limits and rejection rules |
+| AI candidate contract | 4 | Permitted actions, required text and adjustment limits |
+| AI candidate validation | 8 | Source, event, safety, target, action and adjustment constraints |
 | Fixture adapter | 2 | Known and unknown fixture lookup |
-| Full application integration | 7 | Flyway, audit persistence, replay, conflict, rejection and OpenAPI |
+| Full application integration | 8 | Configuration default, Flyway, audit persistence, replay, conflict, rejection and OpenAPI |
 
 `./mvnw.cmd clean verify` runs both Surefire unit tests and the Failsafe integration
 test ending in `IT`.
@@ -379,6 +385,7 @@ The current configuration is deliberately small:
 | Public Compose port | `${OCC_RECOMMENDATION_PORT:6768}` |
 | Internal/process port | `${OCC_RECOMMENDATION_INTERNAL_PORT:8002}` |
 | Fixture location | `${OCC_RECOMMENDATION_FIXTURE_LOCATION:classpath:fixtures/bunching-mitigation-context.json}` |
+| AI candidate generation | `${OCC_RECOMMENDATION_AI_ENABLED:false}` |
 | Database URL | `${OCC_RECOMMENDATION_DB_URL:jdbc:postgresql://localhost:5432/occ}` |
 | Database username | `${OCC_RECOMMENDATION_DB_USERNAME:occ_recommendation}` |
 | Database password | `OCC_RECOMMENDATION_DB_PASSWORD` (required secret) |
@@ -478,6 +485,28 @@ deterministic safety policy. The intended boundary is:
 Durable request/recommendation persistence is now implemented. Phase 7 must add
 model-specific prompt, schema-version, latency, usage and validation audit data
 before enabling nondeterministic model calls.
+
+Phase 7 Steps 1 through 3 are implemented as preparation only:
+
+- `MitigationCandidateGeneratorPort` defines a provider-neutral generation
+  boundary using current event, diagnosis and validated mitigation context;
+- `MitigationCandidate` permits only `HOLD` or `DWELL_ADJUSTMENT`, an identified
+  bus and control stop, an adjustment from 1 through 120 seconds, and a bounded
+  rationale;
+- `BunchingMitigationCandidateValidator` checks simulation classification,
+  confirmed status, operational validation, crowd safety, approved bus and
+  stop, action compatibility, positive headway deficit, and the lowest
+  applicable adjustment limit;
+- rejected candidates carry a stable machine-readable reason for later
+  fallback handling and audit persistence;
+- recommendation IDs, statuses, classifications, impact estimates, safety
+  decisions and evidence remain owned by deterministic code; and
+- `OCC_RECOMMENDATION_AI_ENABLED` defaults to `false`.
+
+The port and validator are deliberately not invoked by the live flow yet.
+Setting the flag to `true` does not enable a provider until fallback
+orchestration and an adapter are implemented in later Phase 7 steps. Existing
+HTTP behavior remains fully deterministic.
 
 ## Guidance for contributors and AI agents
 

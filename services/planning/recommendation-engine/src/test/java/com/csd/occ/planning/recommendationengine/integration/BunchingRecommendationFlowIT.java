@@ -2,6 +2,7 @@ package com.csd.occ.planning.recommendationengine.integration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.csd.occ.planning.recommendationengine.infrastructure.config.RecommendationAiProperties;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.BeforeEach;
@@ -53,9 +54,17 @@ class BunchingRecommendationFlowIT {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private RecommendationAiProperties aiProperties;
+
     @BeforeEach
     void clearRecommendationRecords() {
         jdbc.update("DELETE FROM recommendation.recommendation_record");
+    }
+
+    @Test
+    void aiCandidateGenerationIsDisabledByDefault() {
+        assertThat(aiProperties.enabled()).isFalse();
     }
 
     @Test

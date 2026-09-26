@@ -27,6 +27,8 @@ management:
 
 occ:
   recommendation:
+    ai:
+      enabled: ${OCC_RECOMMENDATION_AI_ENABLED:false}
     fixture:
       location: ${OCC_RECOMMENDATION_FIXTURE_LOCATION:classpath:fixtures/bunching-mitigation-context.json}
 
