@@ -29,3 +29,11 @@ occ:
     retention: ${OCC_INGESTION_RETENTION:24h}
     import-reference-on-startup: ${OCC_INGESTION_IMPORT_REFERENCE_ON_STARTUP:true}
     seed-targets-on-startup: ${OCC_INGESTION_SEED_TARGETS_ON_STARTUP:true}
+    demo:
+      enabled: ${OCC_INGESTION_DEMO_ENABLED:false}
+      scenario: ${OCC_INGESTION_DEMO_SCENARIO:route190-bunching-v1}
+      seed: ${OCC_INGESTION_DEMO_SEED:190}
+      step-interval: ${OCC_INGESTION_DEMO_STEP_INTERVAL:5s}
+      bunching-threshold: ${OCC_BUNCHING_THRESHOLD:90s}
+      bunching-internal-url: ${OCC_BUNCHING_INTERNAL_URL:http://localhost:8002}
+      bunching-control-timeout: ${OCC_BUNCHING_CONTROL_TIMEOUT:5s}

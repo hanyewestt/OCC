@@ -35,7 +35,7 @@ public class IngestionQueryService {
     }
 
     public Page<PollRun> pollRuns(Pageable pageable) {
-        return runs.findAll(pageable);
+        return runs.findByClassification("OBSERVATION_ONLY", pageable);
     }
 
     public List<FeedStatus> feedStatuses() {

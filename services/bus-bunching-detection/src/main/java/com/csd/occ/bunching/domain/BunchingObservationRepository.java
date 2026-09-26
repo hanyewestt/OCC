@@ -19,10 +19,10 @@ public interface BunchingObservationRepository extends Repository<BunchingObserv
     @Query(value = """
             INSERT INTO bunching.bunching_observation
                 (raw_observation_id, poll_run_id, reference_version_id, fetched_at, evaluated_at,
-                 threshold_seconds, stale_after_seconds, rule_version, classification,
+                 threshold_seconds, stale_after_seconds, rule_version, classification, feed_scope, demo_run_id,
                  bunched_group_count, evidence)
             VALUES (:rawId, :pollId, CAST(NULLIF(:referenceId, '') AS uuid), :fetchedAt, :evaluatedAt,
-                    :threshold, :staleAfter, :ruleVersion, 'OBSERVATION_ONLY', :bunchedCount,
+                    :threshold, :staleAfter, :ruleVersion, :classification, :feedScope, :demoRunId, :bunchedCount,
                     CAST(:evidence AS jsonb))
             ON CONFLICT (raw_observation_id) DO NOTHING
             """, nativeQuery = true)
@@ -34,6 +34,16 @@ public interface BunchingObservationRepository extends Repository<BunchingObserv
                        @Param("threshold") BigDecimal threshold,
                        @Param("staleAfter") BigDecimal staleAfter,
                        @Param("ruleVersion") String ruleVersion,
+                       @Param("classification") String classification,
+                       @Param("feedScope") String feedScope,
+                       @Param("demoRunId") UUID demoRunId,
                        @Param("bunchedCount") int bunchedCount,
                        @Param("evidence") String evidence);
+
+    default int insertIfAbsent(UUID rawId, UUID pollId, String referenceId, Instant fetchedAt, Instant evaluatedAt,
+                               BigDecimal threshold, BigDecimal staleAfter, String ruleVersion, int bunchedCount,
+                               String evidence) {
+        return insertIfAbsent(rawId, pollId, referenceId, fetchedAt, evaluatedAt, threshold, staleAfter, ruleVersion,
+                "OBSERVATION_ONLY", "LIVE", null, bunchedCount, evidence);
+    }
 }

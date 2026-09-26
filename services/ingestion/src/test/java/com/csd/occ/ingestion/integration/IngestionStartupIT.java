@@ -1,20 +1,30 @@
 package com.csd.occ.ingestion.integration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
+import com.csd.occ.ingestion.domain.BusArrivalObservationRepository;
 import com.csd.occ.ingestion.domain.BusArrivalSnapshot;
 import com.csd.occ.ingestion.domain.BusReferencePort;
 import com.csd.occ.ingestion.domain.BusArrivalService;
+import com.csd.occ.ingestion.domain.BunchingControlPort;
 import com.csd.occ.ingestion.domain.BunchingFeedService;
+import com.csd.occ.ingestion.domain.DemoModeService;
+import com.csd.occ.ingestion.domain.DemoReplayScenario;
+import com.csd.occ.ingestion.domain.DemoReplayService;
+import com.csd.occ.ingestion.domain.DemoRunDetails;
+import com.csd.occ.ingestion.domain.DemoRunService;
 import com.csd.occ.ingestion.domain.PollRunRepository;
 import com.csd.occ.ingestion.domain.ReferenceTopologyPort;
 import com.csd.occ.ingestion.domain.RawObservationRepository;
 import com.csd.occ.ingestion.infrastructure.config.BusArrivalSchedule;
+import com.csd.occ.ingestion.infrastructure.config.DemoReplaySchedule;
 import com.csd.occ.ingestion.infrastructure.datamall.DataMallAdapter;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -54,11 +64,17 @@ class IngestionStartupIT {
 
     @MockitoBean DataMallAdapter dataMall;
     @MockitoBean BusArrivalSchedule schedule;
+    @MockitoBean DemoReplaySchedule demoReplaySchedule;
+    @MockitoBean BunchingControlPort bunching;
     @Autowired JdbcTemplate jdbc;
     @Autowired PollRunRepository runs;
     @Autowired RawObservationRepository observations;
+    @Autowired BusArrivalObservationRepository arrivals;
     @Autowired BusArrivalService polling;
     @Autowired BunchingFeedService bunchingFeed;
+    @Autowired DemoRunService demoRuns;
+    @Autowired DemoReplayService replay;
+    @Autowired DemoModeService demoMode;
     @Autowired ReferenceTopologyPort topology;
 
     @Test
@@ -127,5 +143,41 @@ class IngestionStartupIT {
                 .extracting(ReferenceTopologyPort.BusStop::stopCode).containsExactly("44009", "44019");
         assertThat(topology.busStop(version.id(), "44009")).hasValueSatisfying(stop ->
                 assertThat(stop.description()).isEqualTo("First stop"));
+    }
+
+    @Test
+    void demoReplayRowsRemainRunScopedAndUnavailableFromLiveQueries() {
+        topology.replaceIfChanged(new BusReferencePort.BusReferenceData(
+                List.of(new BusReferencePort.BusStopRecord("44251", "Demo Road", "Demo Stop",
+                        new java.math.BigDecimal("1.377"), new java.math.BigDecimal("103.771"))),
+                List.of(new BusReferencePort.BusServiceRecord("190", "SBST", "TRUNK")),
+                List.of(new BusReferencePort.BusRouteStopRecord("190", "SBST", 1, 1, "44251",
+                        java.math.BigDecimal.ZERO))), "d".repeat(64));
+        when(bunching.alerts(any(UUID.class))).thenReturn(List.of());
+
+        DemoRunDetails started = demoRuns.start();
+        for (int step = 0; step < DemoReplayScenario.STEP_COUNT; step++) replay.replayNext();
+        DemoRunDetails completed = demoRuns.status(started.id());
+        var simulationPage = bunchingFeed.demoPage(started.id(), 0, 100);
+        var simulationIds = simulationPage.items().stream()
+                .map(BunchingFeedService.Snapshot::rawObservationId).collect(java.util.stream.Collectors.toSet());
+
+        assertThat(demoMode.enabled()).isTrue();
+        assertThat(completed.status()).isEqualTo("REPLAY_COMPLETE");
+        assertThat(simulationPage.items()).hasSize(DemoReplayScenario.STEP_COUNT);
+        assertThat(bunchingFeed.page(0, 100).items())
+                .noneMatch(snapshot -> simulationIds.contains(snapshot.rawObservationId()));
+        assertThat(arrivals.findCurrent("44251", "190", PageRequest.of(0, 50)).getContent()).isEmpty();
+        assertThat(arrivals.findHistory("44251", "190", null, null, PageRequest.of(0, 50)).getContent()).isEmpty();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ingestion.traffic_incident_observation "
+                + "WHERE demo_run_id=? AND classification='SIMULATION'", Integer.class, started.id())).isEqualTo(2);
+
+        DemoRunDetails closed = demoRuns.close(started.id());
+
+        assertThat(closed.status()).isEqualTo("CLOSED");
+        assertThat(demoMode.enabled()).isFalse();
+        assertThat(demoRuns.active()).isEmpty();
+        org.mockito.Mockito.verify(bunching).selectDemo(started.id());
+        org.mockito.Mockito.verify(bunching).selectLive();
     }
 }

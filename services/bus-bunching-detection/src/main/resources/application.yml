@@ -1,8 +1,6 @@
 spring:
   application:
     name: bus-bunching-detection
-  main:
-    web-application-type: none
   datasource:
     url: ${OCC_BUNCHING_DB_URL}
     username: ${OCC_BUNCHING_DB_USER:occ_bunching}
@@ -19,11 +17,14 @@ spring:
     default-schema: bunching
     create-schemas: false
     locations: classpath:db/migration
+server:
+  port: ${OCC_BUNCHING_INTERNAL_PORT:8002}
 
 occ:
   bunching:
     consumer-enabled: ${OCC_BUNCHING_CONSUMER_ENABLED:true}
     threshold: ${OCC_BUNCHING_THRESHOLD:90s}
+    retry-delay: ${OCC_BUNCHING_RETRY_DELAY:30s}
     # Required deployment choice: align with ingestion's configured freshness policy.
     stale-after: ${OCC_BUNCHING_STALE_AFTER:120s}
     poll-interval: ${OCC_BUNCHING_POLL_INTERVAL:1s}

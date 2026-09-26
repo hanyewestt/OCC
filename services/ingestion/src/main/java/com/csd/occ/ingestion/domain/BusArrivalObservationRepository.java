@@ -2,6 +2,7 @@ package com.csd.occ.ingestion.domain;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -16,9 +17,24 @@ public interface BusArrivalObservationRepository extends JpaRepository<BusArriva
     Page<BusArrivalObservation> findByStopCodeAndServiceIdAndFetchedAtBetweenOrderByFetchedAtDesc(
             String stopCode, String serviceId, Instant from, Instant to, Pageable pageable);
 
+    @Query("""
+            select new com.csd.occ.ingestion.domain.DemoSimulationArrivalDetails(
+                assignment.vehicleRegistrationNumber, assignment.operator,
+                assignment.vehicleType, assignment.captainCode, arrival.estimatedArrivalAt)
+            from BusArrivalObservation arrival, DemoVehicleAssignment assignment
+            where arrival.id = :observationId
+              and arrival.classification = 'SIMULATION'
+              and arrival.demoRunId = :demoRunId
+              and arrival.tripId is not null
+              and assignment.id.demoRunId = arrival.demoRunId
+              and assignment.id.tripId = arrival.tripId
+            """)
+    Optional<DemoSimulationArrivalDetails> findSimulationArrivalDetails(@Param("demoRunId") UUID demoRunId,
+            @Param("observationId") UUID observationId);
+
     @Query(value = """
             select id as id, stop_code as stopCode, service_id as serviceId, operator as operator,
-                   direction_id as directionId, visit_order as visitOrder,
+                   direction_id as directionId, visit_order as visitOrder, visit_number as visitNumber,
                    estimated_arrival_at as estimatedArrivalAt, origin_code as originCode,
                    destination_code as destinationCode, monitored as monitored, latitude as latitude,
                    longitude as longitude, load_category as loadCategory, feature as feature,
@@ -36,18 +52,27 @@ public interface BusArrivalObservationRepository extends JpaRepository<BusArriva
     Page<CurrentBusArrivalView> findCurrent(@Param("stopCode") String stopCode,
             @Param("serviceId") String serviceId, Pageable pageable);
 
-    @Query("""
-            select observation from BusArrivalObservation observation
-            where (:stopCode is null or observation.stopCode = :stopCode)
-              and (:serviceId is null or observation.serviceId = :serviceId)
-              and (:from is null or observation.fetchedAt >= :from)
-              and (:to is null or observation.fetchedAt <= :to)
-            order by observation.fetchedAt desc, observation.serviceId, observation.visitOrder
-            """)
+    @Query(value = """
+            select observation.* from ingestion.bus_arrival_observation observation
+            where observation.classification = 'OBSERVATION_ONLY'
+              and (:stopCode is null or observation.stop_code = :stopCode)
+              and (:serviceId is null or observation.service_id = :serviceId)
+              and (cast(:from as timestamptz) is null or observation.fetched_at >= cast(:from as timestamptz))
+              and (cast(:to as timestamptz) is null or observation.fetched_at <= cast(:to as timestamptz))
+            order by observation.fetched_at desc, observation.service_id, observation.visit_order
+            """, countQuery = """
+            select count(*) from ingestion.bus_arrival_observation observation
+            where observation.classification = 'OBSERVATION_ONLY'
+              and (:stopCode is null or observation.stop_code = :stopCode)
+              and (:serviceId is null or observation.service_id = :serviceId)
+              and (cast(:from as timestamptz) is null or observation.fetched_at >= cast(:from as timestamptz))
+              and (cast(:to as timestamptz) is null or observation.fetched_at <= cast(:to as timestamptz))
+            """, nativeQuery = true)
     Page<BusArrivalObservation> findHistory(@Param("stopCode") String stopCode,
             @Param("serviceId") String serviceId, @Param("from") Instant from,
             @Param("to") Instant to, Pageable pageable);
 
     @Modifying
-    long deleteByFetchedAtBefore(Instant cutoff);
+    @Query("delete from BusArrivalObservation observation where observation.classification = 'OBSERVATION_ONLY' and observation.fetchedAt < :cutoff")
+    int deleteExpiredLiveObservations(@Param("cutoff") Instant cutoff);
 }

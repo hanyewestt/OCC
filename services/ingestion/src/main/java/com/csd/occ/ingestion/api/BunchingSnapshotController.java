@@ -3,6 +3,7 @@ package com.csd.occ.ingestion.api;
 import com.csd.occ.ingestion.api.dto.BunchingArrivalResponse;
 import com.csd.occ.ingestion.api.dto.BunchingSnapshotPageResponse;
 import com.csd.occ.ingestion.api.dto.BunchingSnapshotResponse;
+import com.csd.occ.ingestion.api.dto.BunchingFeedHeadResponse;
 import com.csd.occ.ingestion.domain.BunchingFeedService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -34,6 +35,12 @@ public class BunchingSnapshotController {
             @RequestParam(defaultValue = "100") @Min(1) @Max(1000) int size) {
         BunchingFeedService.FeedPage page = feed.page(afterSequence, size);
         return new BunchingSnapshotPageResponse(page.items().stream().map(this::response).toList(), page.nextSequence());
+    }
+
+    @GetMapping("/head")
+    @Operation(operationId = "getBunchingLiveFeedHead", summary = "Get the current live snapshot sequence")
+    public BunchingFeedHeadResponse liveHead() {
+        return new BunchingFeedHeadResponse(feed.liveHeadSequence());
     }
 
     @GetMapping("/{rawObservationId}")

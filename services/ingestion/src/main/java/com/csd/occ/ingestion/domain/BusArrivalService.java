@@ -7,7 +7,9 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -22,6 +24,7 @@ public class BusArrivalService {
     private final PollRunRepository runs;
     private final RawObservationRepository observations;
     private final BusArrivalObservationRepository normalizedObservations;
+    private final BusRouteStopRepository routeStops;
     private final FeedStatusRepository feedStatuses;
     private final BusArrivalPort arrivals;
     private final ReferenceTopologyPort topology;
@@ -30,12 +33,13 @@ public class BusArrivalService {
 
     public BusArrivalService(PollTargetRepository targets, PollRunRepository runs,
             RawObservationRepository observations, BusArrivalObservationRepository normalizedObservations,
-            FeedStatusRepository feedStatuses, BusArrivalPort arrivals, ReferenceTopologyPort topology,
+            BusRouteStopRepository routeStops, FeedStatusRepository feedStatuses, BusArrivalPort arrivals, ReferenceTopologyPort topology,
             PollingConfigurationPort configuration, Clock clock) {
         this.targets = targets;
         this.runs = runs;
         this.observations = observations;
         this.normalizedObservations = normalizedObservations;
+        this.routeStops = routeStops;
         this.feedStatuses = feedStatuses;
         this.arrivals = arrivals;
         this.topology = topology;
@@ -72,6 +76,7 @@ public class BusArrivalService {
             run.setStartedAt(now);
             run.setOutcome("RUNNING");
             run.setRecordsReceived(0);
+            run.setClassification("OBSERVATION_ONLY");
             runs.save(run);
             try {
                 BusArrivalSnapshot response = arrivals.arrivalsAt(target.getStopCode(), target.getServiceId());
@@ -120,6 +125,7 @@ public class BusArrivalService {
             BusArrivalSnapshot snapshot, Instant now, UUID referenceVersionId) {
         List<BusArrivalObservation> result = new ArrayList<>();
         Set<String> monitoredServices = Set.copyOf(configuration.monitoredServices());
+        Map<String, List<BusRouteStop>> routes = new LinkedHashMap<>();
         for (BusArrivalPrediction prediction : snapshot.predictions()) {
             if (!monitoredServices.contains(prediction.serviceId())) continue;
             BusArrivalObservation observation = new BusArrivalObservation();
@@ -130,8 +136,9 @@ public class BusArrivalService {
             observation.setStopCode(target.getStopCode());
             observation.setServiceId(prediction.serviceId());
             observation.setOperator(blankToNull(prediction.operator()));
-            observation.setDirectionId(prediction.directionId());
+            observation.setDirectionId(resolveDirectionId(referenceVersionId, target, prediction, routes));
             observation.setVisitOrder(prediction.visitOrder());
+            observation.setVisitNumber(prediction.visitNumber());
             observation.setEstimatedArrivalAt(prediction.estimatedArrivalAt());
             observation.setLatitude(prediction.latitude());
             observation.setLongitude(prediction.longitude());
@@ -141,6 +148,7 @@ public class BusArrivalService {
             observation.setDestinationCode(prediction.destinationCode());
             observation.setMonitored(prediction.monitored());
             observation.setVehicleType(prediction.vehicleType());
+            observation.setClassification("OBSERVATION_ONLY");
             // A normalized row is evidence derived from this exact raw snapshot.
             // Keep their timestamps identical so downstream consumers can verify
             // the provenance relationship without relying on clock timing.
@@ -153,6 +161,39 @@ public class BusArrivalService {
             result.add(observation);
         }
         return result;
+    }
+
+    /**
+     * Bus Arrival omits Direction, while BusRoutes supplies a fixed direction for each route stop.
+     * Where a stop is served in both directions, terminal codes disambiguate it without guessing.
+     */
+    private Integer resolveDirectionId(UUID referenceVersionId, PollTarget target, BusArrivalPrediction prediction,
+            Map<String, List<BusRouteStop>> routes) {
+        if (prediction.directionId() != null) return prediction.directionId();
+        String operator = blankToNull(prediction.operator());
+        if (operator == null) return null;
+        String routeKey = prediction.serviceId() + "|" + operator;
+        List<BusRouteStop> route = routes.computeIfAbsent(routeKey, ignored -> routeStops
+                .findByIdReferenceVersionIdAndIdServiceIdAndIdOperatorOrderByIdDirectionIdAscIdStopSequenceAsc(
+                        referenceVersionId, prediction.serviceId(), operator));
+        Map<Short, List<BusRouteStop>> directions = new LinkedHashMap<>();
+        for (BusRouteStop routeStop : route) {
+            directions.computeIfAbsent(routeStop.id().directionId(), ignored -> new ArrayList<>()).add(routeStop);
+        }
+        directions.entrySet().removeIf(entry -> entry.getValue().stream()
+                .noneMatch(routeStop -> target.getStopCode().equals(routeStop.stopCode())));
+        if (directions.size() == 1) return directions.keySet().iterator().next().intValue();
+        List<Integer> terminalMatches = directions.entrySet().stream()
+                .filter(entry -> matchesTerminals(entry.getValue(), prediction.originCode(), prediction.destinationCode()))
+                .map(entry -> entry.getKey().intValue())
+                .toList();
+        return terminalMatches.size() == 1 ? terminalMatches.getFirst() : null;
+    }
+
+    private boolean matchesTerminals(List<BusRouteStop> route, String originCode, String destinationCode) {
+        return originCode != null && destinationCode != null
+                && originCode.equals(route.getFirst().stopCode())
+                && destinationCode.equals(route.getLast().stopCode());
     }
 
     private void updateFeedStatus(PollTarget target, Instant now, boolean success, String message) {

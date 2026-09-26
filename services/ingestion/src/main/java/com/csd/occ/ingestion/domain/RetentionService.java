@@ -25,8 +25,8 @@ public class RetentionService {
     @Transactional
     public void purgeExpiredObservations() {
         Instant cutoff = Instant.now(clock).minus(configuration.retention());
-        arrivals.deleteByFetchedAtBefore(cutoff);
-        rawObservations.deleteByFetchedAtBefore(cutoff);
+        arrivals.deleteExpiredLiveObservations(cutoff);
+        rawObservations.deleteExpiredLiveObservations(cutoff);
         runs.deleteCompletedWithoutRawBefore(cutoff);
     }
 }

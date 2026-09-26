@@ -5,11 +5,14 @@ import com.csd.occ.ingestion.domain.PollRun;
 import java.util.UUID;
 import java.util.Optional;
 import java.time.Instant;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
 public interface PollRunRepository extends JpaRepository<PollRun, UUID> {
     Optional<PollRun> findByIdempotencyKey(String idempotencyKey);
+    Page<PollRun> findByClassification(String classification, Pageable pageable);
 
     @Modifying
     @Query(value = """

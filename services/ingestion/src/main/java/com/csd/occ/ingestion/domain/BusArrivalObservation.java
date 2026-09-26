@@ -2,6 +2,7 @@ package com.csd.occ.ingestion.domain;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.Column;
 import java.math.BigDecimal;
@@ -26,12 +27,12 @@ public class BusArrivalObservation {
     private String operator;
     private Short directionId;
     private Short visitOrder;
+    private Short visitNumber;
     private Instant estimatedArrivalAt;
     private BigDecimal latitude;
     private BigDecimal longitude;
     private String loadCategory;
     private String feature;
-    private Instant observedAt;
     private Instant fetchedAt;
     private Instant ingestedAt;
     @Column(name = "record_checksum", columnDefinition = "char(64)", length = 64, nullable = false)
@@ -41,6 +42,9 @@ public class BusArrivalObservation {
     private String destinationCode;
     private Boolean monitored;
     private String vehicleType;
+    private String classification = "OBSERVATION_ONLY";
+    private UUID demoRunId;
+    private String tripId;
 
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
@@ -60,6 +64,8 @@ public class BusArrivalObservation {
     public void setDirectionId(Integer directionId) { this.directionId = directionId == null ? null : directionId.shortValue(); }
     public Integer getVisitOrder() { return visitOrder == null ? null : visitOrder.intValue(); }
     public void setVisitOrder(Integer visitOrder) { this.visitOrder = visitOrder == null ? null : visitOrder.shortValue(); }
+    public Integer getVisitNumber() { return visitNumber == null ? null : visitNumber.intValue(); }
+    public void setVisitNumber(Integer visitNumber) { this.visitNumber = visitNumber == null ? null : visitNumber.shortValue(); }
     public Instant getEstimatedArrivalAt() { return estimatedArrivalAt; }
     public void setEstimatedArrivalAt(Instant estimatedArrivalAt) { this.estimatedArrivalAt = estimatedArrivalAt; }
     public BigDecimal getLatitude() { return latitude; }
@@ -70,8 +76,6 @@ public class BusArrivalObservation {
     public void setLoadCategory(String loadCategory) { this.loadCategory = loadCategory; }
     public String getFeature() { return feature; }
     public void setFeature(String feature) { this.feature = feature; }
-    public Instant getObservedAt() { return observedAt; }
-    public void setObservedAt(Instant observedAt) { this.observedAt = observedAt; }
     public Instant getFetchedAt() { return fetchedAt; }
     public void setFetchedAt(Instant fetchedAt) { this.fetchedAt = fetchedAt; }
     public Instant getIngestedAt() { return ingestedAt; }
@@ -86,4 +90,15 @@ public class BusArrivalObservation {
     public void setMonitored(Boolean monitored) { this.monitored = monitored; }
     public String getVehicleType() { return vehicleType; }
     public void setVehicleType(String vehicleType) { this.vehicleType = vehicleType; }
+    public String getClassification() { return classification; }
+    public void setClassification(String classification) { this.classification = classification; }
+    public UUID getDemoRunId() { return demoRunId; }
+    public void setDemoRunId(UUID demoRunId) { this.demoRunId = demoRunId; }
+    public String getTripId() { return tripId; }
+    public void setTripId(String tripId) { this.tripId = tripId; }
+
+    @PrePersist
+    void defaultToLiveClassification() {
+        if (classification == null) classification = "OBSERVATION_ONLY";
+    }
 }

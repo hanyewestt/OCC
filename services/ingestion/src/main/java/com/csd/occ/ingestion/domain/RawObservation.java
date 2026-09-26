@@ -3,6 +3,7 @@ package com.csd.occ.ingestion.domain;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
@@ -31,7 +32,8 @@ public class RawObservation {
     private Instant fetchedAt;
     private Instant ingestedAt;
     private Integer httpStatus;
-    private String classification;
+    private String classification = "OBSERVATION_ONLY";
+    private UUID demoRunId;
     @Column(insertable = false, updatable = false)
     private Long feedSequence;
 
@@ -60,5 +62,12 @@ public class RawObservation {
     public void setHttpStatus(Integer httpStatus) { this.httpStatus = httpStatus; }
     public String getClassification() { return classification; }
     public void setClassification(String classification) { this.classification = classification; }
+    public UUID getDemoRunId() { return demoRunId; }
+    public void setDemoRunId(UUID demoRunId) { this.demoRunId = demoRunId; }
     public Long getFeedSequence() { return feedSequence; }
+
+    @PrePersist
+    void defaultToLiveClassification() {
+        if (classification == null) classification = "OBSERVATION_ONLY";
+    }
 }

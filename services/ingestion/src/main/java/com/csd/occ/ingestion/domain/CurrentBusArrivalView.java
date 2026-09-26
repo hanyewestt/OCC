@@ -12,6 +12,7 @@ public interface CurrentBusArrivalView {
     String getOperator();
     Integer getDirectionId();
     Integer getVisitOrder();
+    Integer getVisitNumber();
     Instant getEstimatedArrivalAt();
     String getOriginCode();
     String getDestinationCode();

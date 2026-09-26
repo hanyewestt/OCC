@@ -6,6 +6,7 @@ import com.csd.occ.bunching.domain.BunchingObservationRepository;
 import com.csd.occ.bunching.domain.BunchingRecordingService;
 import com.csd.occ.bunching.domain.RecordedBunching;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -70,6 +71,14 @@ class BunchingRecordingIT {
         this.transactions = transactions;
     }
 
+    @BeforeEach
+    void resetFeedState() {
+        jdbc.execute("TRUNCATE bunching.alert_state, bunching.demo_alert_state, bunching.alert_event, bunching.bunching_observation");
+        jdbc.update("UPDATE bunching.consumer_selection SET mode='LIVE', demo_run_id=NULL, changed_at=? WHERE id=1",
+                NOW.atOffset(ZoneOffset.UTC));
+        jdbc.update("UPDATE bunching.ingestion_feed_cursor SET feed_scope='LIVE', demo_run_id=NULL, last_sequence=0 WHERE id=1");
+    }
+
     @Test
     void storesCompleteEvidenceAndSourceProvenance() {
         var snapshot = snapshot(NOW, 60, Optional.of(1));
@@ -127,16 +136,17 @@ class BunchingRecordingIT {
     }
 
     @Test
-    void normalAndInsufficientEvidenceAreAlsoAudited() {
+    void normalStaleAndMissingDirectionEvidenceAreAlsoAudited() {
         var normal = snapshot(NOW, 180, Optional.of(1));
         var stale = snapshot(NOW.minusSeconds(120), 60, Optional.of(1));
         var ambiguous = snapshot(NOW, 60, Optional.empty());
-        for (var snapshot : List.of(normal, stale, ambiguous)) {
+        for (var snapshot : List.of(normal, stale)) {
             assertEquals(0, service.record(snapshot, THRESHOLD, FRESHNESS).bunchedGroupCount());
         }
+        assertEquals(1, service.record(ambiguous, THRESHOLD, FRESHNESS).bunchedGroupCount());
         assertEquals(BunchingEvaluation.State.NORMAL, evaluation(normal).groups().getFirst().state());
         assertEquals(BunchingEvaluation.Reason.STALE_SNAPSHOT, evaluation(stale).groups().getFirst().reason());
-        assertEquals(BunchingEvaluation.Reason.UNKNOWN_DIRECTION, evaluation(ambiguous).groups().getFirst().reason());
+        assertEquals(BunchingEvaluation.State.BUNCHING, evaluation(ambiguous).groups().getFirst().state());
     }
 
     @Test
@@ -172,6 +182,47 @@ class BunchingRecordingIT {
         assertEquals(1, result.bunchedGroupCount());
     }
 
+    @Test
+    void demoSelectionCreatesOnlyRunScopedSimulationAlertsWithSimulationEvidence() {
+        UUID demoRunId = UUID.randomUUID();
+        UUID otherRunId = UUID.randomUUID();
+        jdbc.update("UPDATE bunching.consumer_selection SET mode='DEMO', demo_run_id=?, changed_at=? WHERE id=1",
+                demoRunId, NOW.atOffset(ZoneOffset.UTC));
+        jdbc.update("UPDATE bunching.ingestion_feed_cursor SET feed_scope=?, demo_run_id=?, last_sequence=0 WHERE id=1",
+                "DEMO:" + demoRunId, demoRunId);
+
+        service.record(simulationSnapshot(demoRunId, 45), THRESHOLD, FRESHNESS);
+        service.record(simulationSnapshot(otherRunId, 45), THRESHOLD, FRESHNESS);
+        service.record(snapshot(NOW, 45, Optional.of(1)), THRESHOLD, FRESHNESS);
+
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM bunching.alert_event "
+                + "WHERE classification='SIMULATION' AND demo_run_id=?", Integer.class, demoRunId));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM bunching.alert_event "
+                + "WHERE demo_run_id IS DISTINCT FROM ?", Integer.class, demoRunId));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM bunching.alert_state", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM bunching.demo_alert_state WHERE demo_run_id=?",
+                Integer.class, demoRunId));
+        assertEquals("SIMULATION", jdbc.queryForObject("SELECT evidence->'snapshot'->>'classification' "
+                + "FROM bunching.alert_event WHERE demo_run_id=?", String.class, demoRunId));
+        assertEquals(demoRunId.toString(), jdbc.queryForObject("SELECT evidence->'snapshot'->>'demoRunId' "
+                + "FROM bunching.alert_event WHERE demo_run_id=?", String.class, demoRunId));
+    }
+
+    @Test
+    void liveSelectionIgnoresSimulationAndWritesOnlyLiveAlertState() {
+        UUID demoRunId = UUID.randomUUID();
+
+        service.record(simulationSnapshot(demoRunId, 45), THRESHOLD, FRESHNESS);
+        service.record(snapshot(NOW, 45, Optional.of(1)), THRESHOLD, FRESHNESS);
+
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM bunching.alert_event "
+                + "WHERE classification='OBSERVATION_ONLY' AND demo_run_id IS NULL", Integer.class));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM bunching.alert_event "
+                + "WHERE classification='SIMULATION'", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM bunching.alert_state", Integer.class));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM bunching.demo_alert_state", Integer.class));
+    }
+
     private BunchingEvaluation evaluation(ArrivalSnapshot snapshot) {
         return mapper.readValue(observations.findByRawObservationId(snapshot.rawObservationId())
                 .orElseThrow().evidence(), BunchingEvaluation.class);
@@ -188,6 +239,12 @@ class BunchingRecordingIT {
                                 Optional.of(NOW.plusSeconds(300))),
                         new ArrivalSnapshot.Arrival(UUID.randomUUID(), "190", "44009", direction, 2,
                                 Optional.of(NOW.plusSeconds(300 + gap)))));
+    }
+
+    private ArrivalSnapshot simulationSnapshot(UUID demoRunId, int gap) {
+        var live = snapshot(NOW, gap, Optional.of(1));
+        return new ArrivalSnapshot(live.rawObservationId(), live.pollRunId(), live.referenceVersionId(),
+                live.fetchedAt(), live.arrivals(), "SIMULATION", demoRunId);
     }
 
     @TestConfiguration

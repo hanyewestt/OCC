@@ -14,6 +14,11 @@ public class SourceProcessingAudit {
 
     public SourceProcessingAudit(UUID rawObservationId, Instant occurredAt, String action, String reason,
                                  Instant nextAttemptAt) {
+        this(rawObservationId, occurredAt, action, reason, nextAttemptAt, "OBSERVATION_ONLY", "LIVE", null);
+    }
+
+    public SourceProcessingAudit(UUID rawObservationId, Instant occurredAt, String action, String reason,
+                                 Instant nextAttemptAt, String classification, String feedScope, UUID demoRunId) {
         id = UUID.randomUUID();
         this.rawObservationId = rawObservationId;
         this.occurredAt = occurredAt;
@@ -21,7 +26,7 @@ public class SourceProcessingAudit {
         this.reason = reason;
         this.nextAttemptAt = nextAttemptAt;
         actor = "SYSTEM:BUS_BUNCHING_DETECTION";
-        classification = "OBSERVATION_ONLY";
+        this.classification = classification; this.feedScope = feedScope; this.demoRunId = demoRunId;
     }
 
     @Id
@@ -33,4 +38,6 @@ public class SourceProcessingAudit {
     private String reason;
     private Instant nextAttemptAt;
     private String classification;
+    private String feedScope = "LIVE";
+    private UUID demoRunId;
 }
