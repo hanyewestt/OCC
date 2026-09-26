@@ -3,7 +3,7 @@ spring:
     name: recommendation-engine
 
 server:
-  port: ${SERVER_PORT:8083}
+  port: ${OCC_RECOMMENDATION_INTERNAL_PORT:8002}
 
 management:
   endpoints:
@@ -18,7 +18,7 @@ management:
 occ:
   recommendation:
     fixture:
-      location: classpath:fixtures/bunching-mitigation-context.json
+      location: ${OCC_RECOMMENDATION_FIXTURE_LOCATION:classpath:fixtures/bunching-mitigation-context.json}
 
 springdoc:
   api-docs:

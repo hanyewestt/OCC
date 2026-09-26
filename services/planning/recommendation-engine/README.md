@@ -24,14 +24,14 @@ The service currently provides:
 - RFC 9457-style problem responses;
 - generated OpenAPI documentation;
 - unit, MVC, fixture-adapter, and full application integration tests; and
+- a Maven 3.9.11 wrapper and repository-standard environment configuration;
+- a dedicated `recommendation` PostgreSQL schema owned by `occ_recommendation`;
 - a multi-stage Docker image running as a non-root user.
 
 The following work is not implemented yet:
 
 - WQAP-3 delivery to this endpoint;
 - PostgreSQL persistence and durable idempotency;
-- a recommendation-owned database schema and role;
-- Docker Compose registration and centralized environment configuration;
 - Gemini/Spring AI candidate generation and model audit records;
 - an Operations service adapter; and
 - `STANDBY_DISPATCH` behavior.
@@ -240,19 +240,19 @@ Detailed provenance is recorded in
 ### Requirements
 
 - JDK 25
-- Maven 3.9 or newer
+- Docker Desktop for container or Compose runs
 
 Confirm the environment:
 
 ```powershell
 java -version
-mvn -version
+./mvnw.cmd -version
 ```
 
 From `services/planning/recommendation-engine` run:
 
 ```powershell
-mvn clean verify
+./mvnw.cmd clean verify
 ```
 
 The current suite contains 19 tests:
@@ -264,7 +264,7 @@ The current suite contains 19 tests:
 | Fixture adapter | 2 | Known and unknown fixture lookup |
 | Full application integration | 5 | Fixture flow, repeatability, rejection and OpenAPI |
 
-`mvn clean verify` runs both Surefire unit tests and the Failsafe integration
+`./mvnw.cmd clean verify` runs both Surefire unit tests and the Failsafe integration
 test ending in `IT`.
 
 ## Run locally
@@ -272,14 +272,17 @@ test ending in `IT`.
 From the service directory:
 
 ```powershell
-mvn spring-boot:run
+$env:SPRING_PROFILES_ACTIVE = "local"
+./mvnw.cmd spring-boot:run
 ```
 
-The current default port is `8083`.
+The process listens on `8002` by default. The `local` profile imports the
+repository-root `.env`; all settings also remain overridable through normal
+environment variables.
 
-- Health: `http://localhost:8083/actuator/health`
-- Swagger UI: `http://localhost:8083/swagger-ui.html`
-- Internal OpenAPI JSON: `http://localhost:8083/v3/api-docs/internal`
+- Health: `http://localhost:8002/actuator/health`
+- Swagger UI: `http://localhost:8002/swagger-ui.html`
+- Internal OpenAPI JSON: `http://localhost:8002/v3/api-docs/internal`
 
 Example PowerShell request:
 
@@ -290,7 +293,7 @@ $body = Get-Content `
 
 Invoke-RestMethod `
   -Method Post `
-  -Uri http://localhost:8083/internal/v1/bunching-recommendations `
+  -Uri http://localhost:8002/internal/v1/bunching-recommendations `
   -ContentType application/json `
   -Headers @{ "Idempotency-Key" = "f07c921a-bd3b-4a97-8b17-a384ef1269a7" } `
   -Body $body
@@ -302,12 +305,30 @@ Build from the service directory:
 
 ```powershell
 docker build -t occ-recommendation-engine:local .
-docker run --rm -p 8083:8083 occ-recommendation-engine:local
+docker run --rm -p 6768:8002 occ-recommendation-engine:local
 ```
 
 The image uses a Maven build stage, a Java 25 runtime, and the non-root user
-`10001`. The service has not yet been registered in the repository's local
-Compose stack.
+`10001`. Its `.dockerignore` excludes Git metadata and Maven build output from
+the Docker build context.
+
+From the repository root, the service can also be built and started through the
+local Compose stack:
+
+```powershell
+docker compose --env-file .env -f infra/local/compose.yaml up --build recommendation-engine
+```
+
+Compose publishes the service on `http://localhost:6768` by default and maps
+that host port to the process's internal port `8002`.
+
+The root `.env` must include a non-default local value for
+`OCC_RECOMMENDATION_DB_PASSWORD`. Provision or verify the dedicated schema for
+an existing PostgreSQL volume with:
+
+```powershell
+docker compose --env-file .env -f infra/local/compose.yaml up recommendation-schema-init
+```
 
 ## Package structure
 
@@ -335,25 +356,35 @@ The current configuration is deliberately small:
 | Setting | Current value |
 |---|---|
 | Application name | `recommendation-engine` |
-| Port | `${SERVER_PORT:8083}` |
-| Fixture location | `classpath:fixtures/bunching-mitigation-context.json` |
+| Public Compose port | `${OCC_RECOMMENDATION_PORT:6768}` |
+| Internal/process port | `${OCC_RECOMMENDATION_INTERNAL_PORT:8002}` |
+| Fixture location | `${OCC_RECOMMENDATION_FIXTURE_LOCATION:classpath:fixtures/bunching-mitigation-context.json}` |
+| Schema initialization password | `OCC_RECOMMENDATION_DB_PASSWORD` (required secret) |
 | Health endpoints | `health`, `info` |
 
-Repository conventions added after the initial implementation require
-recommendation-specific environment variables, a Maven wrapper, `.dockerignore`,
-root `.env.example` entries and Compose registration. These remain follow-up
-work and should be completed before deployment-oriented Phase 7 work.
+These variables are inventoried in the repository-root `.env.example`. The
+Maven and IDE `local` profile loads the root `.env` from the service's nested
+working directory. Compose supplies the same settings through its environment.
 
 ## Persistence status
 
-The service currently has no database dependency and does not write any tables.
-The repository already contains `planning`/`occ_planning`, but the team still
-needs to confirm whether this independently deployed service will use that
-schema or receive a feature-owned schema such as
-`recommendation`/`occ_recommendation`.
+Database ownership is confirmed as:
 
-Once ownership is decided, this service should own its Flyway migrations and no
-other service should mutate its tables.
+| Database | Schema | Owner/login role |
+|---|---|---|
+| `occ` | `recommendation` | `occ_recommendation` |
+
+`infra/local/postgres/init/04_recommendation_schema.sh` creates the role and
+schema, revokes public schema access, sets the role's search path to
+`recommendation, public`, and sets its timezone to UTC. The script is safe to
+rerun against an existing local volume and does not reset data or change an
+existing role's password.
+
+The application remains stateless at this milestone: it has no database driver,
+does not connect as `occ_recommendation`, and does not create tables yet. The
+next persistence task will add Flyway migrations and database-backed durable
+idempotency. Those tables and migrations must be owned only by this service;
+other services must integrate through its API instead of mutating the schema.
 
 ## WQAP-3 integration status
 
@@ -384,8 +415,8 @@ deterministic safety policy. The intended boundary is:
 5. Model, prompt/schema version, latency, usage, evidence and validation outcome
    are persisted for audit and replay.
 
-Durable idempotency and database ownership should be resolved before enabling
-nondeterministic model calls.
+Durable idempotency and model-audit persistence must be implemented in the
+confirmed `recommendation` schema before enabling nondeterministic model calls.
 
 ## Guidance for contributors and AI agents
 
@@ -397,7 +428,8 @@ nondeterministic model calls.
 - Keep model generation separate from deterministic validation.
 - Add or update unit and integration tests whenever policy or API behavior
   changes.
-- Run `mvn clean verify` before committing.
+- Run `./mvnw.cmd clean verify` before committing on Windows, or
+  `./mvnw clean verify` on Unix-like systems.
 - Do not commit `target/`, credentials, local `.env` files or model secrets.
 
 ## Related repository references

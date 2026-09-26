@@ -1,3 +1,8 @@
+spring:
+  config:
+    # Maven and IDE runs use services/planning/recommendation-engine as their working directory.
+    import: "optional:file:../../../.env[.properties]"
+
 logging:
   level:
     com.csd.occ.planning.recommendationengine: DEBUG
