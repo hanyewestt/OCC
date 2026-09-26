@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,7 +46,7 @@ public class BusArrivalService {
     public void poll() {
         log.info("Starting Bus Arrival polling loop...");
         List<PollTarget> enabledTargets = targets.findAll().stream()
-                .filter(target -> Boolean.TRUE.equals(target.getEnabled()))
+                .filter(target -> Boolean.TRUE.equals(target.getEnabled()) && target.getServiceId() != null)
                 .toList();
         if (enabledTargets.isEmpty()) {
             log.info("No enabled bus-arrival polling targets are configured.");
@@ -73,7 +74,7 @@ public class BusArrivalService {
             run.setRecordsReceived(0);
             runs.save(run);
             try {
-                BusArrivalSnapshot response = arrivals.arrivalsAt(target.getStopCode());
+                BusArrivalSnapshot response = arrivals.arrivalsAt(target.getStopCode(), target.getServiceId());
                 run.setHttpStatus(response.httpStatus());
                 if (response.httpStatus() >= 200 && response.httpStatus() < 300 && response.payload() != null) {
                     RawObservation observation = new RawObservation();
@@ -81,7 +82,8 @@ public class BusArrivalService {
                     observation.setPollRunId(run.getId());
                     observation.setSource(target.getSource());
                     observation.setSourceKey(target.getScopeKey());
-                    observation.setRequestParameters("{\"BusStopCode\":\"" + target.getStopCode() + "\"}");
+                    observation.setRequestParameters("{\"BusStopCode\":\"" + target.getStopCode()
+                            + "\",\"ServiceNo\":\"" + target.getServiceId() + "\"}");
                     observation.setPayload(response.payload());
                     observation.setPayloadChecksum(sha256(response.payload()));
                     observation.setFetchedAt(Instant.now(clock));
@@ -117,7 +119,9 @@ public class BusArrivalService {
     private List<BusArrivalObservation> normalize(PollTarget target, PollRun run, RawObservation raw,
             BusArrivalSnapshot snapshot, Instant now, UUID referenceVersionId) {
         List<BusArrivalObservation> result = new ArrayList<>();
+        Set<String> monitoredServices = Set.copyOf(configuration.monitoredServices());
         for (BusArrivalPrediction prediction : snapshot.predictions()) {
+            if (!monitoredServices.contains(prediction.serviceId())) continue;
             BusArrivalObservation observation = new BusArrivalObservation();
             observation.setId(UUID.randomUUID());
             observation.setRawObservationId(raw.getId());
@@ -137,8 +141,11 @@ public class BusArrivalService {
             observation.setDestinationCode(prediction.destinationCode());
             observation.setMonitored(prediction.monitored());
             observation.setVehicleType(prediction.vehicleType());
-            observation.setFetchedAt(now);
-            observation.setIngestedAt(now);
+            // A normalized row is evidence derived from this exact raw snapshot.
+            // Keep their timestamps identical so downstream consumers can verify
+            // the provenance relationship without relying on clock timing.
+            observation.setFetchedAt(raw.getFetchedAt());
+            observation.setIngestedAt(raw.getIngestedAt());
             observation.setRecordChecksum(sha256(String.join("|", target.getStopCode(), prediction.serviceId(),
                     String.valueOf(prediction.visitOrder()), String.valueOf(prediction.estimatedArrivalAt()),
                     String.valueOf(prediction.visitNumber()), String.valueOf(prediction.originCode()),

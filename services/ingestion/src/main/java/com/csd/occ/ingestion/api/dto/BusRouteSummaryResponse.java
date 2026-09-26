@@ -1,4 +1,7 @@
 package com.csd.occ.ingestion.api.dto;
 
-public record BusRouteSummaryResponse(String serviceId, String operator, String category) {
+import io.swagger.v3.oas.annotations.media.Schema;
+
+@Schema(requiredProperties = {"serviceId", "operator", "category"})
+public record BusRouteSummaryResponse(String serviceId, String operator, @Schema(nullable = true) String category) {
 }

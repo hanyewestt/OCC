@@ -3,4 +3,5 @@ spring:
   config:
     import: "optional:file:../../.env[.properties]"
   datasource:
+    # The local fallback is deliberately derived from centralized POSTGRES_* values.
     url: ${SPRING_DATASOURCE_URL:${OCC_INGESTION_DB_URL:jdbc:postgresql://localhost:${POSTGRES_PORT:5432}/${POSTGRES_DB:occ}}}

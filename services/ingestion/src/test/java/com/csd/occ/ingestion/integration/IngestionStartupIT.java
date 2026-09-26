@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 import com.csd.occ.ingestion.domain.BusArrivalSnapshot;
 import com.csd.occ.ingestion.domain.BusReferencePort;
 import com.csd.occ.ingestion.domain.BusArrivalService;
+import com.csd.occ.ingestion.domain.BunchingFeedService;
 import com.csd.occ.ingestion.domain.PollRunRepository;
 import com.csd.occ.ingestion.domain.ReferenceTopologyPort;
 import com.csd.occ.ingestion.domain.RawObservationRepository;
@@ -57,6 +58,7 @@ class IngestionStartupIT {
     @Autowired PollRunRepository runs;
     @Autowired RawObservationRepository observations;
     @Autowired BusArrivalService polling;
+    @Autowired BunchingFeedService bunchingFeed;
     @Autowired ReferenceTopologyPort topology;
 
     @Test
@@ -76,15 +78,19 @@ class IngestionStartupIT {
                         java.util.List.of(new BusReferencePort.BusRouteStopRecord("190", "SBST", 1, 1, "44009",
                                 java.math.BigDecimal.ZERO))), "a".repeat(64));
         assertThat(referenceVersion.id()).isNotNull();
-        jdbc.update("insert into ingestion.poll_target (source, scope_key, stop_code, enabled, created_at, updated_at) "
-                + "values ('DATAMALL', 'stop:44009', '44009', true, now(), now())");
-        when(dataMall.arrivalsAt("44009")).thenReturn(new BusArrivalSnapshot(200, "{}", java.util.List.of(), java.util.List.of()));
+        jdbc.update("insert into ingestion.poll_target (source, scope_key, stop_code, service_id, enabled, created_at, updated_at) "
+                + "values ('DATAMALL', 'service:190:stop:44009', '44009', '190', true, now(), now())");
+        when(dataMall.arrivalsAt("44009", "190"))
+                .thenReturn(new BusArrivalSnapshot(200, "{}", java.util.List.of(), java.util.List.of()));
         polling.poll();
         assertThat(observations.findAll()).singleElement().satisfies(observation -> {
             assertThat(observation.getPayload()).isEqualTo("{}");
             assertThat(observation.getPayloadChecksum()).hasSize(64);
             assertThat(observation.getFetchedAt()).isNotNull();
         });
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.bunching_snapshot", Integer.class))
+                .isEqualTo(1);
+        assertThat(bunchingFeed.page(0, 100).items()).hasSize(1);
     }
 
     @Test

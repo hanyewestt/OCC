@@ -1,0 +1,780 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OCC Ingestion API",
+    "description": "Read-only access to normalized DataMall bus-arrival ingestion data.",
+    "version": "v1"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Generated server url"
+    }
+  ],
+  "paths": {
+    "/api/v1/reference-topology": {
+      "get": {
+        "tags": [
+          "Ingestion"
+        ],
+        "summary": "Get the active DataMall topology version",
+        "operationId": "activeReferenceTopology",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferenceTopologyResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/poll-runs": {
+      "get": {
+        "tags": [
+          "Ingestion"
+        ],
+        "summary": "List polling audit runs",
+        "operationId": "listPollRuns",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageResponsePollRunResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feed-status": {
+      "get": {
+        "tags": [
+          "Ingestion"
+        ],
+        "summary": "List polling health for each configured stop",
+        "operationId": "listFeedStatuses",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FeedStatusResponse"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bus-stops": {
+      "get": {
+        "tags": [
+          "Reference topology"
+        ],
+        "summary": "List bus stops in the active reference topology",
+        "operationId": "listBusStops",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageResponseBusStopResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bus-stops/{stopCode}": {
+      "get": {
+        "tags": [
+          "Reference topology"
+        ],
+        "summary": "Get a bus stop by stop code",
+        "operationId": "getBusStop",
+        "parameters": [
+          {
+            "name": "stopCode",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusStopResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bus-routes": {
+      "get": {
+        "tags": [
+          "Reference topology"
+        ],
+        "summary": "List bus routes in the active reference topology",
+        "operationId": "listBusRoutes",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageResponseBusRouteSummaryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bus-routes/{serviceId}": {
+      "get": {
+        "tags": [
+          "Reference topology"
+        ],
+        "summary": "Get all ordered stop sequences for a bus service",
+        "operationId": "getBusRoute",
+        "parameters": [
+          {
+            "name": "serviceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusRouteResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/arrivals": {
+      "get": {
+        "tags": [
+          "Ingestion"
+        ],
+        "summary": "List latest arrival predictions by stop or service",
+        "operationId": "listCurrentArrivals",
+        "parameters": [
+          {
+            "name": "stopCode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "serviceId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageResponseArrivalResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/arrivals/history": {
+      "get": {
+        "tags": [
+          "Ingestion"
+        ],
+        "summary": "List retained normalized arrival observations",
+        "operationId": "listArrivalHistory",
+        "parameters": [
+          {
+            "name": "stopCode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "serviceId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageResponseArrivalResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ReferenceTopologyResponse": {
+        "type": "object",
+        "properties": {
+          "versionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "checksum": {
+            "type": "string"
+          }
+        }
+      },
+      "PageResponsePollRunResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PollRunResponse"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalItems": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "totalPages": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "PollRunResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "source": {
+            "type": "string"
+          },
+          "scopeKey": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "httpStatus": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "recordsReceived": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "errorCode": {
+            "type": "string"
+          },
+          "errorMessage": {
+            "type": "string"
+          }
+        }
+      },
+      "FeedStatusResponse": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "scopeKey": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "lastAttemptAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastSuccessAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "consecutiveFailures": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "staleAfterSeconds": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "message": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "stale": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BusStopResponse": {
+        "type": "object",
+        "properties": {
+          "stopCode": {
+            "type": "string"
+          },
+          "roadName": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "latitude": {
+            "type": "number"
+          },
+          "longitude": {
+            "type": "number"
+          }
+        }
+      },
+      "PageResponseBusStopResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BusStopResponse"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalItems": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "totalPages": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "BusRouteSummaryResponse": {
+        "type": "object",
+        "properties": {
+          "serviceId": {
+            "type": "string"
+          },
+          "operator": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          }
+        }
+      },
+      "PageResponseBusRouteSummaryResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BusRouteSummaryResponse"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalItems": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "totalPages": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "BusRouteDirectionResponse": {
+        "type": "object",
+        "properties": {
+          "directionId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "stops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BusRouteStopResponse"
+            }
+          }
+        }
+      },
+      "BusRouteOperatorResponse": {
+        "type": "object",
+        "properties": {
+          "operator": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "directions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BusRouteDirectionResponse"
+            }
+          }
+        }
+      },
+      "BusRouteResponse": {
+        "type": "object",
+        "properties": {
+          "serviceId": {
+            "type": "string"
+          },
+          "operators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BusRouteOperatorResponse"
+            }
+          }
+        }
+      },
+      "BusRouteStopResponse": {
+        "type": "object",
+        "properties": {
+          "stopCode": {
+            "type": "string"
+          },
+          "roadName": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "latitude": {
+            "type": "number"
+          },
+          "longitude": {
+            "type": "number"
+          },
+          "stopSequence": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "distanceKm": {
+            "type": "number"
+          }
+        }
+      },
+      "ArrivalResponse": {
+        "type": "object",
+        "properties": {
+          "observationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "stopCode": {
+            "type": "string"
+          },
+          "serviceId": {
+            "type": "string"
+          },
+          "operator": {
+            "type": "string"
+          },
+          "directionId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "visitOrder": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "estimatedArrivalAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "originCode": {
+            "type": "string"
+          },
+          "destinationCode": {
+            "type": "string"
+          },
+          "monitored": {
+            "type": "boolean"
+          },
+          "latitude": {
+            "type": "number"
+          },
+          "longitude": {
+            "type": "number"
+          },
+          "loadCategory": {
+            "type": "string"
+          },
+          "feature": {
+            "type": "string"
+          },
+          "vehicleType": {
+            "type": "string"
+          },
+          "fetchedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ageSeconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "referenceVersionId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "PageResponseArrivalResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArrivalResponse"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalItems": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "totalPages": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      }
+    }
+  }
+}

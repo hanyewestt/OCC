@@ -11,6 +11,10 @@ import com.csd.occ.ingestion.domain.FeedStatus;
 import com.csd.occ.ingestion.domain.IngestionQueryService;
 import com.csd.occ.ingestion.domain.PollRun;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -20,6 +24,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -27,7 +33,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 @RestController
-@RequestMapping("/api/v1")
+@RequestMapping(value = "/api/v1", produces = MediaType.APPLICATION_JSON_VALUE)
 @Tag(name = "Ingestion")
 public class ArrivalController {
     private final IngestionQueryService queries;
@@ -38,6 +44,8 @@ public class ArrivalController {
 
     @GetMapping("/arrivals")
     @Operation(operationId = "listCurrentArrivals", summary = "List latest arrival predictions by stop or service")
+    @ApiResponses(@ApiResponse(responseCode = "400", description = "Invalid pagination parameters",
+            content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))))
     public PageResponse<ArrivalResponse> currentArrivals(@RequestParam(required = false) String stopCode,
             @RequestParam(required = false) String serviceId, @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "50") @Min(1) @Max(200) int size) {
@@ -46,6 +54,8 @@ public class ArrivalController {
 
     @GetMapping("/arrivals/history")
     @Operation(operationId = "listArrivalHistory", summary = "List retained normalized arrival observations")
+    @ApiResponses(@ApiResponse(responseCode = "400", description = "Invalid pagination parameters or time range",
+            content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))))
     public PageResponse<ArrivalResponse> arrivalHistory(@RequestParam(required = false) String stopCode,
             @RequestParam(required = false) String serviceId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
@@ -68,6 +78,8 @@ public class ArrivalController {
 
     @GetMapping("/poll-runs")
     @Operation(operationId = "listPollRuns", summary = "List polling audit runs")
+    @ApiResponses(@ApiResponse(responseCode = "400", description = "Invalid pagination parameters",
+            content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))))
     public PageResponse<PollRunResponse> pollRuns(@RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "50") @Min(1) @Max(200) int size) {
         return page(queries.pollRuns(PageRequest.of(page, size)), this::pollRunResponse);
@@ -75,6 +87,8 @@ public class ArrivalController {
 
     @GetMapping("/reference-topology")
     @Operation(operationId = "activeReferenceTopology", summary = "Get the active DataMall topology version")
+    @ApiResponses(@ApiResponse(responseCode = "404", description = "No active reference topology",
+            content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))))
     public ReferenceTopologyResponse activeReferenceTopology() {
         return queries.activeReferenceVersion().map(version -> new ReferenceTopologyResponse(version.id(), version.checksum()))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No active reference topology"));
