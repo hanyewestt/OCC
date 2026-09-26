@@ -2,6 +2,12 @@
 
 Polls DataMall bus arrivals and records observations for analytics. Requires Java 25, PostgreSQL with the `ingestion` schema and `occ_ingestion` account, and a valid DataMall key.
 
+A failed DataMall reference refresh does not stop the HTTP API or replace stored
+topology. If there is no imported topology, target seeding is deferred and the
+polling schedule retries the import. A DataMall `401` means the configured key
+was rejected; update `DATAMALL_API_KEY` in the ignored root `.env` and recreate
+the Ingestion container so it receives the new value.
+
 ## Run only ingestion
 
 From the repository root:

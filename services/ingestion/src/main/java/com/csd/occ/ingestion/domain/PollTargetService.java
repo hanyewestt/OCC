@@ -26,7 +26,7 @@ public class PollTargetService {
 
     public void seed() {
         ReferenceTopologyPort.ReferenceTopologyVersion version = topology.activeVersion()
-                .orElseThrow(() -> new IllegalStateException("No active bus reference topology is available"));
+                .orElseThrow(ReferenceTopologyUnavailableException::new);
         log.info("Seeding poll targets for configured services...");
         int targetCount = 0;
         for (String serviceId : configuration.monitoredServices()) {

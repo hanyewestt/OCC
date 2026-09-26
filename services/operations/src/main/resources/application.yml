@@ -22,6 +22,27 @@ springdoc:
   swagger-ui:
     enabled: ${OCC_OPERATIONS_SWAGGER_UI_ENABLED:false}
 occ:
+  track-inference:
+    enabled: ${OCC_TRACK_INFERENCE_ENABLED:true}
+    interval: ${OCC_TRACK_INFERENCE_INTERVAL:60s}
+    initial-delay: ${OCC_TRACK_INFERENCE_INITIAL_DELAY:5s}
+    stale-after: ${OCC_TRACK_INFERENCE_STALE_AFTER:180s}
+    expiry: ${OCC_TRACK_INFERENCE_EXPIRY:5m}
+    retention: ${OCC_TRACK_INFERENCE_RETENTION:24h}
+    cluster-time-window: ${OCC_TRACK_INFERENCE_CLUSTER_TIME_WINDOW:30s}
+    cluster-meters: ${OCC_TRACK_INFERENCE_CLUSTER_METERS:60}
+    max-route-offset-meters: ${OCC_TRACK_INFERENCE_MAX_ROUTE_OFFSET_METERS:400}
+    max-speed-meters-per-second: ${OCC_TRACK_INFERENCE_MAX_SPEED_METERS_PER_SECOND:25}
+    backward-tolerance-meters: ${OCC_TRACK_INFERENCE_BACKWARD_TOLERANCE_METERS:80}
+    ambiguity-margin-meters: ${OCC_TRACK_INFERENCE_AMBIGUITY_MARGIN_METERS:20}
+    eta-tolerance: ${OCC_TRACK_INFERENCE_ETA_TOLERANCE:90s}
+    page-size: ${OCC_TRACK_INFERENCE_PAGE_SIZE:200}
+    max-pages: ${OCC_TRACK_INFERENCE_MAX_PAGES:20}
+  map:
+    tile-url: ${OCC_MAP_TILE_URL:https://tile.openstreetmap.org/{z}/{x}/{y}.png}
+    attribution-text: ${OCC_MAP_ATTRIBUTION_TEXT:© OpenStreetMap contributors}
+    attribution-url: ${OCC_MAP_ATTRIBUTION_URL:https://www.openstreetmap.org/copyright}
+    refresh-interval: ${OCC_MAP_REFRESH_INTERVAL:60s}
   cognito:
     issuer-uri: ${OCC_COGNITO_ISSUER_URI}
     app-client-id: ${OCC_COGNITO_APP_CLIENT_ID}

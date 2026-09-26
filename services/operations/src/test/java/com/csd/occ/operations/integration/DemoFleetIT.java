@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.csd.occ.operations.OperationsApplication;
 import com.csd.occ.operations.domain.RouteReferencePort;
+import com.csd.occ.operations.domain.LiveMapPort;
 import com.jayway.jsonpath.JsonPath;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -40,6 +41,7 @@ import org.testcontainers.utility.MountableFile;
         "occ.ingestion-topology.base-url=http://ingestion.test",
         "spring.datasource.password=synthetic-operations",
         "springdoc.api-docs.enabled=true"
+        , "occ.track-inference.enabled=false"
 })
 @AutoConfigureMockMvc
 @Testcontainers(disabledWithoutDocker = true)
@@ -60,6 +62,53 @@ class DemoFleetIT {
     @Autowired JdbcTemplate jdbc;
     @MockitoBean JwtDecoder decoder;
     @MockitoBean RouteReferencePort routeReference;
+    @MockitoBean LiveMapPort liveMap;
+    @Autowired com.csd.occ.operations.domain.TrackInferenceService inference;
+
+    @Test
+    void persistentTracksAreIdempotentAmbiguousAndExpire() throws Exception {
+        jdbc.update("delete from operations.inferred_observation_link");
+        jdbc.update("delete from operations.inferred_vehicle_track");
+        when(routeReference.route("190")).thenReturn(Optional.of(new RouteReferencePort.Route("190", List.of(
+                new RouteReferencePort.Direction("SMRT",1,List.of(
+                        new RouteReferencePort.Stop("A",1,new BigDecimal("1.35"),new BigDecimal("103.80")),
+                        new RouteReferencePort.Stop("B",2,new BigDecimal("1.35"),new BigDecimal("103.82"))))))));
+        var now=java.time.Instant.now();
+        var first=trackObservation("A","103.805",now.minusSeconds(70));
+        var duplicate=trackObservation("B","103.8051",now.minusSeconds(70));
+        when(liveMap.observations(null,0,200)).thenReturn(new LiveMapPort.Page(List.of(first,duplicate),0,200,2,1));
+        inference.refresh(); inference.refresh();
+        var track=inference.current("190").getFirst(); var id=track.getId();
+        assertThat(inference.current("190")).hasSize(1);
+        assertThat(inference.evidence(id)).hasSize(2);
+        assertThat(track.getConfirmations()).isEqualTo(1);
+        var moved=trackObservation("A","103.806",now.minusSeconds(10));
+        when(liveMap.observations(null,0,200)).thenReturn(new LiveMapPort.Page(List.of(moved),0,200,1,1));
+        inference.refresh();
+        assertThat(inference.current("190").getFirst().getId()).isEqualTo(id);
+        assertThat(inference.current("190").getFirst().getStatus()).isEqualTo("ACTIVE");
+        mvc.perform(get("/api/v1/map/inferred-tracks?serviceId=190"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].identityStatus").value("INFERRED"))
+                .andExpect(jsonPath("$.items[0].directiveEligible").value(false))
+                .andExpect(jsonPath("$.items[0].observationIds.length()").value(3));
+        // Two candidates claiming one track must not inherit its identity after an overtake/split.
+        var close1=trackObservation("A","103.8061",now.minusSeconds(1));
+        var close2=trackObservation("A","103.8062",now.minusSeconds(1));
+        when(liveMap.observations(null,0,200)).thenReturn(new LiveMapPort.Page(List.of(close1,close2),0,200,2,1));
+        inference.refresh();
+        assertThat(inference.current("190").getFirst().getStatus()).isEqualTo("AMBIGUOUS");
+        assertThat(inference.evidence(id)).hasSize(3);
+        when(liveMap.observations(null,0,200)).thenReturn(new LiveMapPort.Page(List.of(),0,200,0,0));
+        jdbc.update("update operations.inferred_vehicle_track set last_seen_at = ? where id = ?",java.sql.Timestamp.from(now.minusSeconds(301)),id);
+        inference.refresh();
+        assertThat(inference.current("190")).isEmpty();
+        assertThat(jdbc.queryForObject("select status from operations.inferred_vehicle_track where id = ?",String.class,id)).isEqualTo("EXPIRED");
+    }
+
+    private LiveMapPort.Observation trackObservation(String stop,String lon,java.time.Instant time) {
+        return new LiveMapPort.Observation(java.util.UUID.randomUUID(),stop,"190",1,1,time.plusSeconds(300),
+                new BigDecimal("1.35"),new BigDecimal(lon),time,false);
+    }
 
     @BeforeEach
     void routeIsAvailableWithoutLiveBusArrivals() {
@@ -152,6 +201,11 @@ class DemoFleetIT {
 
     @Test
     void openApiDescribesTheProtectedDemoFleetEndpoints() throws Exception {
+        when(liveMap.observations("190", 0, 50)).thenReturn(new LiveMapPort.Page(List.of(), 0, 50, 0, 0));
+        mvc.perform(get("/api/v1/map/observed-buses").param("serviceId", "190"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalItems").value(0));
+        mvc.perform(get("/api/v1/map/settings"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.refreshIntervalMs").value(60000));
         mvc.perform(get("/demo-map.html"))
                 .andExpect(status().isOk());
         String document = mvc.perform(get("/v3/api-docs"))

@@ -62,6 +62,14 @@ docker compose --env-file .env -f infra/local/compose.yaml --profile tools up -d
 
 ## Start the draft demo fleet API
 
+Changing `.env` database passwords does not change passwords in an existing
+PostgreSQL volume. To explicitly align local service accounts with the current
+Compose environment without deleting data, recreate the PostgreSQL container,
+copy `infra/local/postgres/sync-service-passwords.sh` into it, and run that script
+with Bash as the configured PostgreSQL admin. Recreate the application containers
+afterward. This maintenance operation changes local admin and service-role
+passwords only.
+
 Set `OCC_COGNITO_ISSUER_URI` and `OCC_COGNITO_APP_CLIENT_ID` in `.env` for your
 Cognito user pool and app client, then run:
 

@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OCC Demo Fleet Map</title>
+  <title>OCC Live Bus Map</title>
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
   <style>
     :root { font-family: system-ui, sans-serif; color: #173047; background: #f3f6f8; }
     body { margin: 0; }
@@ -20,17 +21,13 @@
     #status { min-height: 1.5rem; margin: .4rem 0; }
     #status.error { color: #9c2632; }
     .panel { background: white; border: 1px solid #d6e0e6; border-radius: 8px; overflow: hidden; }
-    .map-wrap { overflow: auto; }
-    svg { display: block; width: 100%; min-width: 550px; background: #f7fafb; }
-    .grid { stroke: #e2ebef; stroke-width: 1; }
-    .route { fill: none; stroke: #4c94a8; stroke-width: 2.5; stroke-linejoin: round; }
-    .stop { fill: white; stroke: #37798e; stroke-width: 1.5; }
-    .bus { fill: #a43ac2; stroke: white; stroke-width: 3; }
-    .bus-label { fill: #622178; font-size: 16px; font-weight: 700; paint-order: stroke; stroke: white; stroke-width: 4px; }
+    #map { height: 640px; width: 100%; }
+    .legend .live-key::before { color: #1678d2; }
     .legend { display: flex; gap: 1.4rem; padding: .8rem 1rem; border-top: 1px solid #d6e0e6; flex-wrap: wrap; }
     .legend span::before { content: "●"; margin-right: .4rem; }
     .legend .route-key::before { color: #4c94a8; }
     .legend .bus-key::before { color: #a43ac2; }
+    .legend .ambiguous-key::before { color: #d87913; }
     .details { padding: 1rem; }
     .details h2 { margin: 0 0 .5rem; font-size: 1.1rem; }
     .details ul { margin: .4rem 0 0; padding-left: 1.3rem; }
@@ -44,14 +41,20 @@
   </style>
 </head>
 <body>
-  <header><h1>OCC demo fleet map</h1><p>Draft simulation · stop-based schematic</p></header>
+  <header><h1>OCC live bus map</h1><p>DataMall observations and optional demo overlay</p></header>
   <main>
-    <div class="notice">This view draws straight lines between imported bus stops. It is not a road route, live fleet track, or driver dispatch view. Purple markers are prototype-owned demo vehicles.</div>
-    <form id="load-form">
-      <label>Demo run ID<input id="run-id" required autocomplete="off" placeholder="UUID from the create demo run response"></label>
-      <label>Cognito access token<input id="token" required type="password" autocomplete="off" placeholder="ADMIN or CONTROLLER access token"></label>
-      <button id="load-button" type="submit">Load map</button>
-    </form>
+    <div class="notice">Blue markers are inferred bus tracks with temporary labels. Orange tracks have ambiguous identity. Purple markers are your simulated buses. Route lines connect stop points and do not represent a verified road path.</div>
+    <form id="live-form"><label>Live bus service<input id="live-service" maxlength="20" value="190" placeholder="Leave blank for all monitored services"></label><button type="submit">Refresh live map</button></form>
+    <label style="display:flex;gap:.5rem;align-items:center;font-weight:400"><input id="raw-observations" type="checkbox">Show raw observations instead of inferred tracks</label>
+    <p id="live-status" role="status" aria-live="polite">Loading live observations…</p><p id="basemap-status" class="muted"></p>
+    <div class="panel">
+      <div id="map" aria-label="Live observations and demo vehicles on a geographic map"></div>
+      <div class="legend"><span class="live-key">Inferred track · temporary identity</span><span class="ambiguous-key">Ambiguous track</span><span class="route-key">Imported stop sequence</span><span class="bus-key">Simulated vehicle</span></div>
+      <div class="details"><h2 id="details-title">No demo overlay loaded</h2><div id="details-body" class="muted">Live observations are shown above. Create a demo run below to add simulated buses.</div></div>
+    </div>
+
+    <label>Cognito access token (only for the demo overlay)<input id="token" required type="password" autocomplete="off" placeholder="ADMIN or CONTROLLER access token"></label>
+    <p class="muted">For your first demo, choose a service and direction below and click Create and load. A run is a saved scenario containing your simulated buses and drivers.</p>
     <div class="actions">
       <section class="action-panel">
         <h2>Create a draft run</h2>
@@ -72,16 +75,24 @@
         </form>
       </section>
     </div>
+    <details>
+      <summary>Reopen an existing saved scenario</summary>
+      <form id="load-form">
+        <label>Saved run ID<input id="run-id" required autocomplete="off" placeholder="ID generated when a scenario was created"></label>
+        <button id="load-button" type="submit">Load saved run</button>
+      </form>
+    </details>
     <p id="status" role="status" aria-live="polite">Enter an access token, then create a run or load an existing run.</p>
-    <div class="panel">
-      <div class="map-wrap"><svg id="map" viewBox="0 0 1000 640" role="img" aria-label="Schematic route and demo vehicles"></svg></div>
-      <div class="legend"><span class="route-key">Imported stop sequence</span><span class="bus-key">Simulated vehicle</span></div>
-      <div class="details"><h2 id="details-title">No run loaded</h2><div id="details-body" class="muted">No live buses are required for this view.</div></div>
-    </div>
   </main>
+  <script src="/vendor/leaflet/leaflet.js"></script>
   <script>
-    const ns = 'http://www.w3.org/2000/svg';
-    const svg = document.getElementById('map');
+    const map = L.map('map').setView([1.35, 103.82], 12);
+    const liveLayer = L.layerGroup().addTo(map);
+    const demoLayer = L.layerGroup().addTo(map);
+    const routeLayer = L.layerGroup().addTo(map);
+    const liveStatus = document.getElementById('live-status');
+    let liveBusy = false;
+    let liveFitted = false;
     const status = document.getElementById('status');
     const button = document.getElementById('load-button');
     const createButton = document.getElementById('create-button');
@@ -94,12 +105,6 @@
     let activeRunId = null;
     let selectableStops = [];
 
-    function element(name, attributes = {}) {
-      const node = document.createElementNS(ns, name);
-      for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
-      return node;
-    }
-
     function validPoint(point) {
       return Number.isFinite(Number(point.latitude)) && Number.isFinite(Number(point.longitude))
         && point.latitude !== null && point.longitude !== null;
@@ -108,7 +113,7 @@
     async function requestJson(path, token, method = 'GET', body = null) {
       const response = await fetch(path, {
         method,
-        headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) },
         body: body ? JSON.stringify(body) : null,
         cache: 'no-store'
       });
@@ -141,82 +146,134 @@
       return vehicles;
     }
 
+    function popup(lines) {
+      const box = document.createElement('div');
+      for (const line of lines) {
+        const row = document.createElement('div');
+        row.textContent = line;
+        box.append(row);
+      }
+      return box;
+    }
+
+    async function refreshLive() {
+      if (liveBusy) return;
+      liveBusy = true;
+      try {
+        const service = document.getElementById('live-service').value.trim();
+        const raw = document.getElementById('raw-observations').checked;
+        document.querySelector('.live-key').textContent = raw ? 'Raw observation · identity unverified' : 'Inferred track · temporary identity';
+        const items = [];
+        let page = 0;
+        let totalPages;
+        do {
+          const result = await requestJson('/api/v1/map/' + (raw ? 'observed-buses' : 'inferred-tracks') + '?serviceId=' + encodeURIComponent(service) + '&page=' + page);
+          items.push(...result.items);
+          totalPages = result.totalPages;
+          page++;
+        } while (page < totalPages);
+        liveLayer.clearLayers();
+        const fresh = items.filter(item => !item.stale && validPoint(item));
+        if (!raw) {
+          for (const item of fresh) {
+            L.circleMarker([item.latitude, item.longitude], { radius: 8, color: '#ffffff', weight: 2,
+              fillColor: item.status === 'AMBIGUOUS' ? '#d87913' : '#1678d2', fillOpacity: .9 })
+              .bindPopup(popup([item.displayLabel + ' · INFERRED identity',
+                'Direction ' + item.directionId + ' · ' + item.status,
+                'Confidence score ' + Math.round(item.confidence * 100) + '% (heuristic)',
+                'Last seen ' + new Date(item.lastSeenAt).toLocaleString(),
+                item.observationIds.length + ' linked observations · ' + item.confirmations + ' source-time confirmations',
+                'Approximate route progress ' + Math.round(item.routeProgressMeters) + ' m',
+                'Track ID ' + item.trackId, 'Recent evidence IDs: ' + item.observationIds.slice(-5).join(', '),
+                'No real plate or driver is known; directives unavailable']))
+              .bindTooltip(popup([item.displayLabel]), { direction: 'right' }).addTo(liveLayer);
+          }
+          const newest = fresh.map(item => item.lastSeenAt).sort().at(-1);
+          liveStatus.textContent = fresh.length
+            ? fresh.length + ' inferred tracks · ' + fresh.filter(item => item.status === 'AMBIGUOUS').length
+              + ' ambiguous · latest source fetch ' + new Date(newest).toLocaleString()
+              + '. Temporary identities; unresolved observations are omitted.'
+            : 'No current inferred tracks. The projection may be starting, or observations lack usable direction/route evidence. Select raw observations to inspect the source.';
+          if (!liveFitted && fresh.length && !activeRunId) {
+            map.fitBounds(fresh.map(item => [item.latitude, item.longitude]), { padding: [35, 35], maxZoom: 15 });
+            liveFitted = true;
+          }
+          return;
+        }
+        const groups = new Map();
+        for (const item of fresh) {
+          const key = item.latitude + ',' + item.longitude;
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(item);
+        }
+        for (const group of groups.values()) {
+          const item = group[0];
+          L.circleMarker([item.latitude, item.longitude], { radius: 7, color: '#ffffff', weight: 2, fillColor: '#1678d2', fillOpacity: .9 })
+            .bindPopup(popup(group.flatMap(value => [
+              'Service ' + value.serviceId + ' · live observation · identity UNVERIFIED',
+              'Stop ' + value.stopCode + ' · direction ' + (value.directionId ?? 'unknown'),
+              'Fetched ' + new Date(value.fetchedAt).toLocaleString(),
+              'ETA ' + (value.estimatedArrivalAt ? new Date(value.estimatedArrivalAt).toLocaleTimeString() : 'unknown')
+            ]))).bindTooltip(group.length + ' observation(s) at this position').addTo(liveLayer);
+        }
+        const newest = fresh.map(item => item.fetchedAt).sort().at(-1);
+        liveStatus.textContent = fresh.length
+          ? fresh.length + ' current observations · ' + groups.size + ' positions · latest source fetch ' + new Date(newest).toLocaleString() + '. Observations may represent the same bus at several stops.'
+          : 'No current live positions for this selection. Buses may not be operating, or DataMall may have no usable GPS positions. ' + items.filter(item => item.stale).length + ' stale observations hidden.';
+        if (!liveFitted && fresh.length && !activeRunId) {
+          map.fitBounds(fresh.map(item => [item.latitude, item.longitude]), { padding: [35, 35], maxZoom: 15 });
+          liveFitted = true;
+        }
+      } catch (error) {
+        liveLayer.clearLayers();
+        liveStatus.textContent = 'Live feed unavailable: ' + error.message + '. Live markers cleared.';
+      } finally { liveBusy = false; }
+    }
+
+    document.getElementById('raw-observations').addEventListener('change', () => { liveFitted = false; refreshLive(); });
+    document.getElementById('live-form').addEventListener('submit', event => {
+      event.preventDefault(); liveFitted = false; refreshLive();
+    });
+    requestJson('/api/v1/map/settings').then(settings => {
+      const attribution = document.createElement('a');
+      attribution.href = settings.attributionUrl;
+      attribution.textContent = settings.attributionText;
+      attribution.target = '_blank';
+      attribution.rel = 'noopener';
+      const tiles = L.tileLayer(settings.tileUrl, { maxZoom: 19, attribution: attribution.outerHTML }).addTo(map);
+      tiles.on('tileerror', () => { document.getElementById('basemap-status').textContent = 'Some background map tiles could not load. Check your internet connection.'; });
+      refreshLive();
+      setInterval(() => { if (!document.hidden) refreshLive(); }, settings.refreshIntervalMs);
+    }).catch(error => { liveStatus.textContent = 'Map settings unavailable: ' + error.message; });
+
     function draw(route, vehicles) {
-      svg.replaceChildren();
-      const sequences = route.sequences.map(sequence => ({
-        operator: sequence.operator,
-        stops: sequence.stops.filter(validPoint)
-      }));
-      selectableStops = sequences.flatMap(sequence => sequence.stops.map(stop => ({
-        ...stop, operator: sequence.operator
-      })));
+      routeLayer.clearLayers();
+      demoLayer.clearLayers();
+      selectableStops = route.sequences.flatMap(sequence => sequence.stops.filter(validPoint).map(stop => ({ ...stop, operator: sequence.operator })));
       stopSelect.replaceChildren();
       selectableStops.forEach((stop, index) => {
         const option = document.createElement('option');
         option.value = String(index);
-        option.textContent = `${stop.operator} · ${stop.stopSequence} · ${stop.stopCode}`;
+        option.textContent = stop.operator + ' · ' + stop.stopSequence + ' · ' + stop.stopCode;
         stopSelect.append(option);
       });
       stopSelect.disabled = selectableStops.length === 0;
       placeButton.disabled = selectableStops.length === 0;
-      const plottedVehicles = vehicles.filter(validPoint);
-      const points = [...sequences.flatMap(sequence => sequence.stops), ...plottedVehicles];
-      if (points.length === 0) throw new Error('The selected route has no usable stop coordinates.');
-      const meanLatitude = points.reduce((sum, point) => sum + Number(point.latitude), 0) / points.length;
-      const longitudeFactor = Math.cos(meanLatitude * Math.PI / 180);
-      const xs = points.map(point => Number(point.longitude) * longitudeFactor);
-      const ys = points.map(point => Number(point.latitude));
-      const centerX = (Math.min(...xs) + Math.max(...xs)) / 2;
-      const centerY = (Math.min(...ys) + Math.max(...ys)) / 2;
-      const spanX = Math.max(Math.max(...xs) - Math.min(...xs), 0.002);
-      const spanY = Math.max(Math.max(...ys) - Math.min(...ys), 0.002);
-      const scale = Math.min(860 / spanX, 510 / spanY);
-      const project = point => ({
-        x: 500 + (Number(point.longitude) * longitudeFactor - centerX) * scale,
-        y: 320 - (Number(point.latitude) - centerY) * scale
-      });
-      for (let x = 100; x <= 900; x += 100) svg.append(element('line', { x1: x, y1: 0, x2: x, y2: 640, class: 'grid' }));
-      for (let y = 100; y <= 600; y += 100) svg.append(element('line', { x1: 0, y1: y, x2: 1000, y2: y, class: 'grid' }));
-      for (const sequence of sequences) {
-        if (sequence.stops.length > 1) {
-          svg.append(element('polyline', {
-            points: sequence.stops.map(stop => { const p = project(stop); return `${p.x},${p.y}`; }).join(' '),
-            class: 'route'
-          }));
-        }
-        for (const stop of sequence.stops) {
-          const p = project(stop);
-          const marker = element('circle', { cx: p.x, cy: p.y, r: 3.5, class: 'stop' });
-          const title = element('title');
-          title.textContent = `${sequence.operator} · stop ${stop.stopSequence} · ${stop.stopCode}`;
-          marker.append(title);
-          svg.append(marker);
-        }
+      for (const sequence of route.sequences) {
+        const stops = sequence.stops.filter(validPoint);
+        if (stops.length > 1) L.polyline(stops.map(stop => [stop.latitude, stop.longitude]), { color: '#4c94a8', weight: 2, dashArray: '5 7' }).addTo(routeLayer);
+        for (const stop of stops) L.circleMarker([stop.latitude, stop.longitude], { radius: 3, color: '#37798e', fillColor: 'white', fillOpacity: 1 })
+          .bindPopup(popup(['Stop ' + stop.stopCode, sequence.operator + ' · sequence ' + stop.stopSequence])).addTo(routeLayer);
       }
-      for (const vehicle of plottedVehicles) {
-        const p = project(vehicle);
-        const marker = element('circle', { cx: p.x, cy: p.y, r: 10, class: 'bus' });
-        const title = element('title');
-        title.textContent = `${vehicle.displayLabel} · SIMULATION · ${vehicle.driverDisplayName}`;
-        marker.append(title);
-        svg.append(marker);
-        const label = element('text', { x: p.x + 15, y: p.y + 5, class: 'bus-label' });
-        label.textContent = vehicle.displayLabel;
-        svg.append(label);
+      for (const vehicle of vehicles.filter(validPoint)) {
+        L.circleMarker([vehicle.latitude, vehicle.longitude], { radius: 10, color: 'white', weight: 3, fillColor: '#a43ac2', fillOpacity: 1 })
+          .bindPopup(popup([vehicle.displayLabel + ' · SIMULATION', vehicle.syntheticPlate || 'No synthetic plate', vehicle.driverDisplayName]))
+          .bindTooltip(popup([vehicle.displayLabel]), { permanent: true, direction: 'right' }).addTo(demoLayer);
       }
-      document.getElementById('details-title').textContent = `Service ${route.serviceId} · direction ${route.directionId}`;
-      const body = document.getElementById('details-body');
-      body.replaceChildren();
-      const summary = document.createElement('p');
-      summary.textContent = `${sequences.reduce((sum, sequence) => sum + sequence.stops.length, 0)} route stops · ${vehicles.length} simulated vehicles · ${route.routeKind}`;
-      body.append(summary);
-      const list = document.createElement('ul');
-      for (const vehicle of vehicles) {
-        const item = document.createElement('li');
-        item.textContent = `${vehicle.displayLabel} (${vehicle.syntheticPlate || 'no synthetic plate'}) · ${vehicle.driverDisplayName} · ${vehicle.latitude}, ${vehicle.longitude}`;
-        list.append(item);
-      }
-      body.append(list);
+      const points = [...selectableStops, ...vehicles.filter(validPoint)];
+      if (points.length) map.fitBounds(points.map(point => [point.latitude, point.longitude]), { padding: [35, 35], maxZoom: 15 });
+      document.getElementById('details-title').textContent = 'Demo overlay · service ' + route.serviceId + ' · direction ' + route.directionId;
+      document.getElementById('details-body').textContent = selectableStops.length + ' route stops · ' + vehicles.length + ' simulated vehicles. Live observations remain a separate read-only layer.';
     }
 
     async function loadMap(runId) {
@@ -234,7 +291,7 @@
         draw(route, vehicles);
         activeRunId = runId;
         runInput.value = runId;
-        status.textContent = `Loaded draft simulation ${runId}. No live bus observations were used.`;
+        status.textContent = `Loaded draft simulation ${runId}. Live observations are shown separately and do not change this saved run.`;
       } finally {
         button.disabled = false;
       }

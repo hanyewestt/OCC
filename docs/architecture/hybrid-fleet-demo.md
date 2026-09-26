@@ -11,8 +11,9 @@ read-only `/api/v1/map/observed-buses` feed of usable, unverified positions.
 Operations now stores draft demo runs, vehicles, drivers, and assignments behind
 role-protected endpoints and checks service, direction, and proximity to an
 imported route stop. A simple draft map shows the imported stop sequence and
-prototype-owned vehicles without live buses. Track inference, observation
-capture, driven-path validation, simulation execution, a combined live/demo map,
+prototype-owned vehicles alongside a separate live observation layer on a
+geographic basemap. The live layer never changes a demo run. Persistent inferred tracks now link compatible observations with evidence IDs,
+confidence, ambiguity and expiry. Observation capture, driven-path validation, simulation execution,
 and driver delivery remain planned work.
 
 Bus Arrival v3 is scoped to polled stops and the next approaching buses. Its
@@ -41,7 +42,7 @@ not at an invented map position.
 
 ## Inferred tracks and duplicate handling
 
-A future tracker may match observations using service, mapped direction, route
+The Operations tracker matches observations using service, mapped direction, route
 progress, time, ETA, position, and physically possible movement. It must retain
 the contributing observation IDs, confidence, last-seen time, and status. Match
 only when evidence supports a unique candidate. If vehicles overtake, disappear,
@@ -91,8 +92,8 @@ tables. No action is sent to a real operator or bus.
 - Add a versioned simulation input and explicit capture API with authorization,
   freshness checks, provenance, and replay support. Keep it separate from the
   existing ingestion API and live alert state.
-- Build a map read model for current observations. Add inferred tracks only with
-  confidence, ambiguity, expiry, and duplicate-prevention tests.
+- Implemented: map read model and persistent Operations inferred tracks with
+  confidence, ambiguity, expiry, source evidence and duplicate-prevention tests.
 - Add protected demo vehicle placement and assignment APIs, persistence, and UI.
   Validate service, direction, route location, driver assignment, and run scope.
 - Feed injected vehicle timings to the simulation detector, preserving the source

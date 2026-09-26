@@ -214,6 +214,163 @@
         ]
       }
     },
+    "/api/v1/map/settings": {
+      "get": {
+        "tags": [
+          "live-map-controller"
+        ],
+        "summary": "Read public map display settings",
+        "operationId": "getMapSettings",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapSettingsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/map/observed-buses": {
+      "get": {
+        "tags": [
+          "live-map-controller"
+        ],
+        "summary": "Read unverified DataMall positions",
+        "description": "Anonymous read-only observation feed. A marker is an arrival observation, not a verified unique bus. No Cognito token or demo run is needed.",
+        "operationId": "getLiveMapObservations",
+        "parameters": [
+          {
+            "name": "serviceId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current observation page",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveMapResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid paging parameters",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Ingestion unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/map/inferred-tracks": {
+      "get": {
+        "tags": [
+          "inferred-track-controller"
+        ],
+        "summary": "Read current inferred bus tracks",
+        "description": "Temporary identity hypotheses from DataMall observations. Confidence is a heuristic score, not a probability. Stale and expired tracks are omitted. Tracks cannot receive directives.",
+        "operationId": "getInferredVehicleTracks",
+        "parameters": [
+          {
+            "name": "serviceId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 0,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current inferred track page",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/InferredTrackPageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid paging",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetail"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/demo-runs/{runId}": {
       "get": {
         "tags": [
@@ -521,6 +678,193 @@
           },
           "classification": {
             "type": "string"
+          }
+        }
+      },
+      "MapSettingsResponse": {
+        "type": "object",
+        "properties": {
+          "tileUrl": {
+            "type": "string"
+          },
+          "attributionText": {
+            "type": "string"
+          },
+          "attributionUrl": {
+            "type": "string"
+          },
+          "refreshIntervalMs": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "LiveMapResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Observation"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalItems": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "totalPages": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "Observation": {
+        "type": "object",
+        "properties": {
+          "observationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "stopCode": {
+            "type": "string"
+          },
+          "serviceId": {
+            "type": "string"
+          },
+          "directionId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "visitOrder": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "estimatedArrivalAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "latitude": {
+            "type": "number"
+          },
+          "longitude": {
+            "type": "number"
+          },
+          "fetchedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "classification": {
+            "type": "string"
+          },
+          "identityStatus": {
+            "type": "string"
+          }
+        }
+      },
+      "InferredTrackPageResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Track"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "totalItems": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "totalPages": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "Track": {
+        "type": "object",
+        "properties": {
+          "trackId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "displayLabel": {
+            "type": "string"
+          },
+          "serviceId": {
+            "type": "string"
+          },
+          "directionId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "operator": {
+            "type": "string"
+          },
+          "latitude": {
+            "type": "number",
+            "format": "double"
+          },
+          "longitude": {
+            "type": "number",
+            "format": "double"
+          },
+          "routeProgressMeters": {
+            "type": "number",
+            "format": "double"
+          },
+          "firstSeenAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastSeenAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "number",
+            "format": "double"
+          },
+          "confirmations": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "observationIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "classification": {
+            "type": "string"
+          },
+          "identityStatus": {
+            "type": "string"
+          },
+          "directiveEligible": {
+            "type": "boolean"
           }
         }
       },

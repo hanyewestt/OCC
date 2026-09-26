@@ -4,6 +4,7 @@ import com.csd.occ.ingestion.domain.BusArrivalPort;
 import com.csd.occ.ingestion.domain.BusArrivalPrediction;
 import com.csd.occ.ingestion.domain.BusArrivalSnapshot;
 import com.csd.occ.ingestion.domain.BusReferencePort;
+import com.csd.occ.ingestion.domain.ReferenceSourceUnavailableException;
 import com.csd.occ.ingestion.infrastructure.config.DataMallProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -75,7 +76,7 @@ public class DataMallAdapter implements BusArrivalPort, BusReferencePort {
                     .toList();
             return new BusReferenceData(stops, services, routeStops);
         } catch (Exception exception) {
-            throw new IllegalStateException("Unable to fetch DataMall reference topology", exception);
+            throw new ReferenceSourceUnavailableException(exception);
         }
     }
 
