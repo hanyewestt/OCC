@@ -52,7 +52,7 @@ class BunchingRecommendationControllerTest {
                 .extractingPath("$.mitigationType").isEqualTo("HOLD");
         assertThat(result).bodyJson()
                 .extractingPath("$.explanation.tradeOffs[0]")
-                .asString().contains("90 seconds");
+                .asString().contains("120 seconds");
     }
 
     @Test
@@ -64,7 +64,7 @@ class BunchingRecommendationControllerTest {
                   "bunchingEvent": {
                     "directionId": 1,
                     "expectedHeadwaySeconds": 600,
-                    "observedHeadwaySeconds": [180, 210],
+                    "observedHeadwaySeconds": [276, 221],
                     "evidenceIds": []
                   },
                   "diagnosis": {
@@ -94,7 +94,7 @@ class BunchingRecommendationControllerTest {
     void unavailableActionReturnsUnprocessableProblemDetail() throws IOException {
         String request = validRequest()
                 .replace("\"190\"", "\"999\"")
-                .replace("\"44531\"", "\"00000\"");
+                .replace("\"44251\"", "\"00000\"");
 
         var result = mvc.post()
                 .uri(ENDPOINT)
@@ -142,17 +142,17 @@ class BunchingRecommendationControllerTest {
         private BunchingMitigationInputs inputs() {
             return new BunchingMitigationInputs(
                     new ValidatedMitigationContext(
-                            "SIM-BUS-190-02",
-                            "44539",
+                            "SBS5898U",
+                            "44241",
                             FollowingBusState.READY_TO_DEPART,
-                            90,
+                            120,
                             75,
                             CrowdSafetyStatus.PASSED,
                             MitigationValidationStatus.VALIDATED,
-                            List.of("validation-001")),
+                            List.of("route190-reference-directive-first-hold")),
                     new SimulatedImpactEstimate(
-                            210,
-                            420,
+                            221,
+                            341,
                             38,
                             24,
                             new BigDecimal("190"),

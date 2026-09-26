@@ -24,17 +24,19 @@ class BunchingRecommendationPolicyTest {
                 SourceClassification.SIMULATION,
                 confirmedEvent(),
                 diagnosis(),
-                validatedContext(FollowingBusState.READY_TO_DEPART, 90, 120),
+                validatedContext(FollowingBusState.READY_TO_DEPART, 120, 75),
                 impact());
 
         assertThat(result).hasValueSatisfying(recommendation -> {
             assertThat(recommendation.mitigationType()).isEqualTo(MitigationType.HOLD);
-            assertThat(recommendation.adjustmentSeconds()).isEqualTo(90);
-            assertThat(recommendation.targetBusReference()).isEqualTo("SIM-BUS-190-02");
-            assertThat(recommendation.controlStopCode()).isEqualTo("44539");
+            assertThat(recommendation.adjustmentSeconds()).isEqualTo(120);
+            assertThat(recommendation.targetBusReference()).isEqualTo("SBS5898U");
+            assertThat(recommendation.controlStopCode()).isEqualTo("44241");
             assertThat(recommendation.evidenceIds())
-                    .containsExactly("arrival-observation-101", "arrival-observation-102",
-                            "diagnosis-evidence-001", "validation-001");
+                    .containsExactly("route190-arrival-20260928T074402+0800",
+                            "route190-arrival-20260928T074502+0800",
+                            "route190-breakdown-delay-sbs8027y",
+                            "route190-reference-directive-first-hold");
         });
     }
 
@@ -57,14 +59,14 @@ class BunchingRecommendationPolicyTest {
     @Test
     void unsafeCrowdConditionProducesNoAction() {
         ValidatedMitigationContext context = new ValidatedMitigationContext(
-                "SIM-BUS-190-02",
-                "44539",
+                "SBS5898U",
+                "44241",
                 FollowingBusState.READY_TO_DEPART,
                 90,
                 120,
                 CrowdSafetyStatus.FAILED,
                 MitigationValidationStatus.VALIDATED,
-                List.of("validation-001"));
+                List.of("route190-reference-directive-first-hold"));
 
         assertThat(policy.evaluate(RECOMMENDATION_ID, SourceClassification.SIMULATION,
                 confirmedEvent(), diagnosis(), context, impact()))
@@ -74,14 +76,14 @@ class BunchingRecommendationPolicyTest {
     @Test
     void rejectedOperationalValidationProducesNoAction() {
         ValidatedMitigationContext context = new ValidatedMitigationContext(
-                "SIM-BUS-190-02",
-                "44539",
+                "SBS5898U",
+                "44241",
                 FollowingBusState.READY_TO_DEPART,
                 90,
                 120,
                 CrowdSafetyStatus.PASSED,
                 MitigationValidationStatus.REJECTED,
-                List.of("validation-001"));
+                List.of("route190-reference-directive-first-hold"));
 
         assertThat(policy.evaluate(RECOMMENDATION_ID, SourceClassification.SIMULATION,
                 confirmedEvent(), diagnosis(), context, impact()))
@@ -94,15 +96,16 @@ class BunchingRecommendationPolicyTest {
                 EVENT_ID,
                 "190",
                 1,
-                "44531",
+                "44251",
                 BunchingEventStatus.INSUFFICIENT_EVIDENCE,
                 600,
-                List.of(180, 210),
-                Instant.parse("2026-09-22T10:02:00Z"),
-                List.of("arrival-observation-101", "arrival-observation-102"));
+                List.of(276, 221),
+                Instant.parse("2026-09-27T23:45:02Z"),
+                List.of("route190-arrival-20260928T074402+0800",
+                        "route190-arrival-20260928T074502+0800"));
 
         assertThat(policy.evaluate(RECOMMENDATION_ID, SourceClassification.SIMULATION, event, diagnosis(),
-                validatedContext(FollowingBusState.READY_TO_DEPART, 90, 120), impact()))
+                validatedContext(FollowingBusState.READY_TO_DEPART, 120, 75), impact()))
                 .isEmpty();
     }
 
@@ -126,15 +129,16 @@ class BunchingRecommendationPolicyTest {
                 EVENT_ID,
                 "190",
                 1,
-                "44531",
+                "44251",
                 BunchingEventStatus.CONFIRMED,
                 600,
                 List.of(600, 620),
-                Instant.parse("2026-09-22T10:02:00Z"),
-                List.of("arrival-observation-101", "arrival-observation-102"));
+                Instant.parse("2026-09-27T23:45:02Z"),
+                List.of("route190-arrival-20260928T074402+0800",
+                        "route190-arrival-20260928T074502+0800"));
 
         assertThat(policy.evaluate(RECOMMENDATION_ID, SourceClassification.SIMULATION, event, diagnosis(),
-                validatedContext(FollowingBusState.READY_TO_DEPART, 90, 120), impact()))
+                validatedContext(FollowingBusState.READY_TO_DEPART, 120, 75), impact()))
                 .isEmpty();
     }
 
@@ -142,7 +146,7 @@ class BunchingRecommendationPolicyTest {
     void observationOnlyEvidenceProducesNoAction() {
         assertThat(policy.evaluate(RECOMMENDATION_ID, SourceClassification.OBSERVATION_ONLY,
                 confirmedEvent(), diagnosis(),
-                validatedContext(FollowingBusState.READY_TO_DEPART, 90, 120), impact()))
+                validatedContext(FollowingBusState.READY_TO_DEPART, 120, 75), impact()))
                 .isEmpty();
     }
 
@@ -151,21 +155,22 @@ class BunchingRecommendationPolicyTest {
                 EVENT_ID,
                 "190",
                 1,
-                "44531",
+                "44251",
                 BunchingEventStatus.CONFIRMED,
                 600,
-                List.of(180, 210),
-                Instant.parse("2026-09-22T10:02:00Z"),
-                List.of("arrival-observation-101", "arrival-observation-102"));
+                List.of(276, 221),
+                Instant.parse("2026-09-27T23:45:02Z"),
+                List.of("route190-arrival-20260928T074402+0800",
+                        "route190-arrival-20260928T074502+0800"));
     }
 
     private BunchingRootCauseDiagnosis diagnosis() {
         return new BunchingRootCauseDiagnosis(
                 DIAGNOSIS_ID,
-                "Downstream boarding delay caused the following bus to close the gap.",
+                "A vehicle breakdown delayed leader SBS8027Y, allowing follower SBS5898U to close the gap.",
                 new BigDecimal("0.82"),
-                List.of("diagnosis-evidence-001"),
-                List.of("Vehicle location is unavailable."));
+                List.of("route190-breakdown-delay-sbs8027y"),
+                List.of("The diagnosis is supplied by the shared deterministic simulation fixture."));
     }
 
     private ValidatedMitigationContext validatedContext(
@@ -173,20 +178,20 @@ class BunchingRecommendationPolicyTest {
             int maximumHoldSeconds,
             int maximumDwellAdjustmentSeconds) {
         return new ValidatedMitigationContext(
-                "SIM-BUS-190-02",
-                "44539",
+                "SBS5898U",
+                "44241",
                 followingBusState,
                 maximumHoldSeconds,
                 maximumDwellAdjustmentSeconds,
                 CrowdSafetyStatus.PASSED,
                 MitigationValidationStatus.VALIDATED,
-                List.of("validation-001"));
+                List.of("route190-reference-directive-first-hold"));
     }
 
     private SimulatedImpactEstimate impact() {
         return new SimulatedImpactEstimate(
-                210,
-                420,
+                221,
+                341,
                 38,
                 24,
                 new BigDecimal("190"),

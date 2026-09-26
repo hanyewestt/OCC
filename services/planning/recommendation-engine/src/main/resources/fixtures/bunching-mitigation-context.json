@@ -3,20 +3,23 @@
     {
       "serviceId": "190",
       "directionId": 1,
-      "monitoredStopCode": "44531",
+      "monitoredStopCode": "44251",
       "context": {
-        "followingBusReference": "SIM-BUS-190-02",
-        "approvedControlStopCode": "44539",
+        "followingBusReference": "SBS5898U",
+        "approvedControlStopCode": "44241",
         "followingBusState": "READY_TO_DEPART",
-        "maximumHoldSeconds": 90,
+        "maximumHoldSeconds": 120,
         "maximumDwellAdjustmentSeconds": 75,
         "crowdSafetyStatus": "PASSED",
         "validationStatus": "VALIDATED",
-        "evidenceIds": ["validation-001"]
+        "evidenceIds": [
+          "route190-reference-directive-first-hold",
+          "synthetic-impact-estimate-route190-first-hold-v1"
+        ]
       },
       "impact": {
-        "headwayBeforeSeconds": 210,
-        "headwayAfterSeconds": 420,
+        "headwayBeforeSeconds": 221,
+        "headwayAfterSeconds": 341,
         "queueBeforePassengers": 38,
         "queueAfterPassengers": 24,
         "passengerMinutesBefore": 190,

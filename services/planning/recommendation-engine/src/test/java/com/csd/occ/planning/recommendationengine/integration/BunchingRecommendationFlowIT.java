@@ -32,9 +32,13 @@ class BunchingRecommendationFlowIT {
         assertThat(result).bodyJson()
                 .extractingPath("$.mitigationType").isEqualTo("HOLD");
         assertThat(result).bodyJson()
-                .extractingPath("$.adjustmentSeconds").isEqualTo(90);
+                .extractingPath("$.adjustmentSeconds").isEqualTo(120);
         assertThat(result).bodyJson()
-                .extractingPath("$.expectedImpact.headwayAfterSeconds").isEqualTo(420);
+                .extractingPath("$.targetBusReference").isEqualTo("SBS5898U");
+        assertThat(result).bodyJson()
+                .extractingPath("$.controlStopCode").isEqualTo("44241");
+        assertThat(result).bodyJson()
+                .extractingPath("$.expectedImpact.headwayAfterSeconds").isEqualTo(341);
         assertThat(result).bodyJson()
                 .extractingPath("$.expectedImpact.queueAfterPassengers").isEqualTo(24);
         assertThat(result).bodyJson()
@@ -63,7 +67,7 @@ class BunchingRecommendationFlowIT {
     void routeWithoutFixtureContextCannotProduceRecommendation() throws IOException {
         String request = validRequest()
                 .replace("\"190\"", "\"999\"")
-                .replace("\"44531\"", "\"00000\"");
+                .replace("\"44251\"", "\"00000\"");
 
         var result = post(request);
 

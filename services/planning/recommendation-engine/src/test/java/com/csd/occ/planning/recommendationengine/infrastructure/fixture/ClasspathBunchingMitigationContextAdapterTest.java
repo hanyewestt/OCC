@@ -38,8 +38,10 @@ class ClasspathBunchingMitigationContextAdapterTest {
 
         assertThat(recommendation).hasValueSatisfying(value -> {
             assertThat(value.mitigationType()).isEqualTo(MitigationType.HOLD);
-            assertThat(value.adjustmentSeconds()).isEqualTo(90);
-            assertThat(value.expectedImpact().headwayAfterSeconds()).isEqualTo(420);
+            assertThat(value.adjustmentSeconds()).isEqualTo(120);
+            assertThat(value.targetBusReference()).isEqualTo("SBS5898U");
+            assertThat(value.controlStopCode()).isEqualTo("44241");
+            assertThat(value.expectedImpact().headwayAfterSeconds()).isEqualTo(341);
             assertThat(value.expectedImpact().queueAfterPassengers()).isEqualTo(24);
             assertThat(value.expectedImpact().passengerMinutesAfter())
                     .isEqualByComparingTo("128");
@@ -60,7 +62,7 @@ class ClasspathBunchingMitigationContextAdapterTest {
                 "00000",
                 BunchingEventStatus.CONFIRMED,
                 600,
-                List.of(180, 210),
+                List.of(276, 221),
                 Instant.parse("2026-09-22T10:02:00Z"),
                 List.of("arrival-observation-201", "arrival-observation-202"));
 
@@ -72,20 +74,21 @@ class ClasspathBunchingMitigationContextAdapterTest {
                 UUID.fromString("c5934f15-4a65-4e94-87ea-a5a64a7dd4c1"),
                 "190",
                 1,
-                "44531",
+                "44251",
                 BunchingEventStatus.CONFIRMED,
                 600,
-                List.of(180, 210),
-                Instant.parse("2026-09-22T10:02:00Z"),
-                List.of("arrival-observation-101", "arrival-observation-102"));
+                List.of(276, 221),
+                Instant.parse("2026-09-27T23:45:02Z"),
+                List.of("route190-arrival-20260928T074402+0800",
+                        "route190-arrival-20260928T074502+0800"));
     }
 
     private BunchingRootCauseDiagnosis diagnosis() {
         return new BunchingRootCauseDiagnosis(
                 UUID.fromString("f2b8d1b5-c24c-48bb-8a66-bff7be1e9e73"),
-                "Downstream boarding delay caused the following bus to close the gap.",
+                "A vehicle breakdown delayed leader SBS8027Y, allowing follower SBS5898U to close the gap.",
                 new BigDecimal("0.82"),
-                List.of("diagnosis-evidence-001"),
-                List.of("Vehicle location is unavailable."));
+                List.of("route190-breakdown-delay-sbs8027y"),
+                List.of("The diagnosis is supplied by the shared deterministic simulation fixture."));
     }
 }

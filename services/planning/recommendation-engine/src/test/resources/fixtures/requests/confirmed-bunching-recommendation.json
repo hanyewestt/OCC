@@ -5,18 +5,18 @@
     "bunchingEventId": "c5934f15-4a65-4e94-87ea-a5a64a7dd4c1",
     "serviceId": "190",
     "directionId": 1,
-    "monitoredStopCode": "44531",
+    "monitoredStopCode": "44251",
     "status": "CONFIRMED",
     "expectedHeadwaySeconds": 600,
-    "observedHeadwaySeconds": [180, 210],
-    "firstConfirmedAt": "2026-09-22T10:02:00Z",
-    "evidenceIds": ["arrival-observation-101", "arrival-observation-102"]
+    "observedHeadwaySeconds": [276, 221],
+    "firstConfirmedAt": "2026-09-27T23:45:02Z",
+    "evidenceIds": ["route190-arrival-20260928T074402+0800", "route190-arrival-20260928T074502+0800"]
   },
   "diagnosis": {
     "diagnosisId": "f2b8d1b5-c24c-48bb-8a66-bff7be1e9e73",
-    "likelyCause": "Downstream boarding delay caused the following bus to close the gap.",
+    "likelyCause": "A vehicle breakdown delayed leader SBS8027Y, allowing follower SBS5898U to close the gap.",
     "confidence": 0.82,
-    "evidenceIds": ["diagnosis-evidence-001"],
-    "limitations": ["Vehicle location is unavailable."]
+    "evidenceIds": ["route190-breakdown-delay-sbs8027y"],
+    "limitations": ["The diagnosis is supplied by the shared deterministic simulation fixture."]
   }
 }
