@@ -21,7 +21,7 @@ class BunchingRecommendationOrchestratorTest {
         AtomicInteger calls = new AtomicInteger();
         MitigationCandidateGeneratorPort generator = request -> {
             calls.incrementAndGet();
-            return Optional.of(matchingCandidate("Generated rationale."));
+            return generated(matchingCandidate("Generated rationale."));
         };
 
         var result = orchestrator(false, Optional.of(generator)).recommend(
@@ -57,9 +57,9 @@ class BunchingRecommendationOrchestratorTest {
     @Test
     void matchingValidatedCandidateEnrichesDeterministicRecommendationRationale() {
         MitigationCandidateGeneratorPort generator = request ->
-                Optional.of(matchingCandidate("Explain the approved hold in controller-friendly language."));
+                generated(matchingCandidate("Explain the approved hold in controller-friendly language."));
 
-        var result = orchestrator(true, Optional.of(generator)).recommend(
+        var result = orchestrator(true, Optional.of(generator)).evaluate(
                 RECOMMENDATION_ID,
                 SourceClassification.SIMULATION,
                 event(BunchingEventStatus.CONFIRMED),
@@ -67,7 +67,8 @@ class BunchingRecommendationOrchestratorTest {
                 context(),
                 impact());
 
-        assertThat(result).hasValueSatisfying(recommendation -> {
+        assertThat(result).hasValueSatisfying(outcome -> {
+            var recommendation = outcome.recommendation();
             assertThat(recommendation.explanation().rationale())
                     .isEqualTo("Explain the approved hold in controller-friendly language.");
             assertThat(recommendation.mitigationType()).isEqualTo(MitigationType.HOLD);
@@ -79,14 +80,21 @@ class BunchingRecommendationOrchestratorTest {
                             "arrival-observation-2",
                             "diagnosis-evidence-1",
                             "operations-evidence-1");
+            assertThat(outcome.modelInvocation()).hasValueSatisfying(audit -> {
+                assertThat(audit.outcome()).isEqualTo(ModelInvocationOutcome.ACCEPTED);
+                assertThat(audit.deterministicFallbackUsed()).isFalse();
+                assertThat(audit.candidate()).contains(matchingCandidate(
+                        "Explain the approved hold in controller-friendly language."));
+            });
         });
     }
 
     @Test
     void emptyCandidateOutputReturnsDeterministicRecommendation() {
-        MitigationCandidateGeneratorPort generator = request -> Optional.empty();
+        MitigationCandidateGeneratorPort generator = request ->
+                new MitigationCandidateGenerationResult.Empty(metadata());
 
-        var result = orchestrator(true, Optional.of(generator)).recommend(
+        var result = orchestrator(true, Optional.of(generator)).evaluate(
                 RECOMMENDATION_ID,
                 SourceClassification.SIMULATION,
                 event(BunchingEventStatus.CONFIRMED),
@@ -94,19 +102,19 @@ class BunchingRecommendationOrchestratorTest {
                 context(),
                 impact());
 
-        assertDeterministicFallback(result);
+        assertFallbackWithAudit(result, ModelInvocationOutcome.EMPTY_RESPONSE, Optional.empty());
     }
 
     @Test
     void rejectedCandidateReturnsDeterministicRecommendation() {
-        MitigationCandidateGeneratorPort generator = request -> Optional.of(new MitigationCandidate(
+        MitigationCandidateGeneratorPort generator = request -> generated(new MitigationCandidate(
                 CandidateMitigationType.HOLD,
                 "UNAPPROVED-BUS",
                 "44241",
                 120,
                 "Use an unapproved bus."));
 
-        var result = orchestrator(true, Optional.of(generator)).recommend(
+        var result = orchestrator(true, Optional.of(generator)).evaluate(
                 RECOMMENDATION_ID,
                 SourceClassification.SIMULATION,
                 event(BunchingEventStatus.CONFIRMED),
@@ -114,19 +122,22 @@ class BunchingRecommendationOrchestratorTest {
                 context(),
                 impact());
 
-        assertDeterministicFallback(result);
+        assertFallbackWithAudit(
+                result,
+                ModelInvocationOutcome.REJECTED,
+                Optional.of(MitigationCandidateRejectionReason.TARGET_BUS_NOT_APPROVED));
     }
 
     @Test
     void validCandidateThatDoesNotMatchSelectedActionReturnsDeterministicRecommendation() {
-        MitigationCandidateGeneratorPort generator = request -> Optional.of(new MitigationCandidate(
+        MitigationCandidateGeneratorPort generator = request -> generated(new MitigationCandidate(
                 CandidateMitigationType.HOLD,
                 "SBS5898U",
                 "44241",
                 60,
                 "Use a shorter hold than the simulated action."));
 
-        var result = orchestrator(true, Optional.of(generator)).recommend(
+        var result = orchestrator(true, Optional.of(generator)).evaluate(
                 RECOMMENDATION_ID,
                 SourceClassification.SIMULATION,
                 event(BunchingEventStatus.CONFIRMED),
@@ -134,16 +145,17 @@ class BunchingRecommendationOrchestratorTest {
                 context(),
                 impact());
 
-        assertDeterministicFallback(result);
+        assertFallbackWithAudit(result, ModelInvocationOutcome.MISMATCHED, Optional.empty());
     }
 
     @Test
     void providerFailureReturnsDeterministicRecommendation() {
-        MitigationCandidateGeneratorPort generator = request -> {
-            throw new IllegalStateException("Synthetic provider failure");
-        };
+        MitigationCandidateGeneratorPort generator = request ->
+                new MitigationCandidateGenerationResult.Failed(
+                        metadata(),
+                        ModelInvocationFailureCategory.PROVIDER_ERROR);
 
-        var result = orchestrator(true, Optional.of(generator)).recommend(
+        var result = orchestrator(true, Optional.of(generator)).evaluate(
                 RECOMMENDATION_ID,
                 SourceClassification.SIMULATION,
                 event(BunchingEventStatus.CONFIRMED),
@@ -151,7 +163,9 @@ class BunchingRecommendationOrchestratorTest {
                 context(),
                 impact());
 
-        assertDeterministicFallback(result);
+        assertFallbackWithAudit(result, ModelInvocationOutcome.PROVIDER_FAILURE, Optional.empty());
+        assertThat(result.orElseThrow().modelInvocation().orElseThrow().failureCategory())
+                .contains(ModelInvocationFailureCategory.PROVIDER_ERROR);
     }
 
     @Test
@@ -159,7 +173,7 @@ class BunchingRecommendationOrchestratorTest {
         AtomicInteger calls = new AtomicInteger();
         MitigationCandidateGeneratorPort generator = request -> {
             calls.incrementAndGet();
-            return Optional.of(matchingCandidate("Generated rationale."));
+            return generated(matchingCandidate("Generated rationale."));
         };
 
         var result = orchestrator(true, Optional.of(generator)).recommend(
@@ -191,6 +205,45 @@ class BunchingRecommendationOrchestratorTest {
             assertThat(recommendation.explanation().rationale())
                     .startsWith("Hold the following bus");
         });
+    }
+
+    private void assertFallbackWithAudit(
+            Optional<BunchingRecommendationOutcome> result,
+            ModelInvocationOutcome expectedOutcome,
+            Optional<MitigationCandidateRejectionReason> expectedRejectionReason) {
+        assertThat(result).hasValueSatisfying(outcome -> {
+            ValidatedMitigationRecommendation recommendation = outcome.recommendation();
+            assertThat(recommendation.mitigationType()).isEqualTo(MitigationType.HOLD);
+            assertThat(recommendation.adjustmentSeconds()).isEqualTo(120);
+            assertThat(recommendation.explanation().rationale()).startsWith("Hold the following bus");
+            assertThat(outcome.modelInvocation()).hasValueSatisfying(audit -> {
+                assertThat(audit.outcome()).isEqualTo(expectedOutcome);
+                assertThat(audit.rejectionReason()).isEqualTo(expectedRejectionReason);
+                assertThat(audit.deterministicFallbackUsed()).isTrue();
+            });
+        });
+    }
+
+    private MitigationCandidateGenerationResult generated(MitigationCandidate candidate) {
+        return new MitigationCandidateGenerationResult.Generated(metadata(), candidate);
+    }
+
+    private ModelInvocationMetadata metadata() {
+        Instant invokedAt = Instant.parse("2026-09-28T00:00:00Z");
+        return new ModelInvocationMetadata(
+                UUID.fromString("7778bb14-2fe4-4fcc-9149-642e1fd27c00"),
+                ModelInvocationProvider.GEMINI,
+                "gemini-3.7-flash",
+                "bunching-candidate-v1",
+                "mitigation-candidate-v1",
+                Optional.of("synthetic-response"),
+                invokedAt,
+                invokedAt.plusMillis(125),
+                125,
+                Optional.of(new ModelTokenUsage(
+                        Optional.of(100),
+                        Optional.of(25),
+                        Optional.of(125))));
     }
 
     private MitigationCandidate matchingCandidate(String rationale) {

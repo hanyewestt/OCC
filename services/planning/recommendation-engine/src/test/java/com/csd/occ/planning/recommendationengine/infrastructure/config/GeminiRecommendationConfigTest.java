@@ -15,18 +15,21 @@ class GeminiRecommendationConfigTest {
     void createsGoogleModelFromTypedSettingsWithoutCallingProvider() throws Exception {
         RecommendationGeminiProperties properties = new RecommendationGeminiProperties(
                 "synthetic-gemini-key",
-                "gemini-2.5-flash",
+                "gemini-3.7-flash",
                 0.0,
                 512,
+                0,
                 Duration.ofSeconds(30),
                 2);
 
         try (Client client = config.recommendationGeminiClient(properties)) {
             GoogleGenAiChatModel model = config.recommendationGeminiChatModel(client, properties);
 
-            assertThat(model.getOptions().getModel()).isEqualTo("gemini-2.5-flash");
+            assertThat(model.getOptions().getModel()).isEqualTo("gemini-3.7-flash");
             assertThat(model.getOptions().getTemperature()).isZero();
             assertThat(model.getOptions().getMaxOutputTokens()).isEqualTo(512);
+            assertThat(model.getOptions().getThinkingBudget()).isZero();
+            assertThat(model.getOptions().getIncludeThoughts()).isFalse();
             assertThat(model.getOptions().getCandidateCount()).isEqualTo(1);
         }
     }

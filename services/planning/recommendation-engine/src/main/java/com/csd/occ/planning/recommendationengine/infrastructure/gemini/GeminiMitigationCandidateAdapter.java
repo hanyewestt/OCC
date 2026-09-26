@@ -1,14 +1,36 @@
 package com.csd.occ.planning.recommendationengine.infrastructure.gemini;
 
-import com.csd.occ.planning.recommendationengine.domain.MitigationCandidate;
+import com.csd.occ.planning.recommendationengine.domain.MitigationCandidateGenerationResult;
 import com.csd.occ.planning.recommendationengine.domain.MitigationCandidateGeneratorPort;
 import com.csd.occ.planning.recommendationengine.domain.MitigationCandidateRequest;
+import com.csd.occ.planning.recommendationengine.domain.ModelInvocationFailureCategory;
+import com.csd.occ.planning.recommendationengine.domain.ModelInvocationMetadata;
+import com.csd.occ.planning.recommendationengine.domain.ModelInvocationProvider;
+import com.csd.occ.planning.recommendationengine.domain.ModelTokenUsage;
+import com.google.genai.errors.ApiException;
+import java.net.SocketTimeoutException;
+import java.net.http.HttpTimeoutException;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.TimeoutException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.ResponseEntity;
+import org.springframework.ai.chat.metadata.ChatResponseMetadata;
+import org.springframework.ai.chat.metadata.Usage;
+import org.springframework.ai.chat.model.ChatResponse;
 import tools.jackson.databind.json.JsonMapper;
 
 public final class GeminiMitigationCandidateAdapter implements MitigationCandidateGeneratorPort {
+
+    private static final Logger log = LoggerFactory.getLogger(GeminiMitigationCandidateAdapter.class);
+    static final String PROMPT_VERSION = "bunching-candidate-v1";
+    static final String OUTPUT_SCHEMA_VERSION = "mitigation-candidate-v1";
 
     private static final String SYSTEM_PROMPT = """
             You are an advisory bus-operations mitigation assistant.
@@ -36,23 +58,166 @@ public final class GeminiMitigationCandidateAdapter implements MitigationCandida
 
     private final ChatClient chatClient;
     private final JsonMapper json;
+    private final Clock clock;
+    private final String configuredModel;
 
-    public GeminiMitigationCandidateAdapter(ChatClient chatClient, JsonMapper json) {
+    public GeminiMitigationCandidateAdapter(
+            ChatClient chatClient,
+            JsonMapper json,
+            Clock clock,
+            String configuredModel) {
         this.chatClient = Objects.requireNonNull(chatClient, "chatClient is required");
         this.json = Objects.requireNonNull(json, "json is required");
+        this.clock = Objects.requireNonNull(clock, "clock is required");
+        if (configuredModel == null || configuredModel.isBlank()) {
+            throw new IllegalArgumentException("configuredModel is required");
+        }
+        this.configuredModel = configuredModel.trim();
     }
 
     @Override
-    public Optional<MitigationCandidate> generate(MitigationCandidateRequest request) {
+    public MitigationCandidateGenerationResult generate(MitigationCandidateRequest request) {
         Objects.requireNonNull(request, "request is required");
+        UUID invocationId = UUID.randomUUID();
+        Instant startedAt = Instant.now(clock);
         String requestJson = json.writeValueAsString(request);
-        GeminiMitigationCandidateOutput output = chatClient.prompt()
-                .system(SYSTEM_PROMPT)
-                .user(user -> user.text(USER_PROMPT).param("requestJson", requestJson))
-                .call()
-                .entity(
-                        GeminiMitigationCandidateOutput.class,
-                        structuredOutput -> structuredOutput.useProviderStructuredOutput());
-        return Optional.ofNullable(output).map(GeminiMitigationCandidateOutput::toDomain);
+        ResponseEntity<ChatResponse, GeminiMitigationCandidateOutput> response = null;
+        try {
+            response = chatClient.prompt()
+                    .system(SYSTEM_PROMPT)
+                    .user(user -> user.text(USER_PROMPT).param("requestJson", requestJson))
+                    .call()
+                    .responseEntity(
+                            GeminiMitigationCandidateOutput.class,
+                            structuredOutput -> structuredOutput.useProviderStructuredOutput());
+            Instant completedAt = Instant.now(clock);
+            ModelInvocationMetadata metadata = metadata(
+                    invocationId,
+                    startedAt,
+                    completedAt,
+                    response.response());
+            if (response.entity() == null) {
+                return new MitigationCandidateGenerationResult.Empty(metadata);
+            }
+            return new MitigationCandidateGenerationResult.Generated(
+                    metadata,
+                    response.entity().toDomain());
+        } catch (RuntimeException providerFailure) {
+            Instant completedAt = Instant.now(clock);
+            ModelInvocationFailureCategory failureCategory = categorize(providerFailure);
+            logProviderFailure(providerFailure, failureCategory);
+            return new MitigationCandidateGenerationResult.Failed(
+                    metadata(
+                            invocationId,
+                            startedAt,
+                            completedAt,
+                            response == null ? null : response.response()),
+                    failureCategory);
+        }
+    }
+
+    private ModelInvocationMetadata metadata(
+            UUID invocationId,
+            Instant startedAt,
+            Instant completedAt,
+            ChatResponse response) {
+        ChatResponseMetadata responseMetadata = response == null ? null : response.getMetadata();
+        String responseModel = responseMetadata == null || responseMetadata.getModel() == null
+                || responseMetadata.getModel().isBlank()
+                ? configuredModel
+                : responseMetadata.getModel();
+        Optional<String> responseId = responseMetadata == null
+                ? Optional.empty()
+                : optionalText(responseMetadata.getId());
+        Optional<ModelTokenUsage> tokenUsage = responseMetadata == null
+                ? Optional.empty()
+                : tokenUsage(responseMetadata.getUsage());
+        return new ModelInvocationMetadata(
+                invocationId,
+                ModelInvocationProvider.GEMINI,
+                responseModel,
+                PROMPT_VERSION,
+                OUTPUT_SCHEMA_VERSION,
+                responseId,
+                startedAt,
+                completedAt,
+                Duration.between(startedAt, completedAt).toMillis(),
+                tokenUsage);
+    }
+
+    private Optional<ModelTokenUsage> tokenUsage(Usage usage) {
+        if (usage == null
+                || (usage.getPromptTokens() == null
+                        && usage.getCompletionTokens() == null
+                        && usage.getTotalTokens() == null)) {
+            return Optional.empty();
+        }
+        return Optional.of(new ModelTokenUsage(
+                Optional.ofNullable(usage.getPromptTokens()),
+                Optional.ofNullable(usage.getCompletionTokens()),
+                Optional.ofNullable(usage.getTotalTokens())));
+    }
+
+    private Optional<String> optionalText(String value) {
+        return value == null || value.isBlank() ? Optional.empty() : Optional.of(value.trim());
+    }
+
+    private ModelInvocationFailureCategory categorize(RuntimeException failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof TimeoutException
+                    || current instanceof SocketTimeoutException
+                    || current instanceof HttpTimeoutException) {
+                return ModelInvocationFailureCategory.TIMEOUT;
+            }
+            if (current instanceof ApiException apiFailure) {
+                return switch (apiFailure.code()) {
+                    case 401, 403 -> ModelInvocationFailureCategory.AUTHENTICATION;
+                    case 429 -> ModelInvocationFailureCategory.RATE_LIMITED;
+                    case 400, 404 -> ModelInvocationFailureCategory.INVALID_REQUEST;
+                    default -> ModelInvocationFailureCategory.PROVIDER_ERROR;
+                };
+            }
+            current = current.getCause();
+        }
+        if (failure instanceof IllegalArgumentException) {
+            return ModelInvocationFailureCategory.INVALID_RESPONSE;
+        }
+        return ModelInvocationFailureCategory.PROVIDER_ERROR;
+    }
+
+    private void logProviderFailure(
+            RuntimeException failure,
+            ModelInvocationFailureCategory failureCategory) {
+        ApiException apiFailure = findApiFailure(failure);
+        if (apiFailure != null) {
+            log.warn(
+                    "Gemini candidate generation failed: category={}, httpStatus={}, providerStatus={}, exceptionType={}",
+                    failureCategory,
+                    apiFailure.code(),
+                    apiFailure.status(),
+                    failure.getClass().getSimpleName());
+            return;
+        }
+        Throwable rootCause = failure;
+        while (rootCause.getCause() != null) {
+            rootCause = rootCause.getCause();
+        }
+        log.warn(
+                "Gemini candidate generation failed: category={}, exceptionType={}, rootCauseType={}",
+                failureCategory,
+                failure.getClass().getSimpleName(),
+                rootCause.getClass().getSimpleName());
+    }
+
+    private ApiException findApiFailure(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof ApiException apiFailure) {
+                return apiFailure;
+            }
+            current = current.getCause();
+        }
+        return null;
     }
 }

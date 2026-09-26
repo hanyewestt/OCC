@@ -31,6 +31,17 @@ public final class BunchingRecommendationOrchestrator {
             BunchingRootCauseDiagnosis diagnosis,
             ValidatedMitigationContext context,
             SimulatedImpactEstimate impact) {
+        return evaluate(recommendationId, classification, event, diagnosis, context, impact)
+                .map(BunchingRecommendationOutcome::recommendation);
+    }
+
+    public Optional<BunchingRecommendationOutcome> evaluate(
+            UUID recommendationId,
+            SourceClassification classification,
+            ConfirmedBunchingEvent event,
+            BunchingRootCauseDiagnosis diagnosis,
+            ValidatedMitigationContext context,
+            SimulatedImpactEstimate impact) {
         Objects.requireNonNull(recommendationId, "recommendationId is required");
         Objects.requireNonNull(classification, "classification is required");
         Objects.requireNonNull(event, "event is required");
@@ -48,7 +59,8 @@ public final class BunchingRecommendationOrchestrator {
         if (deterministicRecommendation.isEmpty()
                 || !candidateGenerationEnabled
                 || candidateGenerator.isEmpty()) {
-            return deterministicRecommendation;
+            return deterministicRecommendation.map(recommendation ->
+                    new BunchingRecommendationOutcome(recommendation, Optional.empty()));
         }
 
         MitigationCandidateRequest candidateRequest = new MitigationCandidateRequest(
@@ -56,27 +68,79 @@ public final class BunchingRecommendationOrchestrator {
                 event,
                 diagnosis,
                 context);
-        Optional<MitigationCandidate> generatedCandidate = generateCandidate(candidateRequest);
-        if (generatedCandidate.isEmpty()) {
-            return deterministicRecommendation;
-        }
-
-        MitigationCandidate candidate = generatedCandidate.orElseThrow();
-        MitigationCandidateValidationResult validation = candidateValidator.validate(candidateRequest, candidate);
         ValidatedMitigationRecommendation fallback = deterministicRecommendation.orElseThrow();
-        if (!(validation instanceof MitigationCandidateValidationResult.Accepted)
-                || !matchesDeterministicAction(candidate, fallback)) {
-            return deterministicRecommendation;
+        Optional<MitigationCandidateGenerationResult> generation = generateCandidate(candidateRequest);
+        if (generation.isEmpty()) {
+            return Optional.of(new BunchingRecommendationOutcome(fallback, Optional.empty()));
         }
 
-        return Optional.of(withCandidateRationale(fallback, candidate.rationale()));
+        MitigationCandidateGenerationResult result = generation.orElseThrow();
+        if (result instanceof MitigationCandidateGenerationResult.Empty empty) {
+            return withAudit(fallback, new ModelInvocationRecord(
+                    recommendationId,
+                    empty.metadata(),
+                    ModelInvocationOutcome.EMPTY_RESPONSE,
+                    Optional.empty(),
+                    Optional.empty(),
+                    true,
+                    Optional.empty()));
+        }
+        if (result instanceof MitigationCandidateGenerationResult.Failed failed) {
+            return withAudit(fallback, new ModelInvocationRecord(
+                    recommendationId,
+                    failed.metadata(),
+                    ModelInvocationOutcome.PROVIDER_FAILURE,
+                    Optional.empty(),
+                    Optional.empty(),
+                    true,
+                    Optional.of(failed.failureCategory())));
+        }
+
+        MitigationCandidateGenerationResult.Generated generated =
+                (MitigationCandidateGenerationResult.Generated) result;
+        MitigationCandidate candidate = generated.candidate();
+        MitigationCandidateValidationResult validation = candidateValidator.validate(candidateRequest, candidate);
+        if (validation instanceof MitigationCandidateValidationResult.Rejected rejected) {
+            return withAudit(fallback, new ModelInvocationRecord(
+                    recommendationId,
+                    generated.metadata(),
+                    ModelInvocationOutcome.REJECTED,
+                    Optional.of(candidate),
+                    Optional.of(rejected.reason()),
+                    true,
+                    Optional.empty()));
+        }
+        if (!matchesDeterministicAction(candidate, fallback)) {
+            return withAudit(fallback, new ModelInvocationRecord(
+                    recommendationId,
+                    generated.metadata(),
+                    ModelInvocationOutcome.MISMATCHED,
+                    Optional.of(candidate),
+                    Optional.empty(),
+                    true,
+                    Optional.empty()));
+        }
+
+        ValidatedMitigationRecommendation enriched = withCandidateRationale(fallback, candidate.rationale());
+        return withAudit(enriched, new ModelInvocationRecord(
+                recommendationId,
+                generated.metadata(),
+                ModelInvocationOutcome.ACCEPTED,
+                Optional.of(candidate),
+                Optional.empty(),
+                false,
+                Optional.empty()));
     }
 
-    private Optional<MitigationCandidate> generateCandidate(MitigationCandidateRequest request) {
+    private Optional<BunchingRecommendationOutcome> withAudit(
+            ValidatedMitigationRecommendation recommendation,
+            ModelInvocationRecord audit) {
+        return Optional.of(new BunchingRecommendationOutcome(recommendation, Optional.of(audit)));
+    }
+
+    private Optional<MitigationCandidateGenerationResult> generateCandidate(MitigationCandidateRequest request) {
         try {
-            return Objects.requireNonNull(
-                    candidateGenerator.orElseThrow().generate(request),
-                    "candidate generator returned null");
+            return Optional.of(candidateGenerator.orElseThrow().generate(request));
         } catch (RuntimeException providerFailure) {
             return Optional.empty();
         }

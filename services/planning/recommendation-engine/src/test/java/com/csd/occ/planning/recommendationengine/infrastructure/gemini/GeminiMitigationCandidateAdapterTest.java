@@ -1,7 +1,6 @@
 package com.csd.occ.planning.recommendationengine.infrastructure.gemini;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -14,22 +13,30 @@ import com.csd.occ.planning.recommendationengine.domain.ConfirmedBunchingEvent;
 import com.csd.occ.planning.recommendationengine.domain.CrowdSafetyStatus;
 import com.csd.occ.planning.recommendationengine.domain.FollowingBusState;
 import com.csd.occ.planning.recommendationengine.domain.MitigationCandidateRequest;
+import com.csd.occ.planning.recommendationengine.domain.MitigationCandidateGenerationResult;
 import com.csd.occ.planning.recommendationengine.domain.MitigationValidationStatus;
+import com.csd.occ.planning.recommendationengine.domain.ModelInvocationFailureCategory;
 import com.csd.occ.planning.recommendationengine.domain.SourceClassification;
 import com.csd.occ.planning.recommendationengine.domain.ValidatedMitigationContext;
+import com.google.genai.errors.ClientException;
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.metadata.ChatResponseMetadata;
+import org.springframework.ai.chat.metadata.DefaultUsage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.google.genai.GoogleGenAiChatOptions;
+import org.springframework.ai.retry.NonTransientAiException;
 import tools.jackson.databind.json.JsonMapper;
 
 class GeminiMitigationCandidateAdapterTest {
@@ -47,13 +54,21 @@ class GeminiMitigationCandidateAdapterTest {
                 """);
         GeminiMitigationCandidateAdapter adapter = adapter(model);
 
-        var candidate = adapter.generate(request());
+        var result = adapter.generate(request());
 
-        assertThat(candidate).hasValueSatisfying(value -> {
+        assertThat(result).isInstanceOfSatisfying(MitigationCandidateGenerationResult.Generated.class, generated -> {
+            var value = generated.candidate();
             assertThat(value.mitigationType()).isEqualTo(CandidateMitigationType.HOLD);
             assertThat(value.targetBusReference()).isEqualTo("SBS5898U");
             assertThat(value.controlStopCode()).isEqualTo("44241");
             assertThat(value.requestedAdjustmentSeconds()).isEqualTo(120);
+            assertThat(generated.metadata().model()).isEqualTo("gemini-3.7-flash");
+            assertThat(generated.metadata().providerResponseId()).contains("synthetic-response-id");
+            assertThat(generated.metadata().tokenUsage()).hasValueSatisfying(usage -> {
+                assertThat(usage.promptTokens()).contains(120);
+                assertThat(usage.completionTokens()).contains(25);
+                assertThat(usage.totalTokens()).contains(145);
+            });
         });
 
         ArgumentCaptor<Prompt> prompt = ArgumentCaptor.forClass(Prompt.class);
@@ -71,7 +86,7 @@ class GeminiMitigationCandidateAdapterTest {
     }
 
     @Test
-    void semanticallyInvalidStructuredOutputIsRejectedByDomainContract() {
+    void semanticallyInvalidStructuredOutputBecomesSanitizedFailure() {
         ChatModel model = modelReturning("""
                 {
                   "mitigationType": "HOLD",
@@ -82,24 +97,49 @@ class GeminiMitigationCandidateAdapterTest {
                 }
                 """);
 
-        assertThatIllegalArgumentException()
-                .isThrownBy(() -> adapter(model).generate(request()))
-                .withMessageContaining("requestedAdjustmentSeconds");
+        assertThat(adapter(model).generate(request()))
+                .isInstanceOfSatisfying(MitigationCandidateGenerationResult.Failed.class, failure ->
+                        assertThat(failure.failureCategory())
+                                .isEqualTo(ModelInvocationFailureCategory.INVALID_RESPONSE));
+    }
+
+    @Test
+    void providerInvalidRequestBecomesSanitizedFailureCategory() {
+        ChatModel model = mock(ChatModel.class);
+        when(model.getOptions()).thenReturn(GoogleGenAiChatOptions.builder()
+                .model("gemini-3.7-flash")
+                .build());
+        when(model.call(any(Prompt.class))).thenThrow(new NonTransientAiException(
+                "Synthetic provider failure",
+                new ClientException(400, "INVALID_ARGUMENT", "Synthetic invalid request")));
+
+        assertThat(adapter(model).generate(request()))
+                .isInstanceOfSatisfying(MitigationCandidateGenerationResult.Failed.class, failure ->
+                        assertThat(failure.failureCategory())
+                                .isEqualTo(ModelInvocationFailureCategory.INVALID_REQUEST));
     }
 
     private GeminiMitigationCandidateAdapter adapter(ChatModel model) {
         return new GeminiMitigationCandidateAdapter(
                 ChatClient.create(model),
-                JsonMapper.builder().findAndAddModules().build());
+                JsonMapper.builder().findAndAddModules().build(),
+                Clock.fixed(Instant.parse("2026-09-28T00:00:00Z"), ZoneOffset.UTC),
+                "gemini-3.7-flash");
     }
 
     private ChatModel modelReturning(String content) {
         ChatModel model = mock(ChatModel.class);
         when(model.getOptions()).thenReturn(GoogleGenAiChatOptions.builder()
-                .model("gemini-2.5-flash")
+                .model("gemini-3.7-flash")
                 .build());
+        ChatResponseMetadata metadata = ChatResponseMetadata.builder()
+                .id("synthetic-response-id")
+                .model("gemini-3.7-flash")
+                .usage(new DefaultUsage(120, 25, 145))
+                .build();
         when(model.call(any(Prompt.class))).thenReturn(new ChatResponse(
-                List.of(new Generation(new AssistantMessage(content)))));
+                List.of(new Generation(new AssistantMessage(content))),
+                metadata));
         return model;
     }
 

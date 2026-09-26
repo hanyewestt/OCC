@@ -11,6 +11,7 @@ import com.csd.occ.planning.recommendationengine.domain.BunchingRecommendationSe
 import com.csd.occ.planning.recommendationengine.domain.CrowdSafetyStatus;
 import com.csd.occ.planning.recommendationengine.domain.FollowingBusState;
 import com.csd.occ.planning.recommendationengine.domain.MitigationValidationStatus;
+import com.csd.occ.planning.recommendationengine.domain.ModelInvocationRecordPort;
 import com.csd.occ.planning.recommendationengine.domain.SimulatedImpactEstimate;
 import com.csd.occ.planning.recommendationengine.domain.DurableBunchingRecommendationService;
 import com.csd.occ.planning.recommendationengine.domain.RecommendationRecord;
@@ -208,11 +209,17 @@ class BunchingRecommendationControllerTest {
         }
 
         @Bean
+        ModelInvocationRecordPort modelInvocationRecordPort() {
+            return record -> { };
+        }
+
+        @Bean
         DurableBunchingRecommendationService durableBunchingRecommendationService(
                 BunchingRecommendationService recommendations,
                 RecommendationRecordPort records,
+                ModelInvocationRecordPort modelInvocations,
                 Clock clock) {
-            return new DurableBunchingRecommendationService(recommendations, records, clock);
+            return new DurableBunchingRecommendationService(recommendations, records, modelInvocations, clock);
         }
 
         private BunchingMitigationInputs inputs() {

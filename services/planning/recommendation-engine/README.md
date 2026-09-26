@@ -34,17 +34,18 @@ The service currently provides:
   before any provider call;
 - a conditionally registered Gemini adapter using Spring AI 2.0.1 and
   provider-native structured output;
+- durable, sanitized model-invocation audit records linked to stored
+  recommendations;
 - a multi-stage Docker image running as a non-root user.
 
 The repository configuration and local database provisioning have been applied
 and verified. The Maven wrapper resolves Maven 3.9.11, `clean verify` passes
-all 49 tests, and the PostgreSQL integration suite applies the migration and
+all 56 tests, and the PostgreSQL integration suite applies the migrations and
 exercises persistence using only the `occ_recommendation` role.
 
 The following work is not implemented yet:
 
 - WQAP-3 delivery to this endpoint;
-- model invocation and candidate-validation audit records;
 - an Operations service adapter; and
 - `STANDBY_DISPATCH` behavior.
 
@@ -269,7 +270,7 @@ From `services/planning/recommendation-engine` run:
 ./mvnw.cmd clean verify
 ```
 
-The current suite contains 49 tests:
+The current suite contains 56 tests:
 
 | Test area | Count | Coverage |
 |---|---:|---|
@@ -278,9 +279,10 @@ The current suite contains 49 tests:
 | AI candidate contract | 4 | Permitted actions, required text and adjustment limits |
 | AI candidate validation | 8 | Source, event, safety, target, action and adjustment constraints |
 | Candidate/fallback orchestration | 8 | Disabled, unavailable, accepted, empty, rejected, mismatched, failed and non-actionable paths |
-| Gemini configuration and adapter | 6 | Typed settings, secret redaction, model options, native schema and domain conversion |
+| Durable recommendation service | 2 | Associated model audit persistence and idempotent replay short-circuiting |
+| Gemini configuration and adapter | 7 | Typed settings, secret redaction, model options, native schema, failure categories and domain conversion |
 | Fixture adapter | 2 | Known and unknown fixture lookup |
-| Full application integration | 8 | Configuration default, Flyway, audit persistence, replay, conflict, rejection and OpenAPI |
+| Full application integration | 12 | Configuration default, Flyway, transactional recommendation/model audit persistence, replay, conflict, rejection and OpenAPI |
 
 `./mvnw.cmd clean verify` runs both Surefire unit tests and the Failsafe integration
 test ending in `IT`.
@@ -316,9 +318,9 @@ OCC_RECOMMENDATION_GEMINI_API_KEY=<your-private-google-ai-studio-key>
 
 When the flag is `false`, no Gemini client or adapter bean is created and no API
 key is required. When the flag is `true`, startup rejects a missing, blank or
-`change-me` key. Shared environments should keep the flag disabled until model
-audit persistence is implemented. Automated tests use a mocked Spring AI model
-and never make a billable Gemini request.
+`change-me` key. Enable it in shared environments only through an intentional
+deployment decision because requests can incur provider cost. Automated tests
+use a mocked Spring AI model and never make a billable Gemini request.
 
 - Health: `http://localhost:8002/actuator/health`
 - Swagger UI: `http://localhost:8002/swagger-ui.html`
@@ -406,9 +408,10 @@ The current configuration is deliberately small:
 | Fixture location | `${OCC_RECOMMENDATION_FIXTURE_LOCATION:classpath:fixtures/bunching-mitigation-context.json}` |
 | AI candidate generation | `${OCC_RECOMMENDATION_AI_ENABLED:false}` |
 | Gemini API key | `OCC_RECOMMENDATION_GEMINI_API_KEY` (required secret only when AI is enabled) |
-| Gemini model | `${OCC_RECOMMENDATION_GEMINI_MODEL:gemini-2.5-flash}` |
+| Gemini model | `${OCC_RECOMMENDATION_GEMINI_MODEL:gemini-3.7-flash}` |
 | Gemini temperature | `${OCC_RECOMMENDATION_GEMINI_TEMPERATURE:0.0}` |
 | Gemini output limit | `${OCC_RECOMMENDATION_GEMINI_MAX_OUTPUT_TOKENS:512}` |
+| Gemini thinking budget | `${OCC_RECOMMENDATION_GEMINI_THINKING_BUDGET:0}` |
 | Gemini request timeout | `${OCC_RECOMMENDATION_GEMINI_REQUEST_TIMEOUT:30s}` |
 | Gemini total HTTP attempts | `${OCC_RECOMMENDATION_GEMINI_RETRY_ATTEMPTS:2}` |
 | Database URL | `${OCC_RECOMMENDATION_DB_URL:jdbc:postgresql://localhost:5432/occ}` |
@@ -450,6 +453,32 @@ The unique idempotency-key constraint and `INSERT ... ON CONFLICT DO NOTHING`
 make concurrent duplicate handling database-backed. Other services must
 integrate through this API instead of reading or mutating the schema directly.
 
+Flyway migration `V002__create_model_invocation_record.sql` creates a separate
+`model_invocation_record` table linked to `recommendation_record`. It records:
+
+- provider, model, provider response ID, prompt version and output-schema
+  version;
+- invocation start/completion times and latency;
+- prompt, completion and total token counts when the provider reports them;
+- the structured candidate when one was produced;
+- final outcome: `ACCEPTED`, `REJECTED`, `MISMATCHED`, `EMPTY_RESPONSE` or
+  `PROVIDER_FAILURE`;
+- deterministic rejection reason or sanitized provider-failure category when
+  applicable; and
+- whether the deterministic fallback recommendation was used.
+
+The table intentionally does not retain the API key, rendered prompt, raw
+provider response, provider error body or stack trace. The stored operational
+input remains in `recommendation_record`; model audit references it through the
+recommendation ID instead of duplicating it.
+
+The recommendation and its optional model audit are written in the same
+transaction. Idempotent replay returns before candidate generation, so it does
+not invoke Gemini or create another audit row. Under simultaneous first-time
+requests with the same idempotency key, both requests may reach the provider;
+only the invocation associated with the winning stored recommendation is
+retained in this minimal scope.
+
 ### Local database verification
 
 With Docker Desktop running and a private
@@ -469,14 +498,38 @@ database volume. The following properties were verified:
 - authenticated connections as `occ_recommendation` can create and roll back a
   temporary table in its own schema.
 
-The earlier temporary probe table was rolled back. The only application-owned
-table is now `recommendation_record`, created through Flyway rather than the
-role/schema initialization script.
+The earlier temporary probe table was rolled back. The application-owned tables
+are `recommendation_record` and `model_invocation_record`, both created through
+Flyway rather than the role/schema initialization script.
 
 The documented Route 190 request was also verified against the local Compose
 service: the initial call created one record, an identical retry returned the
 same response, different content with the same key returned `409`, and the
 stored response remained available after restarting the application container.
+
+### Live Gemini verification
+
+The guarded provider flow was verified on 2026-09-26 through the local Compose
+service with a private development key and `gemini-3.7-flash`:
+
+- Gemini produced the exact structured `HOLD` candidate for bus `SBS5898U` at
+  stop `44241` for 120 seconds;
+- deterministic validation accepted the candidate and did not use fallback;
+- the persisted audit recorded `ACCEPTED`, model and version information,
+  5,430 ms provider latency, and usage of 641 prompt, 123 completion and 925
+  total tokens;
+- replaying the same idempotency key returned the stored response in 127 ms,
+  leaving exactly one recommendation and one model-invocation row; and
+- the private key, rendered prompt, raw response and provider error body were
+  not persisted or printed.
+
+The verification also exercised failure behavior. The retired
+`gemini-2.5-flash` model returned `404`, and two `gemini-3.8-flash` attempts
+returned transient `503` responses after retries. In every case the service
+returned the unchanged deterministic recommendation and persisted a sanitized
+provider-failure audit. `gemini-3.7-flash` is therefore the verified default.
+The thinking budget defaults to zero so the model emits the small structured
+candidate within the 512-token output limit; thought content is never requested.
 
 ## WQAP-3 integration status
 
@@ -496,8 +549,9 @@ publishes or consumes a finalized cross-service contract.
 
 ## Phase 7 boundary
 
-Gemini/Spring AI is integrated for Phase 7, but model output must not bypass the
-deterministic safety policy. The boundary is:
+Gemini/Spring AI and model-call audit persistence are integrated for Phase 7,
+but model output must not bypass the deterministic safety policy. The boundary
+is:
 
 1. Gemini proposes structured mitigation candidates or explanation content.
 2. Schema validation rejects malformed model output.
@@ -507,11 +561,11 @@ deterministic safety policy. The boundary is:
 5. Model, prompt/schema version, latency, usage, evidence and validation outcome
    are persisted for audit and replay.
 
-Durable request/recommendation persistence is now implemented. Phase 7 must add
-model-specific prompt, schema-version, latency, usage and validation audit data
-before enabling nondeterministic model calls.
+Durable request/recommendation and model-call audit persistence are implemented,
+and the guarded provider flow has been verified with a live private development
+key without weakening deterministic fallback behavior.
 
-Phase 7 Steps 1 through 5 are implemented:
+Phase 7 Steps 1 through 7 are implemented:
 
 - `MitigationCandidateGeneratorPort` defines a provider-neutral generation
   boundary using current event, diagnosis and validated mitigation context;
@@ -539,15 +593,21 @@ Phase 7 Steps 1 through 5 are implemented:
 - Gemini is registered only when `OCC_RECOMMENDATION_AI_ENABLED=true`; its API
   key, model, temperature, output limit, timeout and retry attempts are bound
   through typed configuration, and the key is redacted from configuration text;
+- the configurable thinking budget defaults to zero and thought content is
+  excluded so bounded structured JSON is produced reliably;
 - recommendation IDs, statuses, classifications, impact estimates, safety
-  decisions and evidence remain owned by deterministic code; and
+  decisions and evidence remain owned by deterministic code;
+- model identity, versioned prompt/schema, response ID, latency, optional usage,
+  candidate, validation outcome and fallback decision are persisted without
+  raw prompts, raw responses or secrets; and
 - `OCC_RECOMMENDATION_AI_ENABLED` defaults to `false`.
 
 The live flow now contains both guarded orchestration and the Gemini adapter.
 With the flag disabled, HTTP behavior remains fully deterministic. With the flag
 enabled and a valid key, Gemini proposes a structured candidate; malformed,
 unsafe or mismatched output and provider failures fall back to the deterministic
-recommendation. Durable model-call audit data is the next required Phase 7 step.
+recommendation. Phase 7 is complete for the current WQAP-4 scope; WQAP-3
+service-to-service integration remains separate follow-up work.
 
 ## Guidance for contributors and AI agents
 

@@ -4,6 +4,7 @@ import com.csd.occ.planning.recommendationengine.infrastructure.gemini.GeminiMit
 import com.google.genai.Client;
 import com.google.genai.types.HttpOptions;
 import com.google.genai.types.HttpRetryOptions;
+import java.time.Clock;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.google.genai.GoogleGenAiChatModel;
 import org.springframework.ai.google.genai.GoogleGenAiChatOptions;
@@ -39,6 +40,8 @@ public class GeminiRecommendationConfig {
                 .model(properties.model())
                 .temperature(properties.temperature())
                 .maxOutputTokens(properties.maxOutputTokens())
+                .thinkingBudget(properties.thinkingBudget())
+                .includeThoughts(false)
                 .candidateCount(1)
                 .build();
         return GoogleGenAiChatModel.builder()
@@ -55,7 +58,13 @@ public class GeminiRecommendationConfig {
     @Bean
     GeminiMitigationCandidateAdapter geminiMitigationCandidateAdapter(
             ChatClient recommendationGeminiChatClient,
-            JsonMapper json) {
-        return new GeminiMitigationCandidateAdapter(recommendationGeminiChatClient, json);
+            JsonMapper json,
+            Clock clock,
+            RecommendationGeminiProperties properties) {
+        return new GeminiMitigationCandidateAdapter(
+                recommendationGeminiChatClient,
+                json,
+                clock,
+                properties.model());
     }
 }

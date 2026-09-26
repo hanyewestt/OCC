@@ -9,10 +9,12 @@ public record RecommendationGeminiProperties(
         String model,
         double temperature,
         int maxOutputTokens,
+        int thinkingBudget,
         Duration requestTimeout,
         int retryAttempts) {
 
     private static final int MAXIMUM_OUTPUT_TOKENS = 4_096;
+    private static final int MAXIMUM_THINKING_BUDGET = 32_768;
     private static final int MAXIMUM_RETRY_ATTEMPTS = 5;
 
     public RecommendationGeminiProperties {
@@ -24,6 +26,9 @@ public record RecommendationGeminiProperties(
         }
         if (maxOutputTokens < 1 || maxOutputTokens > MAXIMUM_OUTPUT_TOKENS) {
             throw new IllegalArgumentException("maxOutputTokens must be between one and 4096");
+        }
+        if (thinkingBudget < 0 || thinkingBudget > MAXIMUM_THINKING_BUDGET) {
+            throw new IllegalArgumentException("thinkingBudget must be between zero and 32768");
         }
         if (requestTimeout == null || requestTimeout.isZero() || requestTimeout.isNegative()) {
             throw new IllegalArgumentException("requestTimeout must be positive");
@@ -53,6 +58,7 @@ public record RecommendationGeminiProperties(
         return "RecommendationGeminiProperties[apiKey=<redacted>, model=" + model
                 + ", temperature=" + temperature
                 + ", maxOutputTokens=" + maxOutputTokens
+                + ", thinkingBudget=" + thinkingBudget
                 + ", requestTimeout=" + requestTimeout
                 + ", retryAttempts=" + retryAttempts + "]";
     }

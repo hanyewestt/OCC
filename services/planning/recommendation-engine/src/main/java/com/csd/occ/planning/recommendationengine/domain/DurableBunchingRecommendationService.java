@@ -13,14 +13,17 @@ public class DurableBunchingRecommendationService {
 
     private final BunchingRecommendationService recommendations;
     private final RecommendationRecordPort records;
+    private final ModelInvocationRecordPort modelInvocations;
     private final Clock clock;
 
     public DurableBunchingRecommendationService(
             BunchingRecommendationService recommendations,
             RecommendationRecordPort records,
+            ModelInvocationRecordPort modelInvocations,
             Clock clock) {
         this.recommendations = recommendations;
         this.records = records;
+        this.modelInvocations = modelInvocations;
         this.clock = clock;
     }
 
@@ -45,20 +48,25 @@ public class DurableBunchingRecommendationService {
         }
 
         return recommendations.evaluate(idempotencyKey, classification, event, diagnosis)
-                .map(decision -> persistOrReplay(new RecommendationRecord(
-                        idempotencyKey,
-                        requestHash,
-                        requestId,
-                        classification,
-                        event,
-                        diagnosis,
-                        decision.mitigationContext(),
-                        decision.recommendation(),
-                        Instant.now(clock))));
+                .map(decision -> persistOrReplay(
+                        new RecommendationRecord(
+                                idempotencyKey,
+                                requestHash,
+                                requestId,
+                                classification,
+                                event,
+                                diagnosis,
+                                decision.mitigationContext(),
+                                decision.recommendation(),
+                                Instant.now(clock)),
+                        decision.modelInvocation()));
     }
 
-    private RecommendationRecord persistOrReplay(RecommendationRecord candidate) {
+    private RecommendationRecord persistOrReplay(
+            RecommendationRecord candidate,
+            Optional<ModelInvocationRecord> modelInvocation) {
         if (records.saveIfAbsent(candidate)) {
+            modelInvocation.ifPresent(modelInvocations::save);
             return candidate;
         }
         RecommendationRecord existing = records.findByIdempotencyKey(candidate.idempotencyKey())

@@ -43,15 +43,16 @@ public class BunchingRecommendationService {
         Objects.requireNonNull(diagnosis, "diagnosis is required");
 
         return mitigationContext.findFor(event)
-                .flatMap(inputs -> orchestrator.recommend(
+                .flatMap(inputs -> orchestrator.evaluate(
                         recommendationId,
                         classification,
                         event,
                         diagnosis,
                         inputs.context(),
                         inputs.impact())
-                        .map(recommendation -> new BunchingRecommendationDecision(
-                                recommendation,
-                                inputs.context())));
+                        .map(outcome -> new BunchingRecommendationDecision(
+                                outcome.recommendation(),
+                                inputs.context(),
+                                outcome.modelInvocation())));
     }
 }
