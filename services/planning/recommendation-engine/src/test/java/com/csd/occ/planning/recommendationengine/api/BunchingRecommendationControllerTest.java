@@ -3,9 +3,11 @@ package com.csd.occ.planning.recommendationengine.api;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.csd.occ.planning.recommendationengine.api.error.GlobalExceptionHandler;
+import com.csd.occ.planning.recommendationengine.domain.BunchingMitigationCandidateValidator;
 import com.csd.occ.planning.recommendationengine.domain.BunchingMitigationInputs;
-import com.csd.occ.planning.recommendationengine.domain.BunchingRecommendationService;
+import com.csd.occ.planning.recommendationengine.domain.BunchingRecommendationOrchestrator;
 import com.csd.occ.planning.recommendationengine.domain.BunchingRecommendationPolicy;
+import com.csd.occ.planning.recommendationengine.domain.BunchingRecommendationService;
 import com.csd.occ.planning.recommendationengine.domain.CrowdSafetyStatus;
 import com.csd.occ.planning.recommendationengine.domain.FollowingBusState;
 import com.csd.occ.planning.recommendationengine.domain.MitigationValidationStatus;
@@ -171,11 +173,16 @@ class BunchingRecommendationControllerTest {
 
         @Bean
         BunchingRecommendationService bunchingRecommendationService() {
+            BunchingRecommendationPolicy policy = new BunchingRecommendationPolicy();
             return new BunchingRecommendationService(
                     event -> event.serviceId().equals("190")
                             ? Optional.of(inputs())
                             : Optional.empty(),
-                    new BunchingRecommendationPolicy());
+                    new BunchingRecommendationOrchestrator(
+                            false,
+                            Optional.empty(),
+                            new BunchingMitigationCandidateValidator(),
+                            policy));
         }
 
         @Bean

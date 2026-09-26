@@ -9,13 +9,13 @@ import org.springframework.stereotype.Service;
 public class BunchingRecommendationService {
 
     private final BunchingMitigationContextPort mitigationContext;
-    private final BunchingRecommendationPolicy policy;
+    private final BunchingRecommendationOrchestrator orchestrator;
 
     public BunchingRecommendationService(
             BunchingMitigationContextPort mitigationContext,
-            BunchingRecommendationPolicy policy) {
+            BunchingRecommendationOrchestrator orchestrator) {
         this.mitigationContext = mitigationContext;
-        this.policy = policy;
+        this.orchestrator = orchestrator;
     }
 
     public Optional<ValidatedMitigationRecommendation> recommend(
@@ -43,7 +43,7 @@ public class BunchingRecommendationService {
         Objects.requireNonNull(diagnosis, "diagnosis is required");
 
         return mitigationContext.findFor(event)
-                .flatMap(inputs -> policy.evaluate(
+                .flatMap(inputs -> orchestrator.recommend(
                         recommendationId,
                         classification,
                         event,

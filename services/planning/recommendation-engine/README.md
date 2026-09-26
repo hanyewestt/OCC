@@ -30,18 +30,19 @@ The service currently provides:
 - a provider-neutral AI candidate-generation port and strict candidate contract,
   disabled by default;
 - deterministic candidate validation with explicit rejection reasons;
+- deterministic candidate/fallback orchestration that preflights eligibility
+  before any provider call;
 - a multi-stage Docker image running as a non-root user.
 
 The repository configuration and local database provisioning have been applied
 and verified. The Maven wrapper resolves Maven 3.9.11, `clean verify` passes
-all 35 tests, and the PostgreSQL integration suite applies the migration and
+all 43 tests, and the PostgreSQL integration suite applies the migration and
 exercises persistence using only the `occ_recommendation` role.
 
 The following work is not implemented yet:
 
 - WQAP-3 delivery to this endpoint;
-- a Gemini/Spring AI provider adapter, candidate/fallback orchestration, and
-  model audit records;
+- a Gemini/Spring AI provider adapter and model audit records;
 - an Operations service adapter; and
 - `STANDBY_DISPATCH` behavior.
 
@@ -266,7 +267,7 @@ From `services/planning/recommendation-engine` run:
 ./mvnw.cmd clean verify
 ```
 
-The current suite contains 35 tests:
+The current suite contains 43 tests:
 
 | Test area | Count | Coverage |
 |---|---:|---|
@@ -274,6 +275,7 @@ The current suite contains 35 tests:
 | Domain policy | 8 | Action choice, limits and rejection rules |
 | AI candidate contract | 4 | Permitted actions, required text and adjustment limits |
 | AI candidate validation | 8 | Source, event, safety, target, action and adjustment constraints |
+| Candidate/fallback orchestration | 8 | Disabled, unavailable, accepted, empty, rejected, mismatched, failed and non-actionable paths |
 | Fixture adapter | 2 | Known and unknown fixture lookup |
 | Full application integration | 8 | Configuration default, Flyway, audit persistence, replay, conflict, rejection and OpenAPI |
 
@@ -486,7 +488,7 @@ Durable request/recommendation persistence is now implemented. Phase 7 must add
 model-specific prompt, schema-version, latency, usage and validation audit data
 before enabling nondeterministic model calls.
 
-Phase 7 Steps 1 through 3 are implemented as preparation only:
+Phase 7 Steps 1 through 4 are implemented:
 
 - `MitigationCandidateGeneratorPort` defines a provider-neutral generation
   boundary using current event, diagnosis and validated mitigation context;
@@ -499,14 +501,24 @@ Phase 7 Steps 1 through 3 are implemented as preparation only:
   applicable adjustment limit;
 - rejected candidates carry a stable machine-readable reason for later
   fallback handling and audit persistence;
+- the deterministic policy runs first as an eligibility and safety preflight,
+  so non-actionable input never invokes a candidate provider;
+- when candidate generation is enabled and a provider is available, the
+  orchestrator validates its output and uses its bounded rationale only when
+  the proposed type, bus, stop and adjustment exactly match the deterministic
+  action and its fixture-backed impact;
+- disabled generation, a missing provider, empty output, rejected or mismatched
+  candidates, and provider failures all return the unchanged deterministic
+  recommendation;
 - recommendation IDs, statuses, classifications, impact estimates, safety
   decisions and evidence remain owned by deterministic code; and
 - `OCC_RECOMMENDATION_AI_ENABLED` defaults to `false`.
 
-The port and validator are deliberately not invoked by the live flow yet.
-Setting the flag to `true` does not enable a provider until fallback
-orchestration and an adapter are implemented in later Phase 7 steps. Existing
-HTTP behavior remains fully deterministic.
+The live flow now contains the guarded orchestration boundary, but no provider
+adapter is registered yet. Setting the flag to `true` therefore remains safe:
+the service detects that no provider is available and returns the deterministic
+recommendation. Existing HTTP behavior does not become nondeterministic until a
+provider adapter is added in a later Phase 7 step.
 
 ## Guidance for contributors and AI agents
 

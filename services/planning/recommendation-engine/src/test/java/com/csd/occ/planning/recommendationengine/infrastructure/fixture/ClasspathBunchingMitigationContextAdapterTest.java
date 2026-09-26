@@ -3,6 +3,8 @@ package com.csd.occ.planning.recommendationengine.infrastructure.fixture;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.csd.occ.planning.recommendationengine.domain.BunchingEventStatus;
+import com.csd.occ.planning.recommendationengine.domain.BunchingMitigationCandidateValidator;
+import com.csd.occ.planning.recommendationengine.domain.BunchingRecommendationOrchestrator;
 import com.csd.occ.planning.recommendationengine.domain.BunchingRecommendationPolicy;
 import com.csd.occ.planning.recommendationengine.domain.BunchingRecommendationService;
 import com.csd.occ.planning.recommendationengine.domain.BunchingRootCauseDiagnosis;
@@ -13,6 +15,7 @@ import com.csd.occ.planning.recommendationengine.infrastructure.config.Recommend
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ClassPathResource;
@@ -28,7 +31,13 @@ class ClasspathBunchingMitigationContextAdapterTest {
                         new RecommendationFixtureProperties(
                                 new ClassPathResource("fixtures/bunching-mitigation-context.json")));
         BunchingRecommendationService service =
-                new BunchingRecommendationService(adapter, new BunchingRecommendationPolicy());
+                new BunchingRecommendationService(
+                        adapter,
+                        new BunchingRecommendationOrchestrator(
+                                false,
+                                Optional.empty(),
+                                new BunchingMitigationCandidateValidator(),
+                                new BunchingRecommendationPolicy()));
 
         var recommendation = service.recommend(
                 UUID.fromString("f07c921a-bd3b-4a97-8b17-a384ef1269a7"),
