@@ -60,11 +60,12 @@ public class TrackInferencePolicy {
         var groups = new ArrayList<Candidate>();
         for (var candidate : input.stream().sorted(Comparator.comparing((Candidate c) -> c.latest().fetchedAt())
                 .thenComparing(c -> c.latest().observationId())).toList()) {
+            double allowance = settings.clusterMeters() + settings.clusterTimeWindow().toSeconds() * settings.maxSpeedMetersPerSecond();
             var compatible = groups.stream().filter(group -> sameRoute(group, candidate)
-                    && Math.abs(group.progressMeters() - candidate.progressMeters()) <= settings.clusterMeters()
+                    && Math.abs(group.progressMeters() - candidate.progressMeters()) <= allowance
                     && group.evidence().stream().allMatch(item -> !item.stopCode().equals(candidate.latest().stopCode())
                         && Duration.between(item.fetchedAt(), candidate.latest().fetchedAt()).abs().compareTo(settings.clusterTimeWindow()) <= 0
-                        && meters(item.latitude().doubleValue(), item.longitude().doubleValue(), candidate.latest().latitude().doubleValue(), candidate.latest().longitude().doubleValue()) <= settings.clusterMeters())).toList();
+                        && meters(item.latitude().doubleValue(), item.longitude().doubleValue(), candidate.latest().latitude().doubleValue(), candidate.latest().longitude().doubleValue()) <= allowance)).toList();
             if (compatible.size() != 1) { groups.add(candidate); continue; }
             var group = compatible.getFirst();
             var evidence = new ArrayList<>(group.evidence()); evidence.addAll(candidate.evidence());
