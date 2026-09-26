@@ -79,6 +79,30 @@ may support monitoring and diagnosis, but it must not be relabelled as
 `SIMULATION` merely to obtain a control action. The current engine returns no
 action for observation-only evidence.
 
+### How the recommendation engine works
+
+For each request, the service performs the following flow:
+
+1. It validates the HTTP header and the event and diagnosis fields.
+2. It checks PostgreSQL for an existing record with the supplied
+   `Idempotency-Key`. An exact replay returns the stored response without
+   evaluating the policy or calling Gemini again.
+3. It loads the matching operational context. Today this comes from the
+   deterministic fixture; a future Operations service adapter can replace it.
+4. It runs the deterministic policy first. Only a confirmed `SIMULATION` event
+   with validated operational and crowd-safety constraints is actionable.
+5. When AI is disabled, the deterministic recommendation is used directly.
+   When AI is enabled, Gemini may propose one structured candidate, but that
+   candidate must exactly match the deterministic action and its limits.
+6. Missing, invalid, unsafe, mismatched or failed model output falls back to the
+   deterministic recommendation. Gemini cannot override the safety policy.
+7. The service transactionally stores the recommendation and, when a provider
+   was invoked, a sanitized model-call audit. It then returns exactly one best
+   recommendation for controller review.
+
+WQAP-3 must integrate through the HTTP API. It must not read or write the
+recommendation engine's PostgreSQL schema directly.
+
 ## API contract
 
 ### Create a recommendation
@@ -289,6 +313,54 @@ test ending in `IT`.
 
 ## Run locally
 
+### Prepare the root `.env`
+
+Create a private environment file from the repository inventory. Run this only
+if `.env` does not already exist:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+For deterministic local execution, confirm these entries in the ignored
+repository-root `.env`:
+
+```properties
+POSTGRES_DB=occ
+POSTGRES_USER=occ_admin
+POSTGRES_PASSWORD=<private-local-admin-password>
+
+OCC_RECOMMENDATION_DB_URL=jdbc:postgresql://localhost:5432/occ
+OCC_RECOMMENDATION_DB_USERNAME=occ_recommendation
+OCC_RECOMMENDATION_DB_PASSWORD=<private-local-recommendation-password>
+OCC_RECOMMENDATION_AI_ENABLED=false
+OCC_RECOMMENDATION_GEMINI_API_KEY=change-me
+```
+
+`POSTGRES_PASSWORD` is the local database administrator password.
+`OCC_RECOMMENDATION_DB_PASSWORD` is the password for the service-owned
+`occ_recommendation` role. They may have the same local value, although they
+represent different roles. If an existing PostgreSQL volume already contains
+the role, use the password with which that role was originally created; the
+idempotent schema initialization does not rotate it.
+
+The database URL above is for a service started directly from the host. Compose
+automatically replaces it with the container-internal `postgres` hostname.
+Do not commit `.env` or place real passwords or API keys in `.env.example`.
+
+To exercise the live Gemini path instead, change only these entries:
+
+```properties
+OCC_RECOMMENDATION_AI_ENABLED=true
+OCC_RECOMMENDATION_GEMINI_API_KEY=<your-private-google-ai-studio-key>
+```
+
+The model and guardrail settings already have verified defaults in
+`.env.example`. A Gemini key is not required for deterministic execution or the
+automated test suite.
+
+### Run from Maven
+
 From the service directory:
 
 ```powershell
@@ -340,6 +412,11 @@ Invoke-RestMethod `
   -Headers @{ "Idempotency-Key" = "f07c921a-bd3b-4a97-8b17-a384ef1269a7" } `
   -Body $body
 ```
+
+For a Compose-hosted service, use
+`http://localhost:6768/internal/v1/bunching-recommendations` instead. A WQAP-3
+container on the same Compose network must use
+`http://recommendation-engine:8002/internal/v1/bunching-recommendations`.
 
 ## Docker
 
@@ -533,19 +610,124 @@ candidate within the 512-token output limit; thought content is never requested.
 
 ## WQAP-3 integration status
 
-No WQAP-3 implementation update is available yet. The agreed direction is that
-WQAP-3 will call this service after producing a diagnosis. Before connecting the
-services, both teams must verify:
+WQAP-3 should call this service after it has produced a diagnosis for a
+confirmed bunching event. The current request fixture is the executable
+consumer example until both services share a finalized cross-service contract.
 
-- the exact endpoint and network URL;
-- field names, enum values and timestamp format;
-- how a WQAP-3 diagnosis is associated with a confirmed simulation event;
-- stable event, diagnosis and evidence identifiers;
-- timeout, retry and idempotency behavior; and
-- handling of `400` and `422` responses.
+### WQAP-3 caller checklist
 
-The current request fixture is the executable consumer example until WQAP-3
-publishes or consumes a finalized cross-service contract.
+The WQAP-3 implementation must:
+
+1. Preserve the event received from the detection/simulation flow and attach
+   its diagnosis under the `diagnosis` object. The recommendation engine cannot
+   reconstruct missing event fields from a diagnosis ID.
+2. Send `POST /internal/v1/bunching-recommendations` with
+   `Content-Type: application/json` and a UUID `Idempotency-Key` header.
+3. Generate or persist one idempotency UUID for the intended recommendation
+   request. Every retry must reuse the same key and the same validated request
+   content, including the same `requestId`; different content under the same key
+   returns `409 Conflict`.
+4. Supply stable UUIDs for `requestId`, `bunchingEventId`, and `diagnosisId`,
+   stable evidence references, and an ISO-8601 UTC timestamp such as
+   `2026-09-27T23:45:02Z` for `firstConfirmedAt`.
+5. Send `classification: SIMULATION` and event `status: CONFIRMED` for the
+   current actionable demo flow. `OBSERVATION_ONLY` deliberately returns `422`.
+6. Treat `200` as one recommendation, `400` as a contract/validation fault,
+   `409` as incorrect idempotency-key reuse, and `422` as a valid but
+   non-actionable request. The caller must not retry `400`, `409`, or `422`
+   unchanged.
+7. Retry timeouts or transient `5xx` responses according to WQAP-3's bounded
+   retry policy while retaining the same idempotency key and payload.
+8. Use the API response rather than querying the `recommendation` schema. The
+   schema and its `occ_recommendation` role are private to this service.
+
+The exact request fields and validation meaning are documented under
+**API contract** above. In particular, the diagnosis supplied by WQAP-3 must
+contain:
+
+| Field | WQAP-3 responsibility |
+|---|---|
+| `diagnosisId` | Stable UUID for the produced diagnosis. |
+| `likelyCause` | Non-blank root-cause conclusion, at most 1,000 characters. |
+| `confidence` | Numeric value from `0.0` through `1.0`. |
+| `evidenceIds` | One or more non-blank stable evidence references. |
+| `limitations` | An array of known qualifications; it may be empty. |
+
+WQAP-3 must also forward the complete `bunchingEvent` object shown in the
+example request. `observedHeadwaySeconds` requires between 2 and 10 values, and
+the engine evaluates the latest value.
+
+### Network configuration for WQAP-3
+
+Use the URL appropriate to where WQAP-3 runs:
+
+| WQAP-3 execution location | Recommendation-engine base URL |
+|---|---|
+| Host-native process or manual host test | `http://localhost:6768` when the engine runs in Compose |
+| Container in the same Compose project | `http://recommendation-engine:8002` |
+| Shared environment | Deployment-supplied internal service URL |
+
+When WQAP-3 adds its client setting, expose it through a specifically named
+environment variable such as `OCC_RECOMMENDATION_INTERNAL_URL`, bind it through
+typed configuration, and add it to the root `.env.example`. Containers must use
+service DNS and internal port `8002`, never the host-published port `6768`.
+
+No service-to-service authentication is implemented for this internal endpoint
+yet. If the team introduces authentication, update both services and the
+OpenAPI contract together.
+
+### Integration verification
+
+From the repository root, a teammate can start the complete deterministic
+recommendation path with:
+
+```powershell
+docker compose --env-file .env -f infra/local/compose.yaml up -d --build `
+  postgres recommendation-schema-init recommendation-engine
+```
+
+Verify health and then submit the maintained fixture:
+
+```powershell
+Invoke-RestMethod http://localhost:6768/actuator/health
+
+$body = Get-Content `
+  services/planning/recommendation-engine/src/test/resources/fixtures/requests/confirmed-bunching-recommendation.json `
+  -Raw
+
+$idempotencyKey = [guid]::NewGuid().ToString()
+$first = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://localhost:6768/internal/v1/bunching-recommendations `
+  -ContentType application/json `
+  -Headers @{ "Idempotency-Key" = $idempotencyKey } `
+  -Body $body
+
+$replay = Invoke-RestMethod `
+  -Method Post `
+  -Uri http://localhost:6768/internal/v1/bunching-recommendations `
+  -ContentType application/json `
+  -Headers @{ "Idempotency-Key" = $idempotencyKey } `
+  -Body $body
+
+$first.recommendationId -eq $replay.recommendationId
+```
+
+Expected results are health status `UP`, a `200` response containing exactly
+one recommendation, and `True` for the replay comparison. The maintained Route
+190 fixture currently produces a `HOLD` recommendation for `SBS5898U` at stop
+`44241` for 120 seconds. With AI disabled this verifies the complete
+deterministic, database and idempotency path without a billable provider call.
+
+Finally, run the complete automated suite from the service directory:
+
+```powershell
+./mvnw.cmd clean verify
+```
+
+Docker Desktop must be running because the integration tests use PostgreSQL in
+a container. The automated suite does not require a Gemini API key and does not
+make live Gemini calls.
 
 ## Phase 7 boundary
 
