@@ -233,7 +233,7 @@ class BunchingRecommendationOrchestratorTest {
         return new ModelInvocationMetadata(
                 UUID.fromString("7778bb14-2fe4-4fcc-9149-642e1fd27c00"),
                 ModelInvocationProvider.GEMINI,
-                "gemini-3.7-flash",
+                "gemini-3.1-flash-lite",
                 "bunching-candidate-v1",
                 "mitigation-candidate-v1",
                 Optional.of("synthetic-response"),

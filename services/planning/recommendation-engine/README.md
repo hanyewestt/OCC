@@ -375,7 +375,7 @@ repository root, provision them first with:
 docker compose --env-file .env -f infra/local/compose.yaml up -d postgres recommendation-schema-init
 ```
 
-The process listens on `8002` by default. The `local` profile imports the
+The process listens on internal port `8003` by default. The `local` profile imports the
 repository-root `.env`, including the private database password. Host-native
 runs use `jdbc:postgresql://localhost:5432/occ` and `occ_recommendation` by
 default; all settings remain overridable through environment variables.
@@ -394,9 +394,9 @@ key is required. When the flag is `true`, startup rejects a missing, blank or
 deployment decision because requests can incur provider cost. Automated tests
 use a mocked Spring AI model and never make a billable Gemini request.
 
-- Health: `http://localhost:8002/actuator/health`
-- Swagger UI: `http://localhost:8002/swagger-ui.html`
-- Internal OpenAPI JSON: `http://localhost:8002/v3/api-docs/internal`
+- Health: `http://localhost:8003/actuator/health`
+- Swagger UI: `http://localhost:8003/swagger-ui.html`
+- Internal OpenAPI JSON: `http://localhost:8003/v3/api-docs/internal`
 
 Example PowerShell request:
 
@@ -407,16 +407,16 @@ $body = Get-Content `
 
 Invoke-RestMethod `
   -Method Post `
-  -Uri http://localhost:8002/internal/v1/bunching-recommendations `
+  -Uri http://localhost:8003/internal/v1/bunching-recommendations `
   -ContentType application/json `
   -Headers @{ "Idempotency-Key" = "f07c921a-bd3b-4a97-8b17-a384ef1269a7" } `
   -Body $body
 ```
 
 For a Compose-hosted service, use
-`http://localhost:6768/internal/v1/bunching-recommendations` instead. A WQAP-3
+`http://localhost:6769/internal/v1/bunching-recommendations` instead. A WQAP-3
 container on the same Compose network must use
-`http://recommendation-engine:8002/internal/v1/bunching-recommendations`.
+`http://recommendation-engine:8003/internal/v1/bunching-recommendations`.
 
 ## Docker
 
@@ -441,8 +441,8 @@ local Compose stack:
 docker compose --env-file .env -f infra/local/compose.yaml up --build recommendation-engine
 ```
 
-Compose publishes the service on `http://localhost:6768` by default and maps
-that host port to the process's internal port `8002`.
+Compose publishes the service on `http://localhost:6769` by default and maps
+that host port to the process's internal port `8003`.
 
 The root `.env` must include a non-default local value for
 `OCC_RECOMMENDATION_DB_PASSWORD`. Provision or verify the dedicated schema for
@@ -480,15 +480,15 @@ The current configuration is deliberately small:
 | Setting | Current value |
 |---|---|
 | Application name | `recommendation-engine` |
-| Public Compose port | `${OCC_RECOMMENDATION_PORT:6768}` |
-| Internal/process port | `${OCC_RECOMMENDATION_INTERNAL_PORT:8002}` |
+| Public Compose port | `${OCC_RECOMMENDATION_PORT:6769}` |
+| Internal/process port | `${OCC_RECOMMENDATION_INTERNAL_PORT:8003}` |
 | Fixture location | `${OCC_RECOMMENDATION_FIXTURE_LOCATION:classpath:fixtures/bunching-mitigation-context.json}` |
 | AI candidate generation | `${OCC_RECOMMENDATION_AI_ENABLED:false}` |
 | Gemini API key | `OCC_RECOMMENDATION_GEMINI_API_KEY` (required secret only when AI is enabled) |
-| Gemini model | `${OCC_RECOMMENDATION_GEMINI_MODEL:gemini-3.7-flash}` |
-| Gemini temperature | `${OCC_RECOMMENDATION_GEMINI_TEMPERATURE:0.0}` |
+| Gemini model | `${OCC_RECOMMENDATION_GEMINI_MODEL:gemini-3.1-flash-lite}` |
+| Gemini temperature | `${OCC_RECOMMENDATION_GEMINI_TEMPERATURE:1.0}` |
 | Gemini output limit | `${OCC_RECOMMENDATION_GEMINI_MAX_OUTPUT_TOKENS:512}` |
-| Gemini thinking budget | `${OCC_RECOMMENDATION_GEMINI_THINKING_BUDGET:0}` |
+| Gemini thinking level | `${OCC_RECOMMENDATION_GEMINI_THINKING_LEVEL:MINIMAL}` |
 | Gemini request timeout | `${OCC_RECOMMENDATION_GEMINI_REQUEST_TIMEOUT:30s}` |
 | Gemini total HTTP attempts | `${OCC_RECOMMENDATION_GEMINI_RETRY_ATTEMPTS:2}` |
 | Database URL | `${OCC_RECOMMENDATION_DB_URL:jdbc:postgresql://localhost:5432/occ}` |
@@ -587,7 +587,7 @@ stored response remained available after restarting the application container.
 ### Live Gemini verification
 
 The guarded provider flow was verified on 2026-09-26 through the local Compose
-service with a private development key and `gemini-3.7-flash`:
+service with a private development key and `gemini-3.7-flash` before the repository-wide model standard was changed to `gemini-3.1-flash-lite`:
 
 - Gemini produced the exact structured `HOLD` candidate for bus `SBS5898U` at
   stop `44241` for 120 seconds;
@@ -604,9 +604,10 @@ The verification also exercised failure behavior. The retired
 `gemini-2.5-flash` model returned `404`, and two `gemini-3.8-flash` attempts
 returned transient `503` responses after retries. In every case the service
 returned the unchanged deterministic recommendation and persisted a sanitized
-provider-failure audit. `gemini-3.7-flash` is therefore the verified default.
-The thinking budget defaults to zero so the model emits the small structured
-candidate within the 512-token output limit; thought content is never requested.
+provider-failure audit. That historical run verified `gemini-3.7-flash`; the current configured default is `gemini-3.1-flash-lite` and requires its own deployment smoke check.
+The active Gemini 3 configuration uses the `MINIMAL` thinking level (not the
+legacy thinking-budget parameter) and excludes thought content. The current
+3.1 Flash Lite default still requires its own deployment smoke check.
 
 ## WQAP-3 integration status
 
@@ -663,14 +664,14 @@ Use the URL appropriate to where WQAP-3 runs:
 
 | WQAP-3 execution location | Recommendation-engine base URL |
 |---|---|
-| Host-native process or manual host test | `http://localhost:6768` when the engine runs in Compose |
-| Container in the same Compose project | `http://recommendation-engine:8002` |
+| Host-native process or manual host test | `http://localhost:6769` when the engine runs in Compose |
+| Container in the same Compose project | `http://recommendation-engine:8003` |
 | Shared environment | Deployment-supplied internal service URL |
 
 When WQAP-3 adds its client setting, expose it through a specifically named
 environment variable such as `OCC_RECOMMENDATION_INTERNAL_URL`, bind it through
 typed configuration, and add it to the root `.env.example`. Containers must use
-service DNS and internal port `8002`, never the host-published port `6768`.
+service DNS and internal port `8003`, never the host-published port `6769`.
 
 No service-to-service authentication is implemented for this internal endpoint
 yet. If the team introduces authentication, update both services and the
@@ -689,7 +690,7 @@ docker compose --env-file .env -f infra/local/compose.yaml up -d --build `
 Verify health and then submit the maintained fixture:
 
 ```powershell
-Invoke-RestMethod http://localhost:6768/actuator/health
+Invoke-RestMethod http://localhost:6769/actuator/health
 
 $body = Get-Content `
   services/planning/recommendation-engine/src/test/resources/fixtures/requests/confirmed-bunching-recommendation.json `
@@ -698,14 +699,14 @@ $body = Get-Content `
 $idempotencyKey = [guid]::NewGuid().ToString()
 $first = Invoke-RestMethod `
   -Method Post `
-  -Uri http://localhost:6768/internal/v1/bunching-recommendations `
+  -Uri http://localhost:6769/internal/v1/bunching-recommendations `
   -ContentType application/json `
   -Headers @{ "Idempotency-Key" = $idempotencyKey } `
   -Body $body
 
 $replay = Invoke-RestMethod `
   -Method Post `
-  -Uri http://localhost:6768/internal/v1/bunching-recommendations `
+  -Uri http://localhost:6769/internal/v1/bunching-recommendations `
   -ContentType application/json `
   -Headers @{ "Idempotency-Key" = $idempotencyKey } `
   -Body $body
@@ -775,8 +776,8 @@ Phase 7 Steps 1 through 7 are implemented:
 - Gemini is registered only when `OCC_RECOMMENDATION_AI_ENABLED=true`; its API
   key, model, temperature, output limit, timeout and retry attempts are bound
   through typed configuration, and the key is redacted from configuration text;
-- the configurable thinking budget defaults to zero and thought content is
-  excluded so bounded structured JSON is produced reliably;
+- Gemini 3 uses the configurable `MINIMAL` thinking level and excludes thought
+  content so bounded structured JSON is produced reliably;
 - recommendation IDs, statuses, classifications, impact estimates, safety
   decisions and evidence remain owned by deterministic code;
 - model identity, versioned prompt/schema, response ID, latency, optional usage,

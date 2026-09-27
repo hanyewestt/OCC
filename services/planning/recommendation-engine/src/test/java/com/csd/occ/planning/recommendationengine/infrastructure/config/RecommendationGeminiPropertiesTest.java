@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
+import org.springframework.ai.google.genai.common.GoogleGenAiThinkingLevel;
 
 class RecommendationGeminiPropertiesTest {
 
@@ -16,7 +17,7 @@ class RecommendationGeminiPropertiesTest {
         assertThat(properties.requiredApiKey()).isEqualTo("synthetic-gemini-key");
         assertThat(properties.requestTimeoutMillis()).isEqualTo(30_000);
         assertThat(properties.toString())
-                .contains("apiKey=<redacted>", "model=gemini-3.7-flash")
+                .contains("apiKey=<redacted>", "model=gemini-3.1-flash-lite")
                 .doesNotContain("synthetic-gemini-key");
     }
 
@@ -33,24 +34,22 @@ class RecommendationGeminiPropertiesTest {
     @Test
     void invalidOperationalSettingsAreRejected() {
         assertThatIllegalArgumentException().isThrownBy(() -> new RecommendationGeminiProperties(
-                "synthetic-key", "gemini-3.7-flash", 1.1, 512, 0, Duration.ofSeconds(30), 2));
+                "synthetic-key", "gemini-3.1-flash-lite", 1.1, 512, GoogleGenAiThinkingLevel.MINIMAL, Duration.ofSeconds(30), 2));
         assertThatIllegalArgumentException().isThrownBy(() -> new RecommendationGeminiProperties(
-                "synthetic-key", "gemini-3.7-flash", 0.0, 0, 0, Duration.ofSeconds(30), 2));
+                "synthetic-key", "gemini-3.1-flash-lite", 1.0, 0, GoogleGenAiThinkingLevel.MINIMAL, Duration.ofSeconds(30), 2));
         assertThatIllegalArgumentException().isThrownBy(() -> new RecommendationGeminiProperties(
-                "synthetic-key", "gemini-3.7-flash", 0.0, 512, -1, Duration.ofSeconds(30), 2));
+                "synthetic-key", "gemini-3.1-flash-lite", 1.0, 512, GoogleGenAiThinkingLevel.MINIMAL, Duration.ZERO, 2));
         assertThatIllegalArgumentException().isThrownBy(() -> new RecommendationGeminiProperties(
-                "synthetic-key", "gemini-3.7-flash", 0.0, 512, 0, Duration.ZERO, 2));
-        assertThatIllegalArgumentException().isThrownBy(() -> new RecommendationGeminiProperties(
-                "synthetic-key", "gemini-3.7-flash", 0.0, 512, 0, Duration.ofSeconds(30), 0));
+                "synthetic-key", "gemini-3.1-flash-lite", 1.0, 512, GoogleGenAiThinkingLevel.MINIMAL, Duration.ofSeconds(30), 0));
     }
 
     private RecommendationGeminiProperties properties(String apiKey) {
         return new RecommendationGeminiProperties(
                 apiKey,
-                "gemini-3.7-flash",
-                0.0,
+                "gemini-3.1-flash-lite",
+                1.0,
                 512,
-                0,
+                GoogleGenAiThinkingLevel.MINIMAL,
                 Duration.ofSeconds(30),
                 2);
     }

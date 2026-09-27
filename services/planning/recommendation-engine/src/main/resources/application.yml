@@ -13,7 +13,7 @@ spring:
     locations: classpath:db/migration
 
 server:
-  port: ${OCC_RECOMMENDATION_INTERNAL_PORT:8002}
+  port: ${OCC_RECOMMENDATION_INTERNAL_PORT:8003}
 
 management:
   endpoints:
@@ -31,10 +31,10 @@ occ:
       enabled: ${OCC_RECOMMENDATION_AI_ENABLED:false}
       gemini:
         api-key: ${OCC_RECOMMENDATION_GEMINI_API_KEY:}
-        model: ${OCC_RECOMMENDATION_GEMINI_MODEL:gemini-3.7-flash}
-        temperature: ${OCC_RECOMMENDATION_GEMINI_TEMPERATURE:0.0}
+        model: ${OCC_RECOMMENDATION_GEMINI_MODEL:gemini-3.1-flash-lite}
+        temperature: ${OCC_RECOMMENDATION_GEMINI_TEMPERATURE:1.0}
         max-output-tokens: ${OCC_RECOMMENDATION_GEMINI_MAX_OUTPUT_TOKENS:512}
-        thinking-budget: ${OCC_RECOMMENDATION_GEMINI_THINKING_BUDGET:0}
+        thinking-level: ${OCC_RECOMMENDATION_GEMINI_THINKING_LEVEL:MINIMAL}
         request-timeout: ${OCC_RECOMMENDATION_GEMINI_REQUEST_TIMEOUT:30s}
         retry-attempts: ${OCC_RECOMMENDATION_GEMINI_RETRY_ATTEMPTS:2}
     fixture:

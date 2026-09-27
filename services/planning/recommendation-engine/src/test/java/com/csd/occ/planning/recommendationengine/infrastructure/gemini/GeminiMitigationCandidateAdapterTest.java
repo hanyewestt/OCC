@@ -62,7 +62,7 @@ class GeminiMitigationCandidateAdapterTest {
             assertThat(value.targetBusReference()).isEqualTo("SBS5898U");
             assertThat(value.controlStopCode()).isEqualTo("44241");
             assertThat(value.requestedAdjustmentSeconds()).isEqualTo(120);
-            assertThat(generated.metadata().model()).isEqualTo("gemini-3.7-flash");
+            assertThat(generated.metadata().model()).isEqualTo("gemini-3.1-flash-lite");
             assertThat(generated.metadata().providerResponseId()).contains("synthetic-response-id");
             assertThat(generated.metadata().tokenUsage()).hasValueSatisfying(usage -> {
                 assertThat(usage.promptTokens()).contains(120);
@@ -107,7 +107,7 @@ class GeminiMitigationCandidateAdapterTest {
     void providerInvalidRequestBecomesSanitizedFailureCategory() {
         ChatModel model = mock(ChatModel.class);
         when(model.getOptions()).thenReturn(GoogleGenAiChatOptions.builder()
-                .model("gemini-3.7-flash")
+                .model("gemini-3.1-flash-lite")
                 .build());
         when(model.call(any(Prompt.class))).thenThrow(new NonTransientAiException(
                 "Synthetic provider failure",
@@ -124,17 +124,17 @@ class GeminiMitigationCandidateAdapterTest {
                 ChatClient.create(model),
                 JsonMapper.builder().findAndAddModules().build(),
                 Clock.fixed(Instant.parse("2026-09-28T00:00:00Z"), ZoneOffset.UTC),
-                "gemini-3.7-flash");
+                "gemini-3.1-flash-lite");
     }
 
     private ChatModel modelReturning(String content) {
         ChatModel model = mock(ChatModel.class);
         when(model.getOptions()).thenReturn(GoogleGenAiChatOptions.builder()
-                .model("gemini-3.7-flash")
+                .model("gemini-3.1-flash-lite")
                 .build());
         ChatResponseMetadata metadata = ChatResponseMetadata.builder()
                 .id("synthetic-response-id")
-                .model("gemini-3.7-flash")
+                .model("gemini-3.1-flash-lite")
                 .usage(new DefaultUsage(120, 25, 145))
                 .build();
         when(model.call(any(Prompt.class))).thenReturn(new ChatResponse(

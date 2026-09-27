@@ -15,8 +15,11 @@ import jakarta.validation.Valid;
 import java.util.UUID;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -29,12 +32,15 @@ public class BunchingRecommendationController {
 
     private final DurableBunchingRecommendationService recommendations;
     private final RecommendationRequestFingerprint fingerprints;
+    private final com.csd.occ.planning.recommendationengine.domain.RecommendationRecordPort records;
 
     public BunchingRecommendationController(
             DurableBunchingRecommendationService recommendations,
-            RecommendationRequestFingerprint fingerprints) {
+            RecommendationRequestFingerprint fingerprints,
+            com.csd.occ.planning.recommendationengine.domain.RecommendationRecordPort records) {
         this.recommendations = recommendations;
         this.fingerprints = fingerprints;
+        this.records = records;
     }
 
     @Operation(
@@ -123,5 +129,19 @@ public class BunchingRecommendationController {
                 recommendation.requestId(),
                 recommendation.classification(),
                 recommendation.recommendation());
+    }
+
+    @GetMapping(value = "/by-bunching-event/{bunchingEventId}", produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(operationId = "getBunchingRecommendation", summary = "Get the latest recommendation for a simulated bunching event")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Recommendation returned"),
+            @ApiResponse(responseCode = "404", description = "No recommendation is available for the event")
+    })
+    public ResponseEntity<BunchingRecommendationResponse> findByBunchingEventId(@PathVariable UUID bunchingEventId) {
+        return records.findByBunchingEventId(bunchingEventId)
+                .map(record -> BunchingRecommendationResponse.from(
+                        record.requestId(), record.classification(), record.recommendation()))
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
     }
 }

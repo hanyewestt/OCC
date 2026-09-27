@@ -6,6 +6,7 @@ import com.google.genai.Client;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.google.genai.GoogleGenAiChatModel;
+import org.springframework.ai.google.genai.common.GoogleGenAiThinkingLevel;
 
 class GeminiRecommendationConfigTest {
 
@@ -15,20 +16,20 @@ class GeminiRecommendationConfigTest {
     void createsGoogleModelFromTypedSettingsWithoutCallingProvider() throws Exception {
         RecommendationGeminiProperties properties = new RecommendationGeminiProperties(
                 "synthetic-gemini-key",
-                "gemini-3.7-flash",
-                0.0,
+                "gemini-3.1-flash-lite",
+                1.0,
                 512,
-                0,
+                GoogleGenAiThinkingLevel.MINIMAL,
                 Duration.ofSeconds(30),
                 2);
 
         try (Client client = config.recommendationGeminiClient(properties)) {
             GoogleGenAiChatModel model = config.recommendationGeminiChatModel(client, properties);
 
-            assertThat(model.getOptions().getModel()).isEqualTo("gemini-3.7-flash");
-            assertThat(model.getOptions().getTemperature()).isZero();
+            assertThat(model.getOptions().getModel()).isEqualTo("gemini-3.1-flash-lite");
+            assertThat(model.getOptions().getTemperature()).isEqualTo(1.0);
             assertThat(model.getOptions().getMaxOutputTokens()).isEqualTo(512);
-            assertThat(model.getOptions().getThinkingBudget()).isZero();
+            assertThat(model.getOptions().getThinkingLevel()).isEqualTo(GoogleGenAiThinkingLevel.MINIMAL);
             assertThat(model.getOptions().getIncludeThoughts()).isFalse();
             assertThat(model.getOptions().getCandidateCount()).isEqualTo(1);
         }
