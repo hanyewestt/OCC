@@ -73,7 +73,7 @@ class BunchingRecordingIT {
 
     @BeforeEach
     void resetFeedState() {
-        jdbc.execute("TRUNCATE bunching.alert_state, bunching.demo_alert_state, bunching.alert_event, bunching.bunching_observation");
+        jdbc.execute("TRUNCATE bunching.diagnosis_outbox, bunching.alert_state, bunching.demo_alert_state, bunching.alert_event, bunching.bunching_observation");
         jdbc.update("UPDATE bunching.consumer_selection SET mode='LIVE', demo_run_id=NULL, changed_at=? WHERE id=1",
                 NOW.atOffset(ZoneOffset.UTC));
         jdbc.update("UPDATE bunching.ingestion_feed_cursor SET feed_scope='LIVE', demo_run_id=NULL, last_sequence=0 WHERE id=1");
@@ -191,7 +191,8 @@ class BunchingRecordingIT {
         jdbc.update("UPDATE bunching.ingestion_feed_cursor SET feed_scope=?, demo_run_id=?, last_sequence=0 WHERE id=1",
                 "DEMO:" + demoRunId, demoRunId);
 
-        service.record(simulationSnapshot(demoRunId, 45), THRESHOLD, FRESHNESS);
+        service.record(simulationSnapshot(demoRunId, NOW.minusSeconds(1), 45), THRESHOLD, FRESHNESS);
+        service.record(simulationSnapshot(demoRunId, NOW, 45), THRESHOLD, FRESHNESS);
         service.record(simulationSnapshot(otherRunId, 45), THRESHOLD, FRESHNESS);
         service.record(snapshot(NOW, 45, Optional.of(1)), THRESHOLD, FRESHNESS);
 
@@ -242,7 +243,11 @@ class BunchingRecordingIT {
     }
 
     private ArrivalSnapshot simulationSnapshot(UUID demoRunId, int gap) {
-        var live = snapshot(NOW, gap, Optional.of(1));
+        return simulationSnapshot(demoRunId, NOW, gap);
+    }
+
+    private ArrivalSnapshot simulationSnapshot(UUID demoRunId, Instant fetchedAt, int gap) {
+        var live = snapshot(fetchedAt, gap, Optional.of(1));
         return new ArrivalSnapshot(live.rawObservationId(), live.pollRunId(), live.referenceVersionId(),
                 live.fetchedAt(), live.arrivals(), "SIMULATION", demoRunId);
     }

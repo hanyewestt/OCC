@@ -5,12 +5,10 @@ import com.csd.occ.bunching.infrastructure.config.BunchingProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 @Component
-@EnableScheduling
 @ConditionalOnProperty(name = "occ.bunching.consumer-enabled", havingValue = "true", matchIfMissing = true)
 public class BunchingSchedule {
     private static final Logger log = LoggerFactory.getLogger(BunchingSchedule.class);

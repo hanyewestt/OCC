@@ -55,7 +55,7 @@ class BunchingAlertIT {
     }
 
     @BeforeEach
-    void reset() { jdbc.execute("TRUNCATE bunching.alert_state, bunching.alert_event, bunching.bunching_observation"); }
+    void reset() { jdbc.execute("TRUNCATE bunching.diagnosis_outbox, bunching.alert_state, bunching.alert_event, bunching.bunching_observation"); }
 
     @Test
     void opensOnceClearsAndReopensWithANewEpisode() {
@@ -146,6 +146,7 @@ class BunchingAlertIT {
             UUID event = UUID.fromString(notifications[0].getParameter());
             assertEquals("OPENED", jdbc.queryForObject("SELECT action FROM bunching.alert_event WHERE id=?", String.class, event));
             assertEquals("OBSERVATION_ONLY", jdbc.queryForObject("SELECT classification FROM bunching.alert_event WHERE id=?", String.class, event));
+            statement.execute("UNLISTEN *");
         }
     }
 
@@ -162,6 +163,7 @@ class BunchingAlertIT {
             assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM bunching.bunching_observation", Integer.class));
             var notifications = connection.unwrap(PGConnection.class).getNotifications(100);
             assertTrue(notifications == null || notifications.length == 0);
+            statement.execute("UNLISTEN *");
         }
     }
 
