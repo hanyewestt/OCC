@@ -12,9 +12,12 @@ import com.csd.occ.ingestion.domain.DemoBunchingUnavailableException;
 import com.csd.occ.ingestion.domain.DemoRunAlreadyActiveException;
 import com.csd.occ.ingestion.domain.DemoRunDetails;
 import com.csd.occ.ingestion.domain.DemoRunNotFoundException;
+import com.csd.occ.ingestion.domain.DemoRecommendationDetails;
+import com.csd.occ.ingestion.domain.DemoRecommendationImpact;
 import com.csd.occ.ingestion.domain.DemoRunService;
 import com.csd.occ.ingestion.domain.DemoVehicleDetails;
 import java.time.Instant;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -23,7 +26,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-@WebMvcTest(value = DemoRunController.class, properties = "occ.ingestion.demo.enabled=true")
+@WebMvcTest(DemoRunController.class)
 class DemoRunControllerTest {
     @Autowired MockMvc mvc;
     @MockitoBean DemoRunService runs;
@@ -44,7 +47,7 @@ class DemoRunControllerTest {
         UUID runId = UUID.randomUUID();
         var leading = new DemoVehicleDetails("DEMO-190-01", "DEMO-OPERATOR", "DD", "DEMO-CAPTAIN-01");
         var following = new DemoVehicleDetails("DEMO-190-02", "DEMO-OPERATOR", "DD", "DEMO-CAPTAIN-02");
-        var alert = new DemoAlertDetails("OPENED", "SIMULATION", "190", "44251", "Teck Whye Secondary School",
+        var alert = new DemoAlertDetails(UUID.randomUUID(), UUID.randomUUID(), "OPENED", "SIMULATION", "190", "44251", "Teck Whye Secondary School",
                 "Teck Whye Ave", 1, Instant.parse("2026-09-26T05:00:00Z"), 45L, leading, following);
         when(runs.status(runId)).thenReturn(new DemoRunDetails(runId, "REPLAY_COMPLETE", 3, List.of(alert)));
 
@@ -74,6 +77,22 @@ class DemoRunControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(runId.toString()))
                 .andExpect(jsonPath("$.status").value("CLOSED"));
+    }
+
+    @Test
+    void recommendationReturnsTheSimulationOutputWhenReady() throws Exception {
+        UUID runId = UUID.randomUUID();
+        when(runs.recommendation(runId)).thenReturn(java.util.Optional.of(new DemoRecommendationDetails(
+                UUID.randomUUID(), "SIMULATION", "RECOMMENDED", "HOLD", "SBS5898U", "44241", 120,
+                "Hold the following bus.", "Vehicle breakdown.", new BigDecimal("0.771"),
+                List.of("Additional delay."), List.of(), new DemoRecommendationImpact(45, 165, 38, 24,
+                new BigDecimal("190"), new BigDecimal("128")))));
+
+        mvc.perform(get("/api/v1/demo-runs/{id}/recommendation", runId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.classification").value("SIMULATION"))
+                .andExpect(jsonPath("$.mitigationType").value("HOLD"))
+                .andExpect(jsonPath("$.expectedImpact.headwayAfterSeconds").value(165));
     }
 
     @Test

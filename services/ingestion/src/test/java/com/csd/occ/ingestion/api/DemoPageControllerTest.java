@@ -9,15 +9,19 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.web.servlet.MockMvc;
 
-@WebMvcTest(value = DemoPageController.class, properties = "occ.ingestion.demo.enabled=true")
+@WebMvcTest(DemoPageController.class)
 class DemoPageControllerTest {
     @Autowired MockMvc mvc;
 
     @Test
-    void servesTheSingleFileDemoPageWhenEnabled() throws Exception {
+    void servesDemoPageWithSimulationResultsHiddenUntilRunStarts() throws Exception {
         mvc.perform(get("/demo.html"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith("text/html"))
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("Show demo")));
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("Show demo")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "<section id=\"simulation-results\" hidden>")))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                        "clearSimulationResults()")));
     }
 }

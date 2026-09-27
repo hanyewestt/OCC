@@ -14,15 +14,17 @@ public class DemoRunService {
     private final DemoRunRepository runs;
     private final DemoModeService mode;
     private final BunchingControlPort bunching;
+    private final RecommendationLookupPort recommendations;
     private final BusArrivalObservationRepository arrivals;
     private final ReferenceTopologyPort topology;
     private final Clock clock;
 
     public DemoRunService(DemoReplayService replay, DemoRunRepository runs, DemoModeService mode,
                           BunchingControlPort bunching, BusArrivalObservationRepository arrivals,
-                          ReferenceTopologyPort topology, Clock clock) {
+                          ReferenceTopologyPort topology, RecommendationLookupPort recommendations, Clock clock) {
         this.replay = replay; this.runs = runs; this.mode = mode; this.bunching = bunching;
         this.arrivals = arrivals; this.topology = topology; this.clock = clock;
+        this.recommendations = recommendations;
     }
 
     public DemoRunDetails start() {
@@ -73,6 +75,15 @@ public class DemoRunService {
         return new DemoRunDetails(run.id(), "CLOSED", run.currentStep(), List.of());
     }
 
+    public Optional<DemoRecommendationDetails> recommendation(UUID id) {
+        runs.findById(id).orElseThrow(() -> new DemoRunNotFoundException(id));
+        return bunching.alerts(id).stream()
+                .filter(alert -> "SIMULATION".equals(alert.classification()) && alert.bunchingEventId() != null)
+                .map(DemoBunchingAlert::bunchingEventId)
+                .findFirst()
+                .flatMap(recommendations::findByBunchingEventId);
+    }
+
     public boolean setMode(boolean enabled) {
         if (enabled) {
             Optional<DemoRun> current = runs.findActive();
@@ -116,7 +127,7 @@ public class DemoRunService {
             DemoSimulationArrivalDetails leading = arrival(run.id(), alert.leadingObservationId()).orElse(null);
             DemoSimulationArrivalDetails following = arrival(run.id(), alert.followingObservationId()).orElse(null);
             StopDisplay stop = stop(alert.stopCode());
-            result.add(new DemoAlertDetails(alert.action(), alert.classification(), alert.serviceId(), alert.stopCode(),
+            result.add(new DemoAlertDetails(alert.eventId(), alert.bunchingEventId(), alert.action(), alert.classification(), alert.serviceId(), alert.stopCode(),
                     stop.name(), stop.roadName(), alert.directionId(), alert.detectedAt(), headwaySeconds(leading, following),
                     leading == null ? null : leading.vehicle(), following == null ? null : following.vehicle()));
         }

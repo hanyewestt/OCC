@@ -2,6 +2,7 @@ package com.csd.occ.ingestion.api;
 
 import com.csd.occ.ingestion.api.dto.DemoBunchingAlertResponse;
 import com.csd.occ.ingestion.api.dto.DemoRunResponse;
+import com.csd.occ.ingestion.api.dto.DemoRecommendationResponse;
 import com.csd.occ.ingestion.api.dto.DemoVehicleResponse;
 import com.csd.occ.ingestion.domain.DemoAlertDetails;
 import com.csd.occ.ingestion.domain.DemoRunDetails;
@@ -11,7 +12,6 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.UUID;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -23,7 +23,6 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@ConditionalOnProperty(name = "occ.ingestion.demo.enabled", havingValue = "true")
 @RequestMapping(value = "/api/v1/demo-runs", produces = MediaType.APPLICATION_JSON_VALUE)
 @Tag(name = "Demo runs")
 public class DemoRunController {
@@ -55,6 +54,17 @@ public class DemoRunController {
             @ApiResponse(responseCode = "503", description = "Bunching status is unavailable")})
     public DemoRunResponse status(@PathVariable UUID id) { return response(runs.status(id)); }
 
+    @GetMapping("/{id}/recommendation")
+    @Operation(operationId = "getDemoRecommendation", summary = "Get the recommendation produced for a simulation bunching event")
+    @ApiResponses({@ApiResponse(responseCode = "200", description = "Recommendation output returned"),
+            @ApiResponse(responseCode = "204", description = "Recommendation is still being generated"),
+            @ApiResponse(responseCode = "404", description = "Demo run not found"),
+            @ApiResponse(responseCode = "503", description = "Recommendation service is unavailable")})
+    public ResponseEntity<DemoRecommendationResponse> recommendation(@PathVariable UUID id) {
+        return runs.recommendation(id).map(DemoRecommendationResponse::from).map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
     @PostMapping("/{id}/close")
     @Operation(operationId = "closeDemoRun", summary = "Return bunching consumption to the live feed")
     @ApiResponses({@ApiResponse(responseCode = "200", description = "Run closed and live consumption resumed"),
@@ -68,7 +78,7 @@ public class DemoRunController {
     }
 
     private static DemoBunchingAlertResponse alert(DemoAlertDetails alert) {
-        return new DemoBunchingAlertResponse(alert.action(), alert.classification(), alert.serviceId(),
+        return new DemoBunchingAlertResponse(alert.eventId(), alert.bunchingEventId(), alert.action(), alert.classification(), alert.serviceId(),
                 alert.stopCode(), alert.stopName(), alert.stopRoadName(), alert.directionId(), alert.detectedAt(),
                 alert.headwaySeconds(), vehicle(alert.leadingVehicle()),
                 vehicle(alert.followingVehicle()));

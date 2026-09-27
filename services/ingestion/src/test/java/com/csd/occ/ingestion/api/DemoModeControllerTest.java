@@ -16,7 +16,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-@WebMvcTest(value = DemoModeController.class, properties = "occ.ingestion.demo.enabled=true")
+@WebMvcTest(DemoModeController.class)
 class DemoModeControllerTest {
     @Autowired MockMvc mvc;
     @MockitoBean DemoModeService mode;

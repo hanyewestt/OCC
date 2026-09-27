@@ -26,6 +26,7 @@ class DemoRunServiceTest {
     @Mock private DemoRunRepository runs;
     @Mock private DemoModeService mode;
     @Mock private BunchingControlPort bunching;
+    @Mock private RecommendationLookupPort recommendations;
     @Mock private BusArrivalObservationRepository arrivals;
     @Mock private ReferenceTopologyPort topology;
 
@@ -33,7 +34,7 @@ class DemoRunServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new DemoRunService(replay, runs, mode, bunching, arrivals, topology,
+        service = new DemoRunService(replay, runs, mode, bunching, arrivals, topology, recommendations,
                 Clock.fixed(Instant.parse("2026-09-26T00:00:00Z"), ZoneOffset.UTC));
     }
 
@@ -120,7 +121,7 @@ class DemoRunServiceTest {
         Instant detectedAt = Instant.parse("2026-09-26T00:00:00Z");
         DemoRun run = new DemoRun(runId, detectedAt, "route190-bunching-v1", 190);
         when(runs.findById(runId)).thenReturn(Optional.of(run));
-        when(bunching.alerts(runId)).thenReturn(List.of(new DemoBunchingAlert("OPENED", "190", "44251", 1,
+        when(bunching.alerts(runId)).thenReturn(List.of(new DemoBunchingAlert(UUID.randomUUID(), UUID.randomUUID(), "OPENED", "190", "44251", 1,
                 detectedAt, "SIMULATION", leadingId, followingId)));
         when(arrivals.findSimulationArrivalDetails(runId, leadingId)).thenReturn(Optional.of(
                 new DemoSimulationArrivalDetails("DEMO-BUS-190-01", "DEMO-OPERATOR", "DD", "DEMO-CAPTAIN-190-01",

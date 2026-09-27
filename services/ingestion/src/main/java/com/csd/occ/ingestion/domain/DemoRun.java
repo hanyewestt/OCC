@@ -31,6 +31,7 @@ public class DemoRun {
     private String classification;
     public UUID id() { return id; }
     public String status() { return status; }
+    public String classification() { return classification; }
     public int currentStep() { return currentStep; }
     public Instant startedAt() { return startedAt; }
     public void startReplay() { if (!"PREPARING".equals(status)) throw new IllegalStateException("Demo run is not preparing"); status = "RUNNING"; }

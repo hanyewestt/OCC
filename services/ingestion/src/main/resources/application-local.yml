@@ -5,3 +5,7 @@ spring:
   datasource:
     # The local fallback is deliberately derived from centralized POSTGRES_* values.
     url: ${SPRING_DATASOURCE_URL:${OCC_INGESTION_DB_URL:jdbc:postgresql://localhost:${POSTGRES_PORT:5432}/${POSTGRES_DB:occ}}}
+occ:
+  ingestion:
+    demo:
+      bunching-internal-url: ${OCC_BUNCHING_PUBLIC_URL:${OCC_BUNCHING_INTERNAL_URL:http://localhost:${OCC_BUNCHING_PORT:6768}}}

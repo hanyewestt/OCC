@@ -31,11 +31,17 @@ public class TrafficIncidentObservation {
         id = UUID.randomUUID(); rawObservationId = rawId; pollRunId = pollId; demoRunId = runId;
         sourceIncidentKey = key; incidentType = "Vehicle Breakdown"; latitude = new BigDecimal("1.3802550");
         longitude = new BigDecimal("103.7550750"); message = "DEMO: Vehicle breakdown on Teck Whye Ave.";
-        fetchedAt = now; ingestedAt = now; classification = "SIMULATION";
+        observedAt = now; fetchedAt = now; ingestedAt = now; classification = "SIMULATION";
     }
+    public UUID id() { return id; }
+    public UUID rawObservationId() { return rawObservationId; }
+    public UUID pollRunId() { return pollRunId; }
     public String incidentType() { return incidentType; }
     public BigDecimal latitude() { return latitude; }
     public BigDecimal longitude() { return longitude; }
     public String message() { return message; }
     public Instant fetchedAt() { return fetchedAt; }
+    public Instant observedAt() { return observedAt; }
+    public String classification() { return classification; }
+    public UUID demoRunId() { return demoRunId; }
 }
