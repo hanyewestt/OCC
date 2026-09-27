@@ -2,6 +2,29 @@
 
 Polls DataMall bus arrivals and records observations for analytics. Requires Java 25, PostgreSQL with the `ingestion` schema and `occ_ingestion` account, and a valid DataMall key.
 
+## Demo replay
+
+Demo support is opt-in. Set `OCC_INGESTION_DEMO_ENABLED=true` and restart ingestion to expose the demo page and endpoints. The default is `false`; when disabled, the page, demo APIs and replay scheduler are not registered. Once enabled, open `/demo.html`. **Show demo** starts a run and switches bunching to that simulation; **Return to live** switches bunching back to the live feed and closes the run. The runtime mode can be toggled while ingestion is running; no restart is needed for each demo:
+
+```http
+GET /api/v1/demo-mode
+PUT /api/v1/demo-mode
+Content-Type: application/json
+
+{"enabled":true}
+```
+
+Setting `enabled` to `true` starts a replay if none is active, or resumes the currently active run. Setting it to `false` first switches bunching to the live feed, then closes the active run. The persisted setting is initialized to `false` by Flyway and survives an ingestion restart. The page uses the equivalent start/close run endpoints so it can display the run ID and alert list.
+
+The page starts a fictional, deterministic route-190 replay and lists simulation-only
+bunching alerts. Since the bunching consumer runs independently, after the replay ends
+the page keeps checking until the alert arrives; **Return to live** remains available
+while it waits. Enabling demo support requires `OCC_BUNCHING_INTERNAL_URL`; live DataMall polling remains enabled.
+When no demo run is active, the same page also shows the currently open live bunching
+detections through ingestion's same-origin `GET /api/v1/live-bunching-alerts` proxy.
+The browser does not call bunching directly; the proxy obtains the immutable opening
+`alert_event` for each active live episode from bunching.
+
 ## Run only ingestion
 
 From the repository root:

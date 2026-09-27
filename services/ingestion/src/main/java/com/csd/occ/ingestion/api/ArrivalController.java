@@ -1,6 +1,7 @@
 package com.csd.occ.ingestion.api;
 
 import com.csd.occ.ingestion.api.dto.ArrivalResponse;
+import com.csd.occ.ingestion.api.dto.ArrivalPageResponse;
 import com.csd.occ.ingestion.api.dto.FeedStatusResponse;
 import com.csd.occ.ingestion.api.dto.PageResponse;
 import com.csd.occ.ingestion.api.dto.PollRunResponse;
@@ -44,8 +45,10 @@ public class ArrivalController {
 
     @GetMapping("/arrivals")
     @Operation(operationId = "listCurrentArrivals", summary = "List latest arrival predictions by stop or service")
-    @ApiResponses(@ApiResponse(responseCode = "400", description = "Invalid pagination parameters",
-            content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))))
+    @ApiResponses({@ApiResponse(responseCode = "200", description = "Current arrivals returned",
+            content = @Content(schema = @Schema(implementation = ArrivalPageResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Invalid pagination parameters",
+            content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))})
     public PageResponse<ArrivalResponse> currentArrivals(@RequestParam(required = false) String stopCode,
             @RequestParam(required = false) String serviceId, @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "50") @Min(1) @Max(200) int size) {
@@ -54,8 +57,10 @@ public class ArrivalController {
 
     @GetMapping("/arrivals/history")
     @Operation(operationId = "listArrivalHistory", summary = "List retained normalized arrival observations")
-    @ApiResponses(@ApiResponse(responseCode = "400", description = "Invalid pagination parameters or time range",
-            content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))))
+    @ApiResponses({@ApiResponse(responseCode = "200", description = "Arrival history returned",
+            content = @Content(schema = @Schema(implementation = ArrivalPageResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Invalid pagination parameters or time range",
+            content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))})
     public PageResponse<ArrivalResponse> arrivalHistory(@RequestParam(required = false) String stopCode,
             @RequestParam(required = false) String serviceId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
@@ -96,7 +101,7 @@ public class ArrivalController {
 
     private ArrivalResponse currentResponse(CurrentBusArrivalView value) {
         return new ArrivalResponse(value.getId(), value.getStopCode(), value.getServiceId(), value.getOperator(),
-                value.getDirectionId(), value.getVisitOrder(), value.getEstimatedArrivalAt(), value.getOriginCode(),
+                value.getDirectionId(), value.getVisitOrder(), value.getVisitNumber(), value.getEstimatedArrivalAt(), value.getOriginCode(),
                 value.getDestinationCode(), value.getMonitored(), value.getLatitude(), value.getLongitude(),
                 value.getLoadCategory(), value.getFeature(), value.getVehicleType(), value.getFetchedAt(),
                 value.getAgeSeconds(), value.getReferenceVersionId());
@@ -104,7 +109,7 @@ public class ArrivalController {
 
     private ArrivalResponse historyResponse(BusArrivalObservation value) {
         return new ArrivalResponse(value.getId(), value.getStopCode(), value.getServiceId(), value.getOperator(),
-                value.getDirectionId(), value.getVisitOrder(), value.getEstimatedArrivalAt(), value.getOriginCode(),
+                value.getDirectionId(), value.getVisitOrder(), value.getVisitNumber(), value.getEstimatedArrivalAt(), value.getOriginCode(),
                 value.getDestinationCode(), value.getMonitored(), value.getLatitude(), value.getLongitude(),
                 value.getLoadCategory(), value.getFeature(), value.getVehicleType(), value.getFetchedAt(), null,
                 value.getReferenceVersionId());

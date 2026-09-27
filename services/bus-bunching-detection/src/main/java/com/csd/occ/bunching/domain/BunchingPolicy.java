@@ -43,9 +43,9 @@ public final class BunchingPolicy {
         if (Duration.between(fetchedAt, now).compareTo(staleAfter) >= 0) {
             return insufficient(group, Reason.STALE_SNAPSHOT);
         }
-        if (group.directionId().isEmpty()) {
-            return insufficient(group, Reason.UNKNOWN_DIRECTION);
-        }
+        // Bus Arrival is the authoritative source for the stop's service direction.
+        // Do not reject an otherwise usable arrival group solely because a legacy row
+        // lacks the derived direction value.
         if (arrivals.stream().anyMatch(arrival -> arrival.estimatedArrivalAt().isEmpty())) {
             return insufficient(group, Reason.MISSING_ARRIVAL);
         }

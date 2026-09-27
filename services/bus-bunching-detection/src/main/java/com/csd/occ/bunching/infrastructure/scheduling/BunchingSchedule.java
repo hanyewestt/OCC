@@ -25,7 +25,7 @@ public class BunchingSchedule {
     @Scheduled(fixedDelayString = "${occ.bunching.poll-interval}")
     public void consumeStoredArrivals() {
         try {
-            var result = consumption.consume(settings.batchSize(), settings.threshold(), settings.staleAfter());
+            var result = consumption.consume(settings.batchSize(), settings.threshold(), settings.staleAfter(), settings.retryDelay());
             log.info("Bunching consumption: recorded={}, duplicates={}, rejected={}, failedObservationIds={}",
                     result.recorded(), result.duplicates(), result.rejected(), result.failedObservationIds());
         } catch (RuntimeException failure) {

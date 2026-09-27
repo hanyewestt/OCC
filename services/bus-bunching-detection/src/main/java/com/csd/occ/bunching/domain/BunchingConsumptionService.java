@@ -10,19 +10,18 @@ import java.util.UUID;
 
 @Service
 public class BunchingConsumptionService {
-    private static final Duration RETRY_DELAY = Duration.ofSeconds(30);
     private final StoredArrivalPort source;
     private final BunchingRecordingService recording;
     private final Clock clock;
 
     public BunchingConsumptionService(StoredArrivalPort source, BunchingRecordingService recording, Clock clock) {
-        this.source = source;
-        this.recording = recording;
-        this.clock = clock;
+        this.source = source; this.recording = recording; this.clock = clock;
     }
 
     // Each recording call has its own transaction. A failed row never advances a global cursor.
-    public BatchResult consume(int limit, Duration threshold, Duration staleAfter) {
+    public BatchResult consume(int limit, Duration threshold, Duration staleAfter, Duration retryDelay) {
+        if (retryDelay == null || retryDelay.isZero() || retryDelay.isNegative())
+            throw new IllegalArgumentException("Retry delay must be positive");
         int recorded = 0;
         int duplicates = 0;
         int rejected = 0;
@@ -42,7 +41,7 @@ public class BunchingConsumptionService {
                 // Persist a cooldown so failed rows cannot occupy every batch on every cycle.
                 // If the database cannot store the retry, fail this cycle visibly; do not claim it was deferred.
                 var failedAt = clock.instant();
-                source.defer(id, failedAt, failedAt.plus(RETRY_DELAY), failure instanceof PendingArrivalException
+                source.defer(id, failedAt, failedAt.plus(retryDelay), failure instanceof PendingArrivalException
                         ? StoredArrivalPort.RetryReason.NORMALIZATION_PENDING : StoredArrivalPort.RetryReason.PROCESSING_FAILED);
                 failures.add(id);
             }

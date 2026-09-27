@@ -36,6 +36,20 @@ public class BunchingFeedService {
         return rawObservations.findBunchingFeedById(rawObservationId).map(source -> snapshots(List.of(source)).getFirst());
     }
 
+    @Transactional(readOnly = true)
+    public long liveHeadSequence() {
+        return rawObservations.liveBunchingFeedHead();
+    }
+    @Transactional(readOnly = true)
+    public FeedPage demoPage(UUID demoRunId, long afterSequence, int size) {
+        List<RawObservation> sources = rawObservations.findDemoBunchingFeedAfter(demoRunId, afterSequence, PageRequest.of(0, size)).getContent();
+        return new FeedPage(snapshots(sources), sources.isEmpty() ? afterSequence : sources.getLast().getFeedSequence());
+    }
+    @Transactional(readOnly = true)
+    public Optional<Snapshot> demoSnapshot(UUID demoRunId, UUID rawObservationId) {
+        return rawObservations.findDemoBunchingFeedById(demoRunId, rawObservationId).map(source -> snapshots(List.of(source)).getFirst());
+    }
+
     private List<Snapshot> snapshots(List<RawObservation> sources) {
         Map<UUID, List<BusArrivalObservation>> arrivalsBySource = arrivals.findByRawObservationIdIn(
                 sources.stream().map(RawObservation::getId).toList()).stream()

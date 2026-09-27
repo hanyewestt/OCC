@@ -8,4 +8,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface SourceRetryRepository extends JpaRepository<SourceRetry, UUID> {
     List<SourceRetry> findByNextAttemptAtLessThanEqualOrderByNextAttemptAtAsc(Instant now, Pageable pageable);
+    List<SourceRetry> findByFeedScopeAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAsc(
+            String feedScope, Instant now, Pageable pageable);
 }

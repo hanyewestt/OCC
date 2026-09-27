@@ -2,6 +2,7 @@ package com.csd.occ.ingestion.domain;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
@@ -23,6 +24,8 @@ public class PollRun {
     private Integer recordsReceived;
     private String errorCode;
     private String errorMessage;
+    private String classification = "OBSERVATION_ONLY";
+    private UUID demoRunId;
 
     // Getters and setters
     public UUID getId() { return id; }
@@ -47,4 +50,13 @@ public class PollRun {
     public void setErrorCode(String errorCode) { this.errorCode = errorCode; }
     public String getErrorMessage() { return errorMessage; }
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+    public String getClassification() { return classification; }
+    public void setClassification(String classification) { this.classification = classification; }
+    public UUID getDemoRunId() { return demoRunId; }
+    public void setDemoRunId(UUID demoRunId) { this.demoRunId = demoRunId; }
+
+    @PrePersist
+    void defaultToLiveClassification() {
+        if (classification == null) classification = "OBSERVATION_ONLY";
+    }
 }

@@ -9,6 +9,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -17,13 +18,14 @@ class BusArrivalServiceTest {
     private final PollRunRepository runs = mock(PollRunRepository.class);
     private final RawObservationRepository observations = mock(RawObservationRepository.class);
     private final BusArrivalObservationRepository normalized = mock(BusArrivalObservationRepository.class);
+    private final BusRouteStopRepository routeStops = mock(BusRouteStopRepository.class);
     private final FeedStatusRepository feedStatuses = mock(FeedStatusRepository.class);
     private final BusArrivalPort arrivals = mock(BusArrivalPort.class);
     private final ReferenceTopologyPort topology = mock(ReferenceTopologyPort.class);
     private final PollingConfigurationPort configuration = mock(PollingConfigurationPort.class);
     private final Instant now = Instant.parse("2026-09-24T00:00:00Z");
     private final BusArrivalService service = new BusArrivalService(targets, runs, observations, normalized,
-            feedStatuses, arrivals, topology, configuration, Clock.fixed(now, ZoneOffset.UTC));
+            routeStops, feedStatuses, arrivals, topology, configuration, Clock.fixed(now, ZoneOffset.UTC));
 
     @Test
     void successfulPollPreservesObservationAndMinuteBucket() {
@@ -109,6 +111,32 @@ class BusArrivalServiceTest {
         }));
     }
 
+    @Test
+    void missingProviderDirectionUsesRouteTopologyAndStoresVisitNumber() {
+        UUID referenceVersionId = UUID.randomUUID();
+        when(targets.findAll()).thenReturn(List.of(target(true)));
+        when(topology.activeVersion()).thenReturn(java.util.Optional.of(
+                new ReferenceTopologyPort.ReferenceTopologyVersion(referenceVersionId, "checksum")));
+        when(arrivals.arrivalsAt("44009", "190")).thenReturn(new BusArrivalSnapshot(200, "{}", List.of(
+                new BusArrivalPrediction("190", "SBST", null, 1, "44009", "45009", now, true,
+                        BigDecimal.valueOf(1.3), BigDecimal.valueOf(103.8), 7, "SEA", "WAB", "DD")), List.of()));
+        when(configuration.monitoredServices()).thenReturn(List.of("190"));
+        when(configuration.staleAfterSeconds()).thenReturn(180);
+        when(routeStops.findByIdReferenceVersionIdAndIdServiceIdAndIdOperatorOrderByIdDirectionIdAscIdStopSequenceAsc(
+                referenceVersionId, "190", "SBST")).thenReturn(List.of(
+                routeStop(referenceVersionId, 1, 1, "44009"), routeStop(referenceVersionId, 1, 2, "45009")));
+
+        service.poll();
+
+        verify(normalized).saveAll(argThat(values -> {
+            assertThat(values).singleElement().satisfies(value -> {
+                assertThat(value.getDirectionId()).isEqualTo(1);
+                assertThat(value.getVisitNumber()).isEqualTo(7);
+            });
+            return true;
+        }));
+    }
+
     private BusArrivalSnapshot snapshot() {
         return new BusArrivalSnapshot(200, "{}", List.of(), List.of());
     }
@@ -126,5 +154,10 @@ class BusArrivalServiceTest {
         target.setServiceId("190");
         target.setEnabled(enabled);
         return target;
+    }
+
+    private BusRouteStop routeStop(UUID referenceVersionId, int directionId, int sequence, String stopCode) {
+        return new BusRouteStop(new BusRouteStopId(referenceVersionId, "190", "SBST", (short) directionId, sequence),
+                stopCode, BigDecimal.ZERO, now);
     }
 }

@@ -22,11 +22,12 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-occ}
       POSTGRES_USER: ${POSTGRES_USER:-occ_admin}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in root .env}
-      # Per-schema application users, consumed by postgres/init/01_schemas_and_roles.sh
+      # Per-schema application users, consumed by the postgres init scripts.
       OCC_INGESTION_DB_PASSWORD: ${OCC_INGESTION_DB_PASSWORD:?set in root .env}
       OCC_OPERATIONS_DB_PASSWORD: ${OCC_OPERATIONS_DB_PASSWORD:?set in root .env}
       OCC_PLANNING_DB_PASSWORD: ${OCC_PLANNING_DB_PASSWORD:?set in root .env}
       OCC_BUNCHING_DB_PASSWORD: ${OCC_BUNCHING_DB_PASSWORD:?set in root .env}
+      OCC_RECOMMENDATION_DB_PASSWORD: ${OCC_RECOMMENDATION_DB_PASSWORD:?set in root .env}
       TZ: UTC
       PGTZ: UTC
     ports:
@@ -59,6 +60,22 @@ services:
       postgres:
         condition: service_healthy
 
+  recommendation-schema-init:
+    image: postgis/postgis:18-3.6
+    restart: "no"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-occ}
+      POSTGRES_USER: ${POSTGRES_USER:-occ_admin}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set in root .env}
+      PGHOST: postgres
+      OCC_RECOMMENDATION_DB_PASSWORD: ${OCC_RECOMMENDATION_DB_PASSWORD:?set in root .env}
+    volumes:
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    command: ["bash", "/docker-entrypoint-initdb.d/04_recommendation_schema.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   ingestion:
     image: occ-ingestion:local
     build:
@@ -76,6 +93,13 @@ services:
       OCC_INGESTION_SEED_TARGETS_ON_STARTUP: ${OCC_INGESTION_SEED_TARGETS_ON_STARTUP:-true}
       OCC_INGESTION_FLYWAY_ENABLED: ${OCC_INGESTION_FLYWAY_ENABLED:-true}
       OCC_INGESTION_JPA_DDL_AUTO: ${OCC_INGESTION_JPA_DDL_AUTO:-validate}
+      OCC_INGESTION_DEMO_ENABLED: ${OCC_INGESTION_DEMO_ENABLED:-false}
+      OCC_INGESTION_DEMO_SCENARIO: ${OCC_INGESTION_DEMO_SCENARIO:-route190-bunching-v1}
+      OCC_INGESTION_DEMO_SEED: ${OCC_INGESTION_DEMO_SEED:-190}
+      OCC_INGESTION_DEMO_STEP_INTERVAL: ${OCC_INGESTION_DEMO_STEP_INTERVAL:-5s}
+      OCC_BUNCHING_THRESHOLD: ${OCC_BUNCHING_THRESHOLD:-90s}
+      OCC_BUNCHING_INTERNAL_URL: http://bus-bunching-detection:${OCC_BUNCHING_INTERNAL_PORT:-8002}
+      OCC_BUNCHING_CONTROL_TIMEOUT: ${OCC_BUNCHING_CONTROL_TIMEOUT:-5s}
       OCC_DATAMALL_BASE_URL: ${OCC_DATAMALL_BASE_URL:-https://datamall2.mytransport.sg/ltaodataservice}
       DATAMALL_API_KEY: ${DATAMALL_API_KEY:?set in root .env}
     ports:
@@ -116,10 +140,39 @@ services:
       OCC_BUNCHING_POLL_INTERVAL: ${OCC_BUNCHING_POLL_INTERVAL:-1s}
       OCC_BUNCHING_BATCH_SIZE: ${OCC_BUNCHING_BATCH_SIZE:-100}
       OCC_BUNCHING_THRESHOLD: ${OCC_BUNCHING_THRESHOLD:-90s}
+      OCC_BUNCHING_RETRY_DELAY: ${OCC_BUNCHING_RETRY_DELAY:-30s}
       OCC_BUNCHING_CONSUMER_ENABLED: ${OCC_BUNCHING_CONSUMER_ENABLED:-true}
+      OCC_BUNCHING_INTERNAL_PORT: ${OCC_BUNCHING_INTERNAL_PORT:-8002}
       OCC_INGESTION_INTERNAL_URL: http://ingestion:${OCC_INGESTION_INTERNAL_PORT:-8080}
+    ports:
+      - "${OCC_BUNCHING_PORT:-6768}:${OCC_BUNCHING_INTERNAL_PORT:-8002}"
     depends_on:
       bunching-read-grants:
+        condition: service_completed_successfully
+
+  recommendation-engine:
+    image: occ-recommendation-engine:local
+    build:
+      context: ../../services/planning/recommendation-engine
+    restart: unless-stopped
+    environment:
+      OCC_RECOMMENDATION_INTERNAL_PORT: ${OCC_RECOMMENDATION_INTERNAL_PORT:-8002}
+      OCC_RECOMMENDATION_FIXTURE_LOCATION: ${OCC_RECOMMENDATION_FIXTURE_LOCATION:-classpath:fixtures/bunching-mitigation-context.json}
+      OCC_RECOMMENDATION_AI_ENABLED: ${OCC_RECOMMENDATION_AI_ENABLED:-false}
+      OCC_RECOMMENDATION_GEMINI_API_KEY: ${OCC_RECOMMENDATION_GEMINI_API_KEY:-}
+      OCC_RECOMMENDATION_GEMINI_MODEL: ${OCC_RECOMMENDATION_GEMINI_MODEL:-gemini-3.7-flash}
+      OCC_RECOMMENDATION_GEMINI_TEMPERATURE: ${OCC_RECOMMENDATION_GEMINI_TEMPERATURE:-0.0}
+      OCC_RECOMMENDATION_GEMINI_MAX_OUTPUT_TOKENS: ${OCC_RECOMMENDATION_GEMINI_MAX_OUTPUT_TOKENS:-512}
+      OCC_RECOMMENDATION_GEMINI_THINKING_BUDGET: ${OCC_RECOMMENDATION_GEMINI_THINKING_BUDGET:-0}
+      OCC_RECOMMENDATION_GEMINI_REQUEST_TIMEOUT: ${OCC_RECOMMENDATION_GEMINI_REQUEST_TIMEOUT:-30s}
+      OCC_RECOMMENDATION_GEMINI_RETRY_ATTEMPTS: ${OCC_RECOMMENDATION_GEMINI_RETRY_ATTEMPTS:-2}
+      OCC_RECOMMENDATION_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}
+      OCC_RECOMMENDATION_DB_USERNAME: ${OCC_RECOMMENDATION_DB_USERNAME:-occ_recommendation}
+      OCC_RECOMMENDATION_DB_PASSWORD: ${OCC_RECOMMENDATION_DB_PASSWORD:?set in root .env}
+    ports:
+      - "${OCC_RECOMMENDATION_PORT:-6768}:${OCC_RECOMMENDATION_INTERNAL_PORT:-8002}"
+    depends_on:
+      recommendation-schema-init:
         condition: service_completed_successfully
 
   pgadmin:

@@ -72,15 +72,11 @@ class BunchingAlertIT {
     }
 
     @Test
-    void staleUnknownAndLateEvidenceCannotOpenOrClearAnAlert() {
+    void staleEvidenceCannotOpenAndMissingDirectionOpensAnUnspecifiedDirectionEpisode() {
         record(snapshot(-120, 60, Optional.of(1)));
         record(snapshot(0, 60, Optional.empty()));
-        assertEquals(0, events());
-        record(snapshot(5, 60, Optional.of(1)));
-        record(snapshot(4, 180, Optional.of(1)));
-        record(snapshot(5, 180, Optional.of(1)));
-        record(snapshot(-120, 180, Optional.of(1)));
         assertEquals(1, events());
+        assertEquals(0, jdbc.queryForObject("SELECT direction_id FROM bunching.alert_state", Integer.class));
         assertNotNull(jdbc.queryForObject("SELECT active_alert_id FROM bunching.alert_state", UUID.class));
     }
 

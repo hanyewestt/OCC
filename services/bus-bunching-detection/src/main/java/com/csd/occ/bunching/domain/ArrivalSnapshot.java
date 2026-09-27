@@ -12,14 +12,25 @@ public record ArrivalSnapshot(
         UUID pollRunId,
         Optional<UUID> referenceVersionId,
         Instant fetchedAt,
-        List<Arrival> arrivals) {
+        List<Arrival> arrivals,
+        String classification,
+        UUID demoRunId) {
 
     public ArrivalSnapshot {
         Objects.requireNonNull(rawObservationId);
         Objects.requireNonNull(pollRunId);
         Objects.requireNonNull(referenceVersionId);
         Objects.requireNonNull(fetchedAt);
+        Objects.requireNonNull(classification);
+        if (!("OBSERVATION_ONLY".equals(classification) && demoRunId == null)
+                && !("SIMULATION".equals(classification) && demoRunId != null))
+            throw new IllegalArgumentException("Snapshot classification and demo run scope do not match");
         arrivals = List.copyOf(arrivals);
+    }
+
+    public ArrivalSnapshot(UUID rawObservationId, UUID pollRunId, Optional<UUID> referenceVersionId,
+                           Instant fetchedAt, List<Arrival> arrivals) {
+        this(rawObservationId, pollRunId, referenceVersionId, fetchedAt, arrivals, "OBSERVATION_ONLY", null);
     }
 
     public ArrivalSnapshot(UUID rawObservationId, UUID pollRunId, UUID referenceVersionId,

@@ -37,7 +37,8 @@ public class BunchingRecordingService {
                 .filter(group -> group.state() == BunchingEvaluation.State.BUNCHING).count();
         int inserted = observations.insertIfAbsent(snapshot.rawObservationId(), snapshot.pollRunId(),
                 snapshot.referenceVersionId().map(Object::toString).orElse(""), snapshot.fetchedAt(), evaluation.evaluatedAt(),
-                seconds(threshold), seconds(staleAfter), RULE_VERSION, bunchedCount, evidence.encode(evaluation));
+                seconds(threshold), seconds(staleAfter), RULE_VERSION, snapshot.classification(),
+                feedScope(snapshot), snapshot.demoRunId(), bunchedCount, evidence.encode(evaluation));
         // A concurrent winner has committed before ON CONFLICT returns under READ COMMITTED.
         if (inserted == 1) alerts.trigger(evaluation);
         var stored = observations.findByRawObservationId(snapshot.rawObservationId()).orElseThrow();
@@ -52,5 +53,9 @@ public class BunchingRecordingService {
 
     private BigDecimal seconds(Duration duration) {
         return BigDecimal.valueOf(duration.getSeconds()).add(BigDecimal.valueOf(duration.getNano(), 9));
+    }
+
+    private String feedScope(ArrivalSnapshot snapshot) {
+        return snapshot.demoRunId() == null ? "LIVE" : "DEMO:" + snapshot.demoRunId();
     }
 }

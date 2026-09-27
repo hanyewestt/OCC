@@ -4,6 +4,12 @@ Java 25, Spring Boot 4.1.1, Maven and PostgreSQL 18. Follows
 `docs/CONVENTIONS.md`, the Sprint 1 plan and `01-bus-data-polling.md`.
 `project-v2.md` is not a requirement source.
 
+## Demo selection
+
+The ingestion demo page changes the durable consumer selection through the internal
+`PUT /internal/v1/consumer-selection` endpoint. In `DEMO` mode the detector consumes
+only the selected simulation run and writes alert state separately from live alerts.
+
 ## Contents
 
 - [Scope and data flow](#scope-and-data-flow)
@@ -262,6 +268,36 @@ contention, larger configured intervals and outages can exceed five seconds.
 | `db/migration/V5__audit_source_processing_failures.sql` | Append-only rejection and deferral audit history. |
 | `db/migration/V6__create_alert_trigger.sql` | Current alert state and durable alert transition events. |
 | `db/migration/V7__add_ingestion_feed_cursor.sql` | Durable cursor for the ingestion HTTP feed. |
+| `db/migration/V8__add_demo_consumer_selection.sql` | Durable `LIVE` or run-scoped `DEMO` consumer selection. |
+| `db/migration/V9__scope_demo_alert_events.sql` | Demo-run scope and evidence links on alert events. |
+| `db/migration/V10__scope_processing_state_by_feed.sql` | Feed-scoped cursors, retries, rejection and evaluation audit state. |
+
+### Public and internal APIs
+
+`GET /api/v1/live-bunching-alerts` returns a paginated list of currently open
+`OBSERVATION_ONLY` bunching episodes. Each result is the immutable `OPENED`
+`alert_event` that opened that active episode, including its source IDs and JSON
+evidence. Cleared historical events and all simulation rows are excluded. Compose
+publishes this public API on `OCC_BUNCHING_PORT` (default `6768`).
+
+`PUT /internal/v1/consumer-selection` selects exactly one feed (`LIVE` with no
+run ID, or `DEMO` with a run ID). `GET /internal/v1/demo-runs/{demoRunId}/alerts`
+returns only simulation alert events for that run. These service-to-service
+endpoints are used only for service-to-service control.
+
+The live OpenAPI document is at `/v3/api-docs`; the internal group is at
+`/v3/api-docs/internal`. To export the full runtime contract, run the service
+locally on port 8002, then execute from this service directory:
+
+```powershell
+.\mvnw.cmd -Popenapi org.springdoc:springdoc-openapi-maven-plugin:1.5:generate
+```
+
+```bash
+./mvnw -Popenapi org.springdoc:springdoc-openapi-maven-plugin:1.5:generate
+```
+
+This writes `openapi/bus-bunching-detection.json`.
 
 ### Tests and fixtures
 

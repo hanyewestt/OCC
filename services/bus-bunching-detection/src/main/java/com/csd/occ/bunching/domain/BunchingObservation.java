@@ -42,6 +42,12 @@ public class BunchingObservation {
     @Column(name = "classification", nullable = false)
     private String classification;
 
+    @Column(name = "feed_scope", nullable = false)
+    private String feedScope;
+
+    @Column(name = "demo_run_id")
+    private UUID demoRunId;
+
     @Column(name = "bunched_group_count", nullable = false)
     private int bunchedGroupCount;
 
@@ -60,6 +66,8 @@ public class BunchingObservation {
     public BigDecimal staleAfterSeconds() { return staleAfterSeconds; }
     public String ruleVersion() { return ruleVersion; }
     public String classification() { return classification; }
+    public String feedScope() { return feedScope; }
+    public UUID demoRunId() { return demoRunId; }
     public int bunchedGroupCount() { return bunchedGroupCount; }
     public String evidence() { return evidence; }
 }

@@ -20,7 +20,7 @@ class BunchingPolicyTest {
     private final BunchingPolicy policy = new BunchingPolicy();
 
     @ParameterizedTest
-    @CsvSource({"0,90,BUNCHING", "89,90,BUNCHING", "90,90,NORMAL", "91,90,NORMAL",
+    @CsvSource({"0,90,BUNCHING", "45,90,BUNCHING", "89,90,BUNCHING", "90,90,NORMAL", "91,90,NORMAL", "300,90,NORMAL",
             "59,60,BUNCHING", "60,60,NORMAL", "90,120,BUNCHING", "120,120,NORMAL"})
     void appliesStrictConfigurableThreshold(long gap, long threshold, State expected) {
         var result = policy.evaluate(snapshot(NOW, arrival(1, 300), arrival(2, 300 + gap)),
@@ -59,12 +59,14 @@ class BunchingPolicyTest {
     }
 
     @Test
-    void unknownDirectionRemainsInsufficientEvidence() {
-        var unknown = new ArrivalSnapshot.Arrival(id(2), "190", "44009", Optional.empty(), 2,
+    void missingDirectionStillEvaluatesTheArrivalHeadway() {
+        var first = new ArrivalSnapshot.Arrival(id(1), "190", "44009", Optional.empty(), 1,
+                Optional.of(NOW.plusSeconds(300)));
+        var second = new ArrivalSnapshot.Arrival(id(2), "190", "44009", Optional.empty(), 2,
                 Optional.of(NOW.plusSeconds(360)));
-        var result = evaluate(snapshot(NOW, unknown));
-        assertEquals(Reason.UNKNOWN_DIRECTION, result.groups().getFirst().reason());
-        assertEquals(State.INSUFFICIENT_EVIDENCE, result.groups().getFirst().state());
+        var result = evaluate(snapshot(NOW, first, second));
+        assertEquals(Reason.NONE, result.groups().getFirst().reason());
+        assertEquals(State.BUNCHING, result.groups().getFirst().state());
     }
 
     @Test
