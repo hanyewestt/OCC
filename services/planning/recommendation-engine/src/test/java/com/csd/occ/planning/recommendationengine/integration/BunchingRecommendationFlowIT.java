@@ -121,7 +121,7 @@ class BunchingRecommendationFlowIT {
     @Test
     void aiCandidateGenerationIsDisabledByDefault() {
         assertThat(aiProperties.enabled()).isFalse();
-        assertThat(geminiProperties.model()).isEqualTo("gemini-3.7-flash");
+        assertThat(geminiProperties.model()).isEqualTo("gemini-3.1-flash-lite");
         assertThat(applicationContext.getBeansOfType(GeminiMitigationCandidateAdapter.class)).isEmpty();
     }
 
@@ -195,7 +195,7 @@ class BunchingRecommendationFlowIT {
                  WHERE recommendation_id = ?::uuid
                 """, IDEMPOTENCY_KEY))
                 .containsEntry("provider", "GEMINI")
-                .containsEntry("model", "gemini-3.7-flash")
+                .containsEntry("model", "gemini-3.1-flash-lite")
                 .containsEntry("prompt_version", "bunching-candidate-v1")
                 .containsEntry("output_schema_version", "mitigation-candidate-v1")
                 .containsEntry("provider_response_id", "synthetic-response-id")
@@ -368,7 +368,7 @@ class BunchingRecommendationFlowIT {
         return new ModelInvocationMetadata(
                 UUID.fromString("7778bb14-2fe4-4fcc-9149-642e1fd27c00"),
                 ModelInvocationProvider.GEMINI,
-                "gemini-3.7-flash",
+                "gemini-3.1-flash-lite",
                 "bunching-candidate-v1",
                 "mitigation-candidate-v1",
                 Optional.of("synthetic-response-id"),

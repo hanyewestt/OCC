@@ -11,7 +11,7 @@ public class OpenApiConfig {
     @Bean
     OpenAPI ingestionOpenApi() {
         return new OpenAPI().info(new Info().title("OCC Ingestion API").version("v1")
-                .description("DataMall ingestion APIs and opt-in simulation-only bunching demo APIs."));
+                .description("DataMall ingestion APIs and runtime-toggleable simulation-only bunching demo APIs."));
     }
 
     @Bean

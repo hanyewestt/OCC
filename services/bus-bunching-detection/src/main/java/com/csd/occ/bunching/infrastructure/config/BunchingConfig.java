@@ -5,7 +5,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.time.Clock;
+import java.net.http.HttpClient;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
+import org.springframework.context.annotation.Primary;
 
 @Configuration
 public class BunchingConfig {
@@ -20,7 +23,16 @@ public class BunchingConfig {
     }
 
     @Bean
+    @Primary
     RestClient ingestionRestClient(BunchingProperties settings) {
         return RestClient.builder().baseUrl(settings.ingestionBaseUrl().toString()).build();
+    }
+
+    @Bean
+    RestClient diagnosisRestClient(DiagnosisOutboxProperties settings) {
+        HttpClient client = HttpClient.newBuilder().connectTimeout(settings.requestTimeout()).build();
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(client);
+        factory.setReadTimeout(settings.requestTimeout());
+        return RestClient.builder().baseUrl(settings.internalUrl().toString()).requestFactory(factory).build();
     }
 }

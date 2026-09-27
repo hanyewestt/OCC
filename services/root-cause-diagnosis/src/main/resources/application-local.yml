@@ -1,0 +1,10 @@
+# Local IDE/Maven runs use the root environment inventory from this service directory.
+spring:
+  config:
+    import: "optional:file:../../.env[.properties]"
+
+occ:
+  diagnosis:
+    bunching-internal-url: ${OCC_BUNCHING_PUBLIC_URL:${OCC_BUNCHING_INTERNAL_URL:http://localhost:${OCC_BUNCHING_PORT:6768}}}
+    ingestion-internal-url: ${OCC_INGESTION_PUBLIC_URL:http://localhost:${OCC_INGESTION_PORT:6767}}
+    recommendation-internal-url: ${OCC_RECOMMENDATION_PUBLIC_URL:http://localhost:${OCC_RECOMMENDATION_PORT:6769}}

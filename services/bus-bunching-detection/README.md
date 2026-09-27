@@ -95,8 +95,10 @@ audit tables deliberately do not use foreign keys to the short-lived ingestion d
 5. `BunchingRecordingService` persists the evaluation and evidence once per source
    observation. A new evaluation then calls the alert port in the same transaction.
 6. `JpaBunchingAlertAdapter` locks group state in stable order, opens one episode
-   for new bunching, clears it only on fresh normal evidence, and records the durable
+   for live detections, clears it only on fresh normal evidence, and records the durable
    event. PostgreSQL sends only the event UUID as a commit-time notification.
+   Simulation candidates require two consecutive bunched snapshots before an event is
+   confirmed and made eligible for root-cause diagnosis.
 
 The detector therefore reports a successful bunching evaluation in
 `bunching.bunching_observation` when `bunched_group_count > 0`. An active alert is
@@ -204,6 +206,22 @@ independent retention and no source-telemetry foreign keys. Unique episode/actio
 constraints prevent repeated transition events. Apply V6 before running the new code;
 previous evaluations are not retrospectively turned into alerts.
 
+For `SIMULATION` only, the first fresh BUNCHING sample is retained as a pending
+candidate. A second consecutive bunched sample confirms it; a normal or insufficient
+sample clears the candidate. The confirmed `OPENED` event retains the configured
+expected headway, both observed headways, both sample times, all four arrival IDs and
+the rule version. These producer-owned facts are exposed without recomputation at
+`GET /internal/v1/bunching-alert-events/{eventId}`.
+
+The same transaction that stores a confirmed simulation event inserts a row into
+`bunching.diagnosis_outbox`. Its bounded worker calls WQAP-3
+`POST /internal/v1/diagnosis-requests` with the stable outbox UUID as
+`Idempotency-Key`. It retries network errors, `408`, `429` and `5xx`; other rejections
+are retried with capped exponential backoff indefinitely by default; a positive
+`OCC_BUNCHING_DIAGNOSIS_MAX_ATTEMPTS` enables a terminal limit. Other rejections are
+terminal. `OBSERVATION_ONLY` events never enter this outbox. The outbox is the
+durable delivery path; `LISTEN/NOTIFY` below remains only a latency hint.
+
 After commit, PostgreSQL publishes the event UUID on `bunching_alert`. A trusted
 backend subscriber can `LISTEN bunching_alert` and fetch the matching event:
 
@@ -214,9 +232,8 @@ SELECT * FROM bunching.alert_event ORDER BY triggered_at, id;
 
 Notifications are wake-ups, not durable delivery. A reconnecting subscriber must
 reconcile retained events and deduplicate event IDs; timestamp-only cursors can miss
-late commits. No frontend database access, subscriber/acknowledgement service or
-authenticated alert HTTP endpoint is added in this increment. Those belong to the
-controller integration; no credentials or payloads are placed in notifications.
+late commits. No frontend database access or subscriber/acknowledgement service is
+added here; no credentials or payloads are placed in notifications.
 
 The default one-second consumer interval reduces trigger wait time. Local tests assert
 under five seconds from a stored observation through a scheduled consumer run to a
@@ -256,6 +273,8 @@ contention, larger configured intervals and outages can exceed five seconds.
 | `infrastructure/scheduling/BunchingSchedule.java` | Runs the stored-input consumer on its configured interval. |
 | `infrastructure/config/BunchingProperties.java` | Validates threshold, freshness, interval, batch size and consumer settings. |
 | `infrastructure/config/BunchingConfig.java` | Creates the configured policy and UTC clock beans. |
+| `infrastructure/config/DiagnosisOutboxProperties.java` | Validates the WQAP-3 target, delivery interval, lease, timeout and retry policy. |
+| `infrastructure/scheduling/BunchingDiagnosisDispatcher.java` | Delivers committed simulation events from the durable diagnosis outbox. |
 
 ### Database migrations
 
@@ -271,6 +290,7 @@ contention, larger configured intervals and outages can exceed five seconds.
 | `db/migration/V8__add_demo_consumer_selection.sql` | Durable `LIVE` or run-scoped `DEMO` consumer selection. |
 | `db/migration/V9__scope_demo_alert_events.sql` | Demo-run scope and evidence links on alert events. |
 | `db/migration/V10__scope_processing_state_by_feed.sql` | Feed-scoped cursors, retries, rejection and evaluation audit state. |
+| `db/migration/V11__confirm_simulation_bunching_and_queue_diagnosis.sql` | Consecutive-sample confirmation facts and durable WQAP-3 outbox. |
 
 ### Public and internal APIs
 
@@ -284,6 +304,9 @@ publishes this public API on `OCC_BUNCHING_PORT` (default `6768`).
 run ID, or `DEMO` with a run ID). `GET /internal/v1/demo-runs/{demoRunId}/alerts`
 returns only simulation alert events for that run. These service-to-service
 endpoints are used only for service-to-service control.
+`GET /internal/v1/bunching-alert-events/{eventId}` returns the canonical confirmed
+event facts for root-cause analysis. Set `OCC_BUNCHING_EXPECTED_HEADWAY` to the
+scenario's expected headway; its simulation default is `600s`.
 
 The live OpenAPI document is at `/v3/api-docs`; the internal group is at
 `/v3/api-docs/internal`. To export the full runtime contract, run the service

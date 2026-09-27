@@ -4,7 +4,7 @@ Polls DataMall bus arrivals and records observations for analytics. Requires Jav
 
 ## Demo replay
 
-Demo support is opt-in. Set `OCC_INGESTION_DEMO_ENABLED=true` and restart ingestion to expose the demo page and endpoints. The default is `false`; when disabled, the page, demo APIs and replay scheduler are not registered. Once enabled, open `/demo.html`. **Show demo** starts a run and switches bunching to that simulation; **Return to live** switches bunching back to the live feed and closes the run. The runtime mode can be toggled while ingestion is running; no restart is needed for each demo:
+Demo support is always available at `/demo.html`. Its persisted runtime state starts disabled, so the replay scheduler does no work and bunching remains live until **Show demo** starts a run. **Return to live** switches bunching back to the live feed and closes the run. The mode can also be toggled while ingestion is running; no restart is needed:
 
 ```http
 GET /api/v1/demo-mode
@@ -18,8 +18,9 @@ Setting `enabled` to `true` starts a replay if none is active, or resumes the cu
 
 The page starts a fictional, deterministic route-190 replay and lists simulation-only
 bunching alerts. Since the bunching consumer runs independently, after the replay ends
-the page keeps checking until the alert arrives; **Return to live** remains available
-while it waits. Enabling demo support requires `OCC_BUNCHING_INTERNAL_URL`; live DataMall polling remains enabled.
+the page keeps checking until the alert arrives and then shows the persisted, simulation-only
+recommendation when it is ready; **Return to live** remains available while it waits. Enabling demo
+support requires `OCC_BUNCHING_INTERNAL_URL` and `OCC_RECOMMENDATION_INTERNAL_URL`; live DataMall polling remains enabled.
 When no demo run is active, the same page also shows the currently open live bunching
 detections through ingestion's same-origin `GET /api/v1/live-bunching-alerts` proxy.
 The browser does not call bunching directly; the proxy obtains the immutable opening
@@ -110,7 +111,7 @@ does not disable or remove targets previously created for a service that is late
 removed from the setting. Disable or remove those `ingestion.poll_target` rows
 through an explicit operational change when reducing coverage.
 
-With the service running, browse the interactive API at `http://localhost:<OCC_INGESTION_PORT>/swagger-ui.html` (default `8080`). These read-only endpoints return paginated envelopes except feed status and reference topology:
+With the service running in Compose, browse the interactive API at `http://localhost:<OCC_INGESTION_PORT>/swagger-ui.html` (default host port `6767`). These read-only endpoints return paginated envelopes except feed status and reference topology:
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -125,6 +126,18 @@ With the service running, browse the interactive API at `http://localhost:<OCC_I
 | `GET /api/v1/bus-stops/{stopCode}` | One bus stop by stop code |
 
 The machine-readable OpenAPI document is at `/v3/api-docs`.
+
+### Root-cause evidence contract
+
+WQAP-3 retrieves simulation context through
+`GET /internal/v1/demo-runs/{demoRunId}/root-cause-context` with the confirmed
+event's `at`, `serviceId`, `stopCode`, `directionId`, and two-to-ten
+`arrivalObservationIds` query parameters. The endpoint verifies that each observation
+matches the selected simulation run, event location/service, and time window, then
+returns stable evidence IDs, provenance, timestamps, vehicle/load/location fields, matching simulation incidents, and an
+explicit `missingFields` list. It never returns `OBSERVATION_ONLY` records to a
+simulation diagnosis. Incident `observedAt` is retained when supplied; the fictional
+replay uses its actual simulation timestamp rather than leaving the field absent.
 
 To export the runtime-generated contract to a file, start ingestion and run this
 from `services/ingestion` in another terminal:

@@ -244,9 +244,6 @@ It extends existing tables:
 
 [`DemoProperties`](../services/ingestion/src/main/java/com/csd/occ/ingestion/infrastructure/config/DemoProperties.java) binds and validates demo settings.
 
-There are two levels of control:
-
-1. `OCC_INGESTION_DEMO_ENABLED` is the deployment feature gate. It defaults to `false`; when false, the page, public demo APIs, internal demo feed, and replay scheduler are absent. Changing it requires restarting ingestion.
-2. Runtime mode is stored in `ingestion.demo_runtime_setting` and `bunching.consumer_selection`. It can switch between demo and live while both applications remain running.
+Runtime mode is stored in `ingestion.demo_runtime_setting` and `bunching.consumer_selection`. It starts disabled, and can switch between demo and live while both applications remain running. The demo page and APIs are always available; the scheduler checks the persisted state and does nothing until demo mode is enabled.
 
 Settings are documented in [`.env.example`](../.env.example) and wired through [`services/ingestion/src/main/resources/application.yml`](../services/ingestion/src/main/resources/application.yml) and [`infra/local/compose.yaml`](../infra/local/compose.yaml).

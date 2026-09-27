@@ -18,7 +18,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-@WebMvcTest(value = LiveBunchingAlertController.class, properties = "occ.ingestion.demo.enabled=true")
+@WebMvcTest(LiveBunchingAlertController.class)
 class LiveBunchingAlertControllerTest {
     @Autowired MockMvc mvc;
     @MockitoBean BunchingControlPort bunching;

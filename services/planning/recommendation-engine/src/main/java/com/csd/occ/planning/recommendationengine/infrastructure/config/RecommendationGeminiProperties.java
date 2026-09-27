@@ -2,6 +2,7 @@ package com.csd.occ.planning.recommendationengine.infrastructure.config;
 
 import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.ai.google.genai.common.GoogleGenAiThinkingLevel;
 
 @ConfigurationProperties("occ.recommendation.ai.gemini")
 public record RecommendationGeminiProperties(
@@ -9,12 +10,11 @@ public record RecommendationGeminiProperties(
         String model,
         double temperature,
         int maxOutputTokens,
-        int thinkingBudget,
+        GoogleGenAiThinkingLevel thinkingLevel,
         Duration requestTimeout,
         int retryAttempts) {
 
     private static final int MAXIMUM_OUTPUT_TOKENS = 4_096;
-    private static final int MAXIMUM_THINKING_BUDGET = 32_768;
     private static final int MAXIMUM_RETRY_ATTEMPTS = 5;
 
     public RecommendationGeminiProperties {
@@ -27,9 +27,7 @@ public record RecommendationGeminiProperties(
         if (maxOutputTokens < 1 || maxOutputTokens > MAXIMUM_OUTPUT_TOKENS) {
             throw new IllegalArgumentException("maxOutputTokens must be between one and 4096");
         }
-        if (thinkingBudget < 0 || thinkingBudget > MAXIMUM_THINKING_BUDGET) {
-            throw new IllegalArgumentException("thinkingBudget must be between zero and 32768");
-        }
+        if (thinkingLevel == null) throw new IllegalArgumentException("thinkingLevel is required for Gemini 3 models");
         if (requestTimeout == null || requestTimeout.isZero() || requestTimeout.isNegative()) {
             throw new IllegalArgumentException("requestTimeout must be positive");
         }
@@ -58,7 +56,7 @@ public record RecommendationGeminiProperties(
         return "RecommendationGeminiProperties[apiKey=<redacted>, model=" + model
                 + ", temperature=" + temperature
                 + ", maxOutputTokens=" + maxOutputTokens
-                + ", thinkingBudget=" + thinkingBudget
+                + ", thinkingLevel=" + thinkingLevel
                 + ", requestTimeout=" + requestTimeout
                 + ", retryAttempts=" + retryAttempts + "]";
     }

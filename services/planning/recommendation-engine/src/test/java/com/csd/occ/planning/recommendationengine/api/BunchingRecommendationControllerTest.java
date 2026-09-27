@@ -72,6 +72,25 @@ class BunchingRecommendationControllerTest {
     }
 
     @Test
+    void retrievesTheStoredRecommendationByBunchingEventId() throws IOException {
+        var created = mvc.post()
+                .uri(ENDPOINT)
+                .header("Idempotency-Key", IDEMPOTENCY_KEY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(validRequest())
+                .exchange();
+        assertThat(created).hasStatusOk();
+
+        var result = mvc.get()
+                .uri(ENDPOINT + "/by-bunching-event/c5934f15-4a65-4e94-87ea-a5a64a7dd4c1")
+                .exchange();
+
+        assertThat(result).hasStatusOk();
+        assertThat(result).bodyJson().extractingPath("$.recommendationId")
+                .isEqualTo(IDEMPOTENCY_KEY.toString());
+    }
+
+    @Test
     void invalidNestedFieldsReturnProblemDetail() {
         String invalidRequest = """
                 {
@@ -194,6 +213,13 @@ class BunchingRecommendationControllerTest {
                 @Override
                 public Optional<RecommendationRecord> findByIdempotencyKey(UUID idempotencyKey) {
                     return Optional.ofNullable(records.get(idempotencyKey));
+                }
+
+                @Override
+                public Optional<RecommendationRecord> findByBunchingEventId(UUID bunchingEventId) {
+                    return records.values().stream()
+                            .filter(record -> record.bunchingEvent().bunchingEventId().equals(bunchingEventId))
+                            .findFirst();
                 }
 
                 @Override

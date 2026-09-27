@@ -3,12 +3,10 @@ import com.csd.occ.ingestion.api.dto.BunchingSnapshotPageResponse;
 import com.csd.occ.ingestion.api.dto.BunchingSnapshotResponse;
 import com.csd.occ.ingestion.domain.BunchingFeedService;
 import java.util.UUID;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.http.HttpStatus;
 @RestController
-@ConditionalOnProperty(name = "occ.ingestion.demo.enabled", havingValue = "true")
 @RequestMapping("/internal/v1/demo-runs/{demoRunId}/arrival-snapshots")
 public class DemoSnapshotController {
     private final BunchingFeedService feed;

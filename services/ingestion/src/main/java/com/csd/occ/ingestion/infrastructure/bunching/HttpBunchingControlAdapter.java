@@ -44,7 +44,7 @@ public class HttpBunchingControlAdapter implements BunchingControlPort {
         AlertPage page = bunching.get().uri("/internal/v1/demo-runs/{id}/alerts", runId)
                 .retrieve().body(AlertPage.class);
         return page == null ? List.of() : page.alerts().stream()
-                .map(alert -> new DemoBunchingAlert(alert.action(), alert.serviceId(), alert.stopCode(),
+                .map(alert -> new DemoBunchingAlert(alert.eventId(), alert.bunchingEventId(), alert.action(), alert.serviceId(), alert.stopCode(),
                         alert.directionId(), alert.detectedAt(), alert.classification(),
                         alert.leadingObservationId(), alert.followingObservationId())).toList();
     }
@@ -69,7 +69,7 @@ public class HttpBunchingControlAdapter implements BunchingControlPort {
     private record AlertPage(List<AlertResponse> alerts) {
         private AlertPage { alerts = List.copyOf(alerts); }
     }
-    private record AlertResponse(String action, String serviceId, String stopCode, int directionId,
+    private record AlertResponse(UUID eventId, UUID bunchingEventId, String action, String serviceId, String stopCode, int directionId,
                                  Instant detectedAt, String evidence, String classification,
                                  UUID leadingObservationId, UUID followingObservationId) {}
     private record LiveAlertPage(List<LiveAlertResponse> items, int page, int size, long totalItems, int totalPages) {

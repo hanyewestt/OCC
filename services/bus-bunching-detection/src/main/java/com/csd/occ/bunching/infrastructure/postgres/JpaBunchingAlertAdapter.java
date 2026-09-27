@@ -9,10 +9,13 @@ import com.csd.occ.bunching.domain.ConsumerSelectionService;
 import com.csd.occ.bunching.domain.DemoAlertState;
 import com.csd.occ.bunching.domain.DemoAlertStateId;
 import com.csd.occ.bunching.domain.DemoAlertStateRepository;
+import com.csd.occ.bunching.domain.DiagnosisOutbox;
+import com.csd.occ.bunching.domain.DiagnosisOutboxRepository;
 import com.csd.occ.bunching.domain.BunchingAlertPolicy;
 import com.csd.occ.bunching.domain.BunchingAlertPort;
 import com.csd.occ.bunching.domain.BunchingEvaluation;
 import com.csd.occ.bunching.domain.BunchingEvidencePort;
+import com.csd.occ.bunching.infrastructure.config.BunchingConfirmationProperties;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Comparator;
@@ -31,17 +34,22 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
     private final Clock clock;
     private final ConsumerSelectionService selection;
     private final DemoAlertStateRepository demoStates;
+    private final DiagnosisOutboxRepository diagnosisOutbox;
+    private final BunchingConfirmationProperties confirmation;
     private final BunchingAlertPolicy policy = new BunchingAlertPolicy();
 
     public JpaBunchingAlertAdapter(AlertStateRepository states, AlertEventRepository events,
                                    BunchingEvidencePort evidence, Clock clock, ConsumerSelectionService selection,
-                                   DemoAlertStateRepository demoStates) {
+                                   DemoAlertStateRepository demoStates, DiagnosisOutboxRepository diagnosisOutbox,
+                                   BunchingConfirmationProperties confirmation) {
         this.states = states;
         this.events = events;
         this.evidence = evidence;
         this.clock = clock;
         this.selection = selection;
         this.demoStates = demoStates;
+        this.diagnosisOutbox = diagnosisOutbox;
+        this.confirmation = confirmation;
     }
 
     @Override
@@ -98,24 +106,62 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
         DemoAlertState previous = demoStates.findWithLockById(id).orElseThrow();
         Instant fetchedAt = evaluation.snapshot().fetchedAt();
         if (!fetchedAt.isAfter(previous.lastFetchedAt())) return;
-        BunchingAlertPolicy.Transition transition = policy.transition(result.state(), Optional.ofNullable(previous.activeAlertId()));
-        UUID episode = transition == BunchingAlertPolicy.Transition.OPENED ? UUID.randomUUID() : previous.activeAlertId();
-        UUID leading = previous.leadingObservationId();
-        UUID following = previous.followingObservationId();
-        if (transition == BunchingAlertPolicy.Transition.OPENED) {
-            var bunchedPair = result.headways().stream().filter(BunchingEvaluation.Headway::isBunched).findFirst();
-            leading = bunchedPair.map(BunchingEvaluation.Headway::leadingObservationId).orElse(null);
-            following = bunchedPair.map(BunchingEvaluation.Headway::followingObservationId).orElse(null);
+        if (result.reason() == BunchingEvaluation.Reason.STALE_SNAPSHOT
+                || result.reason() == BunchingEvaluation.Reason.FUTURE_SNAPSHOT) {
+            previous.update(fetchedAt, previous.activeAlertId(), previous.leadingObservationId(), previous.followingObservationId());
+            previous.clearCandidate();
+            return;
         }
-        if (transition != BunchingAlertPolicy.Transition.NONE) {
+
+        if (previous.activeAlertId() == null) {
+            if (result.state() != BunchingEvaluation.State.BUNCHING) {
+                previous.update(fetchedAt, null, null, null);
+                previous.clearCandidate();
+                return;
+            }
+            BunchingEvaluation.Headway current = result.headways().stream()
+                    .filter(BunchingEvaluation.Headway::isBunched).findFirst().orElse(null);
+            if (current == null || current.gap().toSeconds() < 0 || current.gap().toSeconds() > Integer.MAX_VALUE) {
+                previous.update(fetchedAt, null, null, null);
+                previous.clearCandidate();
+                return;
+            }
+            if (previous.pendingHeadwaySeconds() == null || previous.pendingDetectedAt() == null) {
+                previous.recordCandidate(fetchedAt, Math.toIntExact(current.gap().toSeconds()),
+                        current.leadingObservationId(), current.followingObservationId(),
+                        evaluation.snapshot().rawObservationId(), evaluation.snapshot().pollRunId());
+                return;
+            }
+
+            UUID episode = UUID.randomUUID();
+            Instant confirmedAt = clock.instant();
+            int secondHeadway = Math.toIntExact(current.gap().toSeconds());
+            AlertEvent event = events.save(new AlertEvent(episode, "OPENED", id.serviceId(), id.stopCode(), direction,
+                    evaluation.snapshot().rawObservationId(), evaluation.snapshot().pollRunId(), fetchedAt, confirmedAt,
+                    evidence.encodeAlert(evaluation, result), "SIMULATION", runId,
+                    current.leadingObservationId(), current.followingObservationId(), confirmation.expectedHeadwaySeconds(),
+                    previous.pendingHeadwaySeconds(), secondHeadway, previous.pendingDetectedAt(), fetchedAt,
+                    previous.pendingLeadingObservationId(), previous.pendingFollowingObservationId(),
+                    current.leadingObservationId(), current.followingObservationId(), "bunching-gap-v1"));
+            events.notifyListeners(event.id().toString());
+            diagnosisOutbox.save(new DiagnosisOutbox(UUID.randomUUID(), event.id(), confirmedAt));
+            previous.update(fetchedAt, episode, current.leadingObservationId(), current.followingObservationId());
+            previous.clearCandidate();
+            return;
+        }
+
+        BunchingAlertPolicy.Transition transition = policy.transition(result.state(), Optional.of(previous.activeAlertId()));
+        UUID episode = previous.activeAlertId();
+        if (transition == BunchingAlertPolicy.Transition.CLEARED) {
             AlertEvent event = events.save(new AlertEvent(episode, transition.name(), id.serviceId(), id.stopCode(), direction,
                     evaluation.snapshot().rawObservationId(), evaluation.snapshot().pollRunId(), fetchedAt, clock.instant(),
-                    evidence.encodeAlert(evaluation, result), "SIMULATION", runId, leading, following));
+                    evidence.encodeAlert(evaluation, result), "SIMULATION", runId, previous.leadingObservationId(),
+                    previous.followingObservationId()));
             events.notifyListeners(event.id().toString());
-        }
-        if (transition == BunchingAlertPolicy.Transition.CLEARED)
             previous.update(fetchedAt, null, null, null);
-        else
-            previous.update(fetchedAt, episode, leading, following);
+            previous.clearCandidate();
+        } else {
+            previous.update(fetchedAt, episode, previous.leadingObservationId(), previous.followingObservationId());
+        }
     }
 }

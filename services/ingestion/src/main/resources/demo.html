@@ -19,6 +19,8 @@
     .vehicle, .stop { line-height: 1.5; }
     .muted { color: #5b6575; font-size: .9em; }
     .headway { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .recommendation { background: #f7fbf8; }
+    .recommendation strong { color: #156c47; }
     .evidence-popover { position: relative; display: inline-block; }
     .evidence-trigger { margin: 0; padding: 0; border: 0; background: transparent; color: #0b5cad; cursor: help; font: inherit; text-decoration: underline; text-underline-offset: .15em; }
     .evidence-bubble { display: none; position: absolute; z-index: 10; top: 1.7rem; right: 0; width: min(42rem, 75vw); max-height: 22rem; overflow: auto; padding: .85rem; border: 1px solid #718096; border-radius: .4rem; background: #fff; box-shadow: 0 .4rem 1.2rem rgba(23, 32, 51, .22); color: #172033; text-align: left; }
@@ -33,15 +35,24 @@
   <button id="close" type="button" hidden>Return to live</button>
   <p id="status" role="status" aria-live="polite">Checking for an active demo…</p>
 
-  <h2>Simulation bunching alerts</h2>
-  <p class="hint">Fictional simulation data only. It does not affect live bunching detection.</p>
-  <table>
-    <thead><tr>
-      <th>Alert</th><th>Service &amp; direction</th><th>Bus stop</th><th>Detected</th><th>Headway</th>
-      <th>Leading bus</th><th>Following bus</th>
-    </tr></thead>
-    <tbody id="alerts"><tr><td colspan="7">No bunching detected yet.</td></tr></tbody>
-  </table>
+  <section id="simulation-results" hidden>
+    <h2>Simulation bunching alerts</h2>
+    <p class="hint">Fictional simulation data only. It does not affect live bunching detection.</p>
+    <table>
+      <thead><tr>
+        <th>Alert</th><th>Service &amp; direction</th><th>Bus stop</th><th>Detected</th><th>Headway</th>
+        <th>Leading bus</th><th>Following bus</th>
+      </tr></thead>
+      <tbody id="alerts"><tr><td colspan="7">No bunching detected yet.</td></tr></tbody>
+    </table>
+
+    <h2>Simulation recommendation</h2>
+    <p class="hint">Generated from the confirmed simulation event and shown for review only. It is not an operational directive.</p>
+    <table>
+      <thead><tr><th>Status</th><th>Mitigation</th><th>Target</th><th>Root-cause diagnosis</th><th>Rationale and trade-offs</th><th>Expected simulation impact</th></tr></thead>
+      <tbody id="recommendation"><tr><td colspan="6">Waiting for a simulation recommendation.</td></tr></tbody>
+    </table>
+  </section>
 
   <h2>Live bunching detections</h2>
   <p class="hint">Currently open observation-only detections. This view is hidden while a simulation run is active.</p>
@@ -64,11 +75,14 @@
   <script>
     let runId = null;
     let demoTimer = null;
+    let recommendationTimer = null;
     const stops = new Map();
     const status = document.querySelector('#status');
     const show = document.querySelector('#show');
     const close = document.querySelector('#close');
+    const simulationResults = document.querySelector('#simulation-results');
     const alertBody = document.querySelector('#alerts');
+    const recommendationBody = document.querySelector('#recommendation');
     const liveAlertBody = document.querySelector('#live-alerts');
     const liveBody = document.querySelector('#live-arrivals');
 
@@ -119,6 +133,25 @@
         <td class="headway"><strong>${escapeHtml(headway(alert.headwaySeconds))}</strong><br><span class="muted">Predicted-arrival gap</span></td>
         <td>${vehicleCell(alert.leadingVehicle)}</td><td>${vehicleCell(alert.followingVehicle)}</td>
       </tr>`).join('');
+    }
+    function renderRecommendation(recommendation, message = 'Waiting for the recommendation…') {
+      if (!recommendation) {
+        recommendationBody.innerHTML = `<tr><td colspan="6" class="muted">${escapeHtml(message)}</td></tr>`;
+        return;
+      }
+      const impact = recommendation.expectedImpact;
+      const confidence = Number(recommendation.diagnosisConfidence);
+      const confidenceText = Number.isFinite(confidence) ? confidence.toFixed(3) : 'Unavailable';
+      const tradeOffs = recommendation.tradeOffs?.length ? recommendation.tradeOffs.join(' ') : 'No trade-offs recorded.';
+      const limitations = recommendation.limitations?.length ? `<br><span class="muted">Limitations: ${escapeHtml(recommendation.limitations.join(' '))}</span>` : '';
+      recommendationBody.innerHTML = `<tr class="recommendation">
+        <td><strong>${escapeHtml(recommendation.status)}</strong><br><span class="muted">${escapeHtml(recommendation.classification)}</span></td>
+        <td><strong>${escapeHtml(recommendation.mitigationType)}</strong><br><span class="muted">${escapeHtml(recommendation.adjustmentSeconds)} seconds</span></td>
+        <td><strong>${escapeHtml(recommendation.targetBusReference)}</strong><br><span class="muted">Control stop ${escapeHtml(recommendation.controlStopCode)}</span></td>
+        <td>${escapeHtml(recommendation.likelyCause)}<br><span class="muted">Diagnosis confidence ${escapeHtml(confidenceText)}</span></td>
+        <td>${escapeHtml(recommendation.rationale)}<br><span class="muted">${escapeHtml(tradeOffs)}</span>${limitations}</td>
+        <td><span class="headway">Headway ${escapeHtml(headway(impact.headwayBeforeSeconds))} → ${escapeHtml(headway(impact.headwayAfterSeconds))}</span><br><span class="muted">Queue ${escapeHtml(impact.queueBeforePassengers)} → ${escapeHtml(impact.queueAfterPassengers)} passengers<br>Passenger-minutes ${escapeHtml(impact.passengerMinutesBefore)} → ${escapeHtml(impact.passengerMinutesAfter)}</span></td>
+      </tr>`;
     }
     async function responseJson(response) {
       if (response.status === 204) return null;
@@ -207,27 +240,64 @@
     function hideLiveAlertsDuringDemo() {
       liveAlertBody.innerHTML = '<tr><td colspan="10">Live detections are hidden while simulation is active.</td></tr>';
     }
+    function showSimulationResults() {
+      simulationResults.hidden = false;
+    }
+    function clearSimulationResults() {
+      alertBody.replaceChildren();
+      recommendationBody.replaceChildren();
+      simulationResults.hidden = true;
+    }
     function stopDemoPolling() {
       if (demoTimer !== null) clearTimeout(demoTimer);
       demoTimer = null;
     }
+    function stopRecommendationPolling() {
+      if (recommendationTimer !== null) clearTimeout(recommendationTimer);
+      recommendationTimer = null;
+    }
+    function scheduleRecommendationPoll() {
+      stopRecommendationPolling();
+      if (runId) recommendationTimer = setTimeout(refreshRecommendation, 1000);
+    }
+    async function refreshRecommendation() {
+      if (!runId) return;
+      try {
+        const recommendation = await responseJson(await fetch(`/api/v1/demo-runs/${encodeURIComponent(runId)}/recommendation`));
+        if (recommendation) {
+          renderRecommendation(recommendation);
+          stopRecommendationPolling();
+        } else {
+          renderRecommendation(null);
+          scheduleRecommendationPoll();
+        }
+      } catch (error) {
+        renderRecommendation(null, `Unable to load recommendation: ${error.message}`);
+        scheduleRecommendationPoll();
+      }
+    }
     function acceptRun(run) {
       runId = run.id;
+      showSimulationResults();
       hideLiveAlertsDuringDemo();
       show.disabled = true;
       renderAlerts(run.alerts || []);
+      renderRecommendation(null, (run.alerts || []).length
+        ? 'Confirmed bunching detected. Waiting for root-cause diagnosis and recommendation…'
+        : 'Waiting for confirmed bunching…');
       status.classList.remove('error');
       status.textContent = `${run.status}: replay step ${run.currentStep}`;
       if (run.status === 'REPLAY_COMPLETE' && (run.alerts || []).length > 0) {
         status.textContent = `REPLAY_COMPLETE: ${run.alerts.length} bunching alert(s) detected`;
-        stopDemoPolling(); close.hidden = false;
+        stopDemoPolling(); close.hidden = false; scheduleRecommendationPoll();
       } else if (run.status === 'REPLAY_COMPLETE') {
         status.textContent = 'REPLAY_COMPLETE: waiting for bunching analysis…';
-        close.hidden = false; scheduleDemoPoll();
+        close.hidden = false; scheduleDemoPoll(); scheduleRecommendationPoll();
       } else if (run.status === 'FAILED' || run.status === 'CLOSED') {
-        stopDemoPolling(); runId = null; show.disabled = false; close.hidden = true; refreshLiveAlerts();
+        stopDemoPolling(); stopRecommendationPolling(); runId = null; show.disabled = false; close.hidden = true;
+        clearSimulationResults(); refreshLiveAlerts();
       } else {
-        close.hidden = true; scheduleDemoPoll();
+        close.hidden = true; scheduleDemoPoll(); scheduleRecommendationPoll();
       }
     }
     async function refreshRun() {
@@ -291,7 +361,8 @@
       close.disabled = true; status.classList.remove('error'); status.textContent = 'Returning bunching to live…';
       try {
         const closed = await responseJson(await fetch(`/api/v1/demo-runs/${encodeURIComponent(runId)}/close`, { method: 'POST' }));
-        stopDemoPolling(); runId = null; close.hidden = true; show.disabled = false;
+        stopDemoPolling(); stopRecommendationPolling(); runId = null; close.hidden = true; show.disabled = false;
+        clearSimulationResults();
         status.textContent = `${closed.status}: live bunching resumed`; refreshLiveAlerts();
       } catch (error) {
         status.classList.add('error'); status.textContent = `Return to live failed: ${error.message}`;

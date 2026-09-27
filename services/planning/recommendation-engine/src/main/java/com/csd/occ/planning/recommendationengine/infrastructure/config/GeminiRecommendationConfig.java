@@ -40,7 +40,7 @@ public class GeminiRecommendationConfig {
                 .model(properties.model())
                 .temperature(properties.temperature())
                 .maxOutputTokens(properties.maxOutputTokens())
-                .thinkingBudget(properties.thinkingBudget())
+                .thinkingLevel(properties.thinkingLevel())
                 .includeThoughts(false)
                 .candidateCount(1)
                 .build();

@@ -26,6 +26,15 @@ public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort
              WHERE idempotency_key = ?
             """;
 
+    private static final String FIND_BY_BUNCHING_EVENT_ID = """
+            SELECT idempotency_key, request_hash, request_id, request_payload,
+                   mitigation_context, response_payload, created_at
+              FROM recommendation.recommendation_record
+             WHERE bunching_event_id = ?
+             ORDER BY created_at DESC
+             LIMIT 1
+            """;
+
     private static final String INSERT_IF_ABSENT = """
             INSERT INTO recommendation.recommendation_record (
                 recommendation_id, idempotency_key, request_hash, request_id,
@@ -53,6 +62,13 @@ public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort
     @Override
     public Optional<RecommendationRecord> findByIdempotencyKey(UUID idempotencyKey) {
         return jdbc.query(FIND_BY_IDEMPOTENCY_KEY, this::mapRecord, idempotencyKey)
+                .stream()
+                .findFirst();
+    }
+
+    @Override
+    public Optional<RecommendationRecord> findByBunchingEventId(UUID bunchingEventId) {
+        return jdbc.query(FIND_BY_BUNCHING_EVENT_ID, this::mapRecord, bunchingEventId)
                 .stream()
                 .findFirst();
     }

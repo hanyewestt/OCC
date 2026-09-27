@@ -27,7 +27,7 @@ public class DemoAlertController {
     @ApiResponse(responseCode = "200", description = "Simulation alerts returned, possibly an empty list")
     public AlertPage alerts(@PathVariable UUID demoRunId) {
         return new AlertPage(alerts.findByDemoRunIdAndClassificationOrderByTriggeredAtDesc(demoRunId, "SIMULATION").stream()
-                .map(event -> new AlertResponse(event.action(), event.serviceId(), event.stopCode(), event.directionId(),
+                .map(event -> new AlertResponse(event.id(), event.alertId(), event.action(), event.serviceId(), event.stopCode(), event.directionId(),
                         event.triggeredAt(), event.evidence(), event.classification(),
                         event.leadingObservationId(), event.followingObservationId())).toList());
     }
@@ -38,7 +38,7 @@ public class DemoAlertController {
     }
 
     @Schema(description = "One bunching transition with IDs linking its fictional leading and following buses")
-    public record AlertResponse(String action, String serviceId, String stopCode, int directionId, Instant detectedAt,
+    public record AlertResponse(UUID eventId, UUID bunchingEventId, String action, String serviceId, String stopCode, int directionId, Instant detectedAt,
                                 String evidence, String classification, UUID leadingObservationId,
                                 UUID followingObservationId) {}
 }
