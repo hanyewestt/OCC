@@ -2,7 +2,7 @@
 
 ## 1. Outcome
 
-Build `services/root-cause-diagnosis`, a general event-diagnosis service whose first
+Build `services/planning/root-cause-diagnosis`, a general event-diagnosis service whose first
 implemented vertical slice is `BUS_BUNCHING`. The service retrieves canonical event
 facts and contextual evidence, invokes Gemini with a constrained schema, calculates an
 explainable evidence-support score, maps it to the downstream confidence field,
@@ -145,7 +145,7 @@ provider DTOs.
 Follow `docs/CONVENTIONS.md`:
 
 ```text
-services/root-cause-diagnosis/
+services/planning/root-cause-diagnosis/
 ├── pom.xml
 ├── mvnw / mvnw.cmd / .mvn/wrapper/
 ├── Dockerfile

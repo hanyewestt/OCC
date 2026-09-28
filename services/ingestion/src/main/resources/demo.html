@@ -1,34 +1,157 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OCC Bunching Demo</title>
   <style>
-    body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 1240px; color: #172033; }
-    button { padding: .65rem 1rem; margin-right: .5rem; cursor: pointer; }
-    button:disabled { cursor: wait; }
-    #status { min-height: 1.5rem; margin: 1rem 0; }
-    .error { color: #a32626; } h2 { margin: 2rem 0 .35rem; }
-    .hint { color: #4a5568; margin: 0 0 .8rem; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border: 1px solid #ccd2dc; padding: .6rem; text-align: left; vertical-align: top; }
-    th { background: #f2f4f8; }
-    .simulation { color: #8b2141; font-weight: 700; min-width: 12rem; }
-    .live { color: #156c47; font-weight: 700; }
-    .vehicle, .stop { line-height: 1.5; }
-    .muted { color: #5b6575; font-size: .9em; }
-    .headway { font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .recommendation { background: #f7fbf8; }
-    .recommendation strong { color: #156c47; }
-    .evidence-popover { position: relative; display: inline-block; }
-    .evidence-trigger { margin: 0; padding: 0; border: 0; background: transparent; color: #0b5cad; cursor: help; font: inherit; text-decoration: underline; text-underline-offset: .15em; }
-    .evidence-bubble { display: none; position: absolute; z-index: 10; top: 1.7rem; right: 0; width: min(42rem, 75vw); max-height: 22rem; overflow: auto; padding: .85rem; border: 1px solid #718096; border-radius: .4rem; background: #fff; box-shadow: 0 .4rem 1.2rem rgba(23, 32, 51, .22); color: #172033; text-align: left; }
-    .evidence-popover:hover .evidence-bubble, .evidence-popover:focus-within .evidence-bubble { display: block; }
-    .evidence-bubble pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: .78rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
-    @media (max-width: 800px) { body { margin: 1rem; overflow-x: auto; } table { min-width: 1500px; } }
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 2rem;
+      max-width: 1240px;
+      color: #172033;
+    }
+
+    button {
+      padding: .65rem 1rem;
+      margin-right: .5rem;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: wait;
+    }
+
+    #status {
+      min-height: 1.5rem;
+      margin: 1rem 0;
+    }
+
+    .error {
+      color: #a32626;
+    }
+
+    h2 {
+      margin: 2rem 0 .35rem;
+    }
+
+    .hint {
+      color: #4a5568;
+      margin: 0 0 .8rem;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+
+    th,
+    td {
+      border: 1px solid #ccd2dc;
+      padding: .6rem;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f2f4f8;
+    }
+
+    .simulation {
+      color: #8b2141;
+      font-weight: 700;
+      min-width: 12rem;
+    }
+
+    .live {
+      color: #156c47;
+      font-weight: 700;
+    }
+
+    .vehicle,
+    .stop {
+      line-height: 1.5;
+    }
+
+    .muted {
+      color: #5b6575;
+      font-size: .9em;
+    }
+
+    .headway {
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
+    .recommendation {
+      background: #f7fbf8;
+    }
+
+    .recommendation strong {
+      color: #156c47;
+    }
+
+    .evidence-popover {
+      position: relative;
+      display: inline-block;
+    }
+
+    .evidence-trigger {
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: #0b5cad;
+      cursor: help;
+      font: inherit;
+      text-decoration: underline;
+      text-underline-offset: .15em;
+    }
+
+    .evidence-bubble {
+      display: none;
+      position: absolute;
+      z-index: 10;
+      top: 1.7rem;
+      right: 0;
+      width: min(42rem, 75vw);
+      max-height: 22rem;
+      overflow: auto;
+      padding: .85rem;
+      border: 1px solid #718096;
+      border-radius: .4rem;
+      background: #fff;
+      box-shadow: 0 .4rem 1.2rem rgba(23, 32, 51, .22);
+      color: #172033;
+      text-align: left;
+    }
+
+    .evidence-popover:hover .evidence-bubble,
+    .evidence-popover:focus-within .evidence-bubble {
+      display: block;
+    }
+
+    .evidence-bubble pre {
+      margin: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font: .78rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    @media (max-width: 800px) {
+      body {
+        margin: 1rem;
+        overflow-x: auto;
+      }
+
+      table {
+        min-width: 1500px;
+      }
+    }
   </style>
 </head>
+
 <body>
   <h1>Bus bunching demo</h1>
   <button id="show" type="button">Show demo</button>
@@ -39,37 +162,92 @@
     <h2>Simulation bunching alerts</h2>
     <p class="hint">Fictional simulation data only. It does not affect live bunching detection.</p>
     <table>
-      <thead><tr>
-        <th>Alert</th><th>Service &amp; direction</th><th>Bus stop</th><th>Detected</th><th>Headway</th>
-        <th>Leading bus</th><th>Following bus</th>
-      </tr></thead>
-      <tbody id="alerts"><tr><td colspan="7">No bunching detected yet.</td></tr></tbody>
+      <thead>
+        <tr>
+          <th>Alert</th>
+          <th>Service &amp; direction</th>
+          <th>Bus stop</th>
+          <th>Detected</th>
+          <th>Headway</th>
+          <th>Leading bus</th>
+          <th>Following bus</th>
+        </tr>
+      </thead>
+      <tbody id="alerts">
+        <tr>
+          <td colspan="7">No bunching detected yet.</td>
+        </tr>
+      </tbody>
     </table>
 
     <h2>Simulation recommendation</h2>
-    <p class="hint">Generated from the confirmed simulation event and shown for review only. It is not an operational directive.</p>
+    <p class="hint">Generated from the confirmed simulation event and shown for review only. It is not an operational
+      directive.</p>
     <table>
-      <thead><tr><th>Status</th><th>Mitigation</th><th>Target</th><th>Root-cause diagnosis</th><th>Rationale and trade-offs</th><th>Expected simulation impact</th></tr></thead>
-      <tbody id="recommendation"><tr><td colspan="6">Waiting for a simulation recommendation.</td></tr></tbody>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Mitigation</th>
+          <th>Target</th>
+          <th>Root-cause diagnosis</th>
+          <th>Rationale and trade-offs</th>
+          <th>Expected simulation impact</th>
+        </tr>
+      </thead>
+      <tbody id="recommendation">
+        <tr>
+          <td colspan="6">Waiting for a simulation recommendation.</td>
+        </tr>
+      </tbody>
     </table>
   </section>
 
   <h2>Live bunching detections</h2>
   <p class="hint">Currently open observation-only detections. This view is hidden while a simulation run is active.</p>
   <table>
-    <thead><tr>
-      <th>Detection</th><th>Service &amp; direction</th><th>Bus stop</th><th>Detected</th><th>Bus 1</th><th>Bus 2</th><th>Bus 3</th><th>Source snapshot</th><th>Alert event</th><th>Evidence</th>
-    </tr></thead>
-    <tbody id="live-alerts"><tr><td colspan="10">Loading current live detections…</td></tr></tbody>
+    <thead>
+      <tr>
+        <th>Detection</th>
+        <th>Service &amp; direction</th>
+        <th>Bus stop</th>
+        <th>Detected</th>
+        <th>Bus 1</th>
+        <th>Bus 2</th>
+        <th>Bus 3</th>
+        <th>Source snapshot</th>
+        <th>Alert event</th>
+        <th>Evidence</th>
+      </tr>
+    </thead>
+    <tbody id="live-alerts">
+      <tr>
+        <td colspan="10">Loading current live detections…</td>
+      </tr>
+    </tbody>
   </table>
 
   <h2>Live bus arrivals</h2>
-  <p class="hint">Observation-only live arrivals, refreshed every five seconds for viewing only. Each row shows the next three available bus predictions. They are never included in the demo analysis.</p>
+  <p class="hint">Observation-only live arrivals, refreshed every five seconds for viewing only. Each row shows the next
+    three available bus predictions. They are never included in the demo analysis.</p>
   <table>
-    <thead><tr>
-      <th>Service</th><th>Bus stop</th><th>Direction</th><th>Next bus</th><th>Following bus</th><th>Third bus</th><th>Operator</th><th>Load</th><th>Updated</th>
-    </tr></thead>
-    <tbody id="live-arrivals"><tr><td colspan="9">Loading live arrivals…</td></tr></tbody>
+    <thead>
+      <tr>
+        <th>Service</th>
+        <th>Bus stop</th>
+        <th>Direction</th>
+        <th>Next bus</th>
+        <th>Following bus</th>
+        <th>Third bus</th>
+        <th>Operator</th>
+        <th>Load</th>
+        <th>Updated</th>
+      </tr>
+    </thead>
+    <tbody id="live-arrivals">
+      <tr>
+        <td colspan="9">Loading live arrivals…</td>
+      </tr>
+    </tbody>
   </table>
 
   <script>
@@ -373,4 +551,5 @@
     refreshLiveAlerts();
   </script>
 </body>
+
 </html>

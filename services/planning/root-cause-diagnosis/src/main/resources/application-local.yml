@@ -1,7 +1,7 @@
-# Local IDE/Maven runs use the root environment inventory from this service directory.
+# Maven and IDE runs use services/planning/root-cause-diagnosis as their working directory.
 spring:
   config:
-    import: "optional:file:../../.env[.properties]"
+    import: "optional:file:../../../.env[.properties]"
 
 occ:
   diagnosis:

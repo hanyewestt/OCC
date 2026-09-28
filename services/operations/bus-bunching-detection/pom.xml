@@ -89,12 +89,12 @@
     <build>
         <testResources>
             <testResource>
-                <directory>../../infra/local/postgres/init</directory>
+                <directory>../../../infra/local/postgres/init</directory>
                 <targetPath>local-init</targetPath>
             </testResource>
             <testResource><directory>src/test/resources</directory></testResource>
             <testResource>
-                <directory>../ingestion/src/main/resources/db/migration</directory>
+                <directory>../../ingestion/src/main/resources/db/migration</directory>
                 <targetPath>ingestion-migration</targetPath>
             </testResource>
         </testResources>

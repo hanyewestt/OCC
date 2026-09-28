@@ -23,7 +23,7 @@ deployment verification remain outstanding.
 The detector service, stored-input integration, headway policy and durable
 evaluation audit are implemented. Detailed data flow, detection rules,
 persistence behavior, schemas and file responsibilities are maintained in the
-[detector README](../../../services/bus-bunching-detection/README.md).
+[detector README](../../../services/operations/bus-bunching-detection/README.md).
 
 ### Remaining to-dos
 
@@ -133,5 +133,5 @@ The service READMEs are the source of detailed implementation and file-level
 documentation. This document records WQAP status, remaining work, deployment
 checklists, verification evidence and scope decisions.
 
-- [Bus-bunching detection README](../../../services/bus-bunching-detection/README.md)
+- [Bus-bunching detection README](../../../services/operations/bus-bunching-detection/README.md)
 - [Ingestion README](../../../services/ingestion/README.md)
