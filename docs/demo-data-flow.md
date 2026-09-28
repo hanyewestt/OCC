@@ -143,11 +143,11 @@ PUT /internal/v1/consumer-selection
 {"mode":"DEMO","demoRunId":"..."}
 ```
 
-[`ConsumerSelectionController.select()`](../services/bus-bunching-detection/src/main/java/com/csd/occ/bunching/api/ConsumerSelectionController.java) requires a run ID for `DEMO` and forbids one for `LIVE`. [`ConsumerSelectionService.select()`](../services/bus-bunching-detection/src/main/java/com/csd/occ/bunching/domain/ConsumerSelectionService.java) sets the cursor to `DEMO:{runId}`, resets its sequence to zero, and updates the singleton `bunching.consumer_selection` row.
+[`ConsumerSelectionController.select()`](../services/operations/bus-bunching-detection/src/main/java/com/csd/occ/bunching/api/ConsumerSelectionController.java) requires a run ID for `DEMO` and forbids one for `LIVE`. [`ConsumerSelectionService.select()`](../services/operations/bus-bunching-detection/src/main/java/com/csd/occ/bunching/domain/ConsumerSelectionService.java) sets the cursor to `DEMO:{runId}`, resets its sequence to zero, and updates the singleton `bunching.consumer_selection` row.
 
 ### 8. Reading and processing demo data
 
-[`BunchingSchedule.consumeStoredArrivals()`](../services/bus-bunching-detection/src/main/java/com/csd/occ/bunching/infrastructure/scheduling/BunchingSchedule.java) runs the existing consumer loop. [`HttpStoredArrivalAdapter.selectedFeed()`](../services/bus-bunching-detection/src/main/java/com/csd/occ/bunching/infrastructure/ingestion/HttpStoredArrivalAdapter.java) maps:
+[`BunchingSchedule.consumeStoredArrivals()`](../services/operations/bus-bunching-detection/src/main/java/com/csd/occ/bunching/infrastructure/scheduling/BunchingSchedule.java) runs the existing consumer loop. [`HttpStoredArrivalAdapter.selectedFeed()`](../services/operations/bus-bunching-detection/src/main/java/com/csd/occ/bunching/infrastructure/ingestion/HttpStoredArrivalAdapter.java) maps:
 
 - `LIVE` to `/internal/v1/arrival-snapshots`
 - `DEMO` to `/internal/v1/demo-runs/{runId}/arrival-snapshots`
@@ -156,13 +156,13 @@ PUT /internal/v1/consumer-selection
 
 ### 9. Bunching evaluation and alert storage
 
-[`BunchingConsumptionService.consume()`](../services/bus-bunching-detection/src/main/java/com/csd/occ/bunching/domain/BunchingConsumptionService.java) uses the normal processing path. [`BunchingRecordingService.record()`](../services/bus-bunching-detection/src/main/java/com/csd/occ/bunching/domain/BunchingRecordingService.java) runs the existing `BunchingPolicy`, stores a `bunching.bunching_observation`, carries through `SIMULATION`, `DEMO:{runId}`, and `demo_run_id`, then invokes alert handling.
+[`BunchingConsumptionService.consume()`](../services/operations/bus-bunching-detection/src/main/java/com/csd/occ/bunching/domain/BunchingConsumptionService.java) uses the normal processing path. [`BunchingRecordingService.record()`](../services/operations/bus-bunching-detection/src/main/java/com/csd/occ/bunching/domain/BunchingRecordingService.java) runs the existing `BunchingPolicy`, stores a `bunching.bunching_observation`, carries through `SIMULATION`, `DEMO:{runId}`, and `demo_run_id`, then invokes alert handling.
 
-[`JpaBunchingAlertAdapter.trigger()`](../services/bus-bunching-detection/src/main/java/com/csd/occ/bunching/infrastructure/postgres/JpaBunchingAlertAdapter.java) accepts a simulation evaluation only when the selected mode is `DEMO` for the same run, and accepts a live evaluation only in `LIVE` mode. Simulation alerts use `bunching.demo_alert_state`, leaving live `bunching.alert_state` untouched. `triggerDemo()` stores the transition, demo run, service, stop, direction, evidence, and leading/following observation IDs.
+[`JpaBunchingAlertAdapter.trigger()`](../services/operations/bus-bunching-detection/src/main/java/com/csd/occ/bunching/infrastructure/postgres/JpaBunchingAlertAdapter.java) accepts a simulation evaluation only when the selected mode is `DEMO` for the same run, and accepts a live evaluation only in `LIVE` mode. Simulation alerts use `bunching.demo_alert_state`, leaving live `bunching.alert_state` untouched. `triggerDemo()` stores the transition, demo run, service, stop, direction, evidence, and leading/following observation IDs.
 
 ### 10. Returning alerts to the UI
 
-[`DemoAlertController.alerts()`](../services/bus-bunching-detection/src/main/java/com/csd/occ/bunching/api/DemoAlertController.java) returns only `SIMULATION` alerts for the requested run. [`DemoRunService.details()`](../services/ingestion/src/main/java/com/csd/occ/ingestion/domain/DemoRunService.java):
+[`DemoAlertController.alerts()`](../services/operations/bus-bunching-detection/src/main/java/com/csd/occ/bunching/api/DemoAlertController.java) returns only `SIMULATION` alerts for the requested run. [`DemoRunService.details()`](../services/ingestion/src/main/java/com/csd/occ/ingestion/domain/DemoRunService.java):
 
 1. Fetches those alerts from bunching.
 2. Uses their leading and following observation IDs.
@@ -189,7 +189,7 @@ The page calls `POST /api/v1/demo-runs/{runId}/close`. `DemoRunService.close()` 
 5. Ingestion sets `demo_runtime_setting.enabled = false`.
 6. Ingestion marks the demo run `CLOSED`.
 
-The live head comes from [`BunchingSnapshotController.liveHead()`](../services/ingestion/src/main/java/com/csd/occ/ingestion/api/BunchingSnapshotController.java) through [`HttpLiveFeedHeadAdapter.currentLiveSequence()`](../services/bus-bunching-detection/src/main/java/com/csd/occ/bunching/infrastructure/ingestion/HttpLiveFeedHeadAdapter.java). This skips live snapshots accumulated during the demo and prevents a burst of stale alerts.
+The live head comes from [`BunchingSnapshotController.liveHead()`](../services/ingestion/src/main/java/com/csd/occ/ingestion/api/BunchingSnapshotController.java) through [`HttpLiveFeedHeadAdapter.currentLiveSequence()`](../services/operations/bus-bunching-detection/src/main/java/com/csd/occ/bunching/infrastructure/ingestion/HttpLiveFeedHeadAdapter.java). This skips live snapshots accumulated during the demo and prevents a burst of stale alerts.
 
 The runtime endpoint `PUT /api/v1/demo-mode` with `{"enabled":false}` performs the same switch without restarting either application through `DemoRunService.setMode()`.
 
@@ -217,16 +217,16 @@ It extends existing tables:
 
 ### Bunching schema
 
-[`V8__add_demo_consumer_selection.sql`](../services/bus-bunching-detection/src/main/resources/db/migration/V8__add_demo_consumer_selection.sql) creates:
+[`V8__add_demo_consumer_selection.sql`](../services/operations/bus-bunching-detection/src/main/resources/db/migration/V8__add_demo_consumer_selection.sql) creates:
 
 | Table | Purpose |
 | --- | --- |
 | `bunching.consumer_selection` | Durable singleton `LIVE`/`DEMO` selection with optimistic locking |
 | `bunching.demo_alert_state` | Run-scoped alert episode state, separate from live alerts |
 
-[`V9__scope_demo_alert_events.sql`](../services/bus-bunching-detection/src/main/resources/db/migration/V9__scope_demo_alert_events.sql) adds `demo_run_id`, `feed_scope`, consistency constraints, and a demo-run index to `bunching.alert_event`.
+[`V9__scope_demo_alert_events.sql`](../services/operations/bus-bunching-detection/src/main/resources/db/migration/V9__scope_demo_alert_events.sql) adds `demo_run_id`, `feed_scope`, consistency constraints, and a demo-run index to `bunching.alert_event`.
 
-[`V10__scope_processing_state_by_feed.sql`](../services/bus-bunching-detection/src/main/resources/db/migration/V10__scope_processing_state_by_feed.sql) scopes `ingestion_feed_cursor`, `source_retry`, `source_rejection`, `source_processing_audit`, `bunching_observation`, `alert_event`, and `demo_alert_state` by feed. It also adds leading and following observation IDs to demo alert state and events.
+[`V10__scope_processing_state_by_feed.sql`](../services/operations/bus-bunching-detection/src/main/resources/db/migration/V10__scope_processing_state_by_feed.sql) scopes `ingestion_feed_cursor`, `source_retry`, `source_rejection`, `source_processing_audit`, `bunching_observation`, `alert_event`, and `demo_alert_state` by feed. It also adds leading and following observation IDs to demo alert state and events.
 
 ## How existing live behavior is protected
 

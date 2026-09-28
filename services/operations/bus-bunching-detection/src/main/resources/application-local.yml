@@ -1,0 +1,9 @@
+# Maven and IDE runs use services/operations/bus-bunching-detection as their working directory.
+spring:
+  config:
+    import: "optional:file:../../../.env[.properties]"
+
+occ:
+  bunching:
+    diagnosis:
+      internal-url: ${OCC_DIAGNOSIS_PUBLIC_URL:http://localhost:${OCC_DIAGNOSIS_PORT:6770}}

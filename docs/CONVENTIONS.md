@@ -8,10 +8,11 @@ Stack: **Java 25**, **Spring Boot 4.1.1**, Maven, PostgreSQL 18.6, Docker and Do
 
 ## 1. Folder structure
 
-Create exactly these directories. Do not invent siblings without updating this file.
+Create exactly these directories. Services may be grouped beneath a domain directory
+such as `services/planning/`; do not invent other siblings without updating this file.
 
 ```
-services/<service-name>/
+services/[<domain>/]<service-name>/
 ├── pom.xml                            ← dependencies and Maven build settings
 ├── Dockerfile                         ← instructions to package the service as a container
 ├── src/main/java/com/csd/occ/<servicepackage>/
@@ -178,7 +179,7 @@ Bind config to these, never `@Value` on a field.
 
 Use the Maven wrapper in each runnable service (`mvnw` / `mvnw.cmd`), pinned by `.mvn/wrapper/maven-wrapper.properties`. Build with `./mvnw verify` or `.\mvnw.cmd verify`.
 
-Local development uses one ignored repository-root `.env`, documented by the root `.env.example`. `application-local.yml` imports `optional:file:../../.env[.properties]`; run with the `local` profile and the service directory as working directory. Use unquoted values compatible with both Java properties and Compose. Do not put the local import in the default deployment configuration.
+Local development uses one ignored repository-root `.env`, documented by the root `.env.example`. `application-local.yml` imports that file using a path relative to its service directory: `optional:file:../../.env[.properties]` for `services/<service-name>` and `optional:file:../../../.env[.properties]` for `services/<domain>/<service-name>`. Run with the `local` profile and the service directory as working directory. Use unquoted values compatible with both Java properties and Compose. Do not put the local import in the default deployment configuration.
 
 Run the canonical Compose file from the root with `docker compose --env-file .env -f infra/local/compose.yaml up -d`. Explicitly map only required database variables into PostgreSQL. Deployment supplies each service's own environment variables rather than the shared local file.
 

@@ -10,13 +10,13 @@
     
     create a service that polls data for each bus stop, filter out noise (no bus obvious signs of bus bunching) and alerts the the detection if something is found (<90s gap). 
     
-    `services/bus-bunching-detection`
+    `services/operations/bus-bunching-detection`
 
     WQAP-24 implementation: configurable strict `<90s` default headway policy,
     database-backed consumption of successful stored arrivals, and repeatable
     PostgreSQL integration tests. The read contract is ingestion migration V007;
     no DataMall calls are made by the detector. See
-    [service setup and verification](../../../services/bus-bunching-detection/README.md).
+    [service setup and verification](../../../services/operations/bus-bunching-detection/README.md).
     WQAP-38 now persists opening/clearing alert events with the evaluation and emits
     commit-time PostgreSQL notifications; local sub-five-second trigger checks pass.
     Controller delivery/UI (WQAP-39), production latency and a real-feed deployment

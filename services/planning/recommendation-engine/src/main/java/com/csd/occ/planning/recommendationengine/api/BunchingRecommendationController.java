@@ -32,7 +32,7 @@ public class BunchingRecommendationController {
 
     private final DurableBunchingRecommendationService recommendations;
     private final RecommendationRequestFingerprint fingerprints;
-    private final com.csd.occ.planning.recommendationengine.domain.RecommendationRecordPort records;
+      private final com.csd.occ.planning.recommendationengine.domain.RecommendationRecordPort records;
 
     public BunchingRecommendationController(
             DurableBunchingRecommendationService recommendations,

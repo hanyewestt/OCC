@@ -148,7 +148,7 @@ services:
   bus-bunching-detection:
     image: occ-bus-bunching-detection:local
     build:
-      context: ../../services/bus-bunching-detection
+      context: ../../services/operations/bus-bunching-detection
     restart: unless-stopped
     environment:
       OCC_BUNCHING_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}
@@ -206,7 +206,7 @@ services:
   root-cause-diagnosis:
     image: occ-root-cause-diagnosis:local
     build:
-      context: ../../services/root-cause-diagnosis
+      context: ../../services/planning/root-cause-diagnosis
     restart: unless-stopped
     environment:
       OCC_DIAGNOSIS_INTERNAL_PORT: ${OCC_DIAGNOSIS_INTERNAL_PORT:-8004}
