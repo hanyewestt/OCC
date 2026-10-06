@@ -2,6 +2,8 @@ package com.csd.occ.diagnosis.infrastructure.bunching;
 
 import com.csd.occ.diagnosis.domain.BunchingEventFacts;
 import com.csd.occ.diagnosis.domain.DiagnosisFailureException;
+import com.csd.occ.diagnosis.domain.EvidenceLimitExceededException;
+import com.csd.occ.diagnosis.infrastructure.http.PeerResponseLimitExceededException;
 import com.csd.occ.diagnosis.domain.EventFactsPort;
 import java.time.Instant;
 import java.util.List;
@@ -42,9 +44,19 @@ public class HttpBunchingEventFactsAdapter implements EventFactsPort {
                     status == 408 || status == 429 || status >= 500, failure);
         } catch (DiagnosisFailureException failure) {
             throw failure;
+        } catch (EvidenceLimitExceededException failure) {
+            throw new DiagnosisFailureException("EVIDENCE_LIMIT_EXCEEDED", false, failure);
         } catch (RuntimeException failure) {
+            if (hasResponseLimitCause(failure))
+                throw new DiagnosisFailureException("EVIDENCE_LIMIT_EXCEEDED", false, failure);
             throw new DiagnosisFailureException("EVENT_FACTS_UNAVAILABLE", true, failure);
         }
+    }
+
+    private boolean hasResponseLimitCause(Throwable failure) {
+        for (Throwable current = failure; current != null; current = current.getCause())
+            if (current instanceof PeerResponseLimitExceededException) return true;
+        return false;
     }
 
     private record EventResponse(UUID id, UUID bunchingEventId, String action, String classification,

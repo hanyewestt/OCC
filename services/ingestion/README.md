@@ -87,6 +87,16 @@ Flyway applies pending ingestion migrations, then Hibernate validates entity map
 
 If the active reference topology is absent, the scheduler first retries the reference import and target seeding. If that import fails, it skips the poll cycle without sending per-stop arrival requests; the terminal log records the single import failure.
 
+The polling schedule is externally configurable: `OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL`
+and `OCC_INGESTION_BUS_ARRIVAL_INITIAL_DELAY` default to `60s`; retention cleanup uses
+`OCC_INGESTION_RETENTION_INTERVAL=1h` after `OCC_INGESTION_RETENTION_INITIAL_DELAY=5m`.
+Poll intervals are validated from 1 second to 1 hour and retention intervals from
+1 minute to 24 hours. DataMall calls use a 5-second connect timeout and 20-second
+response timeout by default (`OCC_DATAMALL_CONNECT_TIMEOUT` and
+`OCC_DATAMALL_RESPONSE_TIMEOUT`); accepted ranges are 100ms–30s and 100ms–2m.
+All values are inventoried in the repository-root `.env.example` and passed to Compose
+through the ingestion service environment.
+
 ### Polling coverage and bus-bunching coverage
 
 Ingestion, rather than the bus-bunching detector, decides which stops are covered.

@@ -5,32 +5,31 @@ import com.csd.occ.ingestion.domain.BusArrivalPrediction;
 import com.csd.occ.ingestion.domain.BusArrivalSnapshot;
 import com.csd.occ.ingestion.domain.BusReferencePort;
 import com.csd.occ.ingestion.infrastructure.config.DataMallProperties;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import org.springframework.boot.restclient.RestTemplateBuilder;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
 @Component
 public class DataMallAdapter implements BusArrivalPort, BusReferencePort {
-    private final RestTemplate restTemplate;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final RestClient restClient;
+    private final JsonMapper objectMapper;
     private final DataMallProperties properties;
 
-    public DataMallAdapter(RestTemplateBuilder builder, DataMallProperties properties) {
-        this.restTemplate = builder.build();
+    public DataMallAdapter(@Qualifier("dataMallRestClient") RestClient restClient,
+            DataMallProperties properties, JsonMapper objectMapper) {
+        this.restClient = restClient;
         this.properties = properties;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -151,9 +150,8 @@ public class DataMallAdapter implements BusArrivalPort, BusReferencePort {
     }
 
     private ResponseEntity<String> get(String path) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("AccountKey", properties.accountKey());
-        return restTemplate.exchange(properties.baseUrl() + path, HttpMethod.GET,
-                new HttpEntity<>(headers), String.class);
+        return restClient.get().uri(path).header("AccountKey", properties.accountKey())
+                .retrieve().onStatus(org.springframework.http.HttpStatusCode::isError, (request, response) -> { })
+                .toEntity(String.class);
     }
 }

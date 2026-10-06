@@ -17,14 +17,22 @@ public record BunchingRootCauseDiagnosis(
         if (likelyCause == null || likelyCause.isBlank()) {
             throw new IllegalArgumentException("likelyCause is required");
         }
+        if (likelyCause.length() > 1_000) {
+            throw new IllegalArgumentException("likelyCause must be at most 1000 characters");
+        }
         Objects.requireNonNull(confidence, "confidence is required");
         if (confidence.compareTo(BigDecimal.ZERO) < 0 || confidence.compareTo(BigDecimal.ONE) > 0) {
             throw new IllegalArgumentException("confidence must be between zero and one");
         }
         evidenceIds = List.copyOf(evidenceIds);
-        if (evidenceIds.isEmpty()) {
-            throw new IllegalArgumentException("evidenceIds must not be empty");
+        if (evidenceIds.isEmpty() || evidenceIds.size() > 100
+                || evidenceIds.stream().anyMatch(value -> value == null || value.isBlank() || value.length() > 200)) {
+            throw new IllegalArgumentException("evidenceIds must contain 1..100 non-blank values of at most 200 characters");
         }
         limitations = List.copyOf(limitations);
+        if (limitations.size() > 20
+                || limitations.stream().anyMatch(value -> value == null || value.isBlank() || value.length() > 500)) {
+            throw new IllegalArgumentException("limitations must contain at most 20 non-blank values of at most 500 characters");
+        }
     }
 }

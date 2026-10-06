@@ -38,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest(properties = {
         "occ.bunching.consumer-enabled=false",
+        "occ.bunching.diagnosis.worker-enabled=false",
         "occ.bunching.stale-after=120s",
         "spring.datasource.url=jdbc:postgresql://unused/test",
         "spring.datasource.password=synthetic-test-only",

@@ -40,6 +40,11 @@ management:
     health:
       probes:
         enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
 
 occ:
   diagnosis:
@@ -59,6 +64,8 @@ occ:
     evidence-radius-km: ${OCC_DIAGNOSIS_EVIDENCE_RADIUS_KM:2.0}
     confidence-threshold: ${OCC_DIAGNOSIS_CONFIDENCE_THRESHOLD:0.70}
     request-timeout: ${OCC_DIAGNOSIS_REQUEST_TIMEOUT:10s}
+    peer-response-max-bytes: ${OCC_DIAGNOSIS_PEER_RESPONSE_MAX_BYTES:131072}
+    max-prompt-input-bytes: ${OCC_DIAGNOSIS_MAX_PROMPT_INPUT_BYTES:65536}
     gemini:
       api-key: ${OCC_DIAGNOSIS_GEMINI_API_KEY:}
       model: ${OCC_DIAGNOSIS_GEMINI_MODEL:gemini-3.1-flash-lite}

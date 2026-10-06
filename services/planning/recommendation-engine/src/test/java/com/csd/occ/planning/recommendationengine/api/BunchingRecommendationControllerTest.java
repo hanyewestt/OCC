@@ -3,6 +3,7 @@ package com.csd.occ.planning.recommendationengine.api;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.csd.occ.planning.recommendationengine.api.error.GlobalExceptionHandler;
+import com.csd.occ.planning.recommendationengine.api.config.RecommendationInputProperties;
 import com.csd.occ.planning.recommendationengine.domain.BunchingMitigationCandidateValidator;
 import com.csd.occ.planning.recommendationengine.domain.BunchingMitigationInputs;
 import com.csd.occ.planning.recommendationengine.domain.BunchingRecommendationOrchestrator;
@@ -28,6 +29,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -36,6 +38,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 
 @WebMvcTest(BunchingRecommendationController.class)
+@EnableConfigurationProperties(RecommendationInputProperties.class)
 @Import({
         GlobalExceptionHandler.class,
         RecommendationRequestFingerprint.class,

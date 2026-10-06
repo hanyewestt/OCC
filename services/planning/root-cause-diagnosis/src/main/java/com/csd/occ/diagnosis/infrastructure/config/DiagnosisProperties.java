@@ -21,7 +21,9 @@ public record DiagnosisProperties(
         Duration evidenceLookback,
         double evidenceRadiusKm,
         double confidenceThreshold,
-        Duration requestTimeout) {
+        Duration requestTimeout,
+        long peerResponseMaxBytes,
+        long maxPromptInputBytes) {
 
     public DiagnosisProperties {
         requireHttp(bunchingInternalUrl, "bunching-internal-url");
@@ -33,6 +35,10 @@ public record DiagnosisProperties(
         positive(retryMaxDelay, "retry-max-delay");
         positive(evidenceLookback, "evidence-lookback");
         positive(requestTimeout, "request-timeout");
+        if (peerResponseMaxBytes < 16_384 || peerResponseMaxBytes > 1_048_576)
+            throw new IllegalArgumentException("peer-response-max-bytes must be 16384..1048576");
+        if (maxPromptInputBytes < 8_192 || maxPromptInputBytes > 262_144)
+            throw new IllegalArgumentException("max-prompt-input-bytes must be 8192..262144");
         if (workerBatchSize < 1 || workerBatchSize > 100) {
             throw new IllegalArgumentException("worker-batch-size must be in 1..100");
         }

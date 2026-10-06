@@ -5,11 +5,14 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.csd.occ.ingestion.infrastructure.config.DataMallProperties;
+import java.net.URI;
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.restclient.RestTemplateBuilder;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestClient;
+import tools.jackson.databind.json.JsonMapper;
 
 class DataMallAdapterTest {
     @Test
@@ -49,8 +52,11 @@ class DataMallAdapterTest {
     }
 
     private DataMallAdapter adapter(AtomicReference<MockRestServiceServer> server) {
-        RestTemplateBuilder builder = new RestTemplateBuilder().additionalCustomizers(
-                template -> server.set(MockRestServiceServer.bindTo(template).build()));
-        return new DataMallAdapter(builder, new DataMallProperties("https://example.test", "synthetic-key"));
+        RestClient.Builder builder = RestClient.builder().baseUrl("https://example.test");
+        server.set(MockRestServiceServer.bindTo(builder).build());
+        return new DataMallAdapter(builder.build(),
+                new DataMallProperties(URI.create("https://example.test"), "synthetic-key",
+                        Duration.ofSeconds(1), Duration.ofSeconds(2)),
+                JsonMapper.builder().findAndAddModules().build());
     }
 }

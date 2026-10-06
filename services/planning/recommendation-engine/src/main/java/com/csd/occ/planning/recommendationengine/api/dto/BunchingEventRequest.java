@@ -24,7 +24,7 @@ public record BunchingEventRequest(
         @Min(1) int expectedHeadwaySeconds,
         @NotEmpty @Size(min = 2, max = 10) List<@NotNull @PositiveOrZero Integer> observedHeadwaySeconds,
         @NotNull Instant firstConfirmedAt,
-        @NotEmpty @Size(max = 100) List<@NotBlank String> evidenceIds) {
+        @NotEmpty @Size(max = 100) List<@NotBlank @Size(max = 200) String> evidenceIds) {
 
     public ConfirmedBunchingEvent toDomain() {
         return new ConfirmedBunchingEvent(

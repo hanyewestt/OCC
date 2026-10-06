@@ -106,6 +106,10 @@ services:
       OCC_INGESTION_MONITORED_SERVICES: ${OCC_INGESTION_MONITORED_SERVICES:-190,972}
       OCC_INGESTION_STALE_AFTER_SECONDS: ${OCC_INGESTION_STALE_AFTER_SECONDS:-180}
       OCC_INGESTION_RETENTION: ${OCC_INGESTION_RETENTION:-24h}
+      OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL: ${OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL:-60s}
+      OCC_INGESTION_BUS_ARRIVAL_INITIAL_DELAY: ${OCC_INGESTION_BUS_ARRIVAL_INITIAL_DELAY:-60s}
+      OCC_INGESTION_RETENTION_INTERVAL: ${OCC_INGESTION_RETENTION_INTERVAL:-1h}
+      OCC_INGESTION_RETENTION_INITIAL_DELAY: ${OCC_INGESTION_RETENTION_INITIAL_DELAY:-5m}
       OCC_INGESTION_IMPORT_REFERENCE_ON_STARTUP: ${OCC_INGESTION_IMPORT_REFERENCE_ON_STARTUP:-true}
       OCC_INGESTION_SEED_TARGETS_ON_STARTUP: ${OCC_INGESTION_SEED_TARGETS_ON_STARTUP:-true}
       OCC_INGESTION_FLYWAY_ENABLED: ${OCC_INGESTION_FLYWAY_ENABLED:-true}
@@ -119,12 +123,20 @@ services:
       OCC_RECOMMENDATION_INTERNAL_URL: http://recommendation-engine:${OCC_RECOMMENDATION_INTERNAL_PORT:-8003}
       OCC_INGESTION_RECOMMENDATION_TIMEOUT: ${OCC_INGESTION_RECOMMENDATION_TIMEOUT:-5s}
       OCC_DATAMALL_BASE_URL: ${OCC_DATAMALL_BASE_URL:-https://datamall2.mytransport.sg/ltaodataservice}
+      OCC_DATAMALL_CONNECT_TIMEOUT: ${OCC_DATAMALL_CONNECT_TIMEOUT:-5s}
+      OCC_DATAMALL_RESPONSE_TIMEOUT: ${OCC_DATAMALL_RESPONSE_TIMEOUT:-20s}
       DATAMALL_API_KEY: ${DATAMALL_API_KEY:?set in root .env}
     ports:
       - "${OCC_INGESTION_PORT:-6767}:${OCC_INGESTION_INTERNAL_PORT:-8001}"
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:$${OCC_INGESTION_INTERNAL_PORT}/actuator/health/readiness >/dev/null"]
+      interval: ${OCC_HEALTHCHECK_INTERVAL:-10s}
+      timeout: ${OCC_HEALTHCHECK_TIMEOUT:-3s}
+      retries: ${OCC_HEALTHCHECK_RETRIES:-12}
+      start_period: ${OCC_HEALTHCHECK_START_PERIOD:-30s}
 
   bunching-read-grants:
     image: postgis/postgis:18-3.6
@@ -143,7 +155,7 @@ services:
       bunching-schema-init:
         condition: service_completed_successfully
       ingestion:
-        condition: service_started
+        condition: service_healthy
 
   bus-bunching-detection:
     image: occ-bus-bunching-detection:local
@@ -161,6 +173,8 @@ services:
       OCC_BUNCHING_RETRY_DELAY: ${OCC_BUNCHING_RETRY_DELAY:-30s}
       OCC_BUNCHING_CONSUMER_ENABLED: ${OCC_BUNCHING_CONSUMER_ENABLED:-true}
       OCC_BUNCHING_INTERNAL_PORT: ${OCC_BUNCHING_INTERNAL_PORT:-8002}
+      OCC_BUNCHING_INGESTION_CONNECT_TIMEOUT: ${OCC_BUNCHING_INGESTION_CONNECT_TIMEOUT:-2s}
+      OCC_BUNCHING_INGESTION_RESPONSE_TIMEOUT: ${OCC_BUNCHING_INGESTION_RESPONSE_TIMEOUT:-5s}
       OCC_BUNCHING_EXPECTED_HEADWAY: ${OCC_BUNCHING_EXPECTED_HEADWAY:-600s}
       OCC_BUNCHING_DIAGNOSIS_INTERNAL_URL: http://root-cause-diagnosis:${OCC_DIAGNOSIS_INTERNAL_PORT:-8004}
       OCC_BUNCHING_DIAGNOSIS_WORKER_ENABLED: ${OCC_BUNCHING_DIAGNOSIS_WORKER_ENABLED:-true}
@@ -177,6 +191,12 @@ services:
     depends_on:
       bunching-read-grants:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:$${OCC_BUNCHING_INTERNAL_PORT}/actuator/health/readiness >/dev/null"]
+      interval: ${OCC_HEALTHCHECK_INTERVAL:-10s}
+      timeout: ${OCC_HEALTHCHECK_TIMEOUT:-3s}
+      retries: ${OCC_HEALTHCHECK_RETRIES:-12}
+      start_period: ${OCC_HEALTHCHECK_START_PERIOD:-30s}
 
   recommendation-engine:
     image: occ-recommendation-engine:local
@@ -197,11 +217,19 @@ services:
       OCC_RECOMMENDATION_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}
       OCC_RECOMMENDATION_DB_USERNAME: ${OCC_RECOMMENDATION_DB_USERNAME:-occ_recommendation}
       OCC_RECOMMENDATION_DB_PASSWORD: ${OCC_RECOMMENDATION_DB_PASSWORD:?set in root .env}
+      OCC_RECOMMENDATION_MAX_REQUEST_BODY_BYTES: ${OCC_RECOMMENDATION_MAX_REQUEST_BODY_BYTES:-65536}
+      OCC_RECOMMENDATION_MAX_PROMPT_INPUT_BYTES: ${OCC_RECOMMENDATION_MAX_PROMPT_INPUT_BYTES:-65536}
     ports:
       - "${OCC_RECOMMENDATION_PORT:-6769}:${OCC_RECOMMENDATION_INTERNAL_PORT:-8003}"
     depends_on:
       recommendation-schema-init:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:$${OCC_RECOMMENDATION_INTERNAL_PORT}/actuator/health/readiness >/dev/null"]
+      interval: ${OCC_HEALTHCHECK_INTERVAL:-10s}
+      timeout: ${OCC_HEALTHCHECK_TIMEOUT:-3s}
+      retries: ${OCC_HEALTHCHECK_RETRIES:-12}
+      start_period: ${OCC_HEALTHCHECK_START_PERIOD:-30s}
 
   root-cause-diagnosis:
     image: occ-root-cause-diagnosis:local
@@ -229,6 +257,8 @@ services:
       OCC_DIAGNOSIS_EVIDENCE_RADIUS_KM: ${OCC_DIAGNOSIS_EVIDENCE_RADIUS_KM:-2.0}
       OCC_DIAGNOSIS_CONFIDENCE_THRESHOLD: ${OCC_DIAGNOSIS_CONFIDENCE_THRESHOLD:-0.70}
       OCC_DIAGNOSIS_REQUEST_TIMEOUT: ${OCC_DIAGNOSIS_REQUEST_TIMEOUT:-10s}
+      OCC_DIAGNOSIS_PEER_RESPONSE_MAX_BYTES: ${OCC_DIAGNOSIS_PEER_RESPONSE_MAX_BYTES:-131072}
+      OCC_DIAGNOSIS_MAX_PROMPT_INPUT_BYTES: ${OCC_DIAGNOSIS_MAX_PROMPT_INPUT_BYTES:-65536}
       OCC_DIAGNOSIS_GEMINI_API_KEY: ${OCC_DIAGNOSIS_GEMINI_API_KEY:-}
       OCC_DIAGNOSIS_GEMINI_MODEL: ${OCC_DIAGNOSIS_GEMINI_MODEL:-gemini-3.1-flash-lite}
       OCC_DIAGNOSIS_GEMINI_TEMPERATURE: ${OCC_DIAGNOSIS_GEMINI_TEMPERATURE:-1.0}
@@ -242,6 +272,12 @@ services:
     depends_on:
       diagnosis-schema-init:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:$${OCC_DIAGNOSIS_INTERNAL_PORT}/actuator/health/readiness >/dev/null"]
+      interval: ${OCC_HEALTHCHECK_INTERVAL:-10s}
+      timeout: ${OCC_HEALTHCHECK_TIMEOUT:-3s}
+      retries: ${OCC_HEALTHCHECK_RETRIES:-12}
+      start_period: ${OCC_HEALTHCHECK_START_PERIOD:-30s}
 
   pgadmin:
     image: dpage/pgadmin4:9.18

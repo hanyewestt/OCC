@@ -52,6 +52,14 @@ The internal evidence snapshot is typed and treated as untrusted data. Provider
 structured output controls shape only; Java independently validates cause codes,
 subtypes, and every cited evidence ID.
 
+Cross-service HTTP responses are capped at `OCC_DIAGNOSIS_PEER_RESPONSE_MAX_BYTES`
+(131,072 bytes by default), including responses without a trustworthy length header.
+Evidence cardinality and individual field lengths are bounded before prompt creation;
+the complete UTF-8 system/user prompt is capped at
+`OCC_DIAGNOSIS_MAX_PROMPT_INPUT_BYTES` (65,536 bytes). Exceeding a bound is recorded
+as terminal `EVIDENCE_LIMIT_EXCEEDED`, not retried as a transient provider failure.
+Both settings are typed, startup-validated and listed in `.env.example`.
+
 The deterministic `bunching-evidence-support-v1` score combines provenance,
 temporal alignment, spatial alignment, incident specificity, and headway chronology.
 It is an explainable support score, not a calibrated probability of causation. The
@@ -102,6 +110,8 @@ For an IDE/Maven run, use the `local` profile from this service directory so
 Use RFC 9457 `application/problem+json` for rejected requests. API bodies use synthetic
 examples only. The ungrouped docs/API endpoints are not an authorization mechanism;
 deployments must provide network-level protection for the internal service endpoints.
+Compose readiness uses `/actuator/health/readiness` and includes the database; liveness
+is limited to process state so database outages do not trigger restart loops.
 
 To export the runtime-generated OpenAPI contract, start the service and run
 `./mvnw -Popenapi org.springdoc:springdoc-openapi-maven-plugin:1.5:generate`

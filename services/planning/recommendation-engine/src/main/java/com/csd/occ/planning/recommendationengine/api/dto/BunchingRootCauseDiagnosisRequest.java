@@ -17,8 +17,8 @@ public record BunchingRootCauseDiagnosisRequest(
         @NotNull UUID diagnosisId,
         @NotBlank @Size(max = 1_000) String likelyCause,
         @NotNull @DecimalMin("0.0") @DecimalMax("1.0") BigDecimal confidence,
-        @NotEmpty @Size(max = 100) List<@NotBlank String> evidenceIds,
-        @NotNull @Size(max = 20) List<@NotBlank String> limitations) {
+        @NotEmpty @Size(max = 100) List<@NotBlank @Size(max = 200) String> evidenceIds,
+        @NotNull @Size(max = 20) List<@NotBlank @Size(max = 500) String> limitations) {
 
     public BunchingRootCauseDiagnosis toDomain() {
         return new BunchingRootCauseDiagnosis(

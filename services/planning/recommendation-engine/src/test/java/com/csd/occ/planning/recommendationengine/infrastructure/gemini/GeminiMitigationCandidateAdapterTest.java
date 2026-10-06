@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.csd.occ.planning.recommendationengine.domain.BunchingEventStatus;
@@ -18,6 +19,7 @@ import com.csd.occ.planning.recommendationengine.domain.MitigationValidationStat
 import com.csd.occ.planning.recommendationengine.domain.ModelInvocationFailureCategory;
 import com.csd.occ.planning.recommendationengine.domain.SourceClassification;
 import com.csd.occ.planning.recommendationengine.domain.ValidatedMitigationContext;
+import com.csd.occ.planning.recommendationengine.api.config.RecommendationInputProperties;
 import com.google.genai.errors.ClientException;
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -25,6 +27,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.client.ChatClient;
@@ -119,12 +122,32 @@ class GeminiMitigationCandidateAdapterTest {
                                 .isEqualTo(ModelInvocationFailureCategory.INVALID_REQUEST));
     }
 
+    @Test
+    void oversizedUtf8PromptIsRejectedBeforeProviderInvocation() {
+        ChatModel model = mock(ChatModel.class);
+        GeminiMitigationCandidateAdapter adapter = adapter(model, 8_192);
+        List<String> evidenceIds = IntStream.range(0, 100)
+                .mapToObj(index -> String.format("%03d", index) + "e".repeat(197))
+                .toList();
+
+        assertThat(org.assertj.core.api.Assertions.catchThrowable(() ->
+                adapter.generate(request(evidenceIds))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("input budget");
+        verifyNoInteractions(model);
+    }
+
     private GeminiMitigationCandidateAdapter adapter(ChatModel model) {
+        return adapter(model, 65_536);
+    }
+
+    private GeminiMitigationCandidateAdapter adapter(ChatModel model, long maxPromptInputBytes) {
         return new GeminiMitigationCandidateAdapter(
                 ChatClient.create(model),
                 JsonMapper.builder().findAndAddModules().build(),
                 Clock.fixed(Instant.parse("2026-09-28T00:00:00Z"), ZoneOffset.UTC),
-                "gemini-3.1-flash-lite");
+                "gemini-3.1-flash-lite",
+                new RecommendationInputProperties(65_536, maxPromptInputBytes));
     }
 
     private ChatModel modelReturning(String content) {
@@ -144,6 +167,10 @@ class GeminiMitigationCandidateAdapterTest {
     }
 
     private MitigationCandidateRequest request() {
+        return request(List.of("arrival-observation-1", "arrival-observation-2"));
+    }
+
+    private MitigationCandidateRequest request(List<String> evidenceIds) {
         ConfirmedBunchingEvent event = new ConfirmedBunchingEvent(
                 UUID.fromString("c5934f15-4a65-4e94-87ea-a5a64a7dd4c1"),
                 "190",
@@ -153,7 +180,7 @@ class GeminiMitigationCandidateAdapterTest {
                 600,
                 List.of(276, 221),
                 Instant.parse("2026-09-27T23:45:02Z"),
-                List.of("arrival-observation-1", "arrival-observation-2"));
+                evidenceIds);
         BunchingRootCauseDiagnosis diagnosis = new BunchingRootCauseDiagnosis(
                 UUID.fromString("f2b8d1b5-c24c-48bb-8a66-bff7be1e9e73"),
                 "A vehicle breakdown delayed the leader.",

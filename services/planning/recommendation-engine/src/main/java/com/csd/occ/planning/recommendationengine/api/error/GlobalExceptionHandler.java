@@ -2,6 +2,7 @@ package com.csd.occ.planning.recommendationengine.api.error;
 
 import com.csd.occ.planning.recommendationengine.domain.IdempotencyConflictException;
 import jakarta.servlet.http.HttpServletRequest;
+import com.csd.occ.planning.recommendationengine.api.RequestBodyLimitExceededException;
 import java.net.URI;
 import java.util.List;
 import org.springframework.http.HttpStatus;
@@ -40,12 +41,24 @@ public class GlobalExceptionHandler {
             IllegalArgumentException.class
     })
     ProblemDetail handleMalformedRequest(Exception exception, HttpServletRequest request) {
+        if (hasBodyLimitCause(exception)) {
+            return problem(HttpStatus.PAYLOAD_TOO_LARGE, "Request body too large",
+                    "The request body exceeds the configured size limit.",
+                    "urn:occ:problem:request-body-too-large", request);
+        }
         return problem(
                 HttpStatus.BAD_REQUEST,
                 "Invalid request",
                 "The request is malformed or contains an unsupported value.",
                 "urn:occ:problem:invalid-request",
                 request);
+    }
+
+    private boolean hasBodyLimitCause(Throwable failure) {
+        for (Throwable current = failure; current != null; current = current.getCause()) {
+            if (current instanceof RequestBodyLimitExceededException) return true;
+        }
+        return false;
     }
 
     @ExceptionHandler(NoActionableRecommendationException.class)

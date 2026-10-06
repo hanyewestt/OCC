@@ -1,5 +1,6 @@
 package com.csd.occ.planning.recommendationengine.infrastructure.config;
 
+import com.csd.occ.planning.recommendationengine.api.config.RecommendationInputProperties;
 import com.csd.occ.planning.recommendationengine.infrastructure.gemini.GeminiMitigationCandidateAdapter;
 import com.google.genai.Client;
 import com.google.genai.types.HttpOptions;
@@ -60,11 +61,13 @@ public class GeminiRecommendationConfig {
             ChatClient recommendationGeminiChatClient,
             JsonMapper json,
             Clock clock,
-            RecommendationGeminiProperties properties) {
+            RecommendationGeminiProperties properties,
+            RecommendationInputProperties inputProperties) {
         return new GeminiMitigationCandidateAdapter(
                 recommendationGeminiChatClient,
                 json,
                 clock,
-                properties.model());
+                properties.model(),
+                inputProperties);
     }
 }

@@ -23,6 +23,7 @@ public class RootCauseDiagnosisProcessor {
     private final RecommendationPayloadCodecPort payloads;
     private final DiagnosisCompletionService completion;
     private final BunchingEvidenceSupportPolicy confidencePolicy = new BunchingEvidenceSupportPolicy();
+    private final RetryBackoffPolicy retryBackoff = new RetryBackoffPolicy();
     private final DiagnosisPolicySettings settings;
     private final Clock clock;
 
@@ -117,6 +118,8 @@ public class RootCauseDiagnosisProcessor {
             completion.complete(request.id(), diagnosis, invocationDetails, snapshotHash, payload, deliveryId);
         } catch (DiagnosisFailureException failure) {
             fail(request, failure.failureCode(), failure.isRetryable(), invocationDetails, snapshotHash);
+        } catch (EvidenceLimitExceededException failure) {
+            fail(request, "EVIDENCE_LIMIT_EXCEEDED", false, invocationDetails, snapshotHash);
         } catch (RuntimeException failure) {
             fail(request, "DIAGNOSIS_PROCESSING_FAILURE", true, invocationDetails, snapshotHash);
         }
@@ -127,7 +130,7 @@ public class RootCauseDiagnosisProcessor {
             throw new DiagnosisFailureException("EVIDENCE_LIMIT_EXCEEDED", false);
         Instant cutoff = event.firstConfirmedAt().minus(settings.evidenceLookback());
         List<IncidentEvidence> incidents = context.incidents().stream().map(incident -> new IncidentEvidence(
-                incident.evidenceId(), incident.incidentId(), incident.incidentType(), truncate(incident.message(), 500),
+                incident.evidenceId(), incident.incidentId(), incident.incidentType(), incident.message(),
                 incident.latitude(), incident.longitude(), incident.observedAt(), incident.fetchedAt(),
                 incident.classification(), incident.demoRunId()))
                 .filter(incident -> {
@@ -137,19 +140,23 @@ public class RootCauseDiagnosisProcessor {
                 })
                 .sorted(java.util.Comparator.comparing(incident -> incident.observedAt() == null
                         ? incident.fetchedAt() : incident.observedAt()))
-                .limit(50).toList();
+                .toList();
         List<String> missingFields = new ArrayList<>(context.missingFields());
         if (incidents.isEmpty() && !missingFields.contains("traffic-incidents-within-lookback"))
             missingFields.add("traffic-incidents-within-lookback");
+        List<String> distinctMissingFields = missingFields.stream().distinct().toList();
+        if (distinctMissingFields.size() > 20)
+            throw new DiagnosisFailureException("EVIDENCE_LIMIT_EXCEEDED", false);
         return new RootCauseContext(context.classification(), context.demoRunId(), context.referenceVersionId(),
-                context.arrivals(), incidents, missingFields.stream().distinct().limit(20).toList());
+                context.arrivals(), incidents, distinctMissingFields);
     }
 
     private void validateOutput(ModelOutput output, EvidenceSnapshot snapshot) {
         if (output == null || output.causeCode() == null) throw new IllegalArgumentException("causeCode is required");
         if (!List.of("TRAFFIC_INCIDENT", "UNKNOWN").contains(output.causeCode()))
             throw new IllegalArgumentException("causeCode is unsupported");
-        if (output.supportingEvidenceIds().size() > 100 || output.limitations().size() > 20)
+        if (output.supportingEvidenceIds().size() > 100 || output.limitations().size() > 20
+                || output.supportingEvidenceIds().stream().anyMatch(id -> id == null || id.isBlank() || id.length() > 200))
             throw new IllegalArgumentException("model output exceeded configured schema limits");
         if (output.supportingEvidenceIds().stream().anyMatch(id -> !snapshot.allowedEvidenceIds().contains(id)))
             throw new IllegalArgumentException("model cited evidence outside the supplied allow-list");
@@ -197,10 +204,9 @@ public class RootCauseDiagnosisProcessor {
                       List<ModelInvocationDetails> invocationDetails, String snapshotHash) {
         int usedAttempts = request.attemptCount();
         boolean attemptsRemaining = usedAttempts < settings.maxAttempts();
-        long exponent = Math.min(20, Math.max(0, usedAttempts - 1));
-        long base = Math.min(settings.retryMaxDelay().toMillis(), settings.retryInitialDelay().toMillis() * (1L << exponent));
-        long jitter = base == 0 ? 0 : ThreadLocalRandom.current().nextLong(Math.max(1, base / 5 + 1));
-        Instant retryAt = clock.instant().plusMillis(Math.min(settings.retryMaxDelay().toMillis(), base + jitter));
+        double jitter = ThreadLocalRandom.current().nextDouble(-0.20, 0.2000001);
+        Instant retryAt = clock.instant().plus(retryBackoff.delay(settings.retryInitialDelay(),
+                settings.retryMaxDelay(), Math.max(1, usedAttempts), jitter));
         completion.fail(request.id(), code, retryable, attemptsRemaining, retryAt, invocationDetails, snapshotHash);
     }
 }

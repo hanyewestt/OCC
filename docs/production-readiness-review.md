@@ -1,16 +1,42 @@
 # Production-readiness review
 
-The repository has a sound architectural foundation—clear service roles, typed configuration, schema ownership, Flyway, transactional outboxes, idempotency, and substantial PostgreSQL integration testing—but it is not yet production-ready.
+This document preserves the baseline review findings recorded on 2026-09-28. They describe the state before the remediation work below, not the current state of the checkout. See **Implementation status** for what changed and what remains open.
 
-The highest risks are:
+The remaining production-readiness gaps in the agreed scope are:
 
-1. Publicly reachable APIs have no authentication or authorization.
-2. AI prompt inputs are insufficiently bounded, creating cost, latency, and denial-of-service risks.
-3. The root-cause diagnosis workflow and one durable dispatcher have very little automated coverage.
-4. Several synchronous HTTP clients have no explicit deadlines.
-5. The current service relocation is unsafe to commit unless all deletions and untracked replacements are staged atomically.
+1. Authentication and authorization are not implemented; explicitly deferred for this pass.
+2. Historical operations migrations still need an explicit ownership/decommission decision; untouched in this pass.
+3. Provider/consumer contract verification and a Compose end-to-end pipeline test are still absent.
+4. Metrics, distributed traces, correlated logs and operational alerting remain deferred; health probes are implemented.
 
-No files were changed.
+## Implementation status (2026-09-28)
+
+| Baseline finding | Status | Implementation / remaining work |
+|---|---|---|
+| 1. Authentication/authorization | Deferred | Explicitly excluded from this implementation. The APIs remain unauthenticated; production exposure still requires a separate security change. |
+| 2–3. Unbounded diagnosis/recommendation inputs | Implemented | Recommendation HTTP bodies, DTO/domain fields and aggregate prompts are bounded; diagnosis evidence fields, collections, peer response bodies and model prompts have validated budgets. |
+| 4–5. Diagnosis workflow and durable dispatcher coverage | Implemented | Processor, idempotency, lease recovery, concurrent claims, atomic completion/outbox, retry and dispatcher behavior now have unit and PostgreSQL integration tests. |
+| 6. Synchronous HTTP deadlines/retries | Implemented | Explicit typed timeouts and bounded retry/backoff with jitter are configured for the affected clients. |
+| 7. Service relocation safety | Resolved in checkout | The services are present at their current domain paths. This pass did not stage or commit anything. |
+| 8. Provider/consumer contracts and end-to-end test | Partial | OpenAPI artifacts for all four services are present and validated/diffed in CI. Pact/Spring Cloud Contract verification and the Compose pipeline test remain follow-up work. |
+| 9–10. Recommendation/diagnosis OpenAPI artifacts | Implemented | Generated from the running services and stored under each service's `openapi/` directory. |
+| 11–12. Mandatory integration gates / Windows wrapper | Implemented | `verify` requires nonzero Failsafe tests; CI runs the Windows wrapper smoke check. |
+| 13. Health and telemetry | Partial | Actuator liveness/readiness groups and Compose health checks are aligned. Metrics, traces, correlated logging and alerting are deferred. |
+| 14–15. Ingestion schedule and DataMall credential | Implemented | Schedule and HTTP deadlines use typed environment-backed properties; the API key has no mock production fallback. |
+| 16. Historical operations migrations | Deferred | No historical operations migrations were changed; decide ownership and a safe migration/decommission path separately. |
+| 17. Recommendation image port | Implemented | Docker image metadata exposes the recommendation container's internal port `8003`. |
+| 18. Architecture/coverage regression gates | Implemented | ArchUnit rules run in all four services; JaCoCo gates protect the ingestion polling and bunching dispatcher paths. |
+
+Verification on Java 25 / Spring Boot 4.1.1 completed with `mvnw verify` in all services:
+
+| Service | Unit tests | PostgreSQL-backed integration tests | Result |
+|---|---:|---:|---|
+| Ingestion | 53 | 4 | Passed; JaCoCo line and branch gates met |
+| Bus-bunching detection | 52 | 22 | Passed; dispatcher coverage gates met |
+| Recommendation engine | 52 | 12 | Passed |
+| Root-cause diagnosis | 14 | 7 | Passed |
+
+No Git commit was created and no changes were staged. Authentication/authorization, historical operations migrations, full telemetry, provider/consumer contract tests and full-stack end-to-end testing remain outstanding.
 
 ## Research baseline
 
@@ -61,7 +87,7 @@ The four core services are:
 
 The services share a PostgreSQL instance but use distinct schemas and roles. Cross-service workflows use a mixture of synchronous HTTP, read-only database views, and transactional outboxes.
 
-## Findings, ordered by severity
+## Original findings (baseline, ordered by severity)
 
 ### 1. Critical — APIs are reachable without authentication or authorization
 
@@ -221,7 +247,7 @@ The repository already implements several production-grade patterns correctly:
 - Existing ingestion and bus-bunching OpenAPI contracts appear aligned with their current controllers.
 - The large apparent diff is mainly relocation: 158 moved files are byte-identical and the three remaining moved files contain only minor path/comment substitutions. Effective authored change size is about 415 lines, below the review thresholds.
 
-## Testing and coverage gaps
+## Testing and coverage snapshot before implementation
 
 I executed the Maven verification builds:
 
@@ -242,7 +268,7 @@ Additional observations:
 - CI configuration was not found, so mandatory execution of Docker-backed tests, OpenAPI compatibility checks and image scanning could not be verified.
 - Security tests are absent because security is not implemented.
 
-## Prioritized remediation plan
+## Original prioritized remediation plan
 
 1. **Secure the trust boundaries:** implement JWT-based authentication, scoped authorization and network isolation for internal endpoints.
 2. **Bound all AI and HTTP inputs:** enforce per-field, collection, body and aggregate prompt limits before persistence and invocation.

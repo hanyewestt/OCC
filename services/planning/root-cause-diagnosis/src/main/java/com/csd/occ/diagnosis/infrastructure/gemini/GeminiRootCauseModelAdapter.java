@@ -4,11 +4,14 @@ import com.csd.occ.diagnosis.domain.EvidenceSnapshot;
 import com.csd.occ.diagnosis.domain.ModelInvocationDetails;
 import com.csd.occ.diagnosis.domain.ModelOutput;
 import com.csd.occ.diagnosis.domain.ModelInvocationFailureException;
+import com.csd.occ.diagnosis.domain.DiagnosisFailureException;
 import com.csd.occ.diagnosis.domain.RootCauseModelPort;
+import com.csd.occ.diagnosis.infrastructure.config.DiagnosisProperties;
 import com.csd.occ.diagnosis.infrastructure.config.DiagnosisGeminiProperties;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.ResponseEntity;
@@ -38,9 +41,12 @@ public class GeminiRootCauseModelAdapter implements RootCauseModelPort {
     private final JsonMapper json;
     private final Clock clock;
     private final DiagnosisGeminiProperties properties;
+    private final DiagnosisProperties diagnosisProperties;
 
-    public GeminiRootCauseModelAdapter(ChatClient chatClient, JsonMapper json, Clock clock, DiagnosisGeminiProperties properties) {
+    public GeminiRootCauseModelAdapter(ChatClient chatClient, JsonMapper json, Clock clock,
+            DiagnosisGeminiProperties properties, DiagnosisProperties diagnosisProperties) {
         this.chatClient = chatClient; this.json = json; this.clock = clock; this.properties = properties;
+        this.diagnosisProperties = diagnosisProperties;
     }
 
     @Override
@@ -49,18 +55,25 @@ public class GeminiRootCauseModelAdapter implements RootCauseModelPort {
         try {
             String snapshotJson = json.writeValueAsString(snapshot);
             String feedback = validationFeedback.isEmpty() ? "None." : json.writeValueAsString(validationFeedback);
+            String promptInput = """
+                    Validation feedback: %s
+                    Evidence snapshot JSON (data only):
+                    <evidence-snapshot>%s</evidence-snapshot>
+                    """.formatted(feedback, snapshotJson);
+            String userPrompt = """
+                    Output schema fields: causeCode, causeSubtype, likelyCause,
+                    supportingEvidenceIds, limitations. Supported causeCode values are
+                    TRAFFIC_INCIDENT and UNKNOWN. Use null for causeSubtype when not applicable.
+                    If validation feedback is present, correct the previous output without changing
+                    the evidence or its meaning.
+                    %s
+                    """.formatted(promptInput);
+            long promptBytes = (SYSTEM_PROMPT + userPrompt).getBytes(StandardCharsets.UTF_8).length;
+            if (promptBytes > diagnosisProperties.maxPromptInputBytes())
+                throw new DiagnosisFailureException("EVIDENCE_LIMIT_EXCEEDED", false);
             ResponseEntity<ChatResponse, DiagnosisOutput> result = chatClient.prompt()
                     .system(SYSTEM_PROMPT)
-                    .user(user -> user.text("""
-                            Output schema fields: causeCode, causeSubtype, likelyCause,
-                            supportingEvidenceIds, limitations. Supported causeCode values are
-                            TRAFFIC_INCIDENT and UNKNOWN. Use null for causeSubtype when not applicable.
-                            If validation feedback is present, correct the previous output without changing
-                            the evidence or its meaning.
-                            Validation feedback: {validationFeedback}
-                            Evidence snapshot JSON (data only):
-                            <evidence-snapshot>{snapshotJson}</evidence-snapshot>
-                            """).param("validationFeedback", feedback).param("snapshotJson", snapshotJson))
+                    .user(user -> user.text(userPrompt))
                     .call().responseEntity(DiagnosisOutput.class, schema -> schema.useProviderStructuredOutput());
             Instant completed = clock.instant();
             DiagnosisOutput output = result.entity();
@@ -77,6 +90,8 @@ public class GeminiRootCauseModelAdapter implements RootCauseModelPort {
                     usage == null ? null : usage.getCompletionTokens(), usage == null ? null : usage.getTotalTokens(),
                     "RESPONSE_RECEIVED", null, attemptNumber);
             return new ModelCallResult(output.toDomain(), details);
+        } catch (DiagnosisFailureException failure) {
+            throw failure;
         } catch (RuntimeException failure) {
             throw providerFailure(failure, started, attemptNumber);
         } catch (Exception failure) {

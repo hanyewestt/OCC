@@ -1,0 +1,159 @@
+name: Production readiness gates
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-readiness-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify ${{ matrix.service }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: ingestion
+            path: services/ingestion
+          - service: bunching
+            path: services/operations/bus-bunching-detection
+          - service: recommendation
+            path: services/planning/recommendation-engine
+          - service: diagnosis
+            path: services/planning/root-cause-diagnosis
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Java 25
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: ${{ matrix.path }}/pom.xml
+      - name: Run unit and PostgreSQL integration tests
+        working-directory: ${{ matrix.path }}
+        run: ./mvnw --batch-mode --no-transfer-progress verify
+        env:
+          DATAMALL_API_KEY: synthetic-ci-key
+          OCC_DIAGNOSIS_GEMINI_API_KEY: synthetic-ci-key
+          OCC_RECOMMENDATION_GEMINI_API_KEY: synthetic-ci-key
+      - name: Require executed integration tests
+        working-directory: ${{ matrix.path }}
+        run: |
+          python -c "import pathlib, xml.etree.ElementTree as ET; p=pathlib.Path('target/failsafe-reports/failsafe-summary.xml'); assert p.exists(), f'Missing Failsafe summary: {p}'; n=int(ET.parse(p).getroot().findtext('completed', '0')); assert n > 0, f'No integration tests executed in {p.parent}'"
+
+  windows-wrapper:
+    name: Recommendation Windows wrapper smoke check
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Java 25
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Verify Maven wrapper starts on Windows
+        working-directory: services/planning/recommendation-engine
+        shell: pwsh
+        run: .\mvnw.cmd -version
+
+  openapi:
+    name: Validate API contracts and detect breaking changes
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source and history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate committed OpenAPI documents
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' specs < <(find services -type f -path '*/openapi/*.json' -print0)
+          if ((${#specs[@]} == 0)); then
+            echo 'No generated OpenAPI contracts found.' >&2
+            exit 1
+          fi
+          for spec in "${specs[@]}"; do
+            docker run --rm -v "$PWD:/workspace:ro" -w /workspace \
+              tufin/oasdiff:v1.32.1 validate "/workspace/${spec}"
+          done
+      - name: Reject breaking contract changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${GITHUB_BASE_REF:-}" ]]; then
+            base_ref="origin/${GITHUB_BASE_REF}"
+          else
+            base_ref='HEAD^'
+          fi
+          base_sha="$(git merge-base "$base_ref" HEAD 2>/dev/null || true)"
+          if [[ -z "$base_sha" ]]; then
+            echo 'No prior base revision is available; compatibility comparison is skipped.'
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/openapi-baselines"
+          while IFS= read -r spec; do
+            [[ -n "$spec" ]] || continue
+            if ! git cat-file -e "${base_sha}:${spec}" 2>/dev/null; then
+              echo "New API contract, no previous baseline: ${spec}"
+              continue
+            fi
+            name="$(basename "$spec")"
+            git show "${base_sha}:${spec}" > "$RUNNER_TEMP/openapi-baselines/${name}"
+            docker run --rm -v "$PWD:/workspace:ro" \
+              -v "$RUNNER_TEMP/openapi-baselines:/baseline:ro" \
+              tufin/oasdiff:v1.32.1 breaking --fail-on ERR \
+              "/baseline/${name}" "/workspace/${spec}"
+          done < <(git diff --name-only "$base_sha" HEAD -- 'services/**/openapi/*.json')
+
+  container-scan:
+    name: Scan ${{ matrix.service }} image
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: ingestion
+            path: services/ingestion
+            image: occ-ingestion:ci
+          - service: bunching
+            path: services/operations/bus-bunching-detection
+            image: occ-bunching:ci
+          - service: recommendation
+            path: services/planning/recommendation-engine
+            image: occ-recommendation:ci
+          - service: diagnosis
+            path: services/planning/root-cause-diagnosis
+            image: occ-diagnosis:ci
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build container image
+        run: docker build --tag '${{ matrix.image }}' '${{ matrix.path }}'
+      - name: Scan OS and library vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ matrix.image }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH

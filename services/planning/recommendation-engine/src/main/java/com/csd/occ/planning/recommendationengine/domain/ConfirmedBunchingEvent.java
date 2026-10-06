@@ -19,22 +19,26 @@ public record ConfirmedBunchingEvent(
     public ConfirmedBunchingEvent {
         Objects.requireNonNull(bunchingEventId, "bunchingEventId is required");
         serviceId = requireNonBlank(serviceId, "serviceId");
+        requireLength(serviceId, 20, "serviceId");
         if (directionId < 1) {
             throw new IllegalArgumentException("directionId must be positive");
         }
         monitoredStopCode = requireNonBlank(monitoredStopCode, "monitoredStopCode");
+        requireLength(monitoredStopCode, 12, "monitoredStopCode");
         Objects.requireNonNull(status, "status is required");
         if (expectedHeadwaySeconds < 1) {
             throw new IllegalArgumentException("expectedHeadwaySeconds must be positive");
         }
         observedHeadwaySeconds = List.copyOf(observedHeadwaySeconds);
-        if (observedHeadwaySeconds.isEmpty() || observedHeadwaySeconds.stream().anyMatch(value -> value == null || value < 0)) {
-            throw new IllegalArgumentException("observedHeadwaySeconds must contain non-negative values");
+        if (observedHeadwaySeconds.size() < 2 || observedHeadwaySeconds.size() > 10
+                || observedHeadwaySeconds.stream().anyMatch(value -> value == null || value < 0)) {
+            throw new IllegalArgumentException("observedHeadwaySeconds must contain 2..10 non-negative values");
         }
         Objects.requireNonNull(firstConfirmedAt, "firstConfirmedAt is required");
         evidenceIds = List.copyOf(evidenceIds);
-        if (evidenceIds.isEmpty()) {
-            throw new IllegalArgumentException("evidenceIds must not be empty");
+        if (evidenceIds.isEmpty() || evidenceIds.size() > 100
+                || evidenceIds.stream().anyMatch(value -> value == null || value.isBlank() || value.length() > 200)) {
+            throw new IllegalArgumentException("evidenceIds must contain 1..100 non-blank values of at most 200 characters");
         }
     }
 
@@ -43,5 +47,11 @@ public record ConfirmedBunchingEvent(
             throw new IllegalArgumentException(fieldName + " is required");
         }
         return value;
+    }
+
+    private static void requireLength(String value, int maximum, String fieldName) {
+        if (value.length() > maximum) {
+            throw new IllegalArgumentException(fieldName + " must be at most " + maximum + " characters");
+        }
     }
 }

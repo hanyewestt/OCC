@@ -4,10 +4,12 @@ import com.csd.occ.diagnosis.domain.DiagnosisRequestService;
 import com.csd.occ.diagnosis.domain.DeliveryClaim;
 import com.csd.occ.diagnosis.domain.RecommendationDeliveryService;
 import com.csd.occ.diagnosis.domain.RecommendationSubmissionPort;
+import com.csd.occ.diagnosis.domain.RetryBackoffPolicy;
 import com.csd.occ.diagnosis.domain.RootCauseDiagnosisProcessor;
 import com.csd.occ.diagnosis.infrastructure.config.DiagnosisProperties;
 import java.time.Clock;
 import java.util.List;
+import java.util.concurrent.ThreadLocalRandom;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -21,6 +23,7 @@ public class DiagnosisWorker {
     private final RecommendationSubmissionPort recommendation;
     private final DiagnosisProperties properties;
     private final Clock clock;
+    private final RetryBackoffPolicy retryBackoff = new RetryBackoffPolicy();
 
     public DiagnosisWorker(DiagnosisRequestService requests, RootCauseDiagnosisProcessor processor,
             RecommendationDeliveryService deliveries, RecommendationSubmissionPort recommendation,
@@ -61,12 +64,10 @@ public class DiagnosisWorker {
             deliveries.terminal(delivery.deliveryId(), status, code);
             return;
         }
-        long exponent = Math.min(20, Math.max(0, delivery.attemptNumber() - 1));
-        long base = Math.min(properties.retryMaxDelay().toMillis(),
-                properties.retryInitialDelay().toMillis() * (1L << exponent));
-        long jitter = base == 0 ? 0 : java.util.concurrent.ThreadLocalRandom.current().nextLong(Math.max(1, base / 5 + 1));
+        double jitter = ThreadLocalRandom.current().nextDouble(-0.20, 0.2000001);
         deliveries.retry(delivery.deliveryId(), status, code,
-                clock.instant().plusMillis(Math.min(properties.retryMaxDelay().toMillis(), base + jitter)));
+                clock.instant().plus(retryBackoff.delay(properties.retryInitialDelay(),
+                        properties.retryMaxDelay(), delivery.attemptNumber(), jitter)));
     }
 
     private String bounded(String value) {

@@ -25,7 +25,8 @@ public class BusArrivalSchedule {
         this.targets = targets;
     }
 
-    @Scheduled(fixedRate = 60000, initialDelay = 60000)
+    @Scheduled(fixedRateString = "${occ.ingestion.schedule.bus-arrival-poll-interval}",
+            initialDelayString = "${occ.ingestion.schedule.bus-arrival-initial-delay}")
     public void poll() {
         if (topology.activeVersion().isEmpty() && !restoreReferenceTopology()) return;
         arrivals.poll();

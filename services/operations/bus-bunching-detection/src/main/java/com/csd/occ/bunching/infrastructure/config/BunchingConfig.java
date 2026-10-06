@@ -25,7 +25,10 @@ public class BunchingConfig {
     @Bean
     @Primary
     RestClient ingestionRestClient(BunchingProperties settings) {
-        return RestClient.builder().baseUrl(settings.ingestionBaseUrl().toString()).build();
+        HttpClient client = HttpClient.newBuilder().connectTimeout(settings.ingestionConnectTimeout()).build();
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(client);
+        factory.setReadTimeout(settings.ingestionResponseTimeout());
+        return RestClient.builder().baseUrl(settings.ingestionBaseUrl().toString()).requestFactory(factory).build();
     }
 
     @Bean

@@ -1,5 +1,6 @@
 package com.csd.occ.planning.recommendationengine.infrastructure.gemini;
 
+import com.csd.occ.planning.recommendationengine.api.config.RecommendationInputProperties;
 import com.csd.occ.planning.recommendationengine.domain.MitigationCandidateGenerationResult;
 import com.csd.occ.planning.recommendationengine.domain.MitigationCandidateGeneratorPort;
 import com.csd.occ.planning.recommendationengine.domain.MitigationCandidateRequest;
@@ -13,6 +14,7 @@ import java.net.http.HttpTimeoutException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -60,12 +62,14 @@ public final class GeminiMitigationCandidateAdapter implements MitigationCandida
     private final JsonMapper json;
     private final Clock clock;
     private final String configuredModel;
+    private final RecommendationInputProperties inputProperties;
 
     public GeminiMitigationCandidateAdapter(
             ChatClient chatClient,
             JsonMapper json,
             Clock clock,
-            String configuredModel) {
+            String configuredModel,
+            RecommendationInputProperties inputProperties) {
         this.chatClient = Objects.requireNonNull(chatClient, "chatClient is required");
         this.json = Objects.requireNonNull(json, "json is required");
         this.clock = Objects.requireNonNull(clock, "clock is required");
@@ -73,6 +77,7 @@ public final class GeminiMitigationCandidateAdapter implements MitigationCandida
             throw new IllegalArgumentException("configuredModel is required");
         }
         this.configuredModel = configuredModel.trim();
+        this.inputProperties = Objects.requireNonNull(inputProperties, "inputProperties is required");
     }
 
     @Override
@@ -81,6 +86,11 @@ public final class GeminiMitigationCandidateAdapter implements MitigationCandida
         UUID invocationId = UUID.randomUUID();
         Instant startedAt = Instant.now(clock);
         String requestJson = json.writeValueAsString(request);
+        String renderedUserPrompt = USER_PROMPT.replace("{requestJson}", requestJson);
+        long promptBytes = (SYSTEM_PROMPT + renderedUserPrompt).getBytes(StandardCharsets.UTF_8).length;
+        if (promptBytes > inputProperties.maxPromptInputBytes()) {
+            throw new IllegalArgumentException("Recommendation prompt exceeds the configured input budget");
+        }
         ResponseEntity<ChatResponse, GeminiMitigationCandidateOutput> response = null;
         try {
             response = chatClient.prompt()

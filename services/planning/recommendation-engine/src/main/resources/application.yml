@@ -24,9 +24,17 @@ management:
     health:
       probes:
         enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
 
 occ:
   recommendation:
+    input:
+      max-request-body-bytes: ${OCC_RECOMMENDATION_MAX_REQUEST_BODY_BYTES:65536}
+      max-prompt-input-bytes: ${OCC_RECOMMENDATION_MAX_PROMPT_INPUT_BYTES:65536}
     ai:
       enabled: ${OCC_RECOMMENDATION_AI_ENABLED:false}
       gemini:

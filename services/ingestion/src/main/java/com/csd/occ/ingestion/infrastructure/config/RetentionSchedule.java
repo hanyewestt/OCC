@@ -12,7 +12,8 @@ public class RetentionSchedule {
         this.retention = retention;
     }
 
-    @Scheduled(initialDelayString = "PT5M", fixedDelayString = "PT1H")
+    @Scheduled(initialDelayString = "${occ.ingestion.schedule.retention-initial-delay}",
+            fixedDelayString = "${occ.ingestion.schedule.retention-interval}")
     public void purgeExpiredObservations() {
         retention.purgeExpiredObservations();
     }

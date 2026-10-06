@@ -213,6 +213,7 @@ cause, confidence, trade-offs and limitations, and the combined evidence IDs.
 |---|---|
 | `400 Bad Request` | Missing idempotency key, malformed JSON, unsupported enum value, or failed field validation. |
 | `409 Conflict` | The idempotency key already belongs to a different validated request. |
+| `413 Payload Too Large` | The JSON body exceeds `OCC_RECOMMENDATION_MAX_REQUEST_BODY_BYTES` (65,536 bytes by default). |
 | `422 Unprocessable Content` | The input is valid but cannot produce a validated actionable recommendation. |
 
 Examples of `422` conditions include:
@@ -226,6 +227,14 @@ Examples of `422` conditions include:
 
 Errors use `application/problem+json`. When supplied, `X-Correlation-ID` is
 copied into the problem response.
+
+The recommendation endpoint checks both declared `Content-Length` and bytes actually
+read, so chunked requests cannot bypass the body limit. Request evidence is bounded to
+100 IDs of at most 200 characters; headway history contains 2–10 values. Before a
+provider call, the UTF-8 system-plus-user prompt is limited by
+`OCC_RECOMMENDATION_MAX_PROMPT_INPUT_BYTES` (65,536 bytes by default). Both limits are
+typed settings, validated at startup, mapped in Compose and inventoried in `.env.example`;
+an oversized prompt preserves the existing deterministic fallback.
 
 ## Deterministic policy
 
@@ -491,6 +500,8 @@ The current configuration is deliberately small:
 | Gemini thinking level | `${OCC_RECOMMENDATION_GEMINI_THINKING_LEVEL:MINIMAL}` |
 | Gemini request timeout | `${OCC_RECOMMENDATION_GEMINI_REQUEST_TIMEOUT:30s}` |
 | Gemini total HTTP attempts | `${OCC_RECOMMENDATION_GEMINI_RETRY_ATTEMPTS:2}` |
+| Maximum HTTP request body | `${OCC_RECOMMENDATION_MAX_REQUEST_BODY_BYTES:65536}` bytes |
+| Maximum serialized model prompt | `${OCC_RECOMMENDATION_MAX_PROMPT_INPUT_BYTES:65536}` UTF-8 bytes |
 | Database URL | `${OCC_RECOMMENDATION_DB_URL:jdbc:postgresql://localhost:5432/occ}` |
 | Database username | `${OCC_RECOMMENDATION_DB_USERNAME:occ_recommendation}` |
 | Database password | `OCC_RECOMMENDATION_DB_PASSWORD` (required secret) |

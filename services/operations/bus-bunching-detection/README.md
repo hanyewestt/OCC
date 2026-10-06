@@ -327,6 +327,9 @@ This writes `openapi/bus-bunching-detection.json`.
 | File | Coverage |
 | --- | --- |
 | `src/test/java/com/csd/occ/bunching/domain/BunchingPolicyTest.java` | Pure headway, grouping, freshness, slot and evidence rules. |
+| `src/test/java/com/csd/occ/bunching/domain/RetryBackoffPolicyTest.java` | Deterministic exponential cap and jitter bounds. |
+| `src/test/java/com/csd/occ/bunching/infrastructure/scheduling/BunchingDiagnosisDispatcherTest.java` | Accepted, terminal, transient and transport-failure outbox outcomes. |
+| `src/test/java/com/csd/occ/bunching/ArchitectureTest.java` | ArchUnit enforcement of service-layer dependency direction. |
 | `src/test/java/com/csd/occ/bunching/infrastructure/config/BunchingPropertiesTest.java` | Invalid configuration and boundary validation. |
 | `src/test/java/com/csd/occ/bunching/integration/BunchingRecordingIT.java` | Evaluation persistence, idempotency, rollback and evidence retention. |
 | `src/test/java/com/csd/occ/bunching/integration/BunchingAlertIT.java` | Alert lifecycle, concurrency, retention, rollback and notification latency. |
@@ -368,6 +371,11 @@ For example, use `120s` for a local demo freshness limit; it is not a hard-coded
 operational rule. Optional settings are `OCC_BUNCHING_THRESHOLD` (90s),
 `OCC_BUNCHING_POLL_INTERVAL` (1s), `OCC_BUNCHING_BATCH_SIZE` (100), and
 `OCC_BUNCHING_CONSUMER_ENABLED` (true). Invalid durations or batch sizes fail startup.
+The ingestion HTTP client uses `OCC_BUNCHING_INGESTION_CONNECT_TIMEOUT=2s` and
+`OCC_BUNCHING_INGESTION_RESPONSE_TIMEOUT=5s`. Diagnosis outbox retries use capped
+exponential delay with ±20% jitter (`OCC_BUNCHING_DIAGNOSIS_RETRY_INITIAL_DELAY=2s`,
+`OCC_BUNCHING_DIAGNOSIS_RETRY_MAX_DELAY=1m`); retry timing is computed from the
+persisted attempt number. The complete environment inventory is `.env.example`.
 
 5. From this service directory, run `mvn spring-boot:run -Dspring-boot.run.profiles=local`, or `mvn package` followed
    by `java -jar target/bus-bunching-detection-0.0.1-SNAPSHOT.jar`. Flyway creates the
