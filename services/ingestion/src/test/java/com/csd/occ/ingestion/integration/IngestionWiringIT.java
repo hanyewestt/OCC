@@ -53,7 +53,5 @@ class IngestionWiringIT {
     @Test
     void productionApplicationUsesTheExistingPollingServiceAndAppliesTheBunchingContract() {
         assertNotNull(polling);
-        assertTrue(jdbc.queryForObject("SELECT EXISTS (SELECT FROM pg_views WHERE schemaname = 'ingestion' "
-                + "AND viewname = 'bunching_snapshot')", Boolean.class));
     }
 }

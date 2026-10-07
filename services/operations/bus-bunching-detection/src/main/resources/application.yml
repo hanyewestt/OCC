@@ -48,6 +48,10 @@ occ:
     expected-headway: ${OCC_BUNCHING_EXPECTED_HEADWAY:600s}
     ingestion-connect-timeout: ${OCC_BUNCHING_INGESTION_CONNECT_TIMEOUT:2s}
     ingestion-response-timeout: ${OCC_BUNCHING_INGESTION_RESPONSE_TIMEOUT:5s}
+    retention:
+      duration: ${OCC_INGESTION_RETENTION:12h}
+      interval: ${OCC_BUNCHING_RETENTION_INTERVAL:1h}
+      initial-delay: ${OCC_BUNCHING_RETENTION_INITIAL_DELAY:5m}
     diagnosis:
       internal-url: ${OCC_BUNCHING_DIAGNOSIS_INTERNAL_URL:http://root-cause-diagnosis:8004}
       worker-enabled: ${OCC_BUNCHING_DIAGNOSIS_WORKER_ENABLED:true}

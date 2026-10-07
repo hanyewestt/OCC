@@ -62,7 +62,7 @@ The detector schema contains:
    should be attempted.
 - `bunching.source_rejection`: the quarantine record for malformed or unsupported
    source input.
-- `bunching.source_processing_audit`: append-only rejection and deferral history,
+- durable retry and rejection state: current recovery information without an append-only failure audit,
    retained independently from source telemetry.
 - `bunching.alert_state`: the current open/closed episode for each service, stop and
    direction.

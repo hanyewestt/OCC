@@ -270,6 +270,6 @@ class BusArrivalServiceTest {
 
     private BusRouteStop routeStop(UUID referenceVersionId, int directionId, int sequence, String stopCode) {
         return new BusRouteStop(new BusRouteStopId(referenceVersionId, "190", "SBST", (short) directionId, sequence),
-                stopCode, BigDecimal.ZERO, now);
+                stopCode, BigDecimal.ZERO);
     }
 }

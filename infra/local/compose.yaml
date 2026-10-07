@@ -24,8 +24,6 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in root .env}
       # Per-schema application users, consumed by the postgres init scripts.
       OCC_INGESTION_DB_PASSWORD: ${OCC_INGESTION_DB_PASSWORD:?set in root .env}
-      OCC_OPERATIONS_DB_PASSWORD: ${OCC_OPERATIONS_DB_PASSWORD:?set in root .env}
-      OCC_PLANNING_DB_PASSWORD: ${OCC_PLANNING_DB_PASSWORD:?set in root .env}
       OCC_BUNCHING_DB_PASSWORD: ${OCC_BUNCHING_DB_PASSWORD:?set in root .env}
       OCC_RECOMMENDATION_DB_PASSWORD: ${OCC_RECOMMENDATION_DB_PASSWORD:?set in root .env}
       OCC_DIAGNOSIS_DB_PASSWORD: ${OCC_DIAGNOSIS_DB_PASSWORD:?set in root .env}
@@ -138,25 +136,6 @@ services:
       retries: ${OCC_HEALTHCHECK_RETRIES:-12}
       start_period: ${OCC_HEALTHCHECK_START_PERIOD:-30s}
 
-  bunching-read-grants:
-    image: postgis/postgis:18-3.6
-    restart: "no"
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-occ}
-      POSTGRES_USER: ${POSTGRES_USER:-occ_admin}
-      PGPASSWORD: ${POSTGRES_PASSWORD:?set in root .env}
-      PGHOST: postgres
-      OCC_COMPOSE_STARTUP_TIMEOUT_SECONDS: ${OCC_COMPOSE_STARTUP_TIMEOUT_SECONDS:-180}
-    volumes:
-      - ./postgres/init:/docker-entrypoint-initdb.d:ro
-      - ./postgres/wait_and_grant_bunching_views.sh:/usr/local/bin/wait_and_grant_bunching_views.sh:ro
-    command: ["bash", "/usr/local/bin/wait_and_grant_bunching_views.sh"]
-    depends_on:
-      bunching-schema-init:
-        condition: service_completed_successfully
-      ingestion:
-        condition: service_healthy
-
   bus-bunching-detection:
     image: occ-bus-bunching-detection:local
     build:
@@ -189,8 +168,10 @@ services:
     ports:
       - "${OCC_BUNCHING_PORT:-6768}:${OCC_BUNCHING_INTERNAL_PORT:-8002}"
     depends_on:
-      bunching-read-grants:
+      bunching-schema-init:
         condition: service_completed_successfully
+      ingestion:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:$${OCC_BUNCHING_INTERNAL_PORT}/actuator/health/readiness >/dev/null"]
       interval: ${OCC_HEALTHCHECK_INTERVAL:-10s}

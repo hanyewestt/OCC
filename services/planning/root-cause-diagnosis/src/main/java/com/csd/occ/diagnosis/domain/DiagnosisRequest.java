@@ -35,7 +35,6 @@ public class DiagnosisRequest {
     private int attemptCount;
     private Instant nextAttemptAt;
     private Instant leaseUntil;
-    private UUID diagnosisId;
     private String failureCode;
     private Instant createdAt;
     private Instant updatedAt;
@@ -50,7 +49,6 @@ public class DiagnosisRequest {
     public int attemptCount() { return attemptCount; }
     public Instant nextAttemptAt() { return nextAttemptAt; }
     public Instant leaseUntil() { return leaseUntil; }
-    public UUID diagnosisId() { return diagnosisId; }
     public String failureCode() { return failureCode; }
     public Instant createdAt() { return createdAt; }
 
@@ -61,8 +59,7 @@ public class DiagnosisRequest {
         updatedAt = now;
     }
 
-    public void complete(UUID diagnosisId, Instant now) {
-        this.diagnosisId = diagnosisId;
+    public void complete(Instant now) {
         status = DiagnosisRequestStatus.COMPLETED.name();
         leaseUntil = null;
         failureCode = null;

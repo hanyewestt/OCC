@@ -8,15 +8,11 @@ import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
-import com.csd.occ.bunching.domain.BunchingObservationRepository;
-import com.csd.occ.bunching.domain.ConsumerSelection;
+import com.csd.occ.bunching.domain.ConsumerState;
+import com.csd.occ.bunching.domain.ConsumerStateRepository;
 import com.csd.occ.bunching.domain.ConsumerSelectionService;
-import com.csd.occ.bunching.domain.IngestionFeedCursor;
-import com.csd.occ.bunching.domain.IngestionFeedCursorRepository;
 import com.csd.occ.bunching.domain.IngestionFeedHeadPort;
-import com.csd.occ.bunching.domain.SourceProcessingAuditRepository;
-import com.csd.occ.bunching.domain.SourceRejectionRepository;
-import com.csd.occ.bunching.domain.SourceRetryRepository;
+import com.csd.occ.bunching.domain.SourceProcessingStateRepository;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -32,22 +28,6 @@ import static org.mockito.Mockito.when;
 
 class HttpStoredArrivalAdapterTest {
     private static final Instant NOW = Instant.parse("2026-09-26T05:00:00Z");
-
-    @Test
-    void terminalOutcomesRemoveAnExistingRetry() {
-        SourceRetryRepository retries = mock(SourceRetryRepository.class);
-        HttpStoredArrivalAdapter adapter = new HttpStoredArrivalAdapter(RestClient.create(),
-                mock(IngestionFeedCursorRepository.class), retries, mock(SourceRejectionRepository.class),
-                mock(SourceProcessingAuditRepository.class), mock(BunchingObservationRepository.class));
-        UUID completed = UUID.randomUUID();
-        UUID rejected = UUID.randomUUID();
-
-        adapter.complete(completed);
-        adapter.reject(rejected, Instant.parse("2026-09-25T00:00:00Z"), "INVALID_SNAPSHOT");
-
-        verify(retries).deleteById(completed);
-        verify(retries).deleteById(rejected);
-    }
 
     @Test
     void mapsTheIngestionSnapshotContractIntoDetectorInput() {
@@ -68,10 +48,7 @@ class HttpStoredArrivalAdapterTest {
                           "directionId":1,"visitOrder":2,"estimatedArrivalAt":"2026-09-25T00:06:00Z"}]}
                         """.formatted(raw, poll, first, reference, second, reference), MediaType.APPLICATION_JSON));
 
-        HttpStoredArrivalAdapter adapter = new HttpStoredArrivalAdapter(builder.build(),
-                mock(IngestionFeedCursorRepository.class), mock(SourceRetryRepository.class),
-                mock(SourceRejectionRepository.class), mock(SourceProcessingAuditRepository.class),
-                mock(BunchingObservationRepository.class));
+        HttpStoredArrivalAdapter adapter = adapter(builder.build(), "LIVE", null);
         var snapshot = adapter.snapshot(raw);
 
         assertEquals(raw, snapshot.rawObservationId());
@@ -88,23 +65,17 @@ class HttpStoredArrivalAdapterTest {
         UUID demoRunId = UUID.randomUUID();
         UUID rawId = UUID.randomUUID();
         UUID pollId = UUID.randomUUID();
-        var selected = mock(ConsumerSelection.class);
+        var selected = mock(ConsumerState.class);
         when(selected.mode()).thenReturn("DEMO");
         when(selected.demoRunId()).thenReturn(demoRunId);
         var selection = mock(ConsumerSelectionService.class);
         when(selection.current()).thenReturn(selected);
 
-        var cursors = mock(IngestionFeedCursorRepository.class);
-        var cursor = mock(IngestionFeedCursor.class);
-        when(cursors.findById(1)).thenReturn(Optional.of(cursor));
-        when(cursor.matches("DEMO:" + demoRunId, demoRunId)).thenReturn(false);
-        var retries = mock(SourceRetryRepository.class);
-        when(retries.findByFeedScopeAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAsc(
-                eq("DEMO:" + demoRunId), eq(NOW), any(Pageable.class))).thenReturn(List.of());
-        var rejections = mock(SourceRejectionRepository.class);
-        when(rejections.existsById(rawId)).thenReturn(false);
-        var observations = mock(BunchingObservationRepository.class);
-        when(observations.findByRawObservationId(rawId)).thenReturn(Optional.empty());
+        var consumers = mock(ConsumerStateRepository.class);
+        when(consumers.findWithLockById(1)).thenReturn(Optional.of(selected));
+        when(selected.matches("DEMO", demoRunId)).thenReturn(true); when(selected.lastSequence()).thenReturn(0L);
+        var processing = mock(SourceProcessingStateRepository.class);
+        when(processing.findByDemoRunIdAndStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAsc(eq(demoRunId), eq("DEFERRED"), eq(NOW), any(Pageable.class))).thenReturn(List.of());
 
         RestClient.Builder builder = RestClient.builder().baseUrl("http://ingestion.test");
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
@@ -114,8 +85,7 @@ class HttpStoredArrivalAdapterTest {
         server.expect(requestTo("http://ingestion.test/internal/v1/demo-runs/" + demoRunId
                         + "/arrival-snapshots/" + rawId))
                 .andRespond(withSuccess(snapshot(rawId, pollId), MediaType.APPLICATION_JSON));
-        var adapter = new HttpStoredArrivalAdapter(builder.build(), cursors, retries, rejections,
-                mock(SourceProcessingAuditRepository.class), observations, selection, () -> 0);
+        var adapter = new HttpStoredArrivalAdapter(builder.build(), consumers, processing, selection, () -> 0);
 
         var ids = adapter.pendingIds(100, NOW);
         var source = adapter.snapshot(ids.getFirst());
@@ -123,7 +93,6 @@ class HttpStoredArrivalAdapterTest {
         assertEquals(List.of(rawId), ids);
         assertEquals("SIMULATION", source.classification());
         assertEquals(demoRunId, source.demoRunId());
-        verify(cursor).selectDemo(demoRunId);
         server.verify();
     }
 
@@ -131,22 +100,16 @@ class HttpStoredArrivalAdapterTest {
     void liveSelectionReadsOnlyTheLivePageAndSnapshot() {
         UUID rawId = UUID.randomUUID();
         UUID pollId = UUID.randomUUID();
-        var selected = mock(ConsumerSelection.class);
+        var selected = mock(ConsumerState.class);
         when(selected.mode()).thenReturn("LIVE");
         var selection = mock(ConsumerSelectionService.class);
         when(selection.current()).thenReturn(selected);
 
-        var cursors = mock(IngestionFeedCursorRepository.class);
-        var cursor = mock(IngestionFeedCursor.class);
-        when(cursors.findById(1)).thenReturn(Optional.of(cursor));
-        when(cursor.matches("LIVE", null)).thenReturn(false);
-        var retries = mock(SourceRetryRepository.class);
-        when(retries.findByFeedScopeAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAsc(
-                eq("LIVE"), eq(NOW), any(Pageable.class))).thenReturn(List.of());
-        var rejections = mock(SourceRejectionRepository.class);
-        when(rejections.existsById(rawId)).thenReturn(false);
-        var observations = mock(BunchingObservationRepository.class);
-        when(observations.findByRawObservationId(rawId)).thenReturn(Optional.empty());
+        var consumers = mock(ConsumerStateRepository.class);
+        when(consumers.findWithLockById(1)).thenReturn(Optional.of(selected));
+        when(selected.matches("LIVE", null)).thenReturn(true); when(selected.lastSequence()).thenReturn(0L);
+        var processing = mock(SourceProcessingStateRepository.class);
+        when(processing.findByDemoRunIdIsNullAndStatusAndNextAttemptAtLessThanEqualOrderByNextAttemptAtAsc(eq("DEFERRED"), eq(NOW), any(Pageable.class))).thenReturn(List.of());
 
         RestClient.Builder builder = RestClient.builder().baseUrl("http://ingestion.test");
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
@@ -154,8 +117,7 @@ class HttpStoredArrivalAdapterTest {
                 .andRespond(withSuccess(feedPage(rawId, pollId), MediaType.APPLICATION_JSON));
         server.expect(requestTo("http://ingestion.test/internal/v1/arrival-snapshots/" + rawId))
                 .andRespond(withSuccess(snapshot(rawId, pollId), MediaType.APPLICATION_JSON));
-        var adapter = new HttpStoredArrivalAdapter(builder.build(), cursors, retries, rejections,
-                mock(SourceProcessingAuditRepository.class), observations, selection, () -> 1);
+        var adapter = new HttpStoredArrivalAdapter(builder.build(), consumers, processing, selection, () -> 1);
 
         var ids = adapter.pendingIds(100, NOW);
         var source = adapter.snapshot(ids.getFirst());
@@ -163,7 +125,6 @@ class HttpStoredArrivalAdapterTest {
         assertEquals(List.of(rawId), ids);
         assertEquals("OBSERVATION_ONLY", source.classification());
         assertNull(source.demoRunId());
-        verify(cursor).selectLive(1);
         server.verify();
     }
 
@@ -173,6 +134,18 @@ class HttpStoredArrivalAdapterTest {
                 "sourceKey":"fixture","fetchedAt":"2026-09-26T05:00:00Z",
                 "normalizationState":"NORMALIZED","arrivals":[]}],"nextSequence":1}
                 """.formatted(rawId, pollId);
+    }
+
+    private static HttpStoredArrivalAdapter adapter(RestClient client, String mode, UUID runId) {
+        var consumers = mock(ConsumerStateRepository.class);
+        var state = mock(ConsumerState.class);
+        when(consumers.findWithLockById(1)).thenReturn(Optional.of(state));
+        when(state.matches(mode, runId)).thenReturn(true);
+        var selection = mock(ConsumerSelectionService.class);
+        when(selection.current()).thenReturn(state);
+        when(state.mode()).thenReturn(mode); when(state.demoRunId()).thenReturn(runId);
+        var processing = mock(SourceProcessingStateRepository.class);
+        return new HttpStoredArrivalAdapter(client, consumers, processing, selection, () -> 0);
     }
 
     private static String snapshot(UUID rawId, UUID pollId) {

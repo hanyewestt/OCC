@@ -273,9 +273,9 @@ Three tiers, three locations, three speeds.
 **These are two different things and must not share a code path.**
 
 - **Operational logs**: SLF4J, `private static final Logger log = LoggerFactory.getLogger(X.class)`. For diagnosing the service. Free to be lossy.
-- **Audit records**: a domain concern, persisted with actor, affected operational entity, action, time, outcome and correlation ID. Must not be lost when a business change succeeds.
+- **Audit records**: retain only AI input/output evidence and active operational recovery state. Do not create a permanent general-purpose audit trail for routine processing.
 
-Configure diagnostic-log retention separately from operational data. Raw and normalized observations have a 24-hour retention window; audit records, simulation snapshots and imported historical datasets are excluded from that cleanup and follow their own retention rules. Label simulation and observation-only records explicitly so retrospective investigations can distinguish them. Do not reuse a diagnostic-log or telemetry retention setting for audit or business records.
+Configure diagnostic-log retention separately from operational data. Raw, normalized, closed demo, and resolved-alert history use the configured `OCC_INGESTION_RETENTION` window (12h by default); cleanup is irreversible. Retained AI response/input snapshots follow their separate long-lived policy. Label simulation and observation-only records explicitly so retrospective investigations can distinguish them.
 
 Never log a password, token, MFA secret, verification code, or session identifier. Never log a full email at INFO. When in doubt, log the stable user ID — that is what it is for.
 

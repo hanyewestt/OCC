@@ -164,19 +164,19 @@ class BunchingRecommendationFlowIT {
         post(validRequest());
 
         assertThat(jdbc.queryForMap("""
-                SELECT request_id, bunching_event_id, diagnosis_id, mitigation_type,
-                       recommendation_status, rationale, request_payload::text AS request_payload,
+                SELECT recommendation_id, bunching_event_id, direction_id, adjustment_seconds,
+                       request_payload::text AS request_payload,
                        mitigation_context::text AS mitigation_context,
                        response_payload::text AS response_payload, created_at
                   FROM recommendation.recommendation_record
-                 WHERE idempotency_key = ?::uuid
+                 WHERE recommendation_id = ?::uuid
                 """, IDEMPOTENCY_KEY))
-                .containsEntry("mitigation_type", "HOLD")
-                .containsEntry("recommendation_status", "RECOMMENDED")
                 .satisfies(row -> {
+                    assertThat(((Number) row.get("direction_id")).intValue()).isEqualTo(1);
+                    assertThat(((Number) row.get("adjustment_seconds")).intValue()).isEqualTo(120);
                     assertThat(row.get("request_payload").toString()).contains("f2b8d1b5-c24c-48bb-8a66-bff7be1e9e73");
                     assertThat(row.get("mitigation_context").toString()).contains("maximumHoldSeconds");
-                    assertThat(row.get("response_payload").toString()).contains("route190-reference-directive-first-hold");
+                    assertThat(row.get("response_payload").toString()).contains("HOLD", "RECOMMENDED", "route190-reference-directive-first-hold");
                     assertThat(row.get("created_at")).isNotNull();
                 });
     }

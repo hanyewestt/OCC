@@ -154,7 +154,8 @@ class DiagnosisRequestPersistenceIT {
                 "{\"recommendation\":true}", UUID.randomUUID());
 
         assertThat(repository.findById(requestId).orElseThrow().status().name()).isEqualTo("COMPLETED");
-        assertThat(diagnoses.findByRequestId(requestId)).isPresent();
+        assertThat(diagnoses.findByRequestId(requestId)).hasValueSatisfying(persisted ->
+                assertThat(persisted.id()).isEqualTo(diagnosis.id()));
         assertThat(deliveries.findById(deliveryId)).isPresent();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM diagnosis.model_invocation_record WHERE request_id = ?",
                 Integer.class, requestId)).isEqualTo(1);

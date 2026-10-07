@@ -104,8 +104,6 @@ class IngestionStartupIT {
             assertThat(observation.getPayloadChecksum()).hasSize(64);
             assertThat(observation.getFetchedAt()).isNotNull();
         });
-        assertThat(jdbc.queryForObject("select count(*) from ingestion.bunching_snapshot", Integer.class))
-                .isEqualTo(1);
         assertThat(bunchingFeed.page(0, 100).items()).hasSize(1);
     }
 

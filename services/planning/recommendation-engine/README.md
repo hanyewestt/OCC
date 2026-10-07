@@ -528,17 +528,21 @@ existing role's password.
 
 The application connects as `occ_recommendation`. Flyway migration
 `V001__create_recommendation_record.sql` creates the singular
-`recommendation_record` table and supporting indexes. Each successful action
-stores indexed event, diagnosis and mitigation identifiers together with:
+`recommendation_record` table and supporting indexes. `V004__compact_recommendation_record.sql`
+contracts it to nine columns: the recommendation/idempotency UUID, request hash,
+indexed event and safety projections, immutable request/context/response JSON,
+and creation time. Each successful action retains:
 
 - the SHA-256 fingerprint of the validated API request;
 - the complete validated request as JSON;
 - the fixture-backed mitigation context and applied constraints as JSON;
 - the complete validated recommendation as JSON;
-- combined evidence IDs, rationale, status and creation time.
+- the generated evidence IDs, rationale, status and creation time inside the
+  immutable JSON payloads.
 
-The unique idempotency-key constraint and `INSERT ... ON CONFLICT DO NOTHING`
-make concurrent duplicate handling database-backed. Other services must
+`recommendation_id` is the idempotency key and the primary key, so `INSERT ...
+ON CONFLICT DO NOTHING` makes concurrent duplicate handling database-backed.
+Other services must
 integrate through this API instead of reading or mutating the schema directly.
 
 Flyway migration `V002__create_model_invocation_record.sql` creates a separate

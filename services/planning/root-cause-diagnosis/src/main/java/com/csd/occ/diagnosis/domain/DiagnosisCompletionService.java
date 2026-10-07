@@ -34,7 +34,7 @@ public class DiagnosisCompletionService {
                 details, snapshotHash)).forEach(invocations::save);
         deliveries.save(new RecommendationDelivery(deliveryId, diagnosis.id(), deliveryPayload,
                 snapshotHash(deliveryPayload), clock.instant()));
-        request.complete(diagnosis.id(), clock.instant());
+        request.complete(clock.instant());
     }
 
     @Transactional

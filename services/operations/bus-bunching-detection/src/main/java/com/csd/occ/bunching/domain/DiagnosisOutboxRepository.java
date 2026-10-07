@@ -9,6 +9,9 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface DiagnosisOutboxRepository extends JpaRepository<DiagnosisOutbox, UUID> {
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("delete from DiagnosisOutbox row where row.status in ('DELIVERED', 'FAILED_TERMINAL') and coalesce(row.deliveredAt, row.createdAt) < :cutoff")
+    int deleteDeliveredOrTerminalBefore(@Param("cutoff") Instant cutoff);
     Optional<DiagnosisOutbox> findByEventId(UUID eventId);
     @Query(value = "select * from bunching.diagnosis_outbox where "
             + "((status = 'PENDING' and next_attempt_at <= :now) or (status = 'PROCESSING' and lease_until <= :now)) "

@@ -140,12 +140,12 @@ class BunchingDiagnosisDispatcherIT {
                 INSERT INTO bunching.alert_event
                     (id, alert_id, action, classification, service_id, stop_code, direction_id,
                      raw_observation_id, poll_run_id, fetched_at, triggered_at, evidence,
-                     demo_run_id, feed_scope, expected_headway_seconds,
+                     demo_run_id, expected_headway_seconds,
                      first_observed_headway_seconds, second_observed_headway_seconds)
                 VALUES (?, ?, 'OPENED', 'SIMULATION', '190', '44009', 1,
-                        ?, ?, ?, ?, '{}'::jsonb, ?, ?, 600, 360, 390)
+                        ?, ?, ?, ?, '{}'::jsonb, ?, 600, 360, 390)
                 """, eventId, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
-                Timestamp.from(NOW), Timestamp.from(NOW), demoRunId, "DEMO:" + demoRunId);
+                Timestamp.from(NOW), Timestamp.from(NOW), demoRunId);
         DiagnosisOutbox row = new DiagnosisOutbox(UUID.randomUUID(), eventId, NOW);
         return repository.saveAndFlush(row);
     }

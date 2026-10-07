@@ -49,10 +49,8 @@ public class AlertEvent {
         id = UUID.randomUUID();
         this.alertId = alertId;
         this.action = action;
-        actor = "SYSTEM:BUS_BUNCHING_DETECTION";
         this.classification = classification;
         this.demoRunId = demoRunId;
-        feedScope = demoRunId == null ? "LIVE" : "DEMO:" + demoRunId;
         this.leadingObservationId = leadingObservationId;
         this.followingObservationId = followingObservationId;
         this.serviceId = serviceId;
@@ -78,10 +76,8 @@ public class AlertEvent {
     @Id private UUID id;
     private UUID alertId;
     private String action;
-    private String actor;
     private String classification;
     private UUID demoRunId;
-    private String feedScope;
     private UUID leadingObservationId;
     private UUID followingObservationId;
     private String serviceId;

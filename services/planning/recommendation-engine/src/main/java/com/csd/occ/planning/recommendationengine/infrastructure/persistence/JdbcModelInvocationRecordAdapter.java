@@ -17,9 +17,9 @@ public class JdbcModelInvocationRecordAdapter implements ModelInvocationRecordPo
                 output_schema_version, provider_response_id, outcome, candidate_payload,
                 rejection_reason, failure_category, deterministic_fallback_used,
                 prompt_tokens, completion_tokens, total_tokens, started_at,
-                completed_at, latency_milliseconds, created_at
+                completed_at, latency_milliseconds
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSONB), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSONB), ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             """;
 
@@ -53,7 +53,6 @@ public class JdbcModelInvocationRecordAdapter implements ModelInvocationRecordPo
                 usage == null ? null : usage.totalTokens().orElse(null),
                 Timestamp.from(record.metadata().startedAt()),
                 Timestamp.from(record.metadata().completedAt()),
-                record.metadata().latencyMilliseconds(),
-                Timestamp.from(record.metadata().completedAt()));
+                record.metadata().latencyMilliseconds());
     }
 }

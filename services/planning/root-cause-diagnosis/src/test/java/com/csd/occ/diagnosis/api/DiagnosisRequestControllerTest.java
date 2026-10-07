@@ -11,6 +11,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.csd.occ.diagnosis.api.error.GlobalExceptionHandler;
 import com.csd.occ.diagnosis.domain.DiagnosisQueryService;
 import com.csd.occ.diagnosis.domain.DiagnosisRequest;
+import com.csd.occ.diagnosis.domain.DiagnosisRequestStatus;
+import com.csd.occ.diagnosis.domain.DiagnosisRequestView;
 import com.csd.occ.diagnosis.domain.DiagnosisRequestService;
 import com.csd.occ.diagnosis.domain.EventType;
 import java.time.Instant;
@@ -40,6 +42,8 @@ class DiagnosisRequestControllerTest {
                 "bus-bunching-detection", eventId, DiagnosisRequestService.SCHEMA_VERSION, createdAt);
         when(requests.enqueue(EventType.BUS_BUNCHING, "bus-bunching-detection", eventId, idempotencyKey))
                 .thenReturn(request);
+        when(query.findRequest(requestId)).thenReturn(new DiagnosisRequestView(
+                requestId, null, DiagnosisRequestStatus.PENDING, null, createdAt));
 
         mvc.perform(post("/internal/v1/diagnosis-requests")
                         .header("Idempotency-Key", idempotencyKey)
@@ -51,6 +55,7 @@ class DiagnosisRequestControllerTest {
                 .andExpect(jsonPath("$.status").value("PENDING"));
 
         verify(requests).enqueue(EventType.BUS_BUNCHING, "bus-bunching-detection", eventId, idempotencyKey);
+        verify(query).findRequest(requestId);
     }
 
     @Test

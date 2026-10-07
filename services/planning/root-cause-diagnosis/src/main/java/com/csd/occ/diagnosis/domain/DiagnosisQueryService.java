@@ -32,7 +32,9 @@ public class DiagnosisQueryService {
     @Transactional(readOnly = true)
     public DiagnosisRequestView findRequest(UUID id) {
         DiagnosisRequest request = requests.findById(id).orElseThrow(DiagnosisNotFoundException::new);
-        return new DiagnosisRequestView(request.id(), request.diagnosisId(), request.status(),
+        UUID diagnosisId = diagnoses.findByRequestId(request.id()).map(RootCauseDiagnosisEntity::id)
+                .orElse(null);
+        return new DiagnosisRequestView(request.id(), diagnosisId, request.status(),
                 request.failureCode(), request.createdAt());
     }
 

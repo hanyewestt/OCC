@@ -10,14 +10,23 @@ public class RetentionService {
     private final BusArrivalObservationRepository arrivals;
     private final RawObservationRepository rawObservations;
     private final PollRunRepository runs;
+    private final ReferenceDatasetVersionRepository versions;
+    private final BusRouteStopRepository routeStops;
+    private final BusServiceRepository services;
+    private final BusStopRepository stops;
     private final PollingConfigurationPort configuration;
     private final Clock clock;
 
     public RetentionService(BusArrivalObservationRepository arrivals, RawObservationRepository rawObservations,
-            PollRunRepository runs, PollingConfigurationPort configuration, Clock clock) {
+            PollRunRepository runs, ReferenceDatasetVersionRepository versions, BusRouteStopRepository routeStops,
+            BusServiceRepository services, BusStopRepository stops, PollingConfigurationPort configuration, Clock clock) {
         this.arrivals = arrivals;
         this.rawObservations = rawObservations;
         this.runs = runs;
+        this.versions = versions;
+        this.routeStops = routeStops;
+        this.services = services;
+        this.stops = stops;
         this.configuration = configuration;
         this.clock = clock;
     }
@@ -28,5 +37,13 @@ public class RetentionService {
         arrivals.deleteExpiredLiveObservations(cutoff);
         rawObservations.deleteExpiredLiveObservations(cutoff);
         runs.deleteCompletedWithoutRawBefore(cutoff);
+        versions.findExpiredUnreferencedIds(cutoff).forEach(this::deleteTopology);
+    }
+
+    private void deleteTopology(java.util.UUID versionId) {
+        routeStops.deleteByIdReferenceVersionId(versionId);
+        services.deleteByIdReferenceVersionId(versionId);
+        stops.deleteByIdReferenceVersionId(versionId);
+        versions.deleteById(versionId);
     }
 }

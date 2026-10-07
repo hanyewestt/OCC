@@ -56,7 +56,7 @@ class BunchingAlertIT {
     }
 
     @BeforeEach
-    void reset() { jdbc.execute("TRUNCATE bunching.diagnosis_outbox, bunching.alert_state, bunching.alert_event, bunching.bunching_observation"); }
+    void reset() { jdbc.execute("TRUNCATE bunching.diagnosis_outbox, bunching.alert_processing_state, bunching.alert_event, bunching.source_processing_state"); }
 
     @Test
     void opensOnceClearsAndReopensWithANewEpisode() {
@@ -77,8 +77,8 @@ class BunchingAlertIT {
         record(snapshot(-120, 60, Optional.of(1)));
         record(snapshot(0, 60, Optional.empty()));
         assertEquals(1, events());
-        assertEquals(0, jdbc.queryForObject("SELECT direction_id FROM bunching.alert_state", Integer.class));
-        assertNotNull(jdbc.queryForObject("SELECT active_alert_id FROM bunching.alert_state", UUID.class));
+        assertEquals(0, jdbc.queryForObject("SELECT direction_id FROM bunching.alert_processing_state", Integer.class));
+        assertNotNull(jdbc.queryForObject("SELECT active_alert_id FROM bunching.alert_processing_state", UUID.class));
     }
 
     @Test
@@ -109,9 +109,9 @@ class BunchingAlertIT {
         record(snapshot(0, 60, Optional.of(2)));
         record(snapshot(1, 90, Optional.of(1)));
         assertEquals(3, events());
-        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM bunching.alert_state WHERE active_alert_id IS NOT NULL", Integer.class));
-        assertEquals(2, jdbc.queryForObject("SELECT direction_id FROM bunching.alert_state WHERE active_alert_id IS NOT NULL", Integer.class));
-        jdbc.execute("DELETE FROM bunching.bunching_observation");
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM bunching.alert_processing_state WHERE active_alert_id IS NOT NULL", Integer.class));
+        assertEquals(2, jdbc.queryForObject("SELECT direction_id FROM bunching.alert_processing_state WHERE active_alert_id IS NOT NULL", Integer.class));
+        jdbc.execute("DELETE FROM bunching.source_processing_state");
         assertEquals(3, events());
         assertEquals(3, jdbc.queryForObject("SELECT count(*) FROM bunching.alert_event WHERE evidence->'snapshot' IS NOT NULL", Integer.class));
     }
@@ -160,8 +160,8 @@ class BunchingAlertIT {
                 throw new IllegalStateException("synthetic rollback");
             }));
             assertEquals(0, events());
-            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM bunching.alert_state", Integer.class));
-            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM bunching.bunching_observation", Integer.class));
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM bunching.alert_processing_state", Integer.class));
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM bunching.source_processing_state", Integer.class));
             var notifications = connection.unwrap(PGConnection.class).getNotifications(100);
             assertTrue(notifications == null || notifications.length == 0);
             statement.execute("UNLISTEN *");
@@ -174,7 +174,7 @@ class BunchingAlertIT {
         jdbc.execute("ALTER TABLE bunching.alert_event ADD CONSTRAINT test_reject_event CHECK(false) NOT VALID");
         try {
             assertThrows(RuntimeException.class, () -> record(input));
-            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM bunching.bunching_observation", Integer.class));
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM bunching.source_processing_state", Integer.class));
         } finally { jdbc.execute("ALTER TABLE bunching.alert_event DROP CONSTRAINT test_reject_event"); }
         record(input);
         assertEquals(1, events());

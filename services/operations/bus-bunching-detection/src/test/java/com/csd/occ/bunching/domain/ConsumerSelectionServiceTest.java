@@ -18,43 +18,37 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class ConsumerSelectionServiceTest {
     private static final Instant NOW = Instant.parse("2026-09-26T05:00:00Z");
 
-    @Mock private ConsumerSelectionRepository selections;
-    @Mock private IngestionFeedCursorRepository cursors;
+    @Mock private ConsumerStateRepository states;
     @Mock private IngestionFeedHeadPort liveHead;
-    @Mock private IngestionFeedCursor cursor;
-    @Mock private ConsumerSelection selection;
+    @Mock private ConsumerState state;
 
     @Test
     void selectingLiveMovesTheCursorToTheCurrentLiveHead() {
-        when(cursors.findById(1)).thenReturn(Optional.of(cursor));
-        when(selections.findById(1)).thenReturn(Optional.of(selection));
+        when(states.findWithLockById(1)).thenReturn(Optional.of(state));
         when(liveHead.currentLiveSequence()).thenReturn(18_000L);
         var service = service();
 
         service.select("LIVE", null);
 
-        verify(cursor).selectLive(18_000L);
-        verify(selection).select("LIVE", null, NOW);
+        verify(state).selectLive(18_000L, NOW);
         verify(liveHead).currentLiveSequence();
     }
 
     @Test
     void selectingDemoStartsAtThatRunWithoutReadingOrAdvancingTheLiveFeed() {
         UUID runId = UUID.randomUUID();
-        when(cursors.findById(1)).thenReturn(Optional.of(cursor));
-        when(selections.findById(1)).thenReturn(Optional.of(selection));
+        when(states.findWithLockById(1)).thenReturn(Optional.of(state));
         var service = service();
 
         service.select("DEMO", runId);
 
-        verify(cursor).selectDemo(runId);
-        verify(selection).select("DEMO", runId, NOW);
+        verify(state).selectDemo(runId, NOW);
         verify(liveHead, never()).currentLiveSequence();
-        verify(cursor, never()).selectLive(org.mockito.ArgumentMatchers.anyLong());
+        verify(state, never()).selectLive(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any());
     }
 
     private ConsumerSelectionService service() {
-        return new ConsumerSelectionService(selections, cursors, liveHead,
+        return new ConsumerSelectionService(states, liveHead,
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }
 }

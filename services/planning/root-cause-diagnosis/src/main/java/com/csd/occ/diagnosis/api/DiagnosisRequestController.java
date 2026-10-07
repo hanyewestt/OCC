@@ -51,7 +51,8 @@ public class DiagnosisRequestController {
                     description = "UUID reused when retrying this producer event")
             @RequestHeader(name = "Idempotency-Key") UUID idempotencyKey) {
         var request = requests.enqueue(body.eventType(), body.producer(), body.eventId(), idempotencyKey);
-        return new DiagnosisRequestResponse(request.id(), request.diagnosisId(), request.status(), request.failureCode(), request.createdAt());
+        var view = query.findRequest(request.id());
+        return new DiagnosisRequestResponse(view.requestId(), view.diagnosisId(), view.status(), view.failureCode(), view.createdAt());
     }
 
     @GetMapping("/{requestId}")

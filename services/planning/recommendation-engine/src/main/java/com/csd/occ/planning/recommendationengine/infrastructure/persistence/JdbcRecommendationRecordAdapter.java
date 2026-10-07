@@ -20,14 +20,14 @@ import tools.jackson.databind.json.JsonMapper;
 public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort {
 
     private static final String FIND_BY_IDEMPOTENCY_KEY = """
-            SELECT idempotency_key, request_hash, request_id, request_payload,
+            SELECT recommendation_id, request_hash, request_payload,
                    mitigation_context, response_payload, created_at
               FROM recommendation.recommendation_record
-             WHERE idempotency_key = ?
+             WHERE recommendation_id = ?
             """;
 
     private static final String FIND_BY_BUNCHING_EVENT_ID = """
-            SELECT idempotency_key, request_hash, request_id, request_payload,
+            SELECT recommendation_id, request_hash, request_payload,
                    mitigation_context, response_payload, created_at
               FROM recommendation.recommendation_record
              WHERE bunching_event_id = ?
@@ -37,18 +37,14 @@ public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort
 
     private static final String INSERT_IF_ABSENT = """
             INSERT INTO recommendation.recommendation_record (
-                recommendation_id, idempotency_key, request_hash, request_id,
-                bunching_event_id, diagnosis_id, classification, service_id,
-                direction_id, monitored_stop_code, mitigation_type,
-                recommendation_status, rationale, target_bus_reference,
-                control_stop_code, adjustment_seconds, request_payload,
-                mitigation_context, response_payload, evidence_ids, created_at
+                recommendation_id, request_hash, bunching_event_id, direction_id,
+                adjustment_seconds, request_payload, mitigation_context,
+                response_payload, created_at
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                CAST(? AS JSONB), CAST(? AS JSONB), CAST(? AS JSONB),
+                ?, ?, ?, ?, ?, CAST(? AS JSONB), CAST(? AS JSONB),
                 CAST(? AS JSONB), ?
             )
-            ON CONFLICT (idempotency_key) DO NOTHING
+            ON CONFLICT (recommendation_id) DO NOTHING
             """;
 
     private final JdbcTemplate jdbc;
@@ -85,25 +81,13 @@ public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort
         int inserted = jdbc.update(
                 INSERT_IF_ABSENT,
                 recommendation.recommendationId(),
-                record.idempotencyKey(),
                 record.requestHash(),
-                record.requestId(),
                 record.bunchingEvent().bunchingEventId(),
-                record.diagnosis().diagnosisId(),
-                record.classification().name(),
-                record.bunchingEvent().serviceId(),
                 record.bunchingEvent().directionId(),
-                record.bunchingEvent().monitoredStopCode(),
-                recommendation.mitigationType().name(),
-                recommendation.status().name(),
-                recommendation.explanation().rationale(),
-                recommendation.targetBusReference(),
-                recommendation.controlStopCode(),
                 recommendation.adjustmentSeconds(),
                 json.writeValueAsString(request),
                 json.writeValueAsString(record.mitigationContext()),
                 json.writeValueAsString(recommendation),
-                json.writeValueAsString(recommendation.evidenceIds()),
                 Timestamp.from(record.createdAt()));
         return inserted == 1;
     }
@@ -117,9 +101,9 @@ public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort
                 result.getString("response_payload"),
                 ValidatedMitigationRecommendation.class);
         return new RecommendationRecord(
-                result.getObject("idempotency_key", UUID.class),
+                result.getObject("recommendation_id", UUID.class),
                 result.getString("request_hash"),
-                result.getObject("request_id", UUID.class),
+                request.requestId(),
                 request.classification(),
                 request.bunchingEvent(),
                 request.diagnosis(),
