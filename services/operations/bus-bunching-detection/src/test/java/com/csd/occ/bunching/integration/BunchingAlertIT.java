@@ -32,6 +32,7 @@ import java.util.concurrent.Executors;
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest(properties = {"occ.bunching.consumer-enabled=false", "occ.bunching.stale-after=120s",
+        "occ.bunching.diagnosis.worker-enabled=false",
         "spring.datasource.url=jdbc:postgresql://unused/test", "spring.datasource.password=synthetic-only"})
 @Testcontainers(disabledWithoutDocker = true)
 @Import(BunchingAlertIT.Time.class)

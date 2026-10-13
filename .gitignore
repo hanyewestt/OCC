@@ -35,4 +35,5 @@ infra/local/.env
 !.env.example
 **/target/
 **/bin/
+**/__pycache__/
 .vscode/settings.json
