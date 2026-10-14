@@ -58,6 +58,8 @@ class DiagnosisRequestPersistenceIT {
     @Autowired RecommendationDeliveryRepository deliveries;
     @Autowired DiagnosisCompletionService completion;
     @Autowired JdbcTemplate jdbc;
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    com.csd.occ.diagnosis.domain.DiagnosisInputService inputs;
 
     @BeforeEach
     void clearDiagnosisTables() {
@@ -187,6 +189,20 @@ class DiagnosisRequestPersistenceIT {
                 "Available evidence is insufficient.", 0.0, 0.0, List.of("evidence-1"), List.of(),
                 new ConfidenceComponents(1, 0, 0, 0, 0), "{}", "evidence-hash", "GOOGLE_GENAI", model,
                 "prompt-v1", "schema-v1", NOW);
+    }
+
+    @Test void failedAttemptRetainsInputAndActualResponseWithoutAnEvidenceHashOrResult() {
+        UUID requestId = UUID.randomUUID();
+        requests.enqueue(EventType.BUS_BUNCHING, PRODUCER, UUID.randomUUID(), requestId);
+        requests.claimDueRequests(1, Duration.ofMinutes(1));
+        var details = new ModelInvocationDetails("GOOGLE_GENAI", "synthetic-model", "response-1", "prompt-v1", "schema-v1",
+                NOW, NOW, 0, 1, 1, 2, "INVALID", null, 1, "{\"evidence\":true}", "{invalid-json");
+        completion.fail(requestId, "MODEL_OUTPUT_INVALID", false, false, NOW, List.of(details), null);
+        assertThat(jdbc.queryForMap("select input_snapshot, generated_response, evidence_snapshot_hash from diagnosis.model_invocation_record"))
+                .containsEntry("input_snapshot", "{\"evidence\":true}")
+                .containsEntry("generated_response", "{invalid-json")
+                .containsEntry("evidence_snapshot_hash", null);
+        assertThat(diagnoses.findByRequestId(requestId)).isEmpty();
     }
 
     private ModelInvocationDetails invocation(String model) {

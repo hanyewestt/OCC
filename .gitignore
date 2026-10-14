@@ -36,3 +36,7 @@ infra/local/.env
 **/target/
 **/bin/
 .vscode/settings.json
+
+docs/
+!docs/CONVENTIONS.md
+!docs/commit-convention.md

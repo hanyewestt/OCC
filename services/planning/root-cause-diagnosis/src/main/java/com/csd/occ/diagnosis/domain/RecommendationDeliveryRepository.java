@@ -8,6 +8,9 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface RecommendationDeliveryRepository extends JpaRepository<RecommendationDelivery, UUID> {
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("delete from RecommendationDelivery row where (row.status = 'DELIVERED' and row.deliveredAt < :cutoff) or (row.status = 'FAILED_TERMINAL' and row.terminalAt < :cutoff)")
+    int deleteCompletedBefore(@Param("cutoff") Instant cutoff);
     java.util.Optional<RecommendationDelivery> findByDiagnosisId(UUID diagnosisId);
 
     @Query(value = "select * from diagnosis.recommendation_delivery where "

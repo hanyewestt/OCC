@@ -1,0 +1,320 @@
+flowchart LR
+    subgraph Ingestion["ingestion"]
+        direction TB
+
+        PollTarget["`**poll_target**
+source
+scope_key
+stop_code
+enabled
+poll_interval_seconds
+created_at
+updated_at
+service_id`"]
+
+        FeedStatus["`**feed_status**
+source
+scope_key
+status
+last_attempt_at
+last_success_at
+consecutive_failures
+stale_after_seconds
+message
+updated_at`"]
+
+        PollRun["`**poll_run**
+id
+source
+scope_key
+idempotency_key
+started_at
+completed_at
+outcome
+http_status
+records_received
+error_code
+error_message
+classification
+demo_run_id`"]
+
+        RawObservation["`**raw_observation**
+id
+poll_run_id
+source
+source_key
+request_parameters
+payload
+payload_checksum
+observed_at
+fetched_at
+ingested_at
+http_status
+classification
+feed_sequence
+demo_run_id`"]
+
+        ReferenceVersion["`**reference_dataset_version**
+id
+dataset
+version_key
+checksum
+status
+imported_at
+activated_at
+retired_at`"]
+
+        BusStop["`**bus_stop**
+reference_version_id
+stop_code
+road_name
+description
+location`"]
+
+        BusService["`**bus_service**
+reference_version_id
+service_id
+operator
+category`"]
+
+        RouteStop["`**bus_route_stop**
+reference_version_id
+service_id
+operator
+direction_id
+stop_sequence
+stop_code
+distance_km`"]
+
+        ArrivalObservation["`**bus_arrival_observation**
+id
+raw_observation_id
+poll_run_id
+reference_version_id
+stop_code
+service_id
+operator
+direction_id
+visit_order
+estimated_arrival_at
+latitude
+longitude
+load_category
+feature
+fetched_at
+ingested_at
+record_checksum
+origin_code
+destination_code
+monitored
+vehicle_type
+classification
+demo_run_id
+trip_id
+visit_number`"]
+
+        DemoRun["`**demo_run**
+id
+scenario_key
+scenario_version
+seed
+status
+current_step
+started_at
+completed_at
+closed_at
+failure_reason
+classification`"]
+
+        DemoVehicleAssignment["`**demo_vehicle_assignment**
+demo_run_id
+trip_id
+service_id
+direction_id
+operator
+vehicle_registration_number
+vehicle_type
+captain_code`"]
+
+        TrafficIncident["`**traffic_incident_observation**
+id
+raw_observation_id
+poll_run_id
+source_incident_key
+incident_type
+latitude
+longitude
+message
+observed_at
+fetched_at
+ingested_at
+classification
+demo_run_id`"]
+
+        DemoRuntimeSetting["`**demo_runtime_setting**
+id
+enabled
+changed_at`"]
+
+        PollRun -->|"1 to 0..many"| RawObservation
+        PollRun -->|"1 to 0..many"| ArrivalObservation
+        PollRun -->|"1 to 0..many"| TrafficIncident
+        RawObservation -->|"1 to 0..many"| ArrivalObservation
+        RawObservation -->|"1 to 0..many"| TrafficIncident
+
+        ReferenceVersion -->|"1 to 0..many"| BusStop
+        ReferenceVersion -->|"1 to 0..many"| BusService
+        ReferenceVersion -->|"1 to 0..many"| RouteStop
+        ReferenceVersion -->|"1 to 0..many"| ArrivalObservation
+        BusService -->|"1 to 0..many"| RouteStop
+        BusStop -->|"1 to 0..many"| RouteStop
+        BusStop -->|"1 to 0..many"| ArrivalObservation
+
+        DemoRun -->|"1 to 0..many"| PollRun
+        DemoRun -->|"1 to 0..many"| RawObservation
+        DemoRun -->|"1 to 0..many"| DemoVehicleAssignment
+        DemoRun -->|"1 to 0..many"| TrafficIncident
+        DemoVehicleAssignment -->|"1 to 0..many"| ArrivalObservation
+    end
+
+    subgraph Disruption["disruption"]
+        direction TB
+
+        DisruptionRecord["`**disruption**
+id
+type
+status
+classification
+demo_run_id
+service_id
+stop_code
+direction_id
+detected_at
+cleared_at`"]
+
+        DisruptionEvent["`**disruption_event**
+id
+disruption_id
+action
+evidence_snapshot
+occurred_at`"]
+
+        EventEvidence["`**event_evidence**
+id
+event_id
+arrival_observation_id`"]
+
+        DisruptionRecord -->|"1 to 0..many"| DisruptionEvent
+        DisruptionEvent -->|"1 to 0..many"| EventEvidence
+    end
+
+    subgraph Planning["planning"]
+        direction TB
+
+        DiagnosisRequest["`**diagnosis_request**
+id
+event_type
+producer
+event_id
+schema_version
+status
+attempt_count
+next_attempt_at
+lease_until
+failure_code
+created_at
+updated_at
+version`"]
+
+        RootCauseDiagnosis["`**root_cause_diagnosis**
+id
+request_id
+cause_code
+cause_subtype
+likely_cause
+confidence
+evidence_support_score
+supporting_evidence_ids
+limitations
+confidence_components
+evidence_snapshot
+evidence_snapshot_hash
+provider
+model
+prompt_version
+schema_version
+completed_at`"]
+
+        RecommendationDelivery["`**recommendation_delivery**
+id
+diagnosis_id
+payload_json
+payload_fingerprint
+status
+attempt_count
+next_attempt_at
+lease_until
+last_http_status
+failure_code
+response_json
+created_at
+delivered_at`"]
+
+        RecommendationRecord["`**recommendation_record**
+recommendation_id
+request_hash
+bunching_event_id
+direction_id
+adjustment_seconds
+request_payload
+mitigation_context
+response_payload
+created_at`"]
+
+        ModelInvocation["`**model_invocation**
+invocation_id
+purpose
+diagnosis_request_id
+recommendation_id
+provider
+model
+prompt_version
+output_schema_version
+provider_response_id
+evidence_snapshot_hash
+invocation_type
+attempt_number
+outcome
+validation_outcome
+candidate_payload
+rejection_reason
+failure_category
+deterministic_fallback_used
+prompt_tokens
+completion_tokens
+total_tokens
+started_at
+completed_at
+latency_milliseconds`"]
+
+        DiagnosisRequest -->|"1 to 0..1"| RootCauseDiagnosis
+        DiagnosisRequest -->|"1 to 0..many"| ModelInvocation
+        RecommendationRecord -->|"1 to 0..many"| ModelInvocation
+        RootCauseDiagnosis -->|"1 to 0..1"| RecommendationDelivery
+
+        RootCauseDiagnosis -.->|"1 to 0..many"| RecommendationRecord
+        RecommendationDelivery -.->|"1 to 0..1"| RecommendationRecord
+    end
+
+    ArrivalObservation -.->|"1 to 0..many"| EventEvidence
+    DemoRun -.->|"1 to 0..many"| DisruptionRecord
+    DisruptionEvent -.->|"1 to 0..many"| DiagnosisRequest
+    DisruptionRecord -.->|"1 to 0..many"| RecommendationRecord
+
+    classDef ingestion fill:#e8f0fe,stroke:#4776b4,color:#222;
+    classDef disruption fill:#fff1d6,stroke:#b7791f,color:#222;
+    classDef planning fill:#e8f5e9,stroke:#388e3c,color:#222;
+
+    class PollTarget,FeedStatus,PollRun,RawObservation,ReferenceVersion,BusStop,BusService,RouteStop,ArrivalObservation,DemoRun,DemoVehicleAssignment,TrafficIncident,DemoRuntimeSetting ingestion;
+    class DisruptionRecord,DisruptionEvent,EventEvidence disruption;
+    class DiagnosisRequest,RootCauseDiagnosis,RecommendationDelivery,RecommendationRecord,ModelInvocation planning;

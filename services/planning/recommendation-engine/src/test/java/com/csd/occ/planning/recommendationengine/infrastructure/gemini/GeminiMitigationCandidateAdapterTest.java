@@ -122,6 +122,14 @@ class GeminiMitigationCandidateAdapterTest {
                                 .isEqualTo(ModelInvocationFailureCategory.INVALID_REQUEST));
     }
 
+    @Test void malformedResponseIsRetainedWithTheInputInsteadOfDiscarded() {
+        var result = adapter(modelReturning("{not-json")).generate(request());
+        assertThat(result).isInstanceOfSatisfying(MitigationCandidateGenerationResult.Failed.class, failed -> {
+            assertThat(failed.metadata().generatedResponse()).isEqualTo("{not-json");
+            assertThat(failed.metadata().inputSnapshot()).contains("44251", "SBS5898U");
+        });
+    }
+
     @Test
     void oversizedUtf8PromptIsRejectedBeforeProviderInvocation() {
         ChatModel model = mock(ChatModel.class);
@@ -147,7 +155,8 @@ class GeminiMitigationCandidateAdapterTest {
                 JsonMapper.builder().findAndAddModules().build(),
                 Clock.fixed(Instant.parse("2026-09-28T00:00:00Z"), ZoneOffset.UTC),
                 "gemini-3.1-flash-lite",
-                new RecommendationInputProperties(65_536, maxPromptInputBytes));
+                new RecommendationInputProperties(65_536, maxPromptInputBytes),
+                new com.csd.occ.planning.recommendationengine.infrastructure.config.AiAuditProperties(65_536));
     }
 
     private ChatModel modelReturning(String content) {

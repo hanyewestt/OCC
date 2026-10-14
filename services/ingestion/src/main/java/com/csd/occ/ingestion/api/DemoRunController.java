@@ -48,7 +48,8 @@ public class DemoRunController {
     }
 
     @GetMapping("/{id}")
-    @Operation(operationId = "getDemoRun", summary = "Get run status and simulation alerts")
+    @Operation(operationId = "getDemoRun", summary = "Get run status and simulation alerts",
+            description = "Closed and failed runs older than the configured operational retention window return 404, including before physical cleanup. Active replay runs remain available.")
     @ApiResponses({@ApiResponse(responseCode = "200", description = "Run status returned"),
             @ApiResponse(responseCode = "404", description = "Demo run not found"),
             @ApiResponse(responseCode = "503", description = "Bunching status is unavailable")})

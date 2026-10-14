@@ -17,9 +17,9 @@ public class JdbcModelInvocationRecordAdapter implements ModelInvocationRecordPo
                 output_schema_version, provider_response_id, outcome, candidate_payload,
                 rejection_reason, failure_category, deterministic_fallback_used,
                 prompt_tokens, completion_tokens, total_tokens, started_at,
-                completed_at, latency_milliseconds
+                completed_at, latency_milliseconds, correlation_id, input_snapshot, generated_response
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSONB), ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSONB), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             """;
 
@@ -32,12 +32,13 @@ public class JdbcModelInvocationRecordAdapter implements ModelInvocationRecordPo
     }
 
     @Override
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public void save(ModelInvocationRecord record) {
         ModelTokenUsage usage = record.metadata().tokenUsage().orElse(null);
         jdbc.update(
                 INSERT,
                 record.metadata().invocationId(),
-                record.recommendationId(),
+                jdbc.queryForObject("select exists(select 1 from recommendation.recommendation_record where recommendation_id = ?)", Boolean.class, record.recommendationId()) ? record.recommendationId() : null,
                 record.metadata().provider().name(),
                 record.metadata().model(),
                 record.metadata().promptVersion(),
@@ -53,6 +54,12 @@ public class JdbcModelInvocationRecordAdapter implements ModelInvocationRecordPo
                 usage == null ? null : usage.totalTokens().orElse(null),
                 Timestamp.from(record.metadata().startedAt()),
                 Timestamp.from(record.metadata().completedAt()),
-                record.metadata().latencyMilliseconds());
+                record.metadata().latencyMilliseconds(), record.recommendationId(),
+                record.metadata().inputSnapshot(), record.metadata().generatedResponse());
+    }
+
+    @Override
+    public void attach(java.util.UUID recommendationId) {
+        jdbc.update("update recommendation.model_invocation_record set recommendation_id = ? where correlation_id = ? and recommendation_id is null", recommendationId, recommendationId);
     }
 }

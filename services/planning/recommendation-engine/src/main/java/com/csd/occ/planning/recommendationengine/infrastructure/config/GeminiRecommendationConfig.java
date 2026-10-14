@@ -62,12 +62,12 @@ public class GeminiRecommendationConfig {
             JsonMapper json,
             Clock clock,
             RecommendationGeminiProperties properties,
-            RecommendationInputProperties inputProperties) {
+            RecommendationInputProperties inputProperties, AiAuditProperties audit) {
         return new GeminiMitigationCandidateAdapter(
                 recommendationGeminiChatClient,
                 json,
                 clock,
                 properties.model(),
-                inputProperties);
+                inputProperties, audit);
     }
 }

@@ -1,14 +1,14 @@
 # Database reduction plan
 
-Status: proposed implementation plan. No schema or application changes have been applied by this plan.
+Status: Phases 0-7 implemented and locally verified on 2026-10-13. See [verification and breaking changes](database-reduction-verification.md) for applied versions, test results, retention exceptions, and rollback requirements. Phases 8-10 remain optional and unimplemented.
 
-Basis: repository init scripts, all current service migrations, and current readers/writers. This is the schema intended by the repository, not an inspection of the running database. The starting point is 29 application tables: ingestion 13, bunching 10, diagnosis 4, recommendation 2. PostgreSQL extension objects and Flyway history are excluded.
+Basis: repository init scripts, service migrations, current readers/writers, and the local running database inspection. The original starting point was 29 application tables: ingestion 13, bunching 10, diagnosis 4, recommendation 2. The verified reduced catalog contains 24: ingestion 13, bunching 5, diagnosis 4, recommendation 2. PostgreSQL extension objects and Flyway history are excluded.
 
 ## Scope and order
 
 Preserve the four services, live/demo isolation, deterministic detection rules, idempotency, and durable delivery. Remove general-purpose database audit history and audit-writing functionality. Preserve and improve AI-generated response audit records for both diagnosis and recommendation, including the input snapshots required to understand them after source data expires. Retain operational history and topology for a configurable window, with 12 hours as the proposed default. Implement Phases 0-7 first; Phases 8-10 are optional.
 
-The user's revised scope supersedes the earlier permanent general-audit requirement. During implementation, update the audit/retention rules in `docs/CONVENTIONS.md` and the affected service documentation to match it. This plan update does not itself delete database data or change runtime settings.
+The user's revised scope supersedes the earlier permanent general-audit requirement. The audit/retention rules in `docs/CONVENTIONS.md` and affected service documentation follow that policy. The user authorized immediate destructive contraction for the disposable local database; old service binaries must not be run against the contracted schema. This is not authorization to delete another deployment's data.
 
 | Phase | Change | Relative effort | Main owners |
 |---|---|---|---|

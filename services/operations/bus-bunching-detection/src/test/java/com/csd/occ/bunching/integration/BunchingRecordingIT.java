@@ -82,6 +82,15 @@ class BunchingRecordingIT {
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM bunching.source_processing_state", Integer.class));
     }
 
+    @Test void deferredSourceCanBeProcessedAndReplayedAfterRestart() {
+        var snapshot = snapshot(60);
+        states.save(new com.csd.occ.bunching.domain.SourceProcessingState(snapshot.rawObservationId(), NOW, null));
+        assertEquals(RecordedBunching.Outcome.RECORDED, service.record(snapshot, THRESHOLD, Duration.ofSeconds(120)).outcome());
+        assertEquals("PROCESSED", states.findById(snapshot.rawObservationId()).orElseThrow().status());
+        assertEquals(RecordedBunching.Outcome.ALREADY_RECORDED, service.record(snapshot, THRESHOLD, Duration.ofSeconds(120)).outcome());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM bunching.alert_event", Integer.class));
+    }
+
     private ArrivalSnapshot snapshot(int gap) {
         return new ArrivalSnapshot(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), NOW,
                 List.of(new ArrivalSnapshot.Arrival(UUID.randomUUID(), "190", "44009", Optional.of(1), 1, Optional.of(NOW.plusSeconds(300))),

@@ -10,4 +10,8 @@ public record IngestionProperties(
         List<String> monitoredServices,
         int staleAfterSeconds,
         Duration retention) implements PollingConfigurationPort {
+    public IngestionProperties {
+        if (retention == null || retention.isZero() || retention.isNegative())
+            throw new IllegalArgumentException("Ingestion retention must be positive");
+    }
 }

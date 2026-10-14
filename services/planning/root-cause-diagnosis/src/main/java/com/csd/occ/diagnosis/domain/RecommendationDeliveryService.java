@@ -37,6 +37,6 @@ public class RecommendationDeliveryService {
 
     @Transactional
     public void terminal(UUID id, Integer status, String code) {
-        deliveries.findById(id).ifPresent(delivery -> delivery.terminal(status, code));
+        deliveries.findById(id).ifPresent(delivery -> delivery.terminal(status, code, clock.instant()));
     }
 }

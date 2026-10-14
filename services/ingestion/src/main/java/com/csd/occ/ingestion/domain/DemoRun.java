@@ -34,6 +34,10 @@ public class DemoRun {
     public String classification() { return classification; }
     public int currentStep() { return currentStep; }
     public Instant startedAt() { return startedAt; }
+    public boolean expiredAt(Instant cutoff) {
+        return "CLOSED".equals(status) && closedAt != null && closedAt.isBefore(cutoff)
+                || "FAILED".equals(status) && startedAt.isBefore(cutoff);
+    }
     public void startReplay() { if (!"PREPARING".equals(status)) throw new IllegalStateException("Demo run is not preparing"); status = "RUNNING"; }
     public void advance() { currentStep++; }
     public void complete(Instant now) { status = "REPLAY_COMPLETE"; completedAt = now; }

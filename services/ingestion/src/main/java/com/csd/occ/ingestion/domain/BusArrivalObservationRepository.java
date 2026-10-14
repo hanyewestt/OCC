@@ -12,6 +12,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.repository.query.Param;
 
 public interface BusArrivalObservationRepository extends JpaRepository<BusArrivalObservation, UUID> {
+    void deleteByDemoRunId(UUID demoRunId);
     List<BusArrivalObservation> findByPollRunId(UUID pollRunId);
     List<BusArrivalObservation> findByRawObservationIdIn(List<UUID> rawObservationIds);
     Page<BusArrivalObservation> findByStopCodeAndServiceIdAndFetchedAtBetweenOrderByFetchedAtDesc(

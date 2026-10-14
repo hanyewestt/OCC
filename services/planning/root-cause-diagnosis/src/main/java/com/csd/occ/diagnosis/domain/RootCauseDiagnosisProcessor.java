@@ -41,12 +41,13 @@ public class RootCauseDiagnosisProcessor {
         List<ModelInvocationDetails> invocationDetails = new ArrayList<>();
         String snapshotHash = null;
         try {
-            BunchingEventFacts event = eventFacts.findConfirmedEvent(request.eventId());
+            EvidenceSnapshot retained = request.inputSnapshot() == null ? null : snapshots.decode(request.inputSnapshot());
+            BunchingEventFacts event = retained == null ? eventFacts.findConfirmedEvent(request.eventId()) : retained.event();
             if (!event.evidenceIds().stream().allMatch(id -> id != null && !id.isBlank())
                     || event.confirmingObservationTimes().size() < 2
                     || event.confirmingObservationIds().stream().filter(java.util.Objects::nonNull).distinct().count() < 2)
                 throw new DiagnosisFailureException("INCOMPLETE_EVENT_FACTS", false);
-            RootCauseContext context = bound(evidenceContext.findContext(event), event);
+            RootCauseContext context = bound(retained == null ? evidenceContext.findContext(event) : retained.context(), event);
             if (!event.demoRunId().equals(context.demoRunId()) || !"SIMULATION".equals(context.classification()))
                 throw new DiagnosisFailureException("EVIDENCE_PROVENANCE_MISMATCH", false);
             if (context.arrivals().stream().anyMatch(arrival -> !"SIMULATION".equals(arrival.classification())
@@ -87,6 +88,10 @@ public class RootCauseDiagnosisProcessor {
                     call = model.diagnose(snapshot, feedback, attempt);
                 } catch (ModelInvocationFailureException providerFailure) {
                     invocationDetails.add(providerFailure.invocationDetails());
+                    if (providerFailure.invocationDetails().generatedResponse() != null && attempt == 1) {
+                        feedback = List.of("Return valid JSON matching the requested schema.");
+                        continue;
+                    }
                     throw new DiagnosisFailureException("MODEL_PROVIDER_FAILURE", providerFailure.isRetryable(), providerFailure);
                 }
                 try {
@@ -181,7 +186,7 @@ public class RootCauseDiagnosisProcessor {
         return new ModelInvocationDetails(details.provider(), details.model(), details.responseId(),
                 details.promptVersion(), details.schemaVersion(), details.startedAt(), details.completedAt(),
                 details.latencyMillis(), details.promptTokens(), details.completionTokens(), details.totalTokens(),
-                outcome, details.failureCategory(), details.attemptNumber());
+                outcome, details.failureCategory(), details.attemptNumber(), details.inputSnapshot(), details.generatedResponse());
     }
 
     private String safeValidationMessage(RuntimeException failure) {

@@ -19,6 +19,8 @@ public class ModelInvocationRecord {
         completionTokens = details.completionTokens(); totalTokens = details.totalTokens();
         validationOutcome = details.validationOutcome(); failureCategory = details.failureCategory();
         this.evidenceSnapshotHash = evidenceSnapshotHash;
+        inputSnapshot = details.inputSnapshot();
+        generatedResponse = details.generatedResponse();
     }
     @Id private UUID id;
     private UUID requestId;
@@ -38,4 +40,8 @@ public class ModelInvocationRecord {
     private Integer totalTokens;
     private String validationOutcome;
     private String failureCategory;
+    // Legacy attempts and provider failures may have no returned response.
+    @jakarta.persistence.Column(columnDefinition = "text") private String generatedResponse;
+    // Legacy attempts predate self-contained input capture.
+    @jakarta.persistence.Column(columnDefinition = "text") private String inputSnapshot;
 }

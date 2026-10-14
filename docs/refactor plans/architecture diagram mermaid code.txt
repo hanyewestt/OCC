@@ -1,0 +1,76 @@
+flowchart TB
+    browser["Controller/Bus<br/>Captain Browser"]
+
+    subgraph aws["AWS Cloud"]
+        subgraph compose["Docker Compose on EC2 instance"]
+            subgraph nginxContainer["Nginx container"]
+                nginx["Nginx<br/>Public HTTPS entry point at port 443<br/>Static files and API forwarding"]
+
+                subgraph frontend["Static React frontend"]
+                    controller["Controller frontend<br/>Monitoring, Alerts, Plan approval"]
+                    captain["Captain frontend<br/>Read-only assigned instructions"]
+                end
+            end
+
+            gateway["API gateway<br/>JWT validation, Public API routing"]
+
+            subgraph backend["Backend services (private Compose network)"]
+                planning["Planning service"]
+                bunching["Bunching service"]
+                ingestion["Ingestion service"]
+            end
+
+            subgraph db["Shared PostgreSQL DB"]
+                planningSchema["planning schema"]
+                bunchingSchema["bunching schema"]
+                ingestionSchema["ingestion schema"]
+            end
+        end
+    end
+
+    subgraph external["External systems"]
+        gemini["Gemini API"]
+        auth["Supabase Auth"]
+        lta["LTA DataMall"]
+    end
+
+    browser -->|"HTTPS: /controller/<br/>API calls: /api/v1/... + JWT"| nginx
+    browser -->|"Login and token refresh"| auth
+
+    nginx -->|"Serve /controller/ files"| controller
+    nginx -->|"Serve /captain/ files"| captain
+    nginx -->|"Forward /api/v1/...<br/>Preserve Authorization header"| gateway
+
+    gateway -->|"/api/v1/planning/**"| planning
+    gateway -->|"/api/v1/bunching/**"| bunching
+    gateway -->|"/api/v1/ingestion/**"| ingestion
+    gateway -.->|"Fetch public signing keys"| auth
+
+    bunching -->|"Internal API: submit events,<br/>get recommendations"| planning
+    planning -->|"Internal API: read contextual evidence"| ingestion
+    bunching -->|"Internal API: read arrival snapshots"| ingestion
+
+    planning -->|"SQL · Own database role"| planningSchema
+    bunching -->|"SQL · Own database role"| bunchingSchema
+    ingestion -->|"SQL · Own database role"| ingestionSchema
+
+    planning -->|"Structured AI requests"| gemini
+    ingestion -->|"Poll provider APIs"| lta
+
+    classDef service fill:#e8f0fe,stroke:#4b80c4,color:#333
+    classDef schema fill:#e8f4e9,stroke:#49a34b,color:#333
+    classDef externalService fill:#fff2d9,stroke:#cc8a20,color:#333
+    classDef client fill:#fff,stroke:#45455e,color:#333
+
+    class nginx,controller,captain,gateway,planning,bunching,ingestion service
+    class planningSchema,bunchingSchema,ingestionSchema schema
+    class gemini,auth,lta externalService
+    class browser client
+
+    style aws fill:#fcf5ff,stroke:#e99cff
+    style compose fill:#effcfa,stroke:#52dccc
+    style nginxContainer fill:#fff8ef,stroke:#ffab65
+    style frontend fill:#ecfdff,stroke:#48d9ef
+    style backend fill:#f0fcf3,stroke:#51e889
+    style db fill:#f5f2ff,stroke:#b39aff
+    style external fill:#fff3f3,stroke:#ff939b

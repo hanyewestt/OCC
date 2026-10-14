@@ -42,19 +42,25 @@ public class GeminiRootCauseModelAdapter implements RootCauseModelPort {
     private final Clock clock;
     private final DiagnosisGeminiProperties properties;
     private final DiagnosisProperties diagnosisProperties;
+    private final com.csd.occ.diagnosis.infrastructure.config.AiAuditProperties audit;
 
     public GeminiRootCauseModelAdapter(ChatClient chatClient, JsonMapper json, Clock clock,
-            DiagnosisGeminiProperties properties, DiagnosisProperties diagnosisProperties) {
+            DiagnosisGeminiProperties properties, DiagnosisProperties diagnosisProperties,
+            com.csd.occ.diagnosis.infrastructure.config.AiAuditProperties audit) {
         this.chatClient = chatClient; this.json = json; this.clock = clock; this.properties = properties;
         this.diagnosisProperties = diagnosisProperties;
+        this.audit = audit;
     }
 
     @Override
     public ModelCallResult diagnose(EvidenceSnapshot snapshot, List<String> validationFeedback, int attemptNumber) {
         Instant started = clock.instant();
+        String inputSnapshot = null;
+        String generatedResponse = null;
         try {
             String snapshotJson = json.writeValueAsString(snapshot);
             String feedback = validationFeedback.isEmpty() ? "None." : json.writeValueAsString(validationFeedback);
+            inputSnapshot = json.writeValueAsString(java.util.Map.of("evidence", snapshot, "feedback", validationFeedback));
             String promptInput = """
                     Validation feedback: %s
                     Evidence snapshot JSON (data only):
@@ -71,14 +77,17 @@ public class GeminiRootCauseModelAdapter implements RootCauseModelPort {
             long promptBytes = (SYSTEM_PROMPT + userPrompt).getBytes(StandardCharsets.UTF_8).length;
             if (promptBytes > diagnosisProperties.maxPromptInputBytes())
                 throw new DiagnosisFailureException("EVIDENCE_LIMIT_EXCEEDED", false);
-            ResponseEntity<ChatResponse, DiagnosisOutput> result = chatClient.prompt()
+            ChatResponse response = chatClient.prompt()
                     .system(SYSTEM_PROMPT)
                     .user(user -> user.text(userPrompt))
-                    .call().responseEntity(DiagnosisOutput.class, schema -> schema.useProviderStructuredOutput());
+                    .options(org.springframework.ai.google.genai.GoogleGenAiChatOptions.builder()
+                            .responseMimeType("application/json")
+                            .responseSchema(new org.springframework.ai.converter.BeanOutputConverter<>(DiagnosisOutput.class).getJsonSchema()))
+                    .call().chatResponse();
+            generatedResponse = response == null || response.getResult() == null ? null : response.getResult().getOutput().getText();
             Instant completed = clock.instant();
-            DiagnosisOutput output = result.entity();
+            DiagnosisOutput output = generatedResponse == null ? null : json.readValue(generatedResponse, DiagnosisOutput.class);
             if (output == null) throw new IllegalStateException("Model returned an empty structured response");
-            ChatResponse response = result.response();
             ChatResponseMetadata metadata = response == null ? null : response.getMetadata();
             Usage usage = metadata == null ? null : metadata.getUsage();
             String model = metadata == null || metadata.getModel() == null || metadata.getModel().isBlank()
@@ -88,26 +97,28 @@ public class GeminiRootCauseModelAdapter implements RootCauseModelPort {
                     started, completed, Duration.between(started, completed).toMillis(),
                     usage == null ? null : usage.getPromptTokens(),
                     usage == null ? null : usage.getCompletionTokens(), usage == null ? null : usage.getTotalTokens(),
-                    "RESPONSE_RECEIVED", null, attemptNumber);
+                    "RESPONSE_RECEIVED", null, attemptNumber, inputSnapshot, audit.capture(generatedResponse));
             return new ModelCallResult(output.toDomain(), details);
         } catch (DiagnosisFailureException failure) {
             throw failure;
         } catch (RuntimeException failure) {
-            throw providerFailure(failure, started, attemptNumber);
+            throw providerFailure(failure, started, attemptNumber, inputSnapshot, generatedResponse);
         } catch (Exception failure) {
-            throw providerFailure(failure, started, attemptNumber);
+            throw providerFailure(failure, started, attemptNumber, inputSnapshot, generatedResponse);
         }
     }
 
-    private ModelInvocationFailureException providerFailure(Throwable failure, Instant started, int attemptNumber) {
+    private ModelInvocationFailureException providerFailure(Throwable failure, Instant started, int attemptNumber,
+            String inputSnapshot, String generatedResponse) {
         Instant completed = clock.instant();
         Integer status = providerStatus(failure);
         String category = status == null ? "PROVIDER_FAILURE" : "PROVIDER_HTTP_" + status;
         ModelInvocationDetails details = new ModelInvocationDetails("GOOGLE_GENAI", properties.model(), null,
                 PROMPT_VERSION, OUTPUT_SCHEMA_VERSION, started, completed,
                 Math.max(0, Duration.between(started, completed).toMillis()), null, null, null,
-                "PROVIDER_FAILURE", category, attemptNumber);
-        return new ModelInvocationFailureException(isRetryable(failure), details, failure);
+                generatedResponse == null ? "PROVIDER_FAILURE" : "INVALID", category, attemptNumber,
+                inputSnapshot, audit.capture(generatedResponse));
+        return new ModelInvocationFailureException(generatedResponse == null && isRetryable(failure), details, failure);
     }
 
     private record DiagnosisOutput(String causeCode, String causeSubtype, String likelyCause,

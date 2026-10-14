@@ -22,7 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClient;
 
 @Component
-public class HttpStoredArrivalAdapter implements StoredArrivalPort {
+public class HttpStoredArrivalAdapter implements StoredArrivalPort, com.csd.occ.bunching.domain.SourceRetentionPort {
     private final RestClient ingestion;
     private final ConsumerStateRepository consumers;
     private final SourceProcessingStateRepository states;
@@ -96,7 +96,7 @@ public class HttpStoredArrivalAdapter implements StoredArrivalPort {
     @Transactional
     public void reject(UUID id, Instant rejectedAt, String reason) {
         FeedIdentity feed = feedFor(id);
-        states.findById(id).ifPresentOrElse(state -> state.reject(rejectedAt, reason),
+        states.findById(id).ifPresentOrElse(state -> { if (!state.isProcessed()) state.reject(rejectedAt, reason); },
                 () -> { SourceProcessingState state = new SourceProcessingState(id, rejectedAt, feed.demoRunId()); state.reject(rejectedAt, reason); states.save(state); });
         acknowledge(id);
     }
@@ -105,8 +105,9 @@ public class HttpStoredArrivalAdapter implements StoredArrivalPort {
     @Transactional
     public void defer(UUID id, Instant failedAt, Instant nextAttemptAt, RetryReason reason) {
         FeedIdentity feed = feedFor(id);
-        states.findById(id).ifPresentOrElse(state -> state.deferUntil(nextAttemptAt),
-                () -> states.save(new SourceProcessingState(id, nextAttemptAt, feed.demoRunId())));
+        states.findById(id).ifPresentOrElse(state -> state.deferUntil(nextAttemptAt, reason.name()),
+                () -> { var state = new SourceProcessingState(id, nextAttemptAt, feed.demoRunId());
+                    state.deferUntil(nextAttemptAt, reason.name()); states.save(state); });
         acknowledge(id);
     }
 
@@ -123,8 +124,27 @@ public class HttpStoredArrivalAdapter implements StoredArrivalPort {
         Long sequence = discoveredSequences.remove(id);
         discoveredFeeds.remove(id);
         if (sequence == null) return;
+        states.findById(id).ifPresent(state -> state.recordSequence(sequence));
         ConsumerState checkpoint = consumers.findWithLockById(1).orElseThrow();
         if (checkpoint.matches(feed.demoRunId() == null ? "LIVE" : "DEMO", feed.demoRunId())) checkpoint.advanceTo(sequence);
+    }
+
+    @Override
+    public boolean sourceIsAbsent(UUID runId, UUID rawId) {
+        try {
+            if (runId == null) ingestion.get().uri("/internal/v1/arrival-snapshots/{id}", rawId).retrieve().toBodilessEntity();
+            else ingestion.get().uri("/internal/v1/demo-runs/{runId}/arrival-snapshots/{id}", runId, rawId).retrieve().toBodilessEntity();
+            return false;
+        } catch (org.springframework.web.client.HttpClientErrorException.NotFound absent) {
+            return true;
+        }
+    }
+
+    @Override public boolean demoRunIsAbsent(UUID runId) {
+        try {
+            ingestion.get().uri("/api/v1/demo-runs/{id}", runId).retrieve().toBodilessEntity();
+            return false;
+        } catch (org.springframework.web.client.HttpClientErrorException.NotFound absent) { return true; }
     }
 
     private FeedIdentity feedFor(UUID id) {

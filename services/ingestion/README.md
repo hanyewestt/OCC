@@ -167,3 +167,22 @@ actual controllers, DTOs, annotations and active Spring configuration.
 A missing or invalid DataMall key can produce request errors even if the application starts. Stop the app with Ctrl+C.
 
 Tests use fake DataMall responses and synthetic configuration, never the root `.env`. They do not prove live DataMall availability.
+
+## Database reduction and retention
+
+Operational history uses `OCC_INGESTION_RETENTION` (default 12h), with existing
+retention interval and initial-delay environment bindings. Reads enforce the
+cutoff before cleanup sweeps; arrival history is measured by fetch time, never ETA.
+Closed/failed demos expire after their lifecycle cutoff; an expired run returns
+404 even before physical cleanup. Selected runs, deferred work, and undrained
+bunching outboxes protect their simulation input. If protection cannot be read,
+cleanup fails visibly. Children are deleted before raw observations, poll runs,
+assignments, and runs. Active topology is always retained. Retired versions are
+pruned only outside the window and without arrival references, under the same
+transaction advisory lock as topology import. Increasing retention cannot restore
+purged data. AI evidence is snapshotted in planning before operational input expires.
+
+V015 retires ingestion's obsolete cross-schema bunching views; V016 removes child
+import timestamps; V017 records topology retirement. `current_bus_arrival` stays.
+Existing deployments must use the administrator-only reserved-schema procedure
+in [the reduction verification document](../../docs/plans/database-reduction-verification.md).

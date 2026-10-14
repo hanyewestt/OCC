@@ -65,13 +65,15 @@ public class DurableBunchingRecommendationService {
     private RecommendationRecord persistOrReplay(
             RecommendationRecord candidate,
             Optional<ModelInvocationRecord> modelInvocation) {
+        modelInvocation.ifPresent(modelInvocations::save);
         if (records.saveIfAbsent(candidate)) {
-            modelInvocation.ifPresent(modelInvocations::save);
+            modelInvocations.attach(candidate.idempotencyKey());
             return candidate;
         }
         RecommendationRecord existing = records.findByIdempotencyKey(candidate.idempotencyKey())
                 .orElseThrow(() -> new IllegalStateException(
                         "Concurrent recommendation record was not visible after idempotency conflict"));
+        modelInvocations.attach(existing.idempotencyKey());
         return requireMatchingRequest(existing, candidate.requestHash());
     }
 

@@ -63,13 +63,15 @@ public final class GeminiMitigationCandidateAdapter implements MitigationCandida
     private final Clock clock;
     private final String configuredModel;
     private final RecommendationInputProperties inputProperties;
+    private final com.csd.occ.planning.recommendationengine.infrastructure.config.AiAuditProperties audit;
 
     public GeminiMitigationCandidateAdapter(
             ChatClient chatClient,
             JsonMapper json,
             Clock clock,
             String configuredModel,
-            RecommendationInputProperties inputProperties) {
+            RecommendationInputProperties inputProperties,
+            com.csd.occ.planning.recommendationengine.infrastructure.config.AiAuditProperties audit) {
         this.chatClient = Objects.requireNonNull(chatClient, "chatClient is required");
         this.json = Objects.requireNonNull(json, "json is required");
         this.clock = Objects.requireNonNull(clock, "clock is required");
@@ -78,6 +80,7 @@ public final class GeminiMitigationCandidateAdapter implements MitigationCandida
         }
         this.configuredModel = configuredModel.trim();
         this.inputProperties = Objects.requireNonNull(inputProperties, "inputProperties is required");
+        this.audit = audit;
     }
 
     @Override
@@ -91,37 +94,38 @@ public final class GeminiMitigationCandidateAdapter implements MitigationCandida
         if (promptBytes > inputProperties.maxPromptInputBytes()) {
             throw new IllegalArgumentException("Recommendation prompt exceeds the configured input budget");
         }
-        ResponseEntity<ChatResponse, GeminiMitigationCandidateOutput> response = null;
+        ChatResponse response = null;
         try {
             response = chatClient.prompt()
                     .system(SYSTEM_PROMPT)
                     .user(user -> user.text(USER_PROMPT).param("requestJson", requestJson))
-                    .call()
-                    .responseEntity(
-                            GeminiMitigationCandidateOutput.class,
-                            structuredOutput -> structuredOutput.useProviderStructuredOutput());
+                    .options(org.springframework.ai.google.genai.GoogleGenAiChatOptions.builder()
+                            .responseMimeType("application/json")
+                            .responseSchema(new org.springframework.ai.converter.BeanOutputConverter<>(GeminiMitigationCandidateOutput.class).getJsonSchema()))
+                    .call().chatResponse();
             Instant completedAt = Instant.now(clock);
             ModelInvocationMetadata metadata = metadata(
                     invocationId,
                     startedAt,
                     completedAt,
-                    response.response());
-            if (response.entity() == null) {
+                    response, requestJson);
+            if (response == null || response.getResult() == null || response.getResult().getOutput().getText() == null) {
                 return new MitigationCandidateGenerationResult.Empty(metadata);
             }
             return new MitigationCandidateGenerationResult.Generated(
                     metadata,
-                    response.entity().toDomain());
+                    json.readValue(response.getResult().getOutput().getText(), GeminiMitigationCandidateOutput.class).toDomain());
         } catch (RuntimeException providerFailure) {
             Instant completedAt = Instant.now(clock);
-            ModelInvocationFailureCategory failureCategory = categorize(providerFailure);
+            ModelInvocationFailureCategory failureCategory = response == null ? categorize(providerFailure)
+                    : ModelInvocationFailureCategory.INVALID_RESPONSE;
             logProviderFailure(providerFailure, failureCategory);
             return new MitigationCandidateGenerationResult.Failed(
                     metadata(
                             invocationId,
                             startedAt,
                             completedAt,
-                            response == null ? null : response.response()),
+                            response, requestJson),
                     failureCategory);
         }
     }
@@ -130,7 +134,7 @@ public final class GeminiMitigationCandidateAdapter implements MitigationCandida
             UUID invocationId,
             Instant startedAt,
             Instant completedAt,
-            ChatResponse response) {
+            ChatResponse response, String inputSnapshot) {
         ChatResponseMetadata responseMetadata = response == null ? null : response.getMetadata();
         String responseModel = responseMetadata == null || responseMetadata.getModel() == null
                 || responseMetadata.getModel().isBlank()
@@ -152,7 +156,8 @@ public final class GeminiMitigationCandidateAdapter implements MitigationCandida
                 startedAt,
                 completedAt,
                 Duration.between(startedAt, completedAt).toMillis(),
-                tokenUsage);
+                tokenUsage, inputSnapshot,
+                audit.capture(response == null || response.getResult() == null ? null : response.getResult().getOutput().getText()));
     }
 
     private Optional<ModelTokenUsage> tokenUsage(Usage usage) {

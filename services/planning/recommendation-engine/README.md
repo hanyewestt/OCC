@@ -828,3 +828,17 @@ service-to-service integration remains separate follow-up work.
 - [`SimulatedData/README.md`](../../../SimulatedData/README.md)
 - [`SimulatedData/route190/bunching/scenario.json`](../../../SimulatedData/route190/bunching/scenario.json)
 - [`SimulatedData/route190/bunching_mitigated/scenario.json`](../../../SimulatedData/route190/bunching_mitigated/scenario.json)
+
+## Retained AI attempts and operational retention
+
+Model attempts retain provider metadata, structured candidate, actual response
+text (including decode failures), and immutable model input. They commit independently
+of final recommendation persistence and retain their idempotency correlation even
+when no final result exists; the nullable result FK is attached after a result is
+stored. Replay of an existing result does not call the model again.
+`OCC_RECOMMENDATION_AUDIT_MAX_RESPONSE_CHARACTERS` defaults to 65536; control
+characters are sanitized and excess text is explicitly marked `[TRUNCATED]`.
+These records and final request/context/response payloads are excluded from the
+12h operational cleanup. A provider failure without a response stores NULL text.
+Old payloads are backfilled where available; previously discarded responses cannot
+be reconstructed. Deployments retain this evidence under a separate long-lived policy.

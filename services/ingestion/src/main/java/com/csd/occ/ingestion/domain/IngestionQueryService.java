@@ -39,7 +39,7 @@ public class IngestionQueryService {
     }
 
     public Page<PollRun> pollRuns(Pageable pageable) {
-        return runs.findByClassification("OBSERVATION_ONLY", pageable);
+        return runs.findByClassificationAndStartedAtGreaterThanEqual("OBSERVATION_ONLY", clock.instant().minus(configuration.retention()), pageable);
     }
 
     public List<FeedStatus> feedStatuses() {

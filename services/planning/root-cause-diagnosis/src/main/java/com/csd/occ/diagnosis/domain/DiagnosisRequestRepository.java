@@ -10,6 +10,9 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface DiagnosisRequestRepository extends JpaRepository<DiagnosisRequest, UUID> {
+    @Modifying
+    @Query("delete from DiagnosisRequest request where request.status = 'FAILED_TERMINAL' and request.updatedAt < :cutoff and not exists (select attempt from ModelInvocationRecord attempt where attempt.requestId = request.id) and not exists (select result from RootCauseDiagnosisEntity result where result.requestId = request.id)")
+    int deleteUnreferencedTerminalBefore(@Param("cutoff") Instant cutoff);
     Optional<DiagnosisRequest> findByEventTypeAndProducerAndEventIdAndSchemaVersion(
             String eventType, String producer, UUID eventId, String schemaVersion);
 

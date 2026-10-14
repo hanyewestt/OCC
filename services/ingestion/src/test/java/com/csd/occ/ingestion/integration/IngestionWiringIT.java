@@ -33,8 +33,6 @@ class IngestionWiringIT {
             DockerImageName.parse("postgis/postgis:18-3.6").asCompatibleSubstituteFor("postgres"))
             .withDatabaseName("occ").withUsername("occ_admin").withPassword("synthetic-admin")
             .withEnv("OCC_INGESTION_DB_PASSWORD", "synthetic-ingestion")
-            .withEnv("OCC_OPERATIONS_DB_PASSWORD", "synthetic-operations")
-            .withEnv("OCC_PLANNING_DB_PASSWORD", "synthetic-planning")
             .withCopyFileToContainer(MountableFile.forHostPath(Path.of(
                     "../../infra/local/postgres/init/01_schemas_and_roles.sh").toAbsolutePath()),
                     "/docker-entrypoint-initdb.d/01_schemas_and_roles.sh");

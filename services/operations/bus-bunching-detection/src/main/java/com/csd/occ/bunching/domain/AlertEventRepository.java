@@ -9,8 +9,11 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface AlertEventRepository extends JpaRepository<AlertEvent, UUID> {
+    void deleteByDemoRunId(UUID demoRunId);
+    @Query(value = "select event.demo_run_id from bunching.alert_event event join bunching.diagnosis_outbox work on work.event_id = event.id where event.demo_run_id is not null union select demo_run_id from bunching.source_processing_state where demo_run_id is not null and status = 'DEFERRED' union select demo_run_id from bunching.consumer_state where mode = 'DEMO'", nativeQuery = true)
+    List<UUID> findProtectedDemoRunIds();
     @org.springframework.data.jpa.repository.Modifying
-    @Query("delete from AlertEvent event where event.triggeredAt < :cutoff and event.action = 'CLEARED' and not exists (select state from AlertProcessingState state where state.activeAlertId = event.alertId) and not exists (select row from DiagnosisOutbox row where row.eventId = event.id)")
+    @Query("delete from AlertEvent event where event.triggeredAt < :cutoff and exists (select cleared from AlertEvent cleared where cleared.alertId = event.alertId and cleared.action = 'CLEARED' and cleared.triggeredAt < :cutoff) and not exists (select state from AlertProcessingState state where state.activeAlertId = event.alertId) and not exists (select row from DiagnosisOutbox row where row.eventId = event.id)")
     int deleteResolvedBefore(@Param("cutoff") java.time.Instant cutoff);
     List<AlertEvent> findTop20ByOrderByTriggeredAtDesc();
     List<AlertEvent> findByDemoRunIdOrderByTriggeredAtDesc(UUID demoRunId);

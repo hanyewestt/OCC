@@ -14,9 +14,11 @@ public class DiagnosisRequestService {
     private static final String BUNCHING_PRODUCER = "bus-bunching-detection";
     private final DiagnosisRequestRepository requests;
     private final Clock clock;
+    private final DiagnosisInputService inputs;
 
-    public DiagnosisRequestService(DiagnosisRequestRepository requests, Clock clock) {
+    public DiagnosisRequestService(DiagnosisRequestRepository requests, Clock clock, DiagnosisInputService inputs) {
         this.requests = requests; this.clock = clock;
+        this.inputs = inputs;
     }
 
     @Transactional
@@ -34,10 +36,14 @@ public class DiagnosisRequestService {
                 eventType.name(), producer, eventId, SCHEMA_VERSION).orElse(null);
         if (existingEvent != null) return existingEvent;
 
+        String inputSnapshot = inputs.capture(eventId);
         requests.insertIfAbsent(id, eventType.name(), producer, eventId, SCHEMA_VERSION, clock.instant());
         DiagnosisRequest createdByKey = requests.findById(id).orElse(null);
         if (createdByKey != null) {
-            if (sameRequest(createdByKey, eventType, producer, eventId)) return createdByKey;
+            if (sameRequest(createdByKey, eventType, producer, eventId)) {
+                if (createdByKey.inputSnapshot() == null && inputSnapshot != null) createdByKey.retainInput(inputSnapshot);
+                return createdByKey;
+            }
             throw new IdempotencyConflictException();
         }
         return requests.findByEventTypeAndProducerAndEventIdAndSchemaVersion(

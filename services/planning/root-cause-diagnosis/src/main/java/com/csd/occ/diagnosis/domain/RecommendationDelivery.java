@@ -29,6 +29,7 @@ public class RecommendationDelivery {
     private String responseJson;
     private Instant createdAt;
     private Instant deliveredAt;
+    private Instant terminalAt;
 
     public UUID id() { return id; }
     public UUID diagnosisId() { return diagnosisId; }
@@ -46,7 +47,8 @@ public class RecommendationDelivery {
     public void retry(Integer status, String code, Instant next) {
         lastHttpStatus = status; failureCode = code; nextAttemptAt = next; this.status = "PENDING"; leaseUntil = null;
     }
-    public void terminal(Integer status, String code) {
+    public void terminal(Integer status, String code, Instant now) {
         lastHttpStatus = status; failureCode = code; this.status = "FAILED_TERMINAL"; leaseUntil = null;
+        terminalAt = now;
     }
 }

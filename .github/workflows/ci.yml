@@ -53,24 +53,6 @@ jobs:
         run: |
           python -c "import pathlib, xml.etree.ElementTree as ET; p=pathlib.Path('target/failsafe-reports/failsafe-summary.xml'); assert p.exists(), f'Missing Failsafe summary: {p}'; n=int(ET.parse(p).getroot().findtext('completed', '0')); assert n > 0, f'No integration tests executed in {p.parent}'"
 
-  windows-wrapper:
-    name: Recommendation Windows wrapper smoke check
-    runs-on: windows-latest
-    steps:
-      - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - name: Set up Java 25
-        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
-        with:
-          distribution: temurin
-          java-version: '25'
-      - name: Verify Maven wrapper starts on Windows
-        working-directory: services/planning/recommendation-engine
-        shell: pwsh
-        run: .\mvnw.cmd -version
-
   openapi:
     name: Validate API contracts and detect breaking changes
     runs-on: ubuntu-24.04

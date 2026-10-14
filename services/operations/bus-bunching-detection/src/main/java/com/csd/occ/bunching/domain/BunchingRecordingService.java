@@ -27,9 +27,13 @@ public class BunchingRecordingService {
     @Transactional
     public RecordedBunching record(ArrivalSnapshot snapshot, Duration threshold, Duration staleAfter) {
         var existing = states.findByRawObservationId(snapshot.rawObservationId());
-        if (existing.isPresent()) {
+        if (existing.isPresent() && !java.util.Objects.equals(existing.get().demoRunId(), snapshot.demoRunId()))
+            throw new InvalidArrivalException("SOURCE_SCOPE_MISMATCH");
+        if (existing.isPresent() && existing.get().isProcessed()) {
             return result(existing.get(), RecordedBunching.Outcome.ALREADY_RECORDED);
         }
+        if (existing.isPresent() && existing.get().isRejected())
+            throw new InvalidArrivalException("SOURCE_REJECTED");
         var evaluation = policy.evaluate(snapshot, clock.instant(), threshold, staleAfter);
         int bunchedCount = (int) evaluation.groups().stream()
                 .filter(group -> group.state() == BunchingEvaluation.State.BUNCHING).count();

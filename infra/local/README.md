@@ -18,6 +18,25 @@ docker compose --env-file .env -f infra/local/compose.yaml up -d --build
 docker compose --env-file .env -f infra/local/compose.yaml ps
 ```
 
+## Database reduction upgrades
+
+Fresh volumes create only the four active service schemas. The PostgreSQL health
+check uses TCP so schema jobs cannot run against the entrypoint's temporary
+socket-only server. `OCC_OPERATIONS_DB_PASSWORD` and `OCC_PLANNING_DB_PASSWORD`
+are deprecated, accepted but unused; keep existing environment names during transition.
+
+For an existing volume, back up first, inspect reserved schemas and role ownership,
+and run `postgres/admin/retire_reserved_schemas.sql` as an administrator only after
+confirming no external reader uses them. RESTRICT aborts on unexpected dependencies;
+never add CASCADE. Global role cleanup is outside service Flyway ownership.
+
+Operational history defaults to 12h across ingestion and bunching. Existing explicit
+environment values remain supported. New AI text limits are
+`OCC_DIAGNOSIS_AUDIT_MAX_RESPONSE_CHARACTERS` and
+`OCC_RECOMMENDATION_AUDIT_MAX_RESPONSE_CHARACTERS`, both 65536 by default.
+See [the verification and breaking-change report](../../docs/plans/database-reduction-verification.md).
+
+
 **Bash**
 
 ```bash

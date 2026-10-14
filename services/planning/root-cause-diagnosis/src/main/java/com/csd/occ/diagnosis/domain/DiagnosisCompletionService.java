@@ -42,7 +42,7 @@ public class DiagnosisCompletionService {
                      Instant retryAt, List<ModelInvocationDetails> invocationDetails, String snapshotHash) {
         DiagnosisRequest request = requests.findById(requestId).orElseThrow();
         if (request.status() != DiagnosisRequestStatus.PROCESSING) return;
-        if (snapshotHash != null) invocationDetails.stream().map(details -> new ModelInvocationRecord(
+        invocationDetails.stream().map(details -> new ModelInvocationRecord(
                 UUID.randomUUID(), requestId, details, snapshotHash)).forEach(invocations::save);
         if (retryable && attemptsRemaining) request.failRetryable(failureCode, retryAt, clock.instant());
         else request.failTerminal(failureCode, clock.instant());

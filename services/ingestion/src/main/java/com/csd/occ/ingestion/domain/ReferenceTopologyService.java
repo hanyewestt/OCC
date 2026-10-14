@@ -49,6 +49,7 @@ public class ReferenceTopologyService implements ReferenceTopologyPort {
     @Override
     @Transactional
     public ReferenceTopologyVersion replaceIfChanged(BusReferencePort.BusReferenceData data, String checksum) {
+        versions.lockTopology();
         Optional<ReferenceDatasetVersion> active = versions.findByDatasetAndStatus(DATASET, ACTIVE);
         if (active.filter(version -> version.checksum().equals(checksum)).isPresent()) {
             ReferenceDatasetVersion version = active.orElseThrow();

@@ -119,7 +119,28 @@ To export the runtime-generated OpenAPI contract, start the service and run
 This writes `openapi/root-cause-diagnosis.json`; override
 `-Dopenapi.apiDocsUrl=http://localhost:<port>/v3/api-docs` for a non-default port.
 
-Operational history stores immutable evidence snapshots for completed diagnoses,
-snapshot hashes for provider attempts, validated outputs, sanitized model/provider
-metadata, and recommendation-delivery status. It deliberately does not store API
-keys, rendered prompts, raw provider responses/errors, or stack traces.
+Retained AI evidence includes immutable input snapshots, validated outputs,
+sanitized model/provider metadata, and bounded generated response text. It does
+not store API keys, provider exception dumps, or stack traces. Recommendation
+delivery status is operational state, not permanent audit history.
+
+## Retained model evidence and expiring inputs
+
+Each initial and repair attempt retains its immutable evidence/feedback input and
+actual model text, including malformed or rejected output. Provider failures retain
+metadata and NULL output when no response exists. Failure persistence is independent
+of an evidence hash or a final diagnosis. `OCC_DIAGNOSIS_AUDIT_MAX_RESPONSE_CHARACTERS`
+defaults to 65536; sanitized text exceeding the limit carries `[TRUNCATED]`.
+
+New diagnosis requests acquire and persist their event/context snapshot before
+acknowledging the producer. Evidence acquisition failure leaves delivery retryable
+in the producer; workers use the snapshot rather than requiring expired source
+observations. Request rows remain minimal retained identity/input anchors for the
+AI foreign keys. Final diagnoses, attempts, and their input/output are excluded from
+operational cleanup. Legacy available input is backfilled from result evidence;
+missing historical responses are explicitly unknown and are never fabricated.
+Operational cleanup uses `OCC_INGESTION_RETENTION` (default 12h), scheduled by
+`OCC_DIAGNOSIS_RETENTION_INTERVAL` and `OCC_DIAGNOSIS_RETENTION_INITIAL_DELAY`.
+Only expired delivered/terminal delivery rows and unreferenced failed terminal
+requests are removed; pending work and retained AI identity anchors remain.
+After delivery cleanup, a retained diagnosis can have NULL `recommendationDeliveryStatus`.

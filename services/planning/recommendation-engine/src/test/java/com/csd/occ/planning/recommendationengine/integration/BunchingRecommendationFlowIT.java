@@ -221,6 +221,33 @@ class BunchingRecommendationFlowIT {
     }
 
     @Test
+    void missingNullAndWrongTypeJsonProjectionsAreRejected() throws IOException {
+        post(validRequest());
+        for (String mutation : java.util.List.of(
+                "request_payload #- '{bunchingEvent,bunchingEventId}'",
+                "jsonb_set(request_payload, '{bunchingEvent,bunchingEventId}', 'null')",
+                "jsonb_set(request_payload, '{bunchingEvent,directionId}', '\"1\"')",
+                "request_payload #- '{bunchingEvent,directionId}'")) {
+            assertThatThrownBy(() -> jdbc.update("update recommendation.recommendation_record set request_payload = " + mutation))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+        }
+        assertThatThrownBy(() -> jdbc.update("update recommendation.recommendation_record set response_payload = response_payload - 'adjustmentSeconds'"))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void modelAttemptSurvivesFinalResultTransactionRollback() {
+        var transaction = new TransactionTemplate(transactionManager);
+        transaction.executeWithoutResult(status -> {
+            modelInvocations.save(acceptedModelInvocation());
+            status.setRollbackOnly();
+        });
+        assertThat(jdbc.queryForObject("select count(*) from recommendation.model_invocation_record", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select correlation_id::text from recommendation.model_invocation_record", String.class)).isEqualTo(IDEMPOTENCY_KEY);
+        assertThat(jdbc.queryForObject("select recommendation_id from recommendation.model_invocation_record", UUID.class)).isNull();
+    }
+
+    @Test
     void enabledGenerationPersistsOneAuditAndReplayDoesNotInvokeProviderAgain() throws IOException {
         AtomicInteger providerCalls = new AtomicInteger();
         MitigationCandidateGeneratorPort generator = request -> {

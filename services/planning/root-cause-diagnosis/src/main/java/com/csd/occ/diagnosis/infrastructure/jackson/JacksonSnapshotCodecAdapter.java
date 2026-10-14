@@ -19,6 +19,7 @@ public class JacksonSnapshotCodecAdapter implements SnapshotCodecPort {
         try { return json.writeValueAsString(values); }
         catch (Exception failure) { throw new IllegalStateException("Cannot encode JSON list", failure); }
     }
+    @Override public EvidenceSnapshot decode(String value) { return json.readValue(value, EvidenceSnapshot.class); }
     @Override public String encodeConfidenceComponents(ConfidenceComponents components) {
         try { return json.writeValueAsString(components); }
         catch (Exception failure) { throw new IllegalStateException("Cannot encode confidence components", failure); }

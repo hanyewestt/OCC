@@ -49,8 +49,6 @@ class IngestionStartupIT {
             DockerImageName.parse("postgis/postgis:18-3.6").asCompatibleSubstituteFor("postgres"))
             .withDatabaseName("occ").withUsername("occ_admin").withPassword("synthetic-admin")
             .withEnv("OCC_INGESTION_DB_PASSWORD", "synthetic-ingestion")
-            .withEnv("OCC_OPERATIONS_DB_PASSWORD", "synthetic-operations")
-            .withEnv("OCC_PLANNING_DB_PASSWORD", "synthetic-planning")
             .withCopyFileToContainer(MountableFile.forHostPath(Path.of(
                     "../../infra/local/postgres/init/01_schemas_and_roles.sh").toAbsolutePath()),
                     "/docker-entrypoint-initdb.d/01_schemas_and_roles.sh");
@@ -76,6 +74,8 @@ class IngestionStartupIT {
     @Autowired DemoReplayService replay;
     @Autowired DemoModeService demoMode;
     @Autowired ReferenceTopologyPort topology;
+    @Autowired com.csd.occ.ingestion.domain.RetentionService retention;
+    @Autowired org.springframework.context.ApplicationContext context;
 
     @Test
     void migrationsAndPollingWorkWithServiceCredentials() {
@@ -177,5 +177,42 @@ class IngestionStartupIT {
         assertThat(demoRuns.active()).isEmpty();
         org.mockito.Mockito.verify(bunching).selectDemo(started.id());
         org.mockito.Mockito.verify(bunching).selectLive();
+        jdbc.update("update ingestion.demo_run set closed_at = now() - interval '2 days' where id = ?", started.id());
+        when(bunching.protectedDemoRuns()).thenReturn(List.of(started.id()));
+        retention.purgeExpiredObservations();
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.raw_observation where demo_run_id = ?", Integer.class, started.id())).isGreaterThan(0);
+        when(bunching.protectedDemoRuns()).thenReturn(List.of());
+        retention.purgeExpiredObservations();
+        retention.purgeExpiredObservations();
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.demo_run where id = ?", Integer.class, started.id())).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.traffic_incident_observation where demo_run_id = ?", Integer.class, started.id())).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.demo_vehicle_assignment where demo_run_id = ?", Integer.class, started.id())).isZero();
+    }
+
+    @Test void topologyPruningPreservesOldActiveAndBoundaryRetiredVersions() {
+        var fixed = java.time.Clock.fixed(Instant.parse("2026-10-13T12:00:00Z"), java.time.ZoneOffset.UTC);
+        var cutoff = fixed.instant().minus(java.time.Duration.ofHours(12));
+        UUID expired = UUID.randomUUID();
+        UUID boundary = UUID.randomUUID();
+        for (UUID id : List.of(expired, boundary)) {
+            jdbc.update("insert into ingestion.reference_dataset_version (id,dataset,version_key,checksum,status,imported_at,retired_at) values (?, 'RETENTION_TEST', ?, ?, 'SUPERSEDED', '2020-01-01', ?)",
+                    id, id.toString(), "f".repeat(64), java.sql.Timestamp.from(id.equals(expired) ? cutoff.minusNanos(1000) : cutoff));
+        }
+        when(bunching.protectedDemoRuns()).thenReturn(List.of());
+        var pruning = new com.csd.occ.ingestion.domain.RetentionService(arrivals, observations, runs,
+                context.getBean(com.csd.occ.ingestion.domain.ReferenceDatasetVersionRepository.class),
+                context.getBean(com.csd.occ.ingestion.domain.BusRouteStopRepository.class),
+                context.getBean(com.csd.occ.ingestion.domain.BusServiceRepository.class),
+                context.getBean(com.csd.occ.ingestion.domain.BusStopRepository.class),
+                new com.csd.occ.ingestion.infrastructure.config.IngestionProperties(List.of("190"), 180, java.time.Duration.ofHours(12)), fixed,
+                context.getBean(com.csd.occ.ingestion.domain.DemoRunRepository.class),
+                context.getBean(com.csd.occ.ingestion.domain.TrafficIncidentObservationRepository.class),
+                context.getBean(com.csd.occ.ingestion.domain.DemoVehicleAssignmentRepository.class), bunching,
+                context.getBean(com.csd.occ.ingestion.domain.PollTargetRepository.class));
+        var transaction = new org.springframework.transaction.support.TransactionTemplate(context.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        transaction.executeWithoutResult(status -> pruning.purgeExpiredObservations());
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.reference_dataset_version where id = ?", Integer.class, expired)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.reference_dataset_version where id = ?", Integer.class, boundary)).isEqualTo(1);
+        transaction.executeWithoutResult(status -> pruning.purgeExpiredObservations());
     }
 }

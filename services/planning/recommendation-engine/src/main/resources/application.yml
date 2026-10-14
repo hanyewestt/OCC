@@ -32,6 +32,8 @@ management:
 
 occ:
   recommendation:
+    audit:
+      max-response-characters: ${OCC_RECOMMENDATION_AUDIT_MAX_RESPONSE_CHARACTERS:65536}
     input:
       max-request-body-bytes: ${OCC_RECOMMENDATION_MAX_REQUEST_BODY_BYTES:65536}
       max-prompt-input-bytes: ${OCC_RECOMMENDATION_MAX_PROMPT_INPUT_BYTES:65536}

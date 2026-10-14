@@ -34,6 +34,15 @@ public class HttpBunchingControlAdapter implements BunchingControlPort {
     }
 
     @Override
+    public List<UUID> protectedDemoRuns() {
+        ProtectionResponse response = bunching.get().uri("/internal/v1/retention-protection")
+                .retrieve().body(ProtectionResponse.class);
+        if (response == null) throw new IllegalStateException("Retention protection returned no body");
+        return response.demoRunIds();
+    }
+    private record ProtectionResponse(List<UUID> demoRunIds) { }
+
+    @Override
     public void selectLive() {
         bunching.put().uri("/internal/v1/consumer-selection")
                 .body(new SelectionRequest("LIVE", null)).retrieve().toBodilessEntity();

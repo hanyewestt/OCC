@@ -15,7 +15,14 @@ public record ModelInvocationMetadata(
         Instant startedAt,
         Instant completedAt,
         long latencyMilliseconds,
-        Optional<ModelTokenUsage> tokenUsage) {
+        Optional<ModelTokenUsage> tokenUsage, String inputSnapshot, String generatedResponse) {
+
+    public ModelInvocationMetadata(UUID invocationId, ModelInvocationProvider provider, String model,
+            String promptVersion, String outputSchemaVersion, Optional<String> providerResponseId,
+            Instant startedAt, Instant completedAt, long latencyMilliseconds, Optional<ModelTokenUsage> tokenUsage) {
+        this(invocationId, provider, model, promptVersion, outputSchemaVersion, providerResponseId,
+                startedAt, completedAt, latencyMilliseconds, tokenUsage, null, null);
+    }
 
     public ModelInvocationMetadata {
         Objects.requireNonNull(invocationId, "invocationId is required");

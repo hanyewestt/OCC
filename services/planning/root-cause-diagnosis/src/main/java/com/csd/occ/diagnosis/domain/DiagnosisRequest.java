@@ -39,6 +39,10 @@ public class DiagnosisRequest {
     private Instant createdAt;
     private Instant updatedAt;
     @Version private long version;
+    // Legacy requests predate input capture; new work captures input before acknowledgement.
+    @jakarta.persistence.Column(columnDefinition = "text") private String inputSnapshot;
+    public String inputSnapshot() { return inputSnapshot; }
+    public void retainInput(String snapshot) { inputSnapshot = java.util.Objects.requireNonNull(snapshot); }
 
     public UUID id() { return id; }
     public String eventType() { return eventType; }
