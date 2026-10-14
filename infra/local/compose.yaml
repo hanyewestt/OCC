@@ -10,7 +10,7 @@ x-supabase-environment: &supabase-environment
 
 services:
   postgres:
-    image: postgis/postgis:18-3.6
+    image: postgis/postgis:18-3.6@sha256:7e00e8c3539fdd43f513b98806c8204714dcd09dea683c259e333d7690317119
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-occ}
@@ -30,7 +30,7 @@ services:
       start_period: ${OCC_HEALTHCHECK_START_PERIOD:-10s}
 
   db-bootstrap:
-    image: postgis/postgis:18-3.6
+    image: postgis/postgis:18-3.6@sha256:7e00e8c3539fdd43f513b98806c8204714dcd09dea683c259e333d7690317119
     entrypoint: ["bash"]
     command: ["/bootstrap.sh"]
     restart: "no"
@@ -52,7 +52,10 @@ services:
     image: occ-ingestion:local
     build:
       context: ../..
-      dockerfile: services/ingestion/Dockerfile
+      dockerfile: infra/java.Dockerfile
+      args:
+        OCC_SERVICE: ingestion
+        OCC_SERVICE_INTERNAL_PORT: ${OCC_INGESTION_INTERNAL_PORT:-8001}
     restart: unless-stopped
     environment:
       <<: *supabase-environment
@@ -105,7 +108,10 @@ services:
     image: occ-disruption:local
     build:
       context: ../..
-      dockerfile: services/disruption/Dockerfile
+      dockerfile: infra/java.Dockerfile
+      args:
+        OCC_SERVICE: disruption
+        OCC_SERVICE_INTERNAL_PORT: ${OCC_DISRUPTION_INTERNAL_PORT:-8002}
     restart: unless-stopped
     environment:
       <<: *supabase-environment
@@ -162,7 +168,10 @@ services:
     image: occ-planning:local
     build:
       context: ../..
-      dockerfile: services/planning/Dockerfile
+      dockerfile: infra/java.Dockerfile
+      args:
+        OCC_SERVICE: planning
+        OCC_SERVICE_INTERNAL_PORT: ${OCC_PLANNING_INTERNAL_PORT:-8003}
     restart: unless-stopped
     environment:
       <<: *supabase-environment
@@ -225,7 +234,10 @@ services:
     image: occ-gateway:local
     build:
       context: ../..
-      dockerfile: services/gateway/Dockerfile
+      dockerfile: infra/java.Dockerfile
+      args:
+        OCC_SERVICE: gateway
+        OCC_SERVICE_INTERNAL_PORT: ${OCC_GATEWAY_INTERNAL_PORT:-8004}
     restart: unless-stopped
     environment:
       <<: *supabase-environment

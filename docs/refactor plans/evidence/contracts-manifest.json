@@ -1,5 +1,6 @@
 {
   "baselineRevision": "0f2cd49",
+  "targetBaselineRevision": "abc4ac7",
   "capturedAt": "2026-10-15",
   "status": "complete legacy-operation inventory and generated phase-one service contracts",
   "operations": [
@@ -72,8 +73,8 @@
       "targetService": "ingestion",
       "targetContract": "services/ingestion/openapi/ingestion.json",
       "targetMethod": "GET",
-      "targetPath": "/internal/v1/ingestion/demo-runs/{demoRunId}/root-cause-context",
-      "targetOperationId": "getSimulationRootCauseContext",
+      "targetPath": "/internal/v1/ingestion/demo-runs/{demoRunId}/planning-context",
+      "targetOperationId": "getSimulationPlanningContext",
       "classification": "internal-owner-namespace-move",
       "targetAuthorization": "peer-capability",
       "retirementRule": "Use the target contract and update all internal callers before retiring the source process."
@@ -252,8 +253,8 @@
       "targetService": "planning",
       "targetContract": "services/planning/openapi/planning.json",
       "targetMethod": "GET",
-      "targetPath": "/api/v1/planning/demo-runs/{id}/recommendation",
-      "targetOperationId": "getDemoRecommendation",
+      "targetPath": "/api/v1/planning/recommendations/by-disruption-event/{bunchingEventId}",
+      "targetOperationId": "getBunchingRecommendation_1",
       "classification": "owner-move+authentication",
       "targetAuthorization": "ADMIN|CONTROLLER",
       "retirementRule": "Recommendation result read moves from the Ingestion proxy to Planning."

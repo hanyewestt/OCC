@@ -1,4 +1,4 @@
-name: Production readiness gates
+name: Phase 1 verification
 
 on:
   push:
@@ -9,133 +9,237 @@ permissions:
   contents: read
 
 concurrency:
-  group: production-readiness-${{ github.workflow }}-${{ github.ref }}
+  group: phase-one-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   verify:
-    name: Verify ${{ matrix.service }}
+    name: Reactor tests and migration checks
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - service: ingestion
-            path: services/ingestion
-          - service: bunching
-            path: services/operations/bus-bunching-detection
-          - service: recommendation
-            path: services/planning/recommendation-engine
-          - service: diagnosis
-            path: services/planning/root-cause-diagnosis
     steps:
-      - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Check out source and contract baselines
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Java 25
-        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v5.0.0
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
           java-version: '25'
           cache: maven
-          cache-dependency-path: ${{ matrix.path }}/pom.xml
-      - name: Run unit and PostgreSQL integration tests
-        working-directory: ${{ matrix.path }}
-        run: ./mvnw --batch-mode --no-transfer-progress verify
+          cache-dependency-path: |
+            .mvn/wrapper/maven-wrapper.properties
+            pom.xml
+            services/*/pom.xml
+      - name: Run the required four-service reactor
+        run: ./mvnw --batch-mode --no-transfer-progress clean verify
         env:
           DATAMALL_API_KEY: synthetic-ci-key
-          OCC_DIAGNOSIS_GEMINI_API_KEY: synthetic-ci-key
-          OCC_RECOMMENDATION_GEMINI_API_KEY: synthetic-ci-key
-      - name: Require executed integration tests
-        working-directory: ${{ matrix.path }}
+          OCC_PLANNING_GEMINI_API_KEY: synthetic-ci-key
+      - name: Require unit and database integration tests to execute
+        shell: bash
         run: |
-          python -c "import pathlib, xml.etree.ElementTree as ET; p=pathlib.Path('target/failsafe-reports/failsafe-summary.xml'); assert p.exists(), f'Missing Failsafe summary: {p}'; n=int(ET.parse(p).getroot().findtext('completed', '0')); assert n > 0, f'No integration tests executed in {p.parent}'"
+          python3 - <<'PY'
+          import pathlib
+          import sys
+          import xml.etree.ElementTree as ET
 
-  openapi:
-    name: Validate API contracts and detect breaking changes
+          modules = {
+              "ingestion": True,
+              "disruption": True,
+              "planning": True,
+              "gateway": False,
+          }
+          failed = False
+          for module, integration_required in modules.items():
+              base = pathlib.Path("services") / module / "target"
+              reports = sorted((base / "surefire-reports").glob("TEST-*.xml"))
+              totals = {key: 0 for key in ("tests", "failures", "errors", "skipped")}
+              for report in reports:
+                  suite = ET.parse(report).getroot()
+                  for key in totals:
+                      totals[key] += int(suite.attrib.get(key, "0"))
+              valid = bool(reports) and totals["tests"] > 0
+              valid &= totals["failures"] == 0 and totals["errors"] == 0
+              valid &= totals["skipped"] == 0
+              print(f"{module} unit/slice: {totals}; report_files={len(reports)}")
+              if integration_required:
+                  summary = base / "failsafe-reports" / "failsafe-summary.xml"
+                  completed = 0
+                  if summary.is_file():
+                      completed = int(ET.parse(summary).getroot().findtext("completed", "0"))
+                  print(f"{module} integration: completed={completed}")
+                  valid &= completed > 0
+              if not valid:
+                  failed = True
+          if failed:
+              sys.exit("A required test suite was missing, skipped, or failed.")
+          PY
+      - name: Upload sanitized test and coverage reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: phase-one-test-reports
+          path: |
+            services/*/target/surefire-reports/TEST-*.xml
+            services/*/target/failsafe-reports/TEST-*.xml
+            services/*/target/failsafe-reports/failsafe-summary.xml
+            services/*/target/site/jacoco/jacoco.xml
+          if-no-files-found: error
+          retention-days: 7
+
+  config-and-contracts:
+    name: Configuration and API contract checks
     runs-on: ubuntu-24.04
     steps:
-      - name: Check out source and history
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Check out source and contract baselines
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Validate committed OpenAPI documents
+      - name: Validate the safe example Compose configuration
+        run: docker compose --env-file .env.example -f infra/local/compose.yaml config -q
+      - name: Validate generated contracts and source-to-target migration map
         shell: bash
+        env:
+          OASDIFF_IMAGE: tufin/oasdiff:v1.33.0@sha256:6263a96dd2ef0726c54e21fea9b8e1607eac4841add0079324b424c1f52b819c
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+
+          manifest_path = pathlib.Path("docs/refactor plans/evidence/contracts-manifest.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          source_revision = manifest["baselineRevision"]
+          target_revision = manifest["targetBaselineRevision"]
+          for revision in (source_revision, target_revision):
+              subprocess.run(["git", "cat-file", "-e", f"{revision}^{{commit}}"], check=True)
+
+          source_specs = {}
+          target_specs = {}
+          def source_spec(path):
+              if path not in source_specs:
+                  raw = subprocess.run(["git", "show", f"{source_revision}:{path}"],
+                                       check=True, capture_output=True, text=True).stdout
+                  source_specs[path] = json.loads(raw)
+              return source_specs[path]
+
+          def target_spec(path):
+              if path not in target_specs:
+                  target_specs[path] = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+              return target_specs[path]
+
+          def operation(spec, path, method):
+              return spec.get("paths", {}).get(path, {}).get(method.lower())
+
+          rows = manifest["operations"]
+          if not rows:
+              raise SystemExit("Contract migration manifest is empty.")
+          for row in rows:
+              previous = operation(source_spec(row["sourceContract"]),
+                                   row["sourcePath"], row["sourceMethod"])
+              if previous is None or previous.get("operationId") != row["sourceOperationId"]:
+                  raise SystemExit(f"Source operation does not match the baseline: {row['sourceOperationId']}")
+              classification = row["classification"]
+              if classification == "retired-self-http":
+                  if row.get("targetMethod") is not None or row.get("targetPath") is not None:
+                      raise SystemExit("Retired internal self-HTTP operation unexpectedly has a target route.")
+                  continue
+              if row["targetService"] == "edge":
+                  continue
+              current = target_spec(row["targetContract"])
+              matches = [candidate for path_item in current.get("paths", {}).values()
+                         for method, candidate in path_item.items()
+                         if isinstance(candidate, dict)
+                         and method.lower() == row["targetMethod"].lower()
+                         and candidate.get("operationId") == row["targetOperationId"]]
+              if len(matches) != 1:
+                  raise SystemExit(f"Target operation is missing or ambiguous: {row['targetOperationId']}")
+          print(f"Validated {len(rows)} source operations against {len(target_specs)} target contracts.")
+          PY
+
           mapfile -d '' specs < <(find services -type f -path '*/openapi/*.json' -print0)
           if ((${#specs[@]} == 0)); then
             echo 'No generated OpenAPI contracts found.' >&2
             exit 1
           fi
           for spec in "${specs[@]}"; do
-            docker run --rm -v "$PWD:/workspace:ro" -w /workspace \
-              tufin/oasdiff:v1.32.1 validate "/workspace/${spec}"
+            docker run --rm -v "$PWD:/workspace:ro" -w /workspace "$OASDIFF_IMAGE" \
+              validate "/workspace/${spec}"
           done
-      - name: Reject breaking contract changes
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -n "${GITHUB_BASE_REF:-}" ]]; then
-            base_ref="origin/${GITHUB_BASE_REF}"
-          else
-            base_ref='HEAD^'
-          fi
-          base_sha="$(git merge-base "$base_ref" HEAD 2>/dev/null || true)"
-          if [[ -z "$base_sha" ]]; then
-            echo 'No prior base revision is available; compatibility comparison is skipped.'
-            exit 0
-          fi
-          mkdir -p "$RUNNER_TEMP/openapi-baselines"
-          while IFS= read -r spec; do
-            [[ -n "$spec" ]] || continue
-            if ! git cat-file -e "${base_sha}:${spec}" 2>/dev/null; then
-              echo "New API contract, no previous baseline: ${spec}"
-              continue
+
+          git diff --name-only -z \
+            "$(python3 -c 'import json; print(json.load(open("docs/refactor plans/evidence/contracts-manifest.json"))["targetBaselineRevision"])')" \
+            HEAD -- 'services/**/openapi/*.json' > "$RUNNER_TEMP/openapi-changes.zlist"
+          while IFS= read -r -d '' spec; do
+            if [[ ! -f "$spec" ]]; then
+              echo "An OpenAPI contract was removed or renamed without a replacement baseline: ${spec}" >&2
+              exit 1
             fi
-            name="$(basename "$spec")"
-            git show "${base_sha}:${spec}" > "$RUNNER_TEMP/openapi-baselines/${name}"
-            docker run --rm -v "$PWD:/workspace:ro" \
-              -v "$RUNNER_TEMP/openapi-baselines:/baseline:ro" \
-              tufin/oasdiff:v1.32.1 breaking --fail-on ERR \
-              "/baseline/${name}" "/workspace/${spec}"
-          done < <(git diff --name-only "$base_sha" HEAD -- 'services/**/openapi/*.json')
+            baseline="$RUNNER_TEMP/openapi-baseline.json"
+            git show "$(python3 -c 'import json; print(json.load(open("docs/refactor plans/evidence/contracts-manifest.json"))["targetBaselineRevision"])'):${spec}" > "$baseline"
+            docker run --rm -v "$PWD:/workspace:ro" -v "$RUNNER_TEMP:/baseline:ro" \
+              "$OASDIFF_IMAGE" breaking --fail-on ERR "/baseline/openapi-baseline.json" "/workspace/${spec}"
+          done < "$RUNNER_TEMP/openapi-changes.zlist"
 
   container-scan:
-    name: Scan ${{ matrix.service }} image
+    name: Build and scan ${{ matrix.service }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         include:
           - service: ingestion
-            path: services/ingestion
+            port: 8001
             image: occ-ingestion:ci
-          - service: bunching
-            path: services/operations/bus-bunching-detection
-            image: occ-bunching:ci
-          - service: recommendation
-            path: services/planning/recommendation-engine
-            image: occ-recommendation:ci
-          - service: diagnosis
-            path: services/planning/root-cause-diagnosis
-            image: occ-diagnosis:ci
+          - service: disruption
+            port: 8002
+            image: occ-disruption:ci
+          - service: planning
+            port: 8003
+            image: occ-planning:ci
+          - service: gateway
+            port: 8004
+            image: occ-gateway:ci
     steps:
       - name: Check out source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Build container image
-        run: docker build --tag '${{ matrix.image }}' '${{ matrix.path }}'
-      - name: Scan OS and library vulnerabilities
+      - name: Build shared Java application image
+        run: >-
+          docker build --pull --file infra/java.Dockerfile
+          --build-arg OCC_SERVICE=${{ matrix.service }}
+          --build-arg OCC_SERVICE_INTERNAL_PORT=${{ matrix.port }}
+          --tag ${{ matrix.image }} .
+      - name: Fail on HIGH or CRITICAL OS/library findings
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ matrix.image }}
           format: table
+          output: ${{ runner.temp }}/trivy-${{ matrix.service }}.txt
           exit-code: '1'
-          ignore-unfixed: true
+          ignore-unfixed: 'false'
           vuln-type: os,library
-          severity: CRITICAL,HIGH
+          severity: HIGH,CRITICAL
+      - name: Generate image SBOM
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ matrix.image }}
+          format: cyclonedx
+          output: ${{ runner.temp }}/sbom-${{ matrix.service }}.json
+          exit-code: '0'
+      - name: Upload scan report and SBOM
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-security-${{ matrix.service }}
+          path: |
+            ${{ runner.temp }}/trivy-${{ matrix.service }}.txt
+            ${{ runner.temp }}/sbom-${{ matrix.service }}.json
+          if-no-files-found: warn
+          retention-days: 7
