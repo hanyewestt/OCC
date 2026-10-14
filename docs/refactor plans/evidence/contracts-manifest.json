@@ -1,0 +1,13 @@
+{
+  "baselineRevision": "0f2cd49",
+  "capturedAt": "2026-10-15",
+  "status": "inventory; target contracts not implemented",
+  "contracts": [
+    {"owner":"ingestion","source":"services/ingestion/openapi/polling-ingestion.json","paths":["/api/v1/arrivals","/api/v1/arrivals/history","/api/v1/feed-status","/api/v1/poll-runs","/api/v1/reference-topology","/api/v1/demo-runs","/api/v1/demo-mode","/internal/v1/arrival-snapshots","/internal/v1/demo-runs/{demoRunId}/arrival-snapshots","/internal/v1/demo-runs/{demoRunId}/root-cause-context"],"target":"services/ingestion/openapi/ingestion.json","classification":"retain behavior; move public resources beneath /api/v1/ingestion; preserve bounded internal evidence APIs"},
+    {"owner":"disruption","source":"services/operations/bus-bunching-detection/openapi/bus-bunching-detection.json","paths":["/api/v1/live-bunching-alerts","/internal/v1/bunching-alert-events/{eventId}","/internal/v1/consumer-selection","/internal/v1/demo-runs/{demoRunId}/alerts","/internal/v1/retention-protection"],"target":"services/disruption/openapi/disruption.json","classification":"move bunching behavior to /api/v1/disruption/** and typed internal disruption event contracts; add traffic lifecycle API"},
+    {"owner":"planning","source":"services/planning/root-cause-diagnosis/openapi/root-cause-diagnosis.json","paths":["/internal/v1/diagnosis-requests","/internal/v1/diagnosis-requests/{requestId}","/internal/v1/diagnoses/{diagnosisId}"],"target":"services/planning/openapi/planning.json","classification":"move producer submission/status to /internal/v1/planning/** and expose authenticated result reads at /api/v1/planning/**"},
+    {"owner":"planning","source":"services/planning/recommendation-engine/openapi/recommendation-engine.json","paths":["/internal/v1/bunching-recommendations","/internal/v1/bunching-recommendations/by-bunching-event/{bunchingEventId}"],"target":"services/planning/openapi/planning.json","classification":"replace inter-service HTTP with local domain calls; expose stored recommendation reads under /api/v1/planning/**"},
+    {"owner":"gateway","source":null,"paths":[],"target":"services/gateway/openapi/gateway.json","classification":"new routed authentication boundary; no business operations or database"}
+  ],
+  "phase2Only": ["approval/rejection", "captain identity binding", "assigned instructions", "controller/captain React routes"]
+}
