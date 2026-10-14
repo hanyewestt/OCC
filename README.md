@@ -4,3 +4,25 @@ An agentic dispatch and incident mitigation system for Singapore public bus oper
 
 ## Local quick start
 Read [this](infra/local/README.md)
+
+## Build and verify the Phase 1 service reactor
+
+The repository-root Maven Wrapper pins Apache Maven 3.9.16. From the repository root,
+build and run the unit and integration test lifecycle for the four target services:
+
+```powershell
+.\mvnw.cmd verify
+```
+
+```bash
+./mvnw verify
+```
+
+The reactor includes Ingestion, Disruption, Planning, and Gateway. Disruption,
+Planning, and Gateway listen on internal ports `8002`, `8003`, and `8004`;
+configure them through `OCC_DISRUPTION_INTERNAL_PORT`,
+`OCC_PLANNING_INTERNAL_PORT`, and `OCC_GATEWAY_INTERNAL_PORT` in the ignored
+repository-root `.env` for local runs. Planning owns both diagnosis and
+recommendation generation; its setup and protected API details are in
+[`services/planning/README.md`](services/planning/README.md). Environment names
+and safe example values are listed in `.env.example`.

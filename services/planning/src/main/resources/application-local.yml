@@ -1,0 +1,14 @@
+spring:
+  config:
+    import: "optional:file:../../.env[.properties]"
+  datasource:
+    url: ${OCC_PLANNING_DB_PUBLIC_URL}
+
+occ:
+  diagnosis:
+    disruption-internal-url: ${OCC_DISRUPTION_PUBLIC_URL}
+    ingestion-internal-url: ${OCC_INGESTION_PUBLIC_URL}
+
+logging:
+  level:
+    com.csd.occ.planning: DEBUG

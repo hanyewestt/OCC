@@ -1,7 +1,7 @@
 {
   "Servers": {
     "1": {
-      "Name": "OCC Ingestion",
+      "Name": "OCC Ingestion schema",
       "Group": "OCC Local",
       "Host": "postgres",
       "Port": 5432,
@@ -10,13 +10,21 @@
       "SSLMode": "prefer"
     },
     "2": {
-      "Name": "OCC Bunching",
+      "Name": "OCC Disruption schema",
       "Group": "OCC Local",
       "Host": "postgres",
       "Port": 5432,
       "MaintenanceDB": "occ",
-      "Username": "occ_bunching",
-      "Password": "change-me",
+      "Username": "occ_disruption",
+      "SSLMode": "prefer"
+    },
+    "3": {
+      "Name": "OCC Planning schema",
+      "Group": "OCC Local",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "occ",
+      "Username": "occ_planning",
       "SSLMode": "prefer"
     }
   }

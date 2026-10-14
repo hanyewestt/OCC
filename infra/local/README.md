@@ -1,130 +1,85 @@
-# Local Docker Compose stack
+# Local OCC stack
 
-## Prerequisites
+The Compose stack runs PostgreSQL/PostGIS, a one-shot idempotent database bootstrap,
+Ingestion, Disruption, Planning, Gateway, and optional pgAdmin. Each application
+owns one schema. Internal requests use Compose service names and ports; browser
+and host-native calls use the published host ports.
 
-- Docker Desktop is installed and running.
-- Create the repository-root `.env` from `.env.example`, then set all passwords
-  and `DATAMALL_API_KEY`. Do not commit `.env`.
+## Configure and start
 
-## Start everything
-
-Run from the repository root `yourfolders/OCC/`.
-
-**PowerShell**
+Create the ignored repository-root `.env` only if it does not already exist:
 
 ```powershell
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+```
+
+Set the Supabase project URL and JWKS URL, DataMall API key, database passwords,
+and six directed service peer tokens in `.env`. Keep the JWT algorithm aligned
+with Supabase's active signing key. The local environment inventory and safe
+defaults are in [`.env.example`](../../.env.example).
+
+From the repository root, validate and start the stack:
+
+```powershell
+docker compose --env-file .env -f infra/local/compose.yaml config -q
 docker compose --env-file .env -f infra/local/compose.yaml up -d --build
 docker compose --env-file .env -f infra/local/compose.yaml ps
 ```
 
-## Database reduction upgrades
+The bootstrap runs once per Compose update, safely creates or updates the three
+service roles/schemas, and grants read access to existing `bunching`,
+`recommendation`, and `diagnosis` schemas only for the one-time Flyway imports.
+Application runtime traffic stays behind private service APIs. Existing database
+volumes are reused; back them up before the migration.
 
-Fresh volumes create only the four active service schemas. The PostgreSQL health
-check uses TCP so schema jobs cannot run against the entrypoint's temporary
-socket-only server. `OCC_OPERATIONS_DB_PASSWORD` and `OCC_PLANNING_DB_PASSWORD`
-are deprecated, accepted but unused; keep existing environment names during transition.
+For an existing Phase 0/legacy stack, first save a database backup and stop the
+old consumers without deleting the PostgreSQL volume:
 
-For an existing volume, back up first, inspect reserved schemas and role ownership,
-and run `postgres/admin/retire_reserved_schemas.sql` as an administrator only after
-confirming no external reader uses them. RESTRICT aborts on unexpected dependencies;
-never add CASCADE. Global role cleanup is outside service Flyway ownership.
-
-Operational history defaults to 12h across ingestion and bunching. Existing explicit
-environment values remain supported. New AI text limits are
-`OCC_DIAGNOSIS_AUDIT_MAX_RESPONSE_CHARACTERS` and
-`OCC_RECOMMENDATION_AUDIT_MAX_RESPONSE_CHARACTERS`, both 65536 by default.
-See [the verification and breaking-change report](../../docs/plans/database-reduction-verification.md).
-
-
-**Bash**
-
-```bash
-[ -f .env ] || cp .env.example .env
+```powershell
+docker compose --env-file .env -f infra/local/compose.yaml exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' > .\occ-before-phase1.dump
+docker compose --env-file .env -f infra/local/compose.yaml down --remove-orphans
 docker compose --env-file .env -f infra/local/compose.yaml up -d --build
-docker compose --env-file .env -f infra/local/compose.yaml ps
 ```
 
-## Where to find things
+The new service migrations import legacy rows idempotently and record source
+hashes in import ledgers. Keep the backup until the existing demo and live
+workflow checks pass.
 
-| Component | Host address |
-| --- | --- |
-| Ingestion API and Swagger UI | `http://localhost:6767/swagger-ui.html` |
-| PostgreSQL | `localhost:5432` |
-| pgAdmin | `http://localhost:6700` |
-| Application logs | See the commands below |
+## Local endpoints
 
-To follow application logs:
+| Service | Host URL | Container port |
+| --- | --- | ---: |
+| Ingestion | `http://localhost:6767` | 8001 |
+| Disruption | `http://localhost:6768` | 8002 |
+| Planning | `http://localhost:6769` | 8003 |
+| Gateway | `http://localhost:6770` | 8004 |
+| PostgreSQL | `localhost:5432` | 5432 |
+| pgAdmin | `http://localhost:6700` | 80 |
 
-**PowerShell**
+The Gateway API is the user-facing entry point. The service host ports are
+published in this local-only Compose file to simplify health checks, Swagger
+testing and integration work. In Compose, services still call one another using
+`http://ingestion:8001`, `http://disruption:8002` and `http://planning:8003`.
+
+Swagger UI is available at each service's `/swagger-ui.html`; backend services
+require a valid Supabase token and the allowed `ADMIN` or `CONTROLLER` role.
+Gateway health is at `/actuator/health/readiness`. Follow logs with:
+
 ```powershell
-docker compose --env-file .env -f infra/local/compose.yaml logs -f ingestion bus-bunching-detection
-```
-**Bash**
-
-```bash
-docker compose --env-file .env -f infra/local/compose.yaml logs -f ingestion bus-bunching-detection
+docker compose --env-file .env -f infra/local/compose.yaml logs -f gateway ingestion disruption planning
 ```
 
-## Start optional pgAdmin
-**PowerShell**
+Start pgAdmin only when needed:
+
 ```powershell
 docker compose --env-file .env -f infra/local/compose.yaml --profile tools up -d pgadmin
 ```
-**Bash**
 
-```bash
-docker compose --env-file .env -f infra/local/compose.yaml --profile tools up -d pgadmin
-```
+Stop containers without removing database data:
 
-## Stop
-
-Stop the main stack and optional pgAdmin while preserving all local data:
-
-**PowerShell**
 ```powershell
-docker compose --env-file .env -f infra/local/compose.yaml stop
-```
-**Bash**
-
-```bash
-docker compose --env-file .env -f infra/local/compose.yaml stop
+docker compose --env-file .env -f infra/local/compose.yaml down --remove-orphans
 ```
 
-**To stop only pgAdmin:**
-
-**PowerShell**
-```powershell
-docker compose --env-file .env -f infra/local/compose.yaml stop pgadmin
-```
-**Bash**
-
-```bash
-docker compose --env-file .env -f infra/local/compose.yaml stop pgadmin
-```
-
-## Rebuild or reset
-
-Rebuild images and recreate application containers without deleting database data:
-**PowerShell**
-```powershell
-docker compose --env-file .env -f infra/local/compose.yaml up -d --build --force-recreate
-```
-**Bash**
-
-```bash
-docker compose --env-file .env -f infra/local/compose.yaml up -d --build --force-recreate
-```
-
-Delete containers, images created by Compose, and all named volumes for a completely
-fresh local database. This permanently deletes local OCC data:
-
-**PowerShell**
-```powershell
-docker compose --env-file .env -f infra/local/compose.yaml down -v --rmi local --remove-orphans
-```
-**Bash**
-
-```bash
-docker compose --env-file .env -f infra/local/compose.yaml down -v --rmi local --remove-orphans
-```
+Removing Compose volumes with `down -v` permanently erases the local database
+and pgAdmin settings; use it only when a fresh empty database is intentional.

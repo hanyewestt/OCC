@@ -1,0 +1,46 @@
+flowchart LR
+    Browser[Controller browser / existing demo page] -->|HTTPS, user JWT| Nginx[Nginx edge and static assets]
+    Nginx -->|/api/v1/** only| Gateway[Gateway MVC<br/>JWT validation, route and role policy<br/>no business database]
+    Nginx -->|static pages/assets| Static[Existing demo + local/test auth harness]
+
+    Gateway -->|/api/v1/ingestion/**| Ingestion[Ingestion<br/>poll, normalize, topology, demo]
+    Gateway -->|/api/v1/disruption/**| Disruption[Disruption<br/>bunching + traffic lifecycle]
+    Gateway -->|/api/v1/planning/**| Planning[Planning<br/>diagnosis + recommendation]
+
+    Disruption -->|private capability: arrival, traffic, topology, demo reads| Ingestion
+    Disruption -->|durable outbox / private capability| Planning
+    Planning -->|private capability: existing context and topology| Ingestion
+
+    Ingestion -->|schema owner/runtime role| DB[(PostgreSQL + PostGIS)]
+    Disruption -->|schema owner/runtime role| DB
+    Planning -->|schema owner/runtime role| DB
+
+    DataMall[DataMall provider] -->|poll| Ingestion
+    Gemini[Gemini provider] <-->|bounded model request| Planning
+    Supabase[Supabase Auth<br/>issuer + public JWKS] -->|sign-in and public keys| Browser
+    Gateway -.->|issuer/JWKS validation| Supabase
+    Ingestion -.->|provider HTTP egress| Internet[Outbound network]
+    Planning -.->|provider HTTP egress| Internet
+
+    subgraph IngestionRuntime[Ingestion process]
+      Ingestion
+    end
+    subgraph DisruptionRuntime[Disruption process]
+      BunchingPolicy[Bunching policy]
+      TrafficPolicy[Traffic lifecycle policy]
+      BunchingPolicy --> Disruption
+      TrafficPolicy --> Disruption
+    end
+    subgraph PlanningRuntime[Planning process]
+      Diagnosis[Diagnosis policy/model]
+      Recommendation[Recommendation policy/model]
+      Diagnosis -->|local domain call + durable job| Recommendation
+      Diagnosis --> Planning
+      Recommendation --> Planning
+    end
+
+    classDef public fill:#e8f1ff,stroke:#3973ac;
+    classDef private fill:#ecfbf2,stroke:#338652;
+    classDef deferred fill:#f6f6f6,stroke:#888;
+    class Gateway,Nginx public;
+    class Ingestion,Disruption,Planning,DB private;

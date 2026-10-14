@@ -1,0 +1,4352 @@
+[
+    {
+        "kind": "table",
+        "name": "alert_event",
+        "schema": "bunching",
+        "columns": [
+            {
+                "name": "id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "alert_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "action",
+                "type": "character varying(20)",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "classification",
+                "type": "character varying(30)",
+                "default": "'OBSERVATION_ONLY'::character varying",
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "service_id",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": false,
+                "position": 6
+            },
+            {
+                "name": "stop_code",
+                "type": "character varying(20)",
+                "default": null,
+                "nullable": false,
+                "position": 7
+            },
+            {
+                "name": "direction_id",
+                "type": "integer",
+                "default": null,
+                "nullable": false,
+                "position": 8
+            },
+            {
+                "name": "raw_observation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 9
+            },
+            {
+                "name": "poll_run_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 10
+            },
+            {
+                "name": "fetched_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 11
+            },
+            {
+                "name": "triggered_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 12
+            },
+            {
+                "name": "evidence",
+                "type": "jsonb",
+                "default": null,
+                "nullable": false,
+                "position": 13
+            },
+            {
+                "name": "demo_run_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 14
+            },
+            {
+                "name": "leading_observation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 16
+            },
+            {
+                "name": "following_observation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 17
+            },
+            {
+                "name": "expected_headway_seconds",
+                "type": "integer",
+                "default": null,
+                "nullable": true,
+                "position": 18
+            },
+            {
+                "name": "first_observed_headway_seconds",
+                "type": "integer",
+                "default": null,
+                "nullable": true,
+                "position": 19
+            },
+            {
+                "name": "second_observed_headway_seconds",
+                "type": "integer",
+                "default": null,
+                "nullable": true,
+                "position": 20
+            },
+            {
+                "name": "first_confirming_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 21
+            },
+            {
+                "name": "second_confirming_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 22
+            },
+            {
+                "name": "first_leading_observation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 23
+            },
+            {
+                "name": "first_following_observation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 24
+            },
+            {
+                "name": "second_leading_observation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 25
+            },
+            {
+                "name": "second_following_observation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 26
+            },
+            {
+                "name": "detection_rule_version",
+                "type": "character varying(80)",
+                "default": null,
+                "nullable": true,
+                "position": 27
+            }
+        ],
+        "indexes": [
+            {
+                "name": "ix_alert_event_demo_run",
+                "definition": "CREATE INDEX ix_alert_event_demo_run ON bunching.alert_event USING btree (demo_run_id, triggered_at) WHERE ((classification)::text = 'SIMULATION'::text)"
+            },
+            {
+                "name": "ix_alert_event_poll_run_id",
+                "definition": "CREATE INDEX ix_alert_event_poll_run_id ON bunching.alert_event USING btree (poll_run_id)"
+            },
+            {
+                "name": "ix_alert_event_triggered_at",
+                "definition": "CREATE INDEX ix_alert_event_triggered_at ON bunching.alert_event USING btree (triggered_at)"
+            },
+            {
+                "name": "pk_alert_event",
+                "definition": "CREATE UNIQUE INDEX pk_alert_event ON bunching.alert_event USING btree (id)"
+            },
+            {
+                "name": "uq_alert_event_episode_action",
+                "definition": "CREATE UNIQUE INDEX uq_alert_event_episode_action ON bunching.alert_event USING btree (alert_id, action)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "alert_event_action_not_null",
+                "type": null,
+                "definition": "NOT NULL action"
+            },
+            {
+                "name": "alert_event_alert_id_not_null",
+                "type": null,
+                "definition": "NOT NULL alert_id"
+            },
+            {
+                "name": "alert_event_classification_not_null",
+                "type": null,
+                "definition": "NOT NULL classification"
+            },
+            {
+                "name": "alert_event_direction_id_not_null",
+                "type": null,
+                "definition": "NOT NULL direction_id"
+            },
+            {
+                "name": "alert_event_evidence_not_null",
+                "type": null,
+                "definition": "NOT NULL evidence"
+            },
+            {
+                "name": "alert_event_fetched_at_not_null",
+                "type": null,
+                "definition": "NOT NULL fetched_at"
+            },
+            {
+                "name": "alert_event_id_not_null",
+                "type": null,
+                "definition": "NOT NULL id"
+            },
+            {
+                "name": "alert_event_poll_run_id_not_null",
+                "type": null,
+                "definition": "NOT NULL poll_run_id"
+            },
+            {
+                "name": "alert_event_raw_observation_id_not_null",
+                "type": null,
+                "definition": "NOT NULL raw_observation_id"
+            },
+            {
+                "name": "alert_event_service_id_not_null",
+                "type": null,
+                "definition": "NOT NULL service_id"
+            },
+            {
+                "name": "alert_event_stop_code_not_null",
+                "type": null,
+                "definition": "NOT NULL stop_code"
+            },
+            {
+                "name": "alert_event_triggered_at_not_null",
+                "type": null,
+                "definition": "NOT NULL triggered_at"
+            },
+            {
+                "name": "ck_alert_event_action",
+                "type": "check",
+                "definition": "CHECK (action::text = ANY (ARRAY['OPENED'::character varying, 'CLEARED'::character varying]::text[]))"
+            },
+            {
+                "name": "ck_alert_event_classification",
+                "type": "check",
+                "definition": "CHECK (classification::text = ANY (ARRAY['OBSERVATION_ONLY'::character varying, 'SIMULATION'::character varying]::text[]))"
+            },
+            {
+                "name": "ck_alert_event_confirmed_headways",
+                "type": "check",
+                "definition": "CHECK (expected_headway_seconds IS NULL OR expected_headway_seconds > 0)"
+            },
+            {
+                "name": "ck_alert_event_confirmed_observed_headways",
+                "type": "check",
+                "definition": "CHECK (first_observed_headway_seconds IS NULL AND second_observed_headway_seconds IS NULL OR first_observed_headway_seconds >= 0 AND second_observed_headway_seconds >= 0)"
+            },
+            {
+                "name": "ck_alert_event_evidence",
+                "type": "check",
+                "definition": "CHECK (jsonb_typeof(evidence) = 'object'::text)"
+            },
+            {
+                "name": "ck_alert_event_run_classification",
+                "type": "check",
+                "definition": "CHECK (classification::text = 'OBSERVATION_ONLY'::text AND demo_run_id IS NULL OR classification::text = 'SIMULATION'::text AND demo_run_id IS NOT NULL)"
+            },
+            {
+                "name": "pk_alert_event",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (id)"
+            },
+            {
+                "name": "uq_alert_event_episode_action",
+                "type": "unique",
+                "definition": "UNIQUE (alert_id, action)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "alert_processing_state",
+        "schema": "bunching",
+        "columns": [
+            {
+                "name": "id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "demo_run_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 2
+            },
+            {
+                "name": "service_id",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "stop_code",
+                "type": "character varying(20)",
+                "default": null,
+                "nullable": false,
+                "position": 4
+            },
+            {
+                "name": "direction_id",
+                "type": "integer",
+                "default": null,
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "last_fetched_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 6
+            },
+            {
+                "name": "active_alert_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 7
+            },
+            {
+                "name": "leading_observation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 8
+            },
+            {
+                "name": "following_observation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 9
+            },
+            {
+                "name": "pending_headway_seconds",
+                "type": "integer",
+                "default": null,
+                "nullable": true,
+                "position": 10
+            },
+            {
+                "name": "pending_detected_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 11
+            },
+            {
+                "name": "pending_leading_observation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 12
+            },
+            {
+                "name": "pending_following_observation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 13
+            },
+            {
+                "name": "pending_raw_observation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 14
+            },
+            {
+                "name": "pending_poll_run_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 15
+            }
+        ],
+        "indexes": [
+            {
+                "name": "pk_alert_processing_state",
+                "definition": "CREATE UNIQUE INDEX pk_alert_processing_state ON bunching.alert_processing_state USING btree (id)"
+            },
+            {
+                "name": "uq_alert_processing_state_scope",
+                "definition": "CREATE UNIQUE INDEX uq_alert_processing_state_scope ON bunching.alert_processing_state USING btree (demo_run_id, service_id, stop_code, direction_id) NULLS NOT DISTINCT"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "alert_processing_state_direction_id_not_null",
+                "type": null,
+                "definition": "NOT NULL direction_id"
+            },
+            {
+                "name": "alert_processing_state_id_not_null",
+                "type": null,
+                "definition": "NOT NULL id"
+            },
+            {
+                "name": "alert_processing_state_last_fetched_at_not_null",
+                "type": null,
+                "definition": "NOT NULL last_fetched_at"
+            },
+            {
+                "name": "alert_processing_state_service_id_not_null",
+                "type": null,
+                "definition": "NOT NULL service_id"
+            },
+            {
+                "name": "alert_processing_state_stop_code_not_null",
+                "type": null,
+                "definition": "NOT NULL stop_code"
+            },
+            {
+                "name": "pk_alert_processing_state",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (id)"
+            },
+            {
+                "name": "uq_alert_processing_state_scope",
+                "type": "unique",
+                "definition": "UNIQUE NULLS NOT DISTINCT (demo_run_id, service_id, stop_code, direction_id)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "consumer_state",
+        "schema": "bunching",
+        "columns": [
+            {
+                "name": "id",
+                "type": "integer",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "mode",
+                "type": "character varying(10)",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "demo_run_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 3
+            },
+            {
+                "name": "last_sequence",
+                "type": "bigint",
+                "default": "0",
+                "nullable": false,
+                "position": 4
+            },
+            {
+                "name": "updated_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "version",
+                "type": "bigint",
+                "default": "0",
+                "nullable": false,
+                "position": 6
+            }
+        ],
+        "indexes": [
+            {
+                "name": "pk_consumer_state",
+                "definition": "CREATE UNIQUE INDEX pk_consumer_state ON bunching.consumer_state USING btree (id)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "ck_consumer_state_demo_run",
+                "type": "check",
+                "definition": "CHECK (mode::text = 'LIVE'::text AND demo_run_id IS NULL OR mode::text = 'DEMO'::text AND demo_run_id IS NOT NULL)"
+            },
+            {
+                "name": "ck_consumer_state_mode",
+                "type": "check",
+                "definition": "CHECK (mode::text = ANY (ARRAY['LIVE'::character varying, 'DEMO'::character varying]::text[]))"
+            },
+            {
+                "name": "ck_consumer_state_sequence",
+                "type": "check",
+                "definition": "CHECK (last_sequence >= 0)"
+            },
+            {
+                "name": "ck_consumer_state_singleton",
+                "type": "check",
+                "definition": "CHECK (id = 1)"
+            },
+            {
+                "name": "consumer_state_id_not_null",
+                "type": null,
+                "definition": "NOT NULL id"
+            },
+            {
+                "name": "consumer_state_last_sequence_not_null",
+                "type": null,
+                "definition": "NOT NULL last_sequence"
+            },
+            {
+                "name": "consumer_state_mode_not_null",
+                "type": null,
+                "definition": "NOT NULL mode"
+            },
+            {
+                "name": "consumer_state_updated_at_not_null",
+                "type": null,
+                "definition": "NOT NULL updated_at"
+            },
+            {
+                "name": "consumer_state_version_not_null",
+                "type": null,
+                "definition": "NOT NULL version"
+            },
+            {
+                "name": "pk_consumer_state",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (id)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "diagnosis_outbox",
+        "schema": "bunching",
+        "columns": [
+            {
+                "name": "id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "event_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "status",
+                "type": "character varying(30)",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "attempt_count",
+                "type": "integer",
+                "default": "0",
+                "nullable": false,
+                "position": 4
+            },
+            {
+                "name": "next_attempt_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "lease_until",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 6
+            },
+            {
+                "name": "last_http_status",
+                "type": "integer",
+                "default": null,
+                "nullable": true,
+                "position": 7
+            },
+            {
+                "name": "failure_code",
+                "type": "character varying(100)",
+                "default": null,
+                "nullable": true,
+                "position": 8
+            },
+            {
+                "name": "created_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 9
+            },
+            {
+                "name": "delivered_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 10
+            }
+        ],
+        "indexes": [
+            {
+                "name": "ix_diagnosis_outbox_claim",
+                "definition": "CREATE INDEX ix_diagnosis_outbox_claim ON bunching.diagnosis_outbox USING btree (status, next_attempt_at, lease_until, created_at)"
+            },
+            {
+                "name": "pk_diagnosis_outbox",
+                "definition": "CREATE UNIQUE INDEX pk_diagnosis_outbox ON bunching.diagnosis_outbox USING btree (id)"
+            },
+            {
+                "name": "uq_diagnosis_outbox_event",
+                "definition": "CREATE UNIQUE INDEX uq_diagnosis_outbox_event ON bunching.diagnosis_outbox USING btree (event_id)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "ck_diagnosis_outbox_attempts",
+                "type": "check",
+                "definition": "CHECK (attempt_count >= 0)"
+            },
+            {
+                "name": "ck_diagnosis_outbox_status",
+                "type": "check",
+                "definition": "CHECK (status::text = ANY (ARRAY['PENDING'::character varying, 'PROCESSING'::character varying, 'DELIVERED'::character varying, 'FAILED_TERMINAL'::character varying]::text[]))"
+            },
+            {
+                "name": "diagnosis_outbox_attempt_count_not_null",
+                "type": null,
+                "definition": "NOT NULL attempt_count"
+            },
+            {
+                "name": "diagnosis_outbox_created_at_not_null",
+                "type": null,
+                "definition": "NOT NULL created_at"
+            },
+            {
+                "name": "diagnosis_outbox_event_id_not_null",
+                "type": null,
+                "definition": "NOT NULL event_id"
+            },
+            {
+                "name": "diagnosis_outbox_id_not_null",
+                "type": null,
+                "definition": "NOT NULL id"
+            },
+            {
+                "name": "diagnosis_outbox_next_attempt_at_not_null",
+                "type": null,
+                "definition": "NOT NULL next_attempt_at"
+            },
+            {
+                "name": "diagnosis_outbox_status_not_null",
+                "type": null,
+                "definition": "NOT NULL status"
+            },
+            {
+                "name": "fk_diagnosis_outbox_event",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (event_id) REFERENCES bunching.alert_event(id)"
+            },
+            {
+                "name": "pk_diagnosis_outbox",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (id)"
+            },
+            {
+                "name": "uq_diagnosis_outbox_event",
+                "type": "unique",
+                "definition": "UNIQUE (event_id)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "source_processing_state",
+        "schema": "bunching",
+        "columns": [
+            {
+                "name": "raw_observation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "status",
+                "type": "character varying(10)",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "next_attempt_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 3
+            },
+            {
+                "name": "processed_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 4
+            },
+            {
+                "name": "rejected_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 5
+            },
+            {
+                "name": "reason",
+                "type": "character varying(100)",
+                "default": null,
+                "nullable": true,
+                "position": 6
+            },
+            {
+                "name": "demo_run_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 7
+            },
+            {
+                "name": "evaluated_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 8
+            },
+            {
+                "name": "threshold_seconds",
+                "type": "numeric(18,9)",
+                "default": null,
+                "nullable": true,
+                "position": 9
+            },
+            {
+                "name": "bunched_group_count",
+                "type": "integer",
+                "default": null,
+                "nullable": true,
+                "position": 10
+            },
+            {
+                "name": "source_sequence",
+                "type": "bigint",
+                "default": null,
+                "nullable": true,
+                "position": 11
+            },
+            {
+                "name": "version",
+                "type": "bigint",
+                "default": "0",
+                "nullable": false,
+                "position": 12
+            }
+        ],
+        "indexes": [
+            {
+                "name": "ix_source_processing_state_due_retry",
+                "definition": "CREATE INDEX ix_source_processing_state_due_retry ON bunching.source_processing_state USING btree (demo_run_id, next_attempt_at) WHERE ((status)::text = 'DEFERRED'::text)"
+            },
+            {
+                "name": "pk_source_processing_state",
+                "definition": "CREATE UNIQUE INDEX pk_source_processing_state ON bunching.source_processing_state USING btree (raw_observation_id)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "ck_source_processing_state_count",
+                "type": "check",
+                "definition": "CHECK (bunched_group_count IS NULL OR bunched_group_count >= 0)"
+            },
+            {
+                "name": "ck_source_processing_state_deferred",
+                "type": "check",
+                "definition": "CHECK (status::text <> 'DEFERRED'::text OR next_attempt_at IS NOT NULL)"
+            },
+            {
+                "name": "ck_source_processing_state_processed",
+                "type": "check",
+                "definition": "CHECK (status::text <> 'PROCESSED'::text OR processed_at IS NOT NULL AND evaluated_at IS NOT NULL AND threshold_seconds IS NOT NULL AND bunched_group_count IS NOT NULL)"
+            },
+            {
+                "name": "ck_source_processing_state_rejected",
+                "type": "check",
+                "definition": "CHECK (status::text <> 'REJECTED'::text OR rejected_at IS NOT NULL AND reason IS NOT NULL)"
+            },
+            {
+                "name": "ck_source_processing_state_result",
+                "type": "check",
+                "definition": "CHECK (threshold_seconds IS NULL OR threshold_seconds > 0::numeric)"
+            },
+            {
+                "name": "ck_source_processing_state_sequence",
+                "type": "check",
+                "definition": "CHECK (source_sequence IS NULL OR source_sequence >= 0)"
+            },
+            {
+                "name": "ck_source_processing_state_status",
+                "type": "check",
+                "definition": "CHECK (status::text = ANY (ARRAY['PROCESSED'::character varying, 'DEFERRED'::character varying, 'REJECTED'::character varying]::text[]))"
+            },
+            {
+                "name": "pk_source_processing_state",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (raw_observation_id)"
+            },
+            {
+                "name": "source_processing_state_raw_observation_id_not_null",
+                "type": null,
+                "definition": "NOT NULL raw_observation_id"
+            },
+            {
+                "name": "source_processing_state_status_not_null",
+                "type": null,
+                "definition": "NOT NULL status"
+            },
+            {
+                "name": "source_processing_state_version_not_null",
+                "type": null,
+                "definition": "NOT NULL version"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "diagnosis_request",
+        "schema": "diagnosis",
+        "columns": [
+            {
+                "name": "id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "event_type",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "producer",
+                "type": "character varying(80)",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "event_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 4
+            },
+            {
+                "name": "schema_version",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "status",
+                "type": "character varying(30)",
+                "default": null,
+                "nullable": false,
+                "position": 6
+            },
+            {
+                "name": "attempt_count",
+                "type": "integer",
+                "default": "0",
+                "nullable": false,
+                "position": 7
+            },
+            {
+                "name": "next_attempt_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 8
+            },
+            {
+                "name": "lease_until",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 9
+            },
+            {
+                "name": "failure_code",
+                "type": "character varying(80)",
+                "default": null,
+                "nullable": true,
+                "position": 11
+            },
+            {
+                "name": "created_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 12
+            },
+            {
+                "name": "updated_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 13
+            },
+            {
+                "name": "version",
+                "type": "bigint",
+                "default": "0",
+                "nullable": false,
+                "position": 14
+            },
+            {
+                "name": "input_snapshot",
+                "type": "text",
+                "default": null,
+                "nullable": true,
+                "position": 15
+            }
+        ],
+        "indexes": [
+            {
+                "name": "ix_diagnosis_request_claim",
+                "definition": "CREATE INDEX ix_diagnosis_request_claim ON diagnosis.diagnosis_request USING btree (status, next_attempt_at, lease_until, created_at)"
+            },
+            {
+                "name": "pk_diagnosis_request",
+                "definition": "CREATE UNIQUE INDEX pk_diagnosis_request ON diagnosis.diagnosis_request USING btree (id)"
+            },
+            {
+                "name": "uq_diagnosis_request_event",
+                "definition": "CREATE UNIQUE INDEX uq_diagnosis_request_event ON diagnosis.diagnosis_request USING btree (event_type, producer, event_id, schema_version)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "ck_diagnosis_request_attempt_count",
+                "type": "check",
+                "definition": "CHECK (attempt_count >= 0)"
+            },
+            {
+                "name": "ck_diagnosis_request_status",
+                "type": "check",
+                "definition": "CHECK (status::text = ANY (ARRAY['PENDING'::character varying, 'PROCESSING'::character varying, 'COMPLETED'::character varying, 'FAILED_RETRYABLE'::character varying, 'FAILED_TERMINAL'::character varying]::text[]))"
+            },
+            {
+                "name": "diagnosis_request_attempt_count_not_null",
+                "type": null,
+                "definition": "NOT NULL attempt_count"
+            },
+            {
+                "name": "diagnosis_request_created_at_not_null",
+                "type": null,
+                "definition": "NOT NULL created_at"
+            },
+            {
+                "name": "diagnosis_request_event_id_not_null",
+                "type": null,
+                "definition": "NOT NULL event_id"
+            },
+            {
+                "name": "diagnosis_request_event_type_not_null",
+                "type": null,
+                "definition": "NOT NULL event_type"
+            },
+            {
+                "name": "diagnosis_request_id_not_null",
+                "type": null,
+                "definition": "NOT NULL id"
+            },
+            {
+                "name": "diagnosis_request_next_attempt_at_not_null",
+                "type": null,
+                "definition": "NOT NULL next_attempt_at"
+            },
+            {
+                "name": "diagnosis_request_producer_not_null",
+                "type": null,
+                "definition": "NOT NULL producer"
+            },
+            {
+                "name": "diagnosis_request_schema_version_not_null",
+                "type": null,
+                "definition": "NOT NULL schema_version"
+            },
+            {
+                "name": "diagnosis_request_status_not_null",
+                "type": null,
+                "definition": "NOT NULL status"
+            },
+            {
+                "name": "diagnosis_request_updated_at_not_null",
+                "type": null,
+                "definition": "NOT NULL updated_at"
+            },
+            {
+                "name": "diagnosis_request_version_not_null",
+                "type": null,
+                "definition": "NOT NULL version"
+            },
+            {
+                "name": "pk_diagnosis_request",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (id)"
+            },
+            {
+                "name": "uq_diagnosis_request_event",
+                "type": "unique",
+                "definition": "UNIQUE (event_type, producer, event_id, schema_version)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "model_invocation_record",
+        "schema": "diagnosis",
+        "columns": [
+            {
+                "name": "id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "request_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "provider",
+                "type": "character varying(30)",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "configured_model",
+                "type": "character varying(100)",
+                "default": null,
+                "nullable": false,
+                "position": 4
+            },
+            {
+                "name": "response_id",
+                "type": "character varying(200)",
+                "default": null,
+                "nullable": true,
+                "position": 5
+            },
+            {
+                "name": "prompt_version",
+                "type": "character varying(80)",
+                "default": null,
+                "nullable": false,
+                "position": 6
+            },
+            {
+                "name": "schema_version",
+                "type": "character varying(80)",
+                "default": null,
+                "nullable": false,
+                "position": 7
+            },
+            {
+                "name": "evidence_snapshot_hash",
+                "type": "character varying(64)",
+                "default": null,
+                "nullable": true,
+                "position": 8
+            },
+            {
+                "name": "invocation_type",
+                "type": "character varying(30)",
+                "default": null,
+                "nullable": false,
+                "position": 9
+            },
+            {
+                "name": "attempt_number",
+                "type": "integer",
+                "default": null,
+                "nullable": false,
+                "position": 10
+            },
+            {
+                "name": "started_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 11
+            },
+            {
+                "name": "completed_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 12
+            },
+            {
+                "name": "latency_millis",
+                "type": "bigint",
+                "default": null,
+                "nullable": false,
+                "position": 13
+            },
+            {
+                "name": "prompt_tokens",
+                "type": "integer",
+                "default": null,
+                "nullable": true,
+                "position": 14
+            },
+            {
+                "name": "completion_tokens",
+                "type": "integer",
+                "default": null,
+                "nullable": true,
+                "position": 15
+            },
+            {
+                "name": "total_tokens",
+                "type": "integer",
+                "default": null,
+                "nullable": true,
+                "position": 16
+            },
+            {
+                "name": "validation_outcome",
+                "type": "character varying(30)",
+                "default": null,
+                "nullable": false,
+                "position": 17
+            },
+            {
+                "name": "failure_category",
+                "type": "character varying(80)",
+                "default": null,
+                "nullable": true,
+                "position": 18
+            },
+            {
+                "name": "input_snapshot",
+                "type": "text",
+                "default": null,
+                "nullable": true,
+                "position": 19
+            },
+            {
+                "name": "generated_response",
+                "type": "text",
+                "default": null,
+                "nullable": true,
+                "position": 20
+            }
+        ],
+        "indexes": [
+            {
+                "name": "ix_model_invocation_record_request",
+                "definition": "CREATE INDEX ix_model_invocation_record_request ON diagnosis.model_invocation_record USING btree (request_id, started_at)"
+            },
+            {
+                "name": "pk_model_invocation_record",
+                "definition": "CREATE UNIQUE INDEX pk_model_invocation_record ON diagnosis.model_invocation_record USING btree (id)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "ck_model_invocation_record_attempt",
+                "type": "check",
+                "definition": "CHECK (attempt_number > 0)"
+            },
+            {
+                "name": "ck_model_invocation_record_latency",
+                "type": "check",
+                "definition": "CHECK (latency_millis >= 0)"
+            },
+            {
+                "name": "ck_model_invocation_record_type",
+                "type": "check",
+                "definition": "CHECK (invocation_type::text = ANY (ARRAY['INITIAL'::character varying, 'SCHEMA_REPAIR'::character varying]::text[]))"
+            },
+            {
+                "name": "fk_model_invocation_record_request",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (request_id) REFERENCES diagnosis.diagnosis_request(id)"
+            },
+            {
+                "name": "model_invocation_record_attempt_number_not_null",
+                "type": null,
+                "definition": "NOT NULL attempt_number"
+            },
+            {
+                "name": "model_invocation_record_completed_at_not_null",
+                "type": null,
+                "definition": "NOT NULL completed_at"
+            },
+            {
+                "name": "model_invocation_record_configured_model_not_null",
+                "type": null,
+                "definition": "NOT NULL configured_model"
+            },
+            {
+                "name": "model_invocation_record_id_not_null",
+                "type": null,
+                "definition": "NOT NULL id"
+            },
+            {
+                "name": "model_invocation_record_invocation_type_not_null",
+                "type": null,
+                "definition": "NOT NULL invocation_type"
+            },
+            {
+                "name": "model_invocation_record_latency_millis_not_null",
+                "type": null,
+                "definition": "NOT NULL latency_millis"
+            },
+            {
+                "name": "model_invocation_record_prompt_version_not_null",
+                "type": null,
+                "definition": "NOT NULL prompt_version"
+            },
+            {
+                "name": "model_invocation_record_provider_not_null",
+                "type": null,
+                "definition": "NOT NULL provider"
+            },
+            {
+                "name": "model_invocation_record_request_id_not_null",
+                "type": null,
+                "definition": "NOT NULL request_id"
+            },
+            {
+                "name": "model_invocation_record_schema_version_not_null",
+                "type": null,
+                "definition": "NOT NULL schema_version"
+            },
+            {
+                "name": "model_invocation_record_started_at_not_null",
+                "type": null,
+                "definition": "NOT NULL started_at"
+            },
+            {
+                "name": "model_invocation_record_validation_outcome_not_null",
+                "type": null,
+                "definition": "NOT NULL validation_outcome"
+            },
+            {
+                "name": "pk_model_invocation_record",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (id)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "recommendation_delivery",
+        "schema": "diagnosis",
+        "columns": [
+            {
+                "name": "id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "diagnosis_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "payload_json",
+                "type": "text",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "payload_fingerprint",
+                "type": "character varying(64)",
+                "default": null,
+                "nullable": false,
+                "position": 4
+            },
+            {
+                "name": "status",
+                "type": "character varying(30)",
+                "default": null,
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "attempt_count",
+                "type": "integer",
+                "default": "0",
+                "nullable": false,
+                "position": 6
+            },
+            {
+                "name": "next_attempt_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 7
+            },
+            {
+                "name": "lease_until",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 8
+            },
+            {
+                "name": "last_http_status",
+                "type": "integer",
+                "default": null,
+                "nullable": true,
+                "position": 9
+            },
+            {
+                "name": "failure_code",
+                "type": "character varying(80)",
+                "default": null,
+                "nullable": true,
+                "position": 10
+            },
+            {
+                "name": "response_json",
+                "type": "text",
+                "default": null,
+                "nullable": true,
+                "position": 11
+            },
+            {
+                "name": "created_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 12
+            },
+            {
+                "name": "delivered_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 13
+            },
+            {
+                "name": "terminal_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 14
+            }
+        ],
+        "indexes": [
+            {
+                "name": "ix_recommendation_delivery_pending",
+                "definition": "CREATE INDEX ix_recommendation_delivery_pending ON diagnosis.recommendation_delivery USING btree (status, next_attempt_at, lease_until, created_at)"
+            },
+            {
+                "name": "pk_recommendation_delivery",
+                "definition": "CREATE UNIQUE INDEX pk_recommendation_delivery ON diagnosis.recommendation_delivery USING btree (id)"
+            },
+            {
+                "name": "uq_recommendation_delivery_diagnosis",
+                "definition": "CREATE UNIQUE INDEX uq_recommendation_delivery_diagnosis ON diagnosis.recommendation_delivery USING btree (diagnosis_id)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "ck_recommendation_delivery_attempts",
+                "type": "check",
+                "definition": "CHECK (attempt_count >= 0)"
+            },
+            {
+                "name": "ck_recommendation_delivery_status",
+                "type": "check",
+                "definition": "CHECK (status::text = ANY (ARRAY['PENDING'::character varying, 'PROCESSING'::character varying, 'DELIVERED'::character varying, 'FAILED_TERMINAL'::character varying]::text[]))"
+            },
+            {
+                "name": "fk_recommendation_delivery_diagnosis",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (diagnosis_id) REFERENCES diagnosis.root_cause_diagnosis(id)"
+            },
+            {
+                "name": "pk_recommendation_delivery",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (id)"
+            },
+            {
+                "name": "recommendation_delivery_attempt_count_not_null",
+                "type": null,
+                "definition": "NOT NULL attempt_count"
+            },
+            {
+                "name": "recommendation_delivery_created_at_not_null",
+                "type": null,
+                "definition": "NOT NULL created_at"
+            },
+            {
+                "name": "recommendation_delivery_diagnosis_id_not_null",
+                "type": null,
+                "definition": "NOT NULL diagnosis_id"
+            },
+            {
+                "name": "recommendation_delivery_id_not_null",
+                "type": null,
+                "definition": "NOT NULL id"
+            },
+            {
+                "name": "recommendation_delivery_next_attempt_at_not_null",
+                "type": null,
+                "definition": "NOT NULL next_attempt_at"
+            },
+            {
+                "name": "recommendation_delivery_payload_fingerprint_not_null",
+                "type": null,
+                "definition": "NOT NULL payload_fingerprint"
+            },
+            {
+                "name": "recommendation_delivery_payload_json_not_null",
+                "type": null,
+                "definition": "NOT NULL payload_json"
+            },
+            {
+                "name": "recommendation_delivery_status_not_null",
+                "type": null,
+                "definition": "NOT NULL status"
+            },
+            {
+                "name": "uq_recommendation_delivery_diagnosis",
+                "type": "unique",
+                "definition": "UNIQUE (diagnosis_id)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "root_cause_diagnosis",
+        "schema": "diagnosis",
+        "columns": [
+            {
+                "name": "id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "request_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "cause_code",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "cause_subtype",
+                "type": "character varying(100)",
+                "default": null,
+                "nullable": true,
+                "position": 4
+            },
+            {
+                "name": "likely_cause",
+                "type": "character varying(1000)",
+                "default": null,
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "confidence",
+                "type": "numeric(4,3)",
+                "default": null,
+                "nullable": false,
+                "position": 6
+            },
+            {
+                "name": "evidence_support_score",
+                "type": "numeric(4,3)",
+                "default": null,
+                "nullable": false,
+                "position": 7
+            },
+            {
+                "name": "supporting_evidence_ids",
+                "type": "jsonb",
+                "default": null,
+                "nullable": false,
+                "position": 8
+            },
+            {
+                "name": "limitations",
+                "type": "jsonb",
+                "default": null,
+                "nullable": false,
+                "position": 9
+            },
+            {
+                "name": "confidence_components",
+                "type": "jsonb",
+                "default": null,
+                "nullable": false,
+                "position": 10
+            },
+            {
+                "name": "evidence_snapshot",
+                "type": "jsonb",
+                "default": null,
+                "nullable": false,
+                "position": 11
+            },
+            {
+                "name": "evidence_snapshot_hash",
+                "type": "character varying(64)",
+                "default": null,
+                "nullable": false,
+                "position": 12
+            },
+            {
+                "name": "provider",
+                "type": "character varying(30)",
+                "default": null,
+                "nullable": false,
+                "position": 13
+            },
+            {
+                "name": "model",
+                "type": "character varying(100)",
+                "default": null,
+                "nullable": false,
+                "position": 14
+            },
+            {
+                "name": "prompt_version",
+                "type": "character varying(80)",
+                "default": null,
+                "nullable": false,
+                "position": 15
+            },
+            {
+                "name": "schema_version",
+                "type": "character varying(80)",
+                "default": null,
+                "nullable": false,
+                "position": 16
+            },
+            {
+                "name": "completed_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 17
+            }
+        ],
+        "indexes": [
+            {
+                "name": "ix_root_cause_diagnosis_cause",
+                "definition": "CREATE INDEX ix_root_cause_diagnosis_cause ON diagnosis.root_cause_diagnosis USING btree (cause_code, completed_at)"
+            },
+            {
+                "name": "pk_root_cause_diagnosis",
+                "definition": "CREATE UNIQUE INDEX pk_root_cause_diagnosis ON diagnosis.root_cause_diagnosis USING btree (id)"
+            },
+            {
+                "name": "uq_root_cause_diagnosis_request",
+                "definition": "CREATE UNIQUE INDEX uq_root_cause_diagnosis_request ON diagnosis.root_cause_diagnosis USING btree (request_id)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "ck_root_cause_diagnosis_components",
+                "type": "check",
+                "definition": "CHECK (jsonb_typeof(confidence_components) = 'object'::text)"
+            },
+            {
+                "name": "ck_root_cause_diagnosis_confidence",
+                "type": "check",
+                "definition": "CHECK (confidence >= 0::numeric AND confidence <= 1::numeric)"
+            },
+            {
+                "name": "ck_root_cause_diagnosis_evidence",
+                "type": "check",
+                "definition": "CHECK (jsonb_typeof(supporting_evidence_ids) = 'array'::text)"
+            },
+            {
+                "name": "ck_root_cause_diagnosis_limitations",
+                "type": "check",
+                "definition": "CHECK (jsonb_typeof(limitations) = 'array'::text)"
+            },
+            {
+                "name": "ck_root_cause_diagnosis_score",
+                "type": "check",
+                "definition": "CHECK (evidence_support_score >= 0::numeric AND evidence_support_score <= 1::numeric)"
+            },
+            {
+                "name": "ck_root_cause_diagnosis_snapshot",
+                "type": "check",
+                "definition": "CHECK (jsonb_typeof(evidence_snapshot) = 'object'::text)"
+            },
+            {
+                "name": "fk_root_cause_diagnosis_request",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (request_id) REFERENCES diagnosis.diagnosis_request(id)"
+            },
+            {
+                "name": "pk_root_cause_diagnosis",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (id)"
+            },
+            {
+                "name": "root_cause_diagnosis_cause_code_not_null",
+                "type": null,
+                "definition": "NOT NULL cause_code"
+            },
+            {
+                "name": "root_cause_diagnosis_completed_at_not_null",
+                "type": null,
+                "definition": "NOT NULL completed_at"
+            },
+            {
+                "name": "root_cause_diagnosis_confidence_components_not_null",
+                "type": null,
+                "definition": "NOT NULL confidence_components"
+            },
+            {
+                "name": "root_cause_diagnosis_confidence_not_null",
+                "type": null,
+                "definition": "NOT NULL confidence"
+            },
+            {
+                "name": "root_cause_diagnosis_evidence_snapshot_hash_not_null",
+                "type": null,
+                "definition": "NOT NULL evidence_snapshot_hash"
+            },
+            {
+                "name": "root_cause_diagnosis_evidence_snapshot_not_null",
+                "type": null,
+                "definition": "NOT NULL evidence_snapshot"
+            },
+            {
+                "name": "root_cause_diagnosis_evidence_support_score_not_null",
+                "type": null,
+                "definition": "NOT NULL evidence_support_score"
+            },
+            {
+                "name": "root_cause_diagnosis_id_not_null",
+                "type": null,
+                "definition": "NOT NULL id"
+            },
+            {
+                "name": "root_cause_diagnosis_likely_cause_not_null",
+                "type": null,
+                "definition": "NOT NULL likely_cause"
+            },
+            {
+                "name": "root_cause_diagnosis_limitations_not_null",
+                "type": null,
+                "definition": "NOT NULL limitations"
+            },
+            {
+                "name": "root_cause_diagnosis_model_not_null",
+                "type": null,
+                "definition": "NOT NULL model"
+            },
+            {
+                "name": "root_cause_diagnosis_prompt_version_not_null",
+                "type": null,
+                "definition": "NOT NULL prompt_version"
+            },
+            {
+                "name": "root_cause_diagnosis_provider_not_null",
+                "type": null,
+                "definition": "NOT NULL provider"
+            },
+            {
+                "name": "root_cause_diagnosis_request_id_not_null",
+                "type": null,
+                "definition": "NOT NULL request_id"
+            },
+            {
+                "name": "root_cause_diagnosis_schema_version_not_null",
+                "type": null,
+                "definition": "NOT NULL schema_version"
+            },
+            {
+                "name": "root_cause_diagnosis_supporting_evidence_ids_not_null",
+                "type": null,
+                "definition": "NOT NULL supporting_evidence_ids"
+            },
+            {
+                "name": "uq_root_cause_diagnosis_request",
+                "type": "unique",
+                "definition": "UNIQUE (request_id)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "bus_arrival_observation",
+        "schema": "ingestion",
+        "columns": [
+            {
+                "name": "id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "raw_observation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "poll_run_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "reference_version_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 4
+            },
+            {
+                "name": "stop_code",
+                "type": "character varying(12)",
+                "default": null,
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "service_id",
+                "type": "character varying(20)",
+                "default": null,
+                "nullable": false,
+                "position": 6
+            },
+            {
+                "name": "operator",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": true,
+                "position": 7
+            },
+            {
+                "name": "direction_id",
+                "type": "smallint",
+                "default": null,
+                "nullable": true,
+                "position": 8
+            },
+            {
+                "name": "visit_order",
+                "type": "smallint",
+                "default": null,
+                "nullable": false,
+                "position": 9
+            },
+            {
+                "name": "estimated_arrival_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 10
+            },
+            {
+                "name": "latitude",
+                "type": "numeric(10,7)",
+                "default": null,
+                "nullable": true,
+                "position": 11
+            },
+            {
+                "name": "longitude",
+                "type": "numeric(10,7)",
+                "default": null,
+                "nullable": true,
+                "position": 12
+            },
+            {
+                "name": "load_category",
+                "type": "character varying(20)",
+                "default": null,
+                "nullable": true,
+                "position": 13
+            },
+            {
+                "name": "feature",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": true,
+                "position": 14
+            },
+            {
+                "name": "fetched_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 16
+            },
+            {
+                "name": "ingested_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 17
+            },
+            {
+                "name": "record_checksum",
+                "type": "character(64)",
+                "default": null,
+                "nullable": false,
+                "position": 18
+            },
+            {
+                "name": "origin_code",
+                "type": "character varying(12)",
+                "default": null,
+                "nullable": true,
+                "position": 19
+            },
+            {
+                "name": "destination_code",
+                "type": "character varying(12)",
+                "default": null,
+                "nullable": true,
+                "position": 20
+            },
+            {
+                "name": "monitored",
+                "type": "boolean",
+                "default": null,
+                "nullable": true,
+                "position": 21
+            },
+            {
+                "name": "vehicle_type",
+                "type": "character varying(10)",
+                "default": null,
+                "nullable": true,
+                "position": 22
+            },
+            {
+                "name": "classification",
+                "type": "character varying(30)",
+                "default": "'OBSERVATION_ONLY'::character varying",
+                "nullable": false,
+                "position": 23
+            },
+            {
+                "name": "demo_run_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 24
+            },
+            {
+                "name": "trip_id",
+                "type": "character varying(80)",
+                "default": null,
+                "nullable": true,
+                "position": 25
+            },
+            {
+                "name": "visit_number",
+                "type": "smallint",
+                "default": null,
+                "nullable": true,
+                "position": 26
+            }
+        ],
+        "indexes": [
+            {
+                "name": "ix_bus_arrival_demo_feed",
+                "definition": "CREATE INDEX ix_bus_arrival_demo_feed ON ingestion.bus_arrival_observation USING btree (demo_run_id, fetched_at) WHERE ((classification)::text = 'SIMULATION'::text)"
+            },
+            {
+                "name": "ix_bus_arrival_estimated_arrival",
+                "definition": "CREATE INDEX ix_bus_arrival_estimated_arrival ON ingestion.bus_arrival_observation USING btree (estimated_arrival_at)"
+            },
+            {
+                "name": "ix_bus_arrival_poll_run",
+                "definition": "CREATE INDEX ix_bus_arrival_poll_run ON ingestion.bus_arrival_observation USING btree (poll_run_id)"
+            },
+            {
+                "name": "ix_bus_arrival_raw_observation",
+                "definition": "CREATE INDEX ix_bus_arrival_raw_observation ON ingestion.bus_arrival_observation USING btree (raw_observation_id)"
+            },
+            {
+                "name": "ix_bus_arrival_service_time",
+                "definition": "CREATE INDEX ix_bus_arrival_service_time ON ingestion.bus_arrival_observation USING btree (service_id, direction_id, fetched_at DESC)"
+            },
+            {
+                "name": "ix_bus_arrival_stop_time",
+                "definition": "CREATE INDEX ix_bus_arrival_stop_time ON ingestion.bus_arrival_observation USING btree (stop_code, fetched_at DESC)"
+            },
+            {
+                "name": "pk_bus_arrival_observation",
+                "definition": "CREATE UNIQUE INDEX pk_bus_arrival_observation ON ingestion.bus_arrival_observation USING btree (id)"
+            },
+            {
+                "name": "uq_bus_arrival_observation_raw_service_visit_checksum",
+                "definition": "CREATE UNIQUE INDEX uq_bus_arrival_observation_raw_service_visit_checksum ON ingestion.bus_arrival_observation USING btree (raw_observation_id, service_id, visit_order, record_checksum)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "bus_arrival_observation_classification_not_null",
+                "type": null,
+                "definition": "NOT NULL classification"
+            },
+            {
+                "name": "bus_arrival_observation_fetched_at_not_null",
+                "type": null,
+                "definition": "NOT NULL fetched_at"
+            },
+            {
+                "name": "bus_arrival_observation_id_not_null",
+                "type": null,
+                "definition": "NOT NULL id"
+            },
+            {
+                "name": "bus_arrival_observation_ingested_at_not_null",
+                "type": null,
+                "definition": "NOT NULL ingested_at"
+            },
+            {
+                "name": "bus_arrival_observation_poll_run_id_not_null",
+                "type": null,
+                "definition": "NOT NULL poll_run_id"
+            },
+            {
+                "name": "bus_arrival_observation_raw_observation_id_not_null",
+                "type": null,
+                "definition": "NOT NULL raw_observation_id"
+            },
+            {
+                "name": "bus_arrival_observation_record_checksum_not_null",
+                "type": null,
+                "definition": "NOT NULL record_checksum"
+            },
+            {
+                "name": "bus_arrival_observation_reference_version_id_not_null",
+                "type": null,
+                "definition": "NOT NULL reference_version_id"
+            },
+            {
+                "name": "bus_arrival_observation_service_id_not_null",
+                "type": null,
+                "definition": "NOT NULL service_id"
+            },
+            {
+                "name": "bus_arrival_observation_stop_code_not_null",
+                "type": null,
+                "definition": "NOT NULL stop_code"
+            },
+            {
+                "name": "bus_arrival_observation_visit_order_not_null",
+                "type": null,
+                "definition": "NOT NULL visit_order"
+            },
+            {
+                "name": "ck_bus_arrival_demo_scope",
+                "type": "check",
+                "definition": "CHECK (classification::text = 'SIMULATION'::text AND demo_run_id IS NOT NULL AND trip_id IS NOT NULL OR classification::text = 'OBSERVATION_ONLY'::text AND demo_run_id IS NULL AND trip_id IS NULL)"
+            },
+            {
+                "name": "ck_bus_arrival_observation_visit_order",
+                "type": "check",
+                "definition": "CHECK (visit_order >= 1 AND visit_order <= 3)"
+            },
+            {
+                "name": "fk_bus_arrival_demo_assignment",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (demo_run_id, trip_id) REFERENCES ingestion.demo_vehicle_assignment(demo_run_id, trip_id)"
+            },
+            {
+                "name": "fk_bus_arrival_observation_bus_stop",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (reference_version_id, stop_code) REFERENCES ingestion.bus_stop(reference_version_id, stop_code)"
+            },
+            {
+                "name": "fk_bus_arrival_observation_poll_run",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (poll_run_id) REFERENCES ingestion.poll_run(id)"
+            },
+            {
+                "name": "fk_bus_arrival_observation_raw_observation",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (raw_observation_id) REFERENCES ingestion.raw_observation(id)"
+            },
+            {
+                "name": "fk_bus_arrival_observation_reference_version",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (reference_version_id) REFERENCES ingestion.reference_dataset_version(id)"
+            },
+            {
+                "name": "pk_bus_arrival_observation",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (id)"
+            },
+            {
+                "name": "uq_bus_arrival_observation_raw_service_visit_checksum",
+                "type": "unique",
+                "definition": "UNIQUE (raw_observation_id, service_id, visit_order, record_checksum)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "bus_route_stop",
+        "schema": "ingestion",
+        "columns": [
+            {
+                "name": "reference_version_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "service_id",
+                "type": "character varying(20)",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "operator",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "direction_id",
+                "type": "smallint",
+                "default": null,
+                "nullable": false,
+                "position": 4
+            },
+            {
+                "name": "stop_sequence",
+                "type": "integer",
+                "default": null,
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "stop_code",
+                "type": "character varying(12)",
+                "default": null,
+                "nullable": false,
+                "position": 6
+            },
+            {
+                "name": "distance_km",
+                "type": "numeric(8,3)",
+                "default": null,
+                "nullable": true,
+                "position": 7
+            }
+        ],
+        "indexes": [
+            {
+                "name": "pk_bus_route_stop",
+                "definition": "CREATE UNIQUE INDEX pk_bus_route_stop ON ingestion.bus_route_stop USING btree (reference_version_id, service_id, operator, direction_id, stop_sequence)"
+            },
+            {
+                "name": "uq_bus_route_stop_service_direction_stop_sequence",
+                "definition": "CREATE UNIQUE INDEX uq_bus_route_stop_service_direction_stop_sequence ON ingestion.bus_route_stop USING btree (reference_version_id, service_id, operator, direction_id, stop_code, stop_sequence)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "bus_route_stop_direction_id_not_null",
+                "type": null,
+                "definition": "NOT NULL direction_id"
+            },
+            {
+                "name": "bus_route_stop_operator_not_null",
+                "type": null,
+                "definition": "NOT NULL operator"
+            },
+            {
+                "name": "bus_route_stop_reference_version_id_not_null",
+                "type": null,
+                "definition": "NOT NULL reference_version_id"
+            },
+            {
+                "name": "bus_route_stop_service_id_not_null",
+                "type": null,
+                "definition": "NOT NULL service_id"
+            },
+            {
+                "name": "bus_route_stop_stop_code_not_null",
+                "type": null,
+                "definition": "NOT NULL stop_code"
+            },
+            {
+                "name": "bus_route_stop_stop_sequence_not_null",
+                "type": null,
+                "definition": "NOT NULL stop_sequence"
+            },
+            {
+                "name": "fk_bus_route_stop_bus_service",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (reference_version_id, service_id, operator) REFERENCES ingestion.bus_service(reference_version_id, service_id, operator)"
+            },
+            {
+                "name": "fk_bus_route_stop_bus_stop",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (reference_version_id, stop_code) REFERENCES ingestion.bus_stop(reference_version_id, stop_code)"
+            },
+            {
+                "name": "fk_bus_route_stop_reference_version",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (reference_version_id) REFERENCES ingestion.reference_dataset_version(id)"
+            },
+            {
+                "name": "pk_bus_route_stop",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (reference_version_id, service_id, operator, direction_id, stop_sequence)"
+            },
+            {
+                "name": "uq_bus_route_stop_service_direction_stop_sequence",
+                "type": "unique",
+                "definition": "UNIQUE (reference_version_id, service_id, operator, direction_id, stop_code, stop_sequence)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "bus_service",
+        "schema": "ingestion",
+        "columns": [
+            {
+                "name": "reference_version_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "service_id",
+                "type": "character varying(20)",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "operator",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "category",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": true,
+                "position": 4
+            }
+        ],
+        "indexes": [
+            {
+                "name": "pk_bus_service",
+                "definition": "CREATE UNIQUE INDEX pk_bus_service ON ingestion.bus_service USING btree (reference_version_id, service_id, operator)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "bus_service_operator_not_null",
+                "type": null,
+                "definition": "NOT NULL operator"
+            },
+            {
+                "name": "bus_service_reference_version_id_not_null",
+                "type": null,
+                "definition": "NOT NULL reference_version_id"
+            },
+            {
+                "name": "bus_service_service_id_not_null",
+                "type": null,
+                "definition": "NOT NULL service_id"
+            },
+            {
+                "name": "fk_bus_service_reference_version",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (reference_version_id) REFERENCES ingestion.reference_dataset_version(id)"
+            },
+            {
+                "name": "pk_bus_service",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (reference_version_id, service_id, operator)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "bus_stop",
+        "schema": "ingestion",
+        "columns": [
+            {
+                "name": "reference_version_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "stop_code",
+                "type": "character varying(12)",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "road_name",
+                "type": "character varying(160)",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "description",
+                "type": "character varying(200)",
+                "default": null,
+                "nullable": false,
+                "position": 4
+            },
+            {
+                "name": "location",
+                "type": "geometry(Point,4326)",
+                "default": null,
+                "nullable": false,
+                "position": 5
+            }
+        ],
+        "indexes": [
+            {
+                "name": "pk_bus_stop",
+                "definition": "CREATE UNIQUE INDEX pk_bus_stop ON ingestion.bus_stop USING btree (reference_version_id, stop_code)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "bus_stop_description_not_null",
+                "type": null,
+                "definition": "NOT NULL description"
+            },
+            {
+                "name": "bus_stop_location_not_null",
+                "type": null,
+                "definition": "NOT NULL location"
+            },
+            {
+                "name": "bus_stop_reference_version_id_not_null",
+                "type": null,
+                "definition": "NOT NULL reference_version_id"
+            },
+            {
+                "name": "bus_stop_road_name_not_null",
+                "type": null,
+                "definition": "NOT NULL road_name"
+            },
+            {
+                "name": "bus_stop_stop_code_not_null",
+                "type": null,
+                "definition": "NOT NULL stop_code"
+            },
+            {
+                "name": "fk_bus_stop_reference_version",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (reference_version_id) REFERENCES ingestion.reference_dataset_version(id)"
+            },
+            {
+                "name": "pk_bus_stop",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (reference_version_id, stop_code)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "view",
+        "name": "current_bus_arrival",
+        "schema": "ingestion",
+        "columns": [
+            {
+                "name": "id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 1
+            },
+            {
+                "name": "raw_observation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 2
+            },
+            {
+                "name": "poll_run_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 3
+            },
+            {
+                "name": "reference_version_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 4
+            },
+            {
+                "name": "stop_code",
+                "type": "character varying(12)",
+                "default": null,
+                "nullable": true,
+                "position": 5
+            },
+            {
+                "name": "service_id",
+                "type": "character varying(20)",
+                "default": null,
+                "nullable": true,
+                "position": 6
+            },
+            {
+                "name": "operator",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": true,
+                "position": 7
+            },
+            {
+                "name": "direction_id",
+                "type": "smallint",
+                "default": null,
+                "nullable": true,
+                "position": 8
+            },
+            {
+                "name": "visit_order",
+                "type": "smallint",
+                "default": null,
+                "nullable": true,
+                "position": 9
+            },
+            {
+                "name": "estimated_arrival_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 10
+            },
+            {
+                "name": "latitude",
+                "type": "numeric(10,7)",
+                "default": null,
+                "nullable": true,
+                "position": 11
+            },
+            {
+                "name": "longitude",
+                "type": "numeric(10,7)",
+                "default": null,
+                "nullable": true,
+                "position": 12
+            },
+            {
+                "name": "load_category",
+                "type": "character varying(20)",
+                "default": null,
+                "nullable": true,
+                "position": 13
+            },
+            {
+                "name": "feature",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": true,
+                "position": 14
+            },
+            {
+                "name": "fetched_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 15
+            },
+            {
+                "name": "ingested_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 16
+            },
+            {
+                "name": "record_checksum",
+                "type": "character(64)",
+                "default": null,
+                "nullable": true,
+                "position": 17
+            },
+            {
+                "name": "origin_code",
+                "type": "character varying(12)",
+                "default": null,
+                "nullable": true,
+                "position": 18
+            },
+            {
+                "name": "destination_code",
+                "type": "character varying(12)",
+                "default": null,
+                "nullable": true,
+                "position": 19
+            },
+            {
+                "name": "monitored",
+                "type": "boolean",
+                "default": null,
+                "nullable": true,
+                "position": 20
+            },
+            {
+                "name": "vehicle_type",
+                "type": "character varying(10)",
+                "default": null,
+                "nullable": true,
+                "position": 21
+            },
+            {
+                "name": "classification",
+                "type": "character varying(30)",
+                "default": null,
+                "nullable": true,
+                "position": 22
+            },
+            {
+                "name": "demo_run_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 23
+            },
+            {
+                "name": "trip_id",
+                "type": "character varying(80)",
+                "default": null,
+                "nullable": true,
+                "position": 24
+            },
+            {
+                "name": "visit_number",
+                "type": "smallint",
+                "default": null,
+                "nullable": true,
+                "position": 25
+            },
+            {
+                "name": "age_seconds",
+                "type": "bigint",
+                "default": null,
+                "nullable": true,
+                "position": 26
+            }
+        ],
+        "indexes": [
+        ],
+        "constraints": [
+        ],
+        "viewDefinition": " WITH latest_successful_run AS (\n         SELECT DISTINCT ON (poll_run.scope_key) poll_run.id,\n            poll_run.scope_key\n           FROM ingestion.poll_run\n          WHERE poll_run.outcome::text = ANY (ARRAY['SUCCESS'::character varying, 'PARTIAL'::character varying]::text[])\n          ORDER BY poll_run.scope_key, poll_run.completed_at DESC NULLS LAST, poll_run.started_at DESC\n        )\n SELECT observation.id,\n    observation.raw_observation_id,\n    observation.poll_run_id,\n    observation.reference_version_id,\n    observation.stop_code,\n    observation.service_id,\n    observation.operator,\n    observation.direction_id,\n    observation.visit_order,\n    observation.estimated_arrival_at,\n    observation.latitude,\n    observation.longitude,\n    observation.load_category,\n    observation.feature,\n    observation.fetched_at,\n    observation.ingested_at,\n    observation.record_checksum,\n    observation.origin_code,\n    observation.destination_code,\n    observation.monitored,\n    observation.vehicle_type,\n    observation.classification,\n    observation.demo_run_id,\n    observation.trip_id,\n    observation.visit_number,\n    EXTRACT(epoch FROM now() - observation.fetched_at)::bigint AS age_seconds\n   FROM latest_successful_run run\n     JOIN ingestion.bus_arrival_observation observation ON observation.poll_run_id = run.id\n  WHERE observation.classification::text = 'OBSERVATION_ONLY'::text;"
+    },
+    {
+        "kind": "table",
+        "name": "demo_run",
+        "schema": "ingestion",
+        "columns": [
+            {
+                "name": "id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "scenario_key",
+                "type": "character varying(80)",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "scenario_version",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "seed",
+                "type": "bigint",
+                "default": null,
+                "nullable": false,
+                "position": 4
+            },
+            {
+                "name": "status",
+                "type": "character varying(20)",
+                "default": null,
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "current_step",
+                "type": "integer",
+                "default": "0",
+                "nullable": false,
+                "position": 6
+            },
+            {
+                "name": "started_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 7
+            },
+            {
+                "name": "completed_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 8
+            },
+            {
+                "name": "closed_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 9
+            },
+            {
+                "name": "failure_reason",
+                "type": "character varying(500)",
+                "default": null,
+                "nullable": true,
+                "position": 10
+            },
+            {
+                "name": "classification",
+                "type": "character varying(30)",
+                "default": "'SIMULATION'::character varying",
+                "nullable": false,
+                "position": 11
+            }
+        ],
+        "indexes": [
+            {
+                "name": "pk_demo_run",
+                "definition": "CREATE UNIQUE INDEX pk_demo_run ON ingestion.demo_run USING btree (id)"
+            },
+            {
+                "name": "uq_demo_run_active",
+                "definition": "CREATE UNIQUE INDEX uq_demo_run_active ON ingestion.demo_run USING btree ((1)) WHERE ((status)::text = ANY ((ARRAY['PREPARING'::character varying, 'RUNNING'::character varying, 'REPLAY_COMPLETE'::character varying])::text[]))"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "ck_demo_run_classification",
+                "type": "check",
+                "definition": "CHECK (classification::text = 'SIMULATION'::text)"
+            },
+            {
+                "name": "ck_demo_run_status",
+                "type": "check",
+                "definition": "CHECK (status::text = ANY (ARRAY['PREPARING'::character varying, 'RUNNING'::character varying, 'REPLAY_COMPLETE'::character varying, 'CLOSED'::character varying, 'FAILED'::character varying]::text[]))"
+            },
+            {
+                "name": "ck_demo_run_step",
+                "type": "check",
+                "definition": "CHECK (current_step >= 0)"
+            },
+            {
+                "name": "demo_run_classification_not_null",
+                "type": null,
+                "definition": "NOT NULL classification"
+            },
+            {
+                "name": "demo_run_current_step_not_null",
+                "type": null,
+                "definition": "NOT NULL current_step"
+            },
+            {
+                "name": "demo_run_id_not_null",
+                "type": null,
+                "definition": "NOT NULL id"
+            },
+            {
+                "name": "demo_run_scenario_key_not_null",
+                "type": null,
+                "definition": "NOT NULL scenario_key"
+            },
+            {
+                "name": "demo_run_scenario_version_not_null",
+                "type": null,
+                "definition": "NOT NULL scenario_version"
+            },
+            {
+                "name": "demo_run_seed_not_null",
+                "type": null,
+                "definition": "NOT NULL seed"
+            },
+            {
+                "name": "demo_run_started_at_not_null",
+                "type": null,
+                "definition": "NOT NULL started_at"
+            },
+            {
+                "name": "demo_run_status_not_null",
+                "type": null,
+                "definition": "NOT NULL status"
+            },
+            {
+                "name": "pk_demo_run",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (id)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "demo_runtime_setting",
+        "schema": "ingestion",
+        "columns": [
+            {
+                "name": "id",
+                "type": "integer",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "enabled",
+                "type": "boolean",
+                "default": "false",
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "changed_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            }
+        ],
+        "indexes": [
+            {
+                "name": "pk_demo_runtime_setting",
+                "definition": "CREATE UNIQUE INDEX pk_demo_runtime_setting ON ingestion.demo_runtime_setting USING btree (id)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "ck_demo_runtime_setting_singleton",
+                "type": "check",
+                "definition": "CHECK (id = 1)"
+            },
+            {
+                "name": "demo_runtime_setting_changed_at_not_null",
+                "type": null,
+                "definition": "NOT NULL changed_at"
+            },
+            {
+                "name": "demo_runtime_setting_enabled_not_null",
+                "type": null,
+                "definition": "NOT NULL enabled"
+            },
+            {
+                "name": "demo_runtime_setting_id_not_null",
+                "type": null,
+                "definition": "NOT NULL id"
+            },
+            {
+                "name": "pk_demo_runtime_setting",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (id)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "demo_vehicle_assignment",
+        "schema": "ingestion",
+        "columns": [
+            {
+                "name": "demo_run_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "trip_id",
+                "type": "character varying(80)",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "service_id",
+                "type": "character varying(20)",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "direction_id",
+                "type": "smallint",
+                "default": null,
+                "nullable": false,
+                "position": 4
+            },
+            {
+                "name": "operator",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "vehicle_registration_number",
+                "type": "character varying(20)",
+                "default": null,
+                "nullable": false,
+                "position": 6
+            },
+            {
+                "name": "vehicle_type",
+                "type": "character varying(10)",
+                "default": null,
+                "nullable": false,
+                "position": 7
+            },
+            {
+                "name": "captain_code",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": false,
+                "position": 8
+            }
+        ],
+        "indexes": [
+            {
+                "name": "pk_demo_vehicle_assignment",
+                "definition": "CREATE UNIQUE INDEX pk_demo_vehicle_assignment ON ingestion.demo_vehicle_assignment USING btree (demo_run_id, trip_id)"
+            },
+            {
+                "name": "uq_demo_vehicle_assignment_captain",
+                "definition": "CREATE UNIQUE INDEX uq_demo_vehicle_assignment_captain ON ingestion.demo_vehicle_assignment USING btree (demo_run_id, captain_code)"
+            },
+            {
+                "name": "uq_demo_vehicle_assignment_registration",
+                "definition": "CREATE UNIQUE INDEX uq_demo_vehicle_assignment_registration ON ingestion.demo_vehicle_assignment USING btree (demo_run_id, vehicle_registration_number)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "ck_demo_vehicle_assignment_direction",
+                "type": "check",
+                "definition": "CHECK (direction_id > 0)"
+            },
+            {
+                "name": "demo_vehicle_assignment_captain_code_not_null",
+                "type": null,
+                "definition": "NOT NULL captain_code"
+            },
+            {
+                "name": "demo_vehicle_assignment_demo_run_id_not_null",
+                "type": null,
+                "definition": "NOT NULL demo_run_id"
+            },
+            {
+                "name": "demo_vehicle_assignment_direction_id_not_null",
+                "type": null,
+                "definition": "NOT NULL direction_id"
+            },
+            {
+                "name": "demo_vehicle_assignment_operator_not_null",
+                "type": null,
+                "definition": "NOT NULL operator"
+            },
+            {
+                "name": "demo_vehicle_assignment_service_id_not_null",
+                "type": null,
+                "definition": "NOT NULL service_id"
+            },
+            {
+                "name": "demo_vehicle_assignment_trip_id_not_null",
+                "type": null,
+                "definition": "NOT NULL trip_id"
+            },
+            {
+                "name": "demo_vehicle_assignment_vehicle_registration_number_not_null",
+                "type": null,
+                "definition": "NOT NULL vehicle_registration_number"
+            },
+            {
+                "name": "demo_vehicle_assignment_vehicle_type_not_null",
+                "type": null,
+                "definition": "NOT NULL vehicle_type"
+            },
+            {
+                "name": "fk_demo_vehicle_assignment_run",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (demo_run_id) REFERENCES ingestion.demo_run(id)"
+            },
+            {
+                "name": "pk_demo_vehicle_assignment",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (demo_run_id, trip_id)"
+            },
+            {
+                "name": "uq_demo_vehicle_assignment_captain",
+                "type": "unique",
+                "definition": "UNIQUE (demo_run_id, captain_code)"
+            },
+            {
+                "name": "uq_demo_vehicle_assignment_registration",
+                "type": "unique",
+                "definition": "UNIQUE (demo_run_id, vehicle_registration_number)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "feed_status",
+        "schema": "ingestion",
+        "columns": [
+            {
+                "name": "source",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "scope_key",
+                "type": "character varying(120)",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "status",
+                "type": "character varying(20)",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "last_attempt_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 4
+            },
+            {
+                "name": "last_success_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 5
+            },
+            {
+                "name": "consecutive_failures",
+                "type": "integer",
+                "default": "0",
+                "nullable": false,
+                "position": 6
+            },
+            {
+                "name": "stale_after_seconds",
+                "type": "integer",
+                "default": null,
+                "nullable": false,
+                "position": 7
+            },
+            {
+                "name": "message",
+                "type": "character varying(500)",
+                "default": null,
+                "nullable": true,
+                "position": 8
+            },
+            {
+                "name": "updated_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 9
+            }
+        ],
+        "indexes": [
+            {
+                "name": "pk_feed_status",
+                "definition": "CREATE UNIQUE INDEX pk_feed_status ON ingestion.feed_status USING btree (source, scope_key)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "ck_feed_status_status",
+                "type": "check",
+                "definition": "CHECK (status::text = ANY (ARRAY['HEALTHY'::character varying, 'DEGRADED'::character varying, 'FAILED'::character varying, 'NEVER_RUN'::character varying]::text[]))"
+            },
+            {
+                "name": "feed_status_consecutive_failures_not_null",
+                "type": null,
+                "definition": "NOT NULL consecutive_failures"
+            },
+            {
+                "name": "feed_status_scope_key_not_null",
+                "type": null,
+                "definition": "NOT NULL scope_key"
+            },
+            {
+                "name": "feed_status_source_not_null",
+                "type": null,
+                "definition": "NOT NULL source"
+            },
+            {
+                "name": "feed_status_stale_after_seconds_not_null",
+                "type": null,
+                "definition": "NOT NULL stale_after_seconds"
+            },
+            {
+                "name": "feed_status_status_not_null",
+                "type": null,
+                "definition": "NOT NULL status"
+            },
+            {
+                "name": "feed_status_updated_at_not_null",
+                "type": null,
+                "definition": "NOT NULL updated_at"
+            },
+            {
+                "name": "pk_feed_status",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (source, scope_key)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "poll_run",
+        "schema": "ingestion",
+        "columns": [
+            {
+                "name": "id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "source",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "scope_key",
+                "type": "character varying(120)",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "idempotency_key",
+                "type": "character varying(120)",
+                "default": null,
+                "nullable": false,
+                "position": 4
+            },
+            {
+                "name": "started_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "completed_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 6
+            },
+            {
+                "name": "outcome",
+                "type": "character varying(20)",
+                "default": null,
+                "nullable": false,
+                "position": 7
+            },
+            {
+                "name": "http_status",
+                "type": "integer",
+                "default": null,
+                "nullable": true,
+                "position": 8
+            },
+            {
+                "name": "records_received",
+                "type": "integer",
+                "default": "0",
+                "nullable": false,
+                "position": 9
+            },
+            {
+                "name": "error_code",
+                "type": "character varying(80)",
+                "default": null,
+                "nullable": true,
+                "position": 10
+            },
+            {
+                "name": "error_message",
+                "type": "character varying(500)",
+                "default": null,
+                "nullable": true,
+                "position": 11
+            },
+            {
+                "name": "classification",
+                "type": "character varying(30)",
+                "default": "'OBSERVATION_ONLY'::character varying",
+                "nullable": false,
+                "position": 12
+            },
+            {
+                "name": "demo_run_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 13
+            }
+        ],
+        "indexes": [
+            {
+                "name": "pk_poll_run",
+                "definition": "CREATE UNIQUE INDEX pk_poll_run ON ingestion.poll_run USING btree (id)"
+            },
+            {
+                "name": "uq_poll_run_idempotency_key",
+                "definition": "CREATE UNIQUE INDEX uq_poll_run_idempotency_key ON ingestion.poll_run USING btree (idempotency_key)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "ck_poll_run_outcome",
+                "type": "check",
+                "definition": "CHECK (outcome::text = ANY (ARRAY['RUNNING'::character varying, 'SUCCESS'::character varying, 'PARTIAL'::character varying, 'FAILED'::character varying]::text[]))"
+            },
+            {
+                "name": "fk_poll_run_demo_run",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (demo_run_id) REFERENCES ingestion.demo_run(id)"
+            },
+            {
+                "name": "pk_poll_run",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (id)"
+            },
+            {
+                "name": "poll_run_classification_not_null",
+                "type": null,
+                "definition": "NOT NULL classification"
+            },
+            {
+                "name": "poll_run_id_not_null",
+                "type": null,
+                "definition": "NOT NULL id"
+            },
+            {
+                "name": "poll_run_idempotency_key_not_null",
+                "type": null,
+                "definition": "NOT NULL idempotency_key"
+            },
+            {
+                "name": "poll_run_outcome_not_null",
+                "type": null,
+                "definition": "NOT NULL outcome"
+            },
+            {
+                "name": "poll_run_records_received_not_null",
+                "type": null,
+                "definition": "NOT NULL records_received"
+            },
+            {
+                "name": "poll_run_scope_key_not_null",
+                "type": null,
+                "definition": "NOT NULL scope_key"
+            },
+            {
+                "name": "poll_run_source_not_null",
+                "type": null,
+                "definition": "NOT NULL source"
+            },
+            {
+                "name": "poll_run_started_at_not_null",
+                "type": null,
+                "definition": "NOT NULL started_at"
+            },
+            {
+                "name": "uq_poll_run_idempotency_key",
+                "type": "unique",
+                "definition": "UNIQUE (idempotency_key)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "poll_target",
+        "schema": "ingestion",
+        "columns": [
+            {
+                "name": "source",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "scope_key",
+                "type": "character varying(120)",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "stop_code",
+                "type": "character varying(12)",
+                "default": null,
+                "nullable": true,
+                "position": 3
+            },
+            {
+                "name": "enabled",
+                "type": "boolean",
+                "default": "true",
+                "nullable": false,
+                "position": 4
+            },
+            {
+                "name": "poll_interval_seconds",
+                "type": "integer",
+                "default": "60",
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "created_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 6
+            },
+            {
+                "name": "updated_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 7
+            },
+            {
+                "name": "service_id",
+                "type": "character varying(20)",
+                "default": null,
+                "nullable": true,
+                "position": 8
+            }
+        ],
+        "indexes": [
+            {
+                "name": "pk_poll_target",
+                "definition": "CREATE UNIQUE INDEX pk_poll_target ON ingestion.poll_target USING btree (source, scope_key)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "pk_poll_target",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (source, scope_key)"
+            },
+            {
+                "name": "poll_target_created_at_not_null",
+                "type": null,
+                "definition": "NOT NULL created_at"
+            },
+            {
+                "name": "poll_target_enabled_not_null",
+                "type": null,
+                "definition": "NOT NULL enabled"
+            },
+            {
+                "name": "poll_target_poll_interval_seconds_not_null",
+                "type": null,
+                "definition": "NOT NULL poll_interval_seconds"
+            },
+            {
+                "name": "poll_target_scope_key_not_null",
+                "type": null,
+                "definition": "NOT NULL scope_key"
+            },
+            {
+                "name": "poll_target_source_not_null",
+                "type": null,
+                "definition": "NOT NULL source"
+            },
+            {
+                "name": "poll_target_updated_at_not_null",
+                "type": null,
+                "definition": "NOT NULL updated_at"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "raw_observation",
+        "schema": "ingestion",
+        "columns": [
+            {
+                "name": "id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "poll_run_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "source",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "source_key",
+                "type": "character varying(200)",
+                "default": null,
+                "nullable": false,
+                "position": 4
+            },
+            {
+                "name": "request_parameters",
+                "type": "jsonb",
+                "default": null,
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "payload",
+                "type": "jsonb",
+                "default": null,
+                "nullable": false,
+                "position": 6
+            },
+            {
+                "name": "payload_checksum",
+                "type": "character(64)",
+                "default": null,
+                "nullable": false,
+                "position": 7
+            },
+            {
+                "name": "observed_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 8
+            },
+            {
+                "name": "fetched_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 9
+            },
+            {
+                "name": "ingested_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 10
+            },
+            {
+                "name": "http_status",
+                "type": "integer",
+                "default": null,
+                "nullable": false,
+                "position": 11
+            },
+            {
+                "name": "classification",
+                "type": "character varying(30)",
+                "default": "'OBSERVATION_ONLY'::character varying",
+                "nullable": false,
+                "position": 12
+            },
+            {
+                "name": "feed_sequence",
+                "type": "bigint",
+                "default": "nextval('ingestion.raw_observation_feed_sequence_seq'::regclass)",
+                "nullable": false,
+                "position": 13
+            },
+            {
+                "name": "demo_run_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 14
+            }
+        ],
+        "indexes": [
+            {
+                "name": "ix_raw_observation_bunching_feed",
+                "definition": "CREATE INDEX ix_raw_observation_bunching_feed ON ingestion.raw_observation USING btree (feed_sequence) WHERE (((source)::text = 'DATAMALL'::text) AND ((source_key)::text ~~ 'stop:%'::text) AND ((classification)::text = 'OBSERVATION_ONLY'::text) AND ((http_status >= 200) AND (http_status <= 299)))"
+            },
+            {
+                "name": "pk_raw_observation",
+                "definition": "CREATE UNIQUE INDEX pk_raw_observation ON ingestion.raw_observation USING btree (id)"
+            },
+            {
+                "name": "uq_raw_observation_feed_sequence",
+                "definition": "CREATE UNIQUE INDEX uq_raw_observation_feed_sequence ON ingestion.raw_observation USING btree (feed_sequence)"
+            },
+            {
+                "name": "uq_raw_observation_run_key_checksum",
+                "definition": "CREATE UNIQUE INDEX uq_raw_observation_run_key_checksum ON ingestion.raw_observation USING btree (poll_run_id, source_key, payload_checksum)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "ck_raw_observation_demo_scope",
+                "type": "check",
+                "definition": "CHECK (classification::text = 'SIMULATION'::text AND demo_run_id IS NOT NULL OR classification::text = 'OBSERVATION_ONLY'::text AND demo_run_id IS NULL)"
+            },
+            {
+                "name": "fk_raw_observation_demo_run",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (demo_run_id) REFERENCES ingestion.demo_run(id)"
+            },
+            {
+                "name": "fk_raw_observation_poll_run",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (poll_run_id) REFERENCES ingestion.poll_run(id)"
+            },
+            {
+                "name": "pk_raw_observation",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (id)"
+            },
+            {
+                "name": "raw_observation_classification_not_null",
+                "type": null,
+                "definition": "NOT NULL classification"
+            },
+            {
+                "name": "raw_observation_feed_sequence_not_null",
+                "type": null,
+                "definition": "NOT NULL feed_sequence"
+            },
+            {
+                "name": "raw_observation_fetched_at_not_null",
+                "type": null,
+                "definition": "NOT NULL fetched_at"
+            },
+            {
+                "name": "raw_observation_http_status_not_null",
+                "type": null,
+                "definition": "NOT NULL http_status"
+            },
+            {
+                "name": "raw_observation_id_not_null",
+                "type": null,
+                "definition": "NOT NULL id"
+            },
+            {
+                "name": "raw_observation_ingested_at_not_null",
+                "type": null,
+                "definition": "NOT NULL ingested_at"
+            },
+            {
+                "name": "raw_observation_payload_checksum_not_null",
+                "type": null,
+                "definition": "NOT NULL payload_checksum"
+            },
+            {
+                "name": "raw_observation_payload_not_null",
+                "type": null,
+                "definition": "NOT NULL payload"
+            },
+            {
+                "name": "raw_observation_poll_run_id_not_null",
+                "type": null,
+                "definition": "NOT NULL poll_run_id"
+            },
+            {
+                "name": "raw_observation_request_parameters_not_null",
+                "type": null,
+                "definition": "NOT NULL request_parameters"
+            },
+            {
+                "name": "raw_observation_source_key_not_null",
+                "type": null,
+                "definition": "NOT NULL source_key"
+            },
+            {
+                "name": "raw_observation_source_not_null",
+                "type": null,
+                "definition": "NOT NULL source"
+            },
+            {
+                "name": "uq_raw_observation_run_key_checksum",
+                "type": "unique",
+                "definition": "UNIQUE (poll_run_id, source_key, payload_checksum)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "reference_dataset_version",
+        "schema": "ingestion",
+        "columns": [
+            {
+                "name": "id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "dataset",
+                "type": "character varying(40)",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "version_key",
+                "type": "character varying(80)",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "checksum",
+                "type": "character(64)",
+                "default": null,
+                "nullable": false,
+                "position": 4
+            },
+            {
+                "name": "status",
+                "type": "character varying(20)",
+                "default": null,
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "imported_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 6
+            },
+            {
+                "name": "activated_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 7
+            },
+            {
+                "name": "retired_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 8
+            }
+        ],
+        "indexes": [
+            {
+                "name": "ix_reference_dataset_version_retention",
+                "definition": "CREATE INDEX ix_reference_dataset_version_retention ON ingestion.reference_dataset_version USING btree (status, retired_at) WHERE ((status)::text <> 'ACTIVE'::text)"
+            },
+            {
+                "name": "pk_reference_dataset_version",
+                "definition": "CREATE UNIQUE INDEX pk_reference_dataset_version ON ingestion.reference_dataset_version USING btree (id)"
+            },
+            {
+                "name": "uq_reference_dataset_version_active",
+                "definition": "CREATE UNIQUE INDEX uq_reference_dataset_version_active ON ingestion.reference_dataset_version USING btree (dataset) WHERE ((status)::text = 'ACTIVE'::text)"
+            },
+            {
+                "name": "uq_reference_dataset_version_dataset_key",
+                "definition": "CREATE UNIQUE INDEX uq_reference_dataset_version_dataset_key ON ingestion.reference_dataset_version USING btree (dataset, version_key)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "ck_reference_dataset_version_status",
+                "type": "check",
+                "definition": "CHECK (status::text = ANY (ARRAY['CANDIDATE'::character varying, 'ACTIVE'::character varying, 'SUPERSEDED'::character varying, 'REJECTED'::character varying]::text[]))"
+            },
+            {
+                "name": "pk_reference_dataset_version",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (id)"
+            },
+            {
+                "name": "reference_dataset_version_checksum_not_null",
+                "type": null,
+                "definition": "NOT NULL checksum"
+            },
+            {
+                "name": "reference_dataset_version_dataset_not_null",
+                "type": null,
+                "definition": "NOT NULL dataset"
+            },
+            {
+                "name": "reference_dataset_version_id_not_null",
+                "type": null,
+                "definition": "NOT NULL id"
+            },
+            {
+                "name": "reference_dataset_version_imported_at_not_null",
+                "type": null,
+                "definition": "NOT NULL imported_at"
+            },
+            {
+                "name": "reference_dataset_version_status_not_null",
+                "type": null,
+                "definition": "NOT NULL status"
+            },
+            {
+                "name": "reference_dataset_version_version_key_not_null",
+                "type": null,
+                "definition": "NOT NULL version_key"
+            },
+            {
+                "name": "uq_reference_dataset_version_dataset_key",
+                "type": "unique",
+                "definition": "UNIQUE (dataset, version_key)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "traffic_incident_observation",
+        "schema": "ingestion",
+        "columns": [
+            {
+                "name": "id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "raw_observation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 2
+            },
+            {
+                "name": "poll_run_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "source_incident_key",
+                "type": "character(64)",
+                "default": null,
+                "nullable": false,
+                "position": 4
+            },
+            {
+                "name": "incident_type",
+                "type": "character varying(60)",
+                "default": null,
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "latitude",
+                "type": "numeric(10,7)",
+                "default": null,
+                "nullable": false,
+                "position": 6
+            },
+            {
+                "name": "longitude",
+                "type": "numeric(10,7)",
+                "default": null,
+                "nullable": false,
+                "position": 7
+            },
+            {
+                "name": "message",
+                "type": "character varying(500)",
+                "default": null,
+                "nullable": false,
+                "position": 8
+            },
+            {
+                "name": "observed_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": true,
+                "position": 9
+            },
+            {
+                "name": "fetched_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 10
+            },
+            {
+                "name": "ingested_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 11
+            },
+            {
+                "name": "classification",
+                "type": "character varying(30)",
+                "default": null,
+                "nullable": false,
+                "position": 12
+            },
+            {
+                "name": "demo_run_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 13
+            }
+        ],
+        "indexes": [
+            {
+                "name": "ix_traffic_incident_demo_feed",
+                "definition": "CREATE INDEX ix_traffic_incident_demo_feed ON ingestion.traffic_incident_observation USING btree (demo_run_id, fetched_at) WHERE ((classification)::text = 'SIMULATION'::text)"
+            },
+            {
+                "name": "pk_traffic_incident_observation",
+                "definition": "CREATE UNIQUE INDEX pk_traffic_incident_observation ON ingestion.traffic_incident_observation USING btree (id)"
+            },
+            {
+                "name": "uq_traffic_incident_observation_source",
+                "definition": "CREATE UNIQUE INDEX uq_traffic_incident_observation_source ON ingestion.traffic_incident_observation USING btree (raw_observation_id, source_incident_key)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "ck_traffic_incident_demo_scope",
+                "type": "check",
+                "definition": "CHECK (classification::text = 'SIMULATION'::text AND demo_run_id IS NOT NULL OR classification::text = 'OBSERVATION_ONLY'::text AND demo_run_id IS NULL)"
+            },
+            {
+                "name": "ck_traffic_incident_latitude",
+                "type": "check",
+                "definition": "CHECK (latitude >= '-90'::integer::numeric AND latitude <= 90::numeric)"
+            },
+            {
+                "name": "ck_traffic_incident_longitude",
+                "type": "check",
+                "definition": "CHECK (longitude >= '-180'::integer::numeric AND longitude <= 180::numeric)"
+            },
+            {
+                "name": "fk_traffic_incident_demo_run",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (demo_run_id) REFERENCES ingestion.demo_run(id)"
+            },
+            {
+                "name": "fk_traffic_incident_poll",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (poll_run_id) REFERENCES ingestion.poll_run(id)"
+            },
+            {
+                "name": "fk_traffic_incident_raw",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (raw_observation_id) REFERENCES ingestion.raw_observation(id)"
+            },
+            {
+                "name": "pk_traffic_incident_observation",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (id)"
+            },
+            {
+                "name": "traffic_incident_observation_classification_not_null",
+                "type": null,
+                "definition": "NOT NULL classification"
+            },
+            {
+                "name": "traffic_incident_observation_fetched_at_not_null",
+                "type": null,
+                "definition": "NOT NULL fetched_at"
+            },
+            {
+                "name": "traffic_incident_observation_id_not_null",
+                "type": null,
+                "definition": "NOT NULL id"
+            },
+            {
+                "name": "traffic_incident_observation_incident_type_not_null",
+                "type": null,
+                "definition": "NOT NULL incident_type"
+            },
+            {
+                "name": "traffic_incident_observation_ingested_at_not_null",
+                "type": null,
+                "definition": "NOT NULL ingested_at"
+            },
+            {
+                "name": "traffic_incident_observation_latitude_not_null",
+                "type": null,
+                "definition": "NOT NULL latitude"
+            },
+            {
+                "name": "traffic_incident_observation_longitude_not_null",
+                "type": null,
+                "definition": "NOT NULL longitude"
+            },
+            {
+                "name": "traffic_incident_observation_message_not_null",
+                "type": null,
+                "definition": "NOT NULL message"
+            },
+            {
+                "name": "traffic_incident_observation_poll_run_id_not_null",
+                "type": null,
+                "definition": "NOT NULL poll_run_id"
+            },
+            {
+                "name": "traffic_incident_observation_raw_observation_id_not_null",
+                "type": null,
+                "definition": "NOT NULL raw_observation_id"
+            },
+            {
+                "name": "traffic_incident_observation_source_incident_key_not_null",
+                "type": null,
+                "definition": "NOT NULL source_incident_key"
+            },
+            {
+                "name": "uq_traffic_incident_observation_source",
+                "type": "unique",
+                "definition": "UNIQUE (raw_observation_id, source_incident_key)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "model_invocation_record",
+        "schema": "recommendation",
+        "columns": [
+            {
+                "name": "invocation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "recommendation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": true,
+                "position": 2
+            },
+            {
+                "name": "provider",
+                "type": "character varying(32)",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "model",
+                "type": "character varying(128)",
+                "default": null,
+                "nullable": false,
+                "position": 4
+            },
+            {
+                "name": "prompt_version",
+                "type": "character varying(64)",
+                "default": null,
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "output_schema_version",
+                "type": "character varying(64)",
+                "default": null,
+                "nullable": false,
+                "position": 6
+            },
+            {
+                "name": "provider_response_id",
+                "type": "character varying(255)",
+                "default": null,
+                "nullable": true,
+                "position": 7
+            },
+            {
+                "name": "outcome",
+                "type": "character varying(32)",
+                "default": null,
+                "nullable": false,
+                "position": 8
+            },
+            {
+                "name": "candidate_payload",
+                "type": "jsonb",
+                "default": null,
+                "nullable": true,
+                "position": 9
+            },
+            {
+                "name": "rejection_reason",
+                "type": "character varying(64)",
+                "default": null,
+                "nullable": true,
+                "position": 10
+            },
+            {
+                "name": "failure_category",
+                "type": "character varying(64)",
+                "default": null,
+                "nullable": true,
+                "position": 11
+            },
+            {
+                "name": "deterministic_fallback_used",
+                "type": "boolean",
+                "default": null,
+                "nullable": false,
+                "position": 12
+            },
+            {
+                "name": "prompt_tokens",
+                "type": "integer",
+                "default": null,
+                "nullable": true,
+                "position": 13
+            },
+            {
+                "name": "completion_tokens",
+                "type": "integer",
+                "default": null,
+                "nullable": true,
+                "position": 14
+            },
+            {
+                "name": "total_tokens",
+                "type": "integer",
+                "default": null,
+                "nullable": true,
+                "position": 15
+            },
+            {
+                "name": "started_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 16
+            },
+            {
+                "name": "completed_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 17
+            },
+            {
+                "name": "latency_milliseconds",
+                "type": "bigint",
+                "default": null,
+                "nullable": false,
+                "position": 18
+            },
+            {
+                "name": "correlation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 20
+            },
+            {
+                "name": "input_snapshot",
+                "type": "text",
+                "default": null,
+                "nullable": true,
+                "position": 21
+            },
+            {
+                "name": "generated_response",
+                "type": "text",
+                "default": null,
+                "nullable": true,
+                "position": 22
+            }
+        ],
+        "indexes": [
+            {
+                "name": "ix_model_invocation_outcome",
+                "definition": "CREATE INDEX ix_model_invocation_outcome ON recommendation.model_invocation_record USING btree (outcome)"
+            },
+            {
+                "name": "ix_model_invocation_provider_model",
+                "definition": "CREATE INDEX ix_model_invocation_provider_model ON recommendation.model_invocation_record USING btree (provider, model)"
+            },
+            {
+                "name": "ix_model_invocation_recommendation_id",
+                "definition": "CREATE INDEX ix_model_invocation_recommendation_id ON recommendation.model_invocation_record USING btree (recommendation_id)"
+            },
+            {
+                "name": "pk_model_invocation_record",
+                "definition": "CREATE UNIQUE INDEX pk_model_invocation_record ON recommendation.model_invocation_record USING btree (invocation_id)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "ck_model_invocation_candidate_payload",
+                "type": "check",
+                "definition": "CHECK (candidate_payload IS NULL OR jsonb_typeof(candidate_payload) = 'object'::text)"
+            },
+            {
+                "name": "ck_model_invocation_completion_tokens",
+                "type": "check",
+                "definition": "CHECK (completion_tokens IS NULL OR completion_tokens >= 0)"
+            },
+            {
+                "name": "ck_model_invocation_latency",
+                "type": "check",
+                "definition": "CHECK (latency_milliseconds >= 0)"
+            },
+            {
+                "name": "ck_model_invocation_outcome",
+                "type": "check",
+                "definition": "CHECK (outcome::text = ANY (ARRAY['ACCEPTED'::character varying, 'REJECTED'::character varying, 'MISMATCHED'::character varying, 'EMPTY_RESPONSE'::character varying, 'PROVIDER_FAILURE'::character varying]::text[]))"
+            },
+            {
+                "name": "ck_model_invocation_outcome_state",
+                "type": "check",
+                "definition": "CHECK (outcome::text = 'ACCEPTED'::text AND candidate_payload IS NOT NULL AND rejection_reason IS NULL AND failure_category IS NULL AND deterministic_fallback_used = false OR outcome::text = 'REJECTED'::text AND candidate_payload IS NOT NULL AND rejection_reason IS NOT NULL AND failure_category IS NULL AND deterministic_fallback_used = true OR outcome::text = 'MISMATCHED'::text AND candidate_payload IS NOT NULL AND rejection_reason IS NULL AND failure_category IS NULL AND deterministic_fallback_used = true OR outcome::text = 'EMPTY_RESPONSE'::text AND candidate_payload IS NULL AND rejection_reason IS NULL AND failure_category IS NULL AND deterministic_fallback_used = true OR outcome::text = 'PROVIDER_FAILURE'::text AND candidate_payload IS NULL AND rejection_reason IS NULL AND failure_category IS NOT NULL AND deterministic_fallback_used = true)"
+            },
+            {
+                "name": "ck_model_invocation_prompt_tokens",
+                "type": "check",
+                "definition": "CHECK (prompt_tokens IS NULL OR prompt_tokens >= 0)"
+            },
+            {
+                "name": "ck_model_invocation_provider",
+                "type": "check",
+                "definition": "CHECK (provider::text = 'GEMINI'::text)"
+            },
+            {
+                "name": "ck_model_invocation_timestamps",
+                "type": "check",
+                "definition": "CHECK (completed_at >= started_at)"
+            },
+            {
+                "name": "ck_model_invocation_total_tokens",
+                "type": "check",
+                "definition": "CHECK (total_tokens IS NULL OR total_tokens >= 0)"
+            },
+            {
+                "name": "fk_model_invocation_recommendation",
+                "type": "foreign key",
+                "definition": "FOREIGN KEY (recommendation_id) REFERENCES recommendation.recommendation_record(recommendation_id)"
+            },
+            {
+                "name": "model_invocation_record_completed_at_not_null",
+                "type": null,
+                "definition": "NOT NULL completed_at"
+            },
+            {
+                "name": "model_invocation_record_correlation_id_not_null",
+                "type": null,
+                "definition": "NOT NULL correlation_id"
+            },
+            {
+                "name": "model_invocation_record_deterministic_fallback_used_not_null",
+                "type": null,
+                "definition": "NOT NULL deterministic_fallback_used"
+            },
+            {
+                "name": "model_invocation_record_invocation_id_not_null",
+                "type": null,
+                "definition": "NOT NULL invocation_id"
+            },
+            {
+                "name": "model_invocation_record_latency_milliseconds_not_null",
+                "type": null,
+                "definition": "NOT NULL latency_milliseconds"
+            },
+            {
+                "name": "model_invocation_record_model_not_null",
+                "type": null,
+                "definition": "NOT NULL model"
+            },
+            {
+                "name": "model_invocation_record_outcome_not_null",
+                "type": null,
+                "definition": "NOT NULL outcome"
+            },
+            {
+                "name": "model_invocation_record_output_schema_version_not_null",
+                "type": null,
+                "definition": "NOT NULL output_schema_version"
+            },
+            {
+                "name": "model_invocation_record_prompt_version_not_null",
+                "type": null,
+                "definition": "NOT NULL prompt_version"
+            },
+            {
+                "name": "model_invocation_record_provider_not_null",
+                "type": null,
+                "definition": "NOT NULL provider"
+            },
+            {
+                "name": "model_invocation_record_started_at_not_null",
+                "type": null,
+                "definition": "NOT NULL started_at"
+            },
+            {
+                "name": "pk_model_invocation_record",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (invocation_id)"
+            }
+        ],
+        "viewDefinition": null
+    },
+    {
+        "kind": "table",
+        "name": "recommendation_record",
+        "schema": "recommendation",
+        "columns": [
+            {
+                "name": "recommendation_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 1
+            },
+            {
+                "name": "request_hash",
+                "type": "character varying(64)",
+                "default": null,
+                "nullable": false,
+                "position": 3
+            },
+            {
+                "name": "bunching_event_id",
+                "type": "uuid",
+                "default": null,
+                "nullable": false,
+                "position": 5
+            },
+            {
+                "name": "direction_id",
+                "type": "smallint",
+                "default": null,
+                "nullable": false,
+                "position": 9
+            },
+            {
+                "name": "adjustment_seconds",
+                "type": "smallint",
+                "default": null,
+                "nullable": false,
+                "position": 16
+            },
+            {
+                "name": "request_payload",
+                "type": "jsonb",
+                "default": null,
+                "nullable": false,
+                "position": 17
+            },
+            {
+                "name": "mitigation_context",
+                "type": "jsonb",
+                "default": null,
+                "nullable": false,
+                "position": 18
+            },
+            {
+                "name": "response_payload",
+                "type": "jsonb",
+                "default": null,
+                "nullable": false,
+                "position": 19
+            },
+            {
+                "name": "created_at",
+                "type": "timestamp with time zone",
+                "default": null,
+                "nullable": false,
+                "position": 21
+            }
+        ],
+        "indexes": [
+            {
+                "name": "ix_recommendation_record_bunching_event_created_at",
+                "definition": "CREATE INDEX ix_recommendation_record_bunching_event_created_at ON recommendation.recommendation_record USING btree (bunching_event_id, created_at DESC)"
+            },
+            {
+                "name": "ix_recommendation_record_created_at",
+                "definition": "CREATE INDEX ix_recommendation_record_created_at ON recommendation.recommendation_record USING btree (created_at)"
+            },
+            {
+                "name": "pk_recommendation_record",
+                "definition": "CREATE UNIQUE INDEX pk_recommendation_record ON recommendation.recommendation_record USING btree (recommendation_id)"
+            }
+        ],
+        "constraints": [
+            {
+                "name": "ck_recommendation_record_adjustment_projection",
+                "type": "check",
+                "definition": "CHECK ((jsonb_typeof(response_payload -> 'adjustmentSeconds'::text) = 'number'::text AND (response_payload ->> 'adjustmentSeconds'::text) = adjustment_seconds::text) IS TRUE)"
+            },
+            {
+                "name": "ck_recommendation_record_adjustment_seconds",
+                "type": "check",
+                "definition": "CHECK (adjustment_seconds >= 1 AND adjustment_seconds <= 120)"
+            },
+            {
+                "name": "ck_recommendation_record_bunching_event_projection",
+                "type": "check",
+                "definition": "CHECK ((jsonb_typeof(request_payload #> '{bunchingEvent,bunchingEventId}'::text[]) = 'string'::text AND (request_payload #>> '{bunchingEvent,bunchingEventId}'::text[]) = bunching_event_id::text) IS TRUE)"
+            },
+            {
+                "name": "ck_recommendation_record_direction_id",
+                "type": "check",
+                "definition": "CHECK (direction_id = ANY (ARRAY[1, 2]))"
+            },
+            {
+                "name": "ck_recommendation_record_direction_projection",
+                "type": "check",
+                "definition": "CHECK ((jsonb_typeof(request_payload #> '{bunchingEvent,directionId}'::text[]) = 'number'::text AND (request_payload #>> '{bunchingEvent,directionId}'::text[]) = direction_id::text) IS TRUE)"
+            },
+            {
+                "name": "ck_recommendation_record_mitigation_context",
+                "type": "check",
+                "definition": "CHECK (jsonb_typeof(mitigation_context) = 'object'::text)"
+            },
+            {
+                "name": "ck_recommendation_record_request_hash",
+                "type": "check",
+                "definition": "CHECK (request_hash::text ~ '^[0-9a-f]{64}$'::text)"
+            },
+            {
+                "name": "ck_recommendation_record_request_payload",
+                "type": "check",
+                "definition": "CHECK (jsonb_typeof(request_payload) = 'object'::text)"
+            },
+            {
+                "name": "ck_recommendation_record_response_payload",
+                "type": "check",
+                "definition": "CHECK (jsonb_typeof(response_payload) = 'object'::text)"
+            },
+            {
+                "name": "pk_recommendation_record",
+                "type": "primary key",
+                "definition": "PRIMARY KEY (recommendation_id)"
+            },
+            {
+                "name": "recommendation_record_adjustment_seconds_not_null",
+                "type": null,
+                "definition": "NOT NULL adjustment_seconds"
+            },
+            {
+                "name": "recommendation_record_bunching_event_id_not_null",
+                "type": null,
+                "definition": "NOT NULL bunching_event_id"
+            },
+            {
+                "name": "recommendation_record_created_at_not_null",
+                "type": null,
+                "definition": "NOT NULL created_at"
+            },
+            {
+                "name": "recommendation_record_direction_id_not_null",
+                "type": null,
+                "definition": "NOT NULL direction_id"
+            },
+            {
+                "name": "recommendation_record_mitigation_context_not_null",
+                "type": null,
+                "definition": "NOT NULL mitigation_context"
+            },
+            {
+                "name": "recommendation_record_recommendation_id_not_null",
+                "type": null,
+                "definition": "NOT NULL recommendation_id"
+            },
+            {
+                "name": "recommendation_record_request_hash_not_null",
+                "type": null,
+                "definition": "NOT NULL request_hash"
+            },
+            {
+                "name": "recommendation_record_request_payload_not_null",
+                "type": null,
+                "definition": "NOT NULL request_payload"
+            },
+            {
+                "name": "recommendation_record_response_payload_not_null",
+                "type": null,
+                "definition": "NOT NULL response_payload"
+            }
+        ],
+        "viewDefinition": null
+    }
+]

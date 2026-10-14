@@ -22,15 +22,15 @@ The browser uses the publishable key. Spring resource servers verify user tokens
 
 In Authentication settings/providers, enable email/password authentication. Keep anonymous sign-in disabled. For this controlled test project, disable public registration and create the test users administratively. Leave production email/registration policy decisions for the later product login work.
 
-Use this proposed local-only harness origin:
+Use the local Gateway origin and test page when the local auth harness is enabled:
 
 ```text
-Site URL:             http://localhost
-Allowed redirect URL: http://localhost/auth-test/callback
-Temporary page:       http://localhost/auth-test/
+Site URL:             http://localhost:6770
+Allowed redirect URL: http://localhost:6770/auth-test/callback
+Temporary page:       http://localhost:6770/auth-test/index.html
 ```
 
-These URLs are the planned Nginx development entry point, not a page already running. If host port 80 is unavailable, choose the actual local Nginx port and use that same origin/port consistently in all three values and the application configuration. Do not use a backend service's direct port as the browser's end-to-end gateway test origin.
+The page is served by the local Gateway on host port `6770` when `OCC_GATEWAY_AUTH_TEST_ENABLED=true`. It signs in with Supabase's email/password endpoint and does not use a redirect callback. Keep the allowed callback for redirect-based confirmation or recovery flows; those routes are for future login-page work. Keep product login and callback behavior in phase 2.
 
 Direct email/password sign-in returns a session without an OAuth callback. The redirect entry prepares confirmation/recovery or future redirect flows; it does not require a full product UI now. Use exact callbacks, not a broad production wildcard. Later add the actual deployed Site URL/callbacks. [Password authentication](https://supabase.com/docs/guides/auth/passwords), [redirect URL configuration](https://supabase.com/docs/guides/auth/redirect-urls)
 
@@ -98,9 +98,9 @@ The project owner explicitly approved recording these temporary mock credentials
 | Driver | driver1@occ.com | abcd1234 | DRIVER |
 | Unassigned | testuser@email.com | abcd1234 | Absent |
 
-Development project settings: publishable key `sb_publishable_5MVyFbf0il3Go2tTrTKMGg_1Dl46EAf`, issuer `https://lldbezcwwotvtytnddgf.supabase.co/auth/v1`, JWKS `https://lldbezcwwotvtytnddgf.supabase.co/auth/v1/.well-known/jwks.json`, algorithm `ES256`, Site URL `http://localhost`, callback `http://localhost/auth-test/callback`, hook `public.occ_custom_access_token_hook`, claim `occ_role`. The JWKS endpoint was fetched successfully and advertised an EC P-256 / ES256 public key; that alone does not verify issued tokens or hook execution.
+Development project settings last supplied for this setup: publishable key `sb_publishable_5MVyFbf0il3Go2tTrTKMGg_1Dl46EAf`, issuer `https://lldbezcwwotvtytnddgf.supabase.co/auth/v1`, JWKS `https://lldbezcwwotvtytnddgf.supabase.co/auth/v1/.well-known/jwks.json`, algorithm `ES256`, Site URL `http://localhost:6770`, allowed callback `http://localhost:6770/auth-test/callback`, hook `public.occ_custom_access_token_hook`, claim `occ_role`. Confirm the URL settings in the dashboard if they have since changed. The JWKS endpoint was fetched successfully and advertised an EC P-256 / ES256 public key; that alone does not verify issued tokens or hook execution.
 
-For the opt-in live check, sign in with each account using the publishable key and password authentication. Verify signatures and issuer/audience/subject, then assert the expected claim above. Call the same protected operational read through Nginx/gateway: ADMIN and CONTROLLER should succeed; DRIVER and UNASSIGNED should receive 403. Verify a missing bearer token receives 401, refresh preserves the expected claim, and sign-out clears the harness session. Keep tokens in memory and record only account labels, assertions and HTTP outcomes. Configure the test runner through documented environment variables; do not hard-code these values into application code or production defaults. Ordinary CI remains deterministic and offline.
+For the opt-in live check, sign in with each account using the publishable key and password authentication. Verify signatures and issuer/audience/subject, then assert the expected claim above. Call the same protected operational read through the Gateway: ADMIN and CONTROLLER should succeed; DRIVER and UNASSIGNED should receive 403. Verify a missing bearer token receives 401, refresh preserves the expected claim, and sign-out clears the harness session. Keep tokens in memory and record only account labels, assertions and HTTP outcomes. Configure the test runner through documented environment variables; do not hard-code these values into application code or production defaults. Ordinary CI remains deterministic and offline.
 
 ## 6. Send back the public setup details
 
@@ -110,8 +110,8 @@ Provide the following handoff in chat or a non-secret setup note:
 Project URL: https://PROJECT_REF.supabase.co
 Publishable key: sb_publishable_...
 Current signing algorithm: ES256 (or the actual algorithm)
-Site URL: http://localhost (or the actual selected origin)
-Callback URL: http://localhost/auth-test/callback
+Site URL: http://localhost:6770 (local Gateway origin)
+Callback URL: http://localhost:6770/auth-test/callback (redirect flows only)
 Role hook: public.occ_custom_access_token_hook — enabled
 Role claim: occ_role
 Test users: ADMIN, CONTROLLER, DRIVER, UNASSIGNED created
@@ -126,10 +126,10 @@ The implementing agent will:
 
 1. Bind canonical issuer/JWKS/audience/algorithm settings through typed validated `@ConfigurationProperties`, documenting every supported environment variable in `.env.example`. Add public Supabase URL/key and local harness URL through allowlisted runtime config; these keys are proposed until the bindings exist.
 2. Implement gateway/backend resource-server validation and trusted `occ_role` mapping. Keep existing internal service identities distinct. Fail startup for incomplete required production identity config.
-3. Serve a development-only `/auth-test/` page through local Nginx. Supabase SDK client: `persistSession: false`, `autoRefreshToken: true`, `detectSessionInUrl: false` for direct password login. Store the session only in memory; never display/log tokens/passwords. A future redirect callback needs its own correctly implemented session handling.
-4. Provide email/password sign-in, sign-out, current role display and a button invoking a verified existing read-only API through Nginx -> gateway -> service. The request uses the user's `access_token` as bearer token, not the publishable key. No service/secret key or token-minting private key reaches the browser.
+3. Serve the temporary `/auth-test/index.html` page from the local Gateway when `OCC_GATEWAY_AUTH_TEST_ENABLED=true`; keep the feature disabled by default in deployments. The current page uses Supabase's email/password endpoint directly, keeps the session in memory, and does not process redirect callbacks. A future redirect callback needs its own correctly implemented session handling.
+4. Provide email/password sign-in, sign-out, current role display and a button invoking a verified existing read-only API through Gateway -> service. The request uses the user's `access_token` as bearer token, not the publishable key. No service/secret key or token-minting private key reaches the browser.
 5. Check fresh live tokens have correct `iss`, `aud`, `sub`, algorithm and `occ_role` without sharing token contents. Verify ADMIN/CONTROLLER allow cases, DRIVER/unassigned deny cases, missing/expired/invalid tokens, refresh and role-change behavior. Do not claim logout invalidates every issued JWT immediately; the harness stops using it, while server acceptance follows token expiry/revocation policy.
 6. Keep deterministic synthetic JWT/JWKS tests in ordinary CI. Real Supabase integration is a separate opt-in development check using the owner-approved temporary accounts above; ordinary PRs never depend on test account passwords or the external service.
-7. Exclude the temporary page from production builds/routes. Replace it with phase-2 product login pages; preserve verified backend authentication behavior.
+7. Keep the temporary page inaccessible by default outside the local Compose setup. Replace it with phase-2 product login pages; preserve verified backend authentication behavior.
 
 Only public project settings are needed for initial integration. The agent may use the supplied temporary development accounts for live sign-in verification once the harness/test runner exists, without requesting credentials again. If sign-in reports a hook error, check function EXECUTE, table SELECT and its RLS policy for `supabase_auth_admin`; do not make the role table publicly readable to fix it.

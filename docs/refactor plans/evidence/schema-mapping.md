@@ -1,6 +1,6 @@
 # Phase 1 schema mapping
 
-Status: source inventory captured on 15 October 2026 by replaying all four latest migration directories on a disposable PostgreSQL 18.6/PostGIS 3.6 instance. It did not connect to the local Compose database. Exact source columns and nullability are listed below; the target schema/constraints and import rules must be finalized and exercised by the phase-1 migration work before any real cutover. Never infer missing historical evidence.
+Status: source inventory captured on 15 October 2026 by replaying all four latest migration directories on a disposable PostgreSQL 18.6/PostGIS 3.6 instance. It did not connect to the local Compose database. The replay produced [exact field/constraint/index catalog](source-schema-catalog.json), [SHA-256 checksums for all 46 source migrations](migration-checksums.csv), and a [field-by-field source-to-target map](source-column-mapping.csv). The [target schema contract](target-schema-contract.md) records the proposed new constraints, indexes, import and retention rules. All target DDL/import behavior still requires PostgreSQL verification before any real cutover. Never infer missing historical evidence.
 
 ## Ownership map
 
@@ -43,6 +43,10 @@ The target retains these current entities and their columns/semantics as governe
 The derived `current_bus_arrival` view selects the latest successful/partial observation by scope and adds `age_seconds`; recreate the view under the current Ingestion migration definitions. The old bunching snapshot views were retired by V015. Disruption consumes supported APIs rather than reading Ingestion tables/views directly.
 
 ## Source schema inventory and transition invariants
+
+The machine-readable field map has 317 rows covering every column in all 24 current tables and the derived view. It records source and target schema/object/field, PostgreSQL type, nullability, defaults, source PK/FK/unique/check/index definitions, backfill treatment, retention behavior and API consumers. For moved tables, table and column renames are explicit; equivalent fields retain their SQL type and source null/default behavior. The two independent model-attempt tables are unioned into a purpose-discriminated Planning table; its purpose-specific nullability and keys are defined in the target schema contract.
+
+The catalog replay found one owned sequence: `ingestion.raw_observation_feed_sequence_seq`, created by `BIGSERIAL` for the monotonically increasing `raw_observation.feed_sequence`. Its unique index and DataMall feed partial index are included in the catalog. The empty migration replay does not reveal a running database's current sequence value. Ingestion remains in place; capture and verify the actual sequence state only during the authorized write-pause cutover, and never reset it to the largest retained row if it has advanced further.
 
 Latest active business tables, after applying all migrations:
 

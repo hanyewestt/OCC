@@ -1,0 +1,29 @@
+occ:
+  disruption:
+    ingestion-base-url: http://ingestion.test
+    planning:
+      internal-url: http://planning.test
+    traffic:
+      poll-enabled: false
+      poll-interval: 10s
+      page-size: 100
+      stale-after: 5m
+      clear-after-successful-absences: 2
+  security:
+    supabase:
+      project-url: https://issuer.test
+      jwks-url: https://issuer.test/auth/v1/.well-known/jwks.json
+      audience: authenticated
+      clock-skew: 30s
+      allowed-algorithms: [ES256]
+    peer:
+      ingestion-to-disruption-token: test-ingestion-to-disruption-token
+      planning-to-disruption-token: test-planning-to-disruption-token
+    peer-clients:
+      ingestion-token: test-disruption-to-ingestion-token
+      planning-token: test-disruption-to-planning-token
+server:
+  port: 0
+spring:
+  flyway:
+    create-schemas: true

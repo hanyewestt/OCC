@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.1.1</version>
+        <relativePath/>
+    </parent>
+    <groupId>com.csd.occ</groupId>
+    <artifactId>occ-parent</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>OCC service reactor</name>
+
+    <properties>
+        <java.version>25</java.version>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <springdoc.version>3.1.1</springdoc.version>
+        <springdoc-maven-plugin.version>1.5</springdoc-maven-plugin.version>
+        <openapi.apiDocsUrl>http://localhost:8080/v3/api-docs</openapi.apiDocsUrl>
+        <spring-ai.version>2.0.1</spring-ai.version>
+        <maven-surefire.version>3.5.6</maven-surefire.version>
+        <maven-failsafe.version>3.5.6</maven-failsafe.version>
+        <maven-compiler.version>3.15.0</maven-compiler.version>
+        <jacoco.version>0.8.15</jacoco.version>
+        <archunit.version>1.5.0</archunit.version>
+    </properties>
+
+    <modules>
+        <module>services/ingestion</module>
+        <module>services/disruption</module>
+        <module>services/planning</module>
+        <module>services/gateway</module>
+    </modules>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${maven-compiler.version}</version>
+                    <configuration><release>${maven.compiler.release}</release></configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${maven-surefire.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <version>${maven-failsafe.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.jacoco</groupId>
+                    <artifactId>jacoco-maven-plugin</artifactId>
+                    <version>${jacoco.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>openapi</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.springdoc</groupId>
+                        <artifactId>springdoc-openapi-maven-plugin</artifactId>
+                        <version>${springdoc-maven-plugin.version}</version>
+                        <configuration>
+                            <apiDocsUrl>${openapi.apiDocsUrl}</apiDocsUrl>
+                            <outputDir>${project.basedir}/openapi</outputDir>
+                            <outputFileName>${project.artifactId}.json</outputFileName>
+                            <failOnError>true</failOnError>
+                            <headers>
+                                <Authorization>Bearer ${env.OCC_OPENAPI_EXPORT_TOKEN}</Authorization>
+                            </headers>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

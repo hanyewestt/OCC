@@ -1,0 +1,10 @@
+spring:
+  config:
+    import: "optional:file:../../.env[.properties]"
+  datasource:
+    url: ${OCC_DISRUPTION_DB_PUBLIC_URL}
+occ:
+  disruption:
+    ingestion-base-url: ${OCC_INGESTION_PUBLIC_URL}
+    planning:
+      internal-url: ${OCC_PLANNING_PUBLIC_URL}

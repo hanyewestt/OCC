@@ -40,3 +40,17 @@ infra/local/.env
 docs/
 !docs/CONVENTIONS.md
 !docs/commit-convention.md
+
+# Keep the active refactor evidence and accepted decisions visible to Git.
+!docs/
+docs/*
+!docs/CONVENTIONS.md
+!docs/commit-convention.md
+!docs/refactor plans/
+docs/refactor plans/*
+!docs/refactor plans/evidence/
+docs/refactor plans/evidence/*
+!docs/refactor plans/evidence/**
+!docs/decisions/
+docs/decisions/*
+!docs/decisions/**

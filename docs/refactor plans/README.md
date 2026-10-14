@@ -1,12 +1,12 @@
 # Refactor package
 
-Prepared **14 October 2026** from the supplied architecture, database diagram, technical details, current working tree and official release/framework documentation.
+Prepared **14 October 2026** from the supplied architecture, database diagram, technical details, current working tree and official release/framework documentation. Stable build-tool releases were rechecked on 15 October 2026.
 
-Plan reorganized **15 October 2026** into two core phases; release research remains dated 14 October.
+Plan reorganized **15 October 2026** into two core phases; release research is updated to 15 October.
 
 The ten design-gap decisions are now accepted from the user's feedback: canonical Disruption combines bunching and traffic incident detection; canonical Planning combines diagnosis and recommendation; live identity integration is deferred to phase 2; single-host MVP migration is acceptable and HA is outside scope.
 
-1. Read [RESEARCH.md](RESEARCH.md) for current stable releases, compatible project selections, official sources and repository findings.
+1. Read [RESEARCH.md](RESEARCH.md) for current stable releases, compatible project selections, official sources and repository findings; [versions.md](versions.md) records the wrapper checksum and inspected container digests used by implementation.
 2. Follow [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) for two core phases with detailed work packages, ownership/migration decisions, setup/build instructions, security rules, CI/test gates, deployment/rollback and separate acceptance matrices.
 3. Use the phase-specific handoff prompts at the end of the plan. The default prompt implements phase 1 and stops before phase 2.
 
@@ -34,7 +34,21 @@ Record the accepted decisions and remaining implementation details in ADRs:
 - Current normalized/derived fields that differ from the pasted ER.
 - Compatibility, write-pause cutover and rollback after new data has been written.
 
-These documents are a researched draft, not evidence of executed refactoring or production deployment. Existing application files, CI and uncommitted work were left untouched. Proposed scripts and profiles in the plan must be implemented before they can be run.
+Implementation is now in progress. The committed baseline and current 1.1 evidence are linked below; they do not claim that the target architecture, cutover, or production deployment has been completed.
+
+## Phase 1 evidence
+
+- [Pre-refactor build/test baseline](evidence/baseline.md)
+- [Root reactor build result and current test coverage](evidence/reactor-build.md)
+- [Accepted service/schema ownership](../decisions/ADR-001-phase-one-service-and-schema-ownership.md)
+- [JWT and role boundary decision](../decisions/ADR-002-jwt-identity-and-api-boundaries.md)
+- [Source-to-target schema map](evidence/schema-mapping.md), with [field mapping](evidence/source-column-mapping.csv), [replayed source catalog](evidence/source-schema-catalog.json), and [migration hashes](evidence/migration-checksums.csv)
+- [Target schema contract](evidence/target-schema-contract.md)
+- [Existing-workflow and traffic lifecycle fixtures](evidence/workflow-fixtures.md)
+- [Legacy-to-target API operation manifest](evidence/contracts-manifest.json)
+- [Target service architecture](evidence/target-architecture.mmd), [logical data model](evidence/target-schema-logical.mmd), and [physical ownership/FK model](evidence/target-schema-physical.mmd)
+
+These are implementation artifacts, not proof that the target code or cutover already passes. Each work-package gate remains open until its checks are executed and recorded.
 
 ## Original inputs
 

@@ -36,6 +36,7 @@ public class TrafficIncidentObservation {
     public UUID id() { return id; }
     public UUID rawObservationId() { return rawObservationId; }
     public UUID pollRunId() { return pollRunId; }
+    public String sourceIncidentKey() { return sourceIncidentKey; }
     public String incidentType() { return incidentType; }
     public BigDecimal latitude() { return latitude; }
     public BigDecimal longitude() { return longitude; }

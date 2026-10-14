@@ -20,7 +20,7 @@ The page starts a fictional, deterministic route-190 replay and lists simulation
 bunching alerts. Since the bunching consumer runs independently, after the replay ends
 the page keeps checking until the alert arrives and then shows the persisted, simulation-only
 recommendation when it is ready; **Return to live** remains available while it waits. Enabling demo
-support requires `OCC_BUNCHING_INTERNAL_URL` and `OCC_RECOMMENDATION_INTERNAL_URL`; live DataMall polling remains enabled.
+support requires `OCC_DISRUPTION_INTERNAL_URL` and `OCC_PLANNING_INTERNAL_URL`; live DataMall polling remains enabled.
 When no demo run is active, the same page also shows the currently open live bunching
 detections through ingestion's same-origin `GET /api/v1/live-bunching-alerts` proxy.
 The browser does not call bunching directly; the proxy obtains the immutable opening
@@ -61,7 +61,7 @@ docker compose --env-file .env -f infra/local/compose.yaml up -d
 docker compose --env-file .env -f infra/local/compose.yaml up -d
 ```
 
-This does not start operations or planning. See [database setup](../../infra/local/README.md).
+This starts the shared PostgreSQL service and Phase 1 application stack. See [local stack setup](../../infra/local/README.md).
 
 ## IDE and deployment
 
@@ -149,20 +149,26 @@ explicit `missingFields` list. It never returns `OBSERVATION_ONLY` records to a
 simulation diagnosis. Incident `observedAt` is retained when supplied; the fictional
 replay uses its actual simulation timestamp rather than leaving the field absent.
 
-To export the runtime-generated contract to a file, start ingestion and run this
-from `services/ingestion` in another terminal:
+To export the runtime-generated contract, start the local Compose stack and set a
+short-lived ADMIN or CONTROLLER access token in the current shell only. Do not put
+the token in `.env`, a command history, or a committed file. Then run from the repo
+root:
 
 ```powershell
-.\mvnw.cmd -Popenapi org.springdoc:springdoc-openapi-maven-plugin:1.5:generate
+$env:OCC_OPENAPI_EXPORT_TOKEN = '<short-lived access token>'
+.\mvnw.cmd -pl services/ingestion -Popenapi org.springdoc:springdoc-openapi-maven-plugin:1.5:generate "-Dopenapi.apiDocsUrl=http://localhost:6767/v3/api-docs"
+Remove-Item Env:OCC_OPENAPI_EXPORT_TOKEN
 ```
 
 ```bash
-./mvnw -Popenapi org.springdoc:springdoc-openapi-maven-plugin:1.5:generate
+export OCC_OPENAPI_EXPORT_TOKEN='<short-lived access token>'
+./mvnw -pl services/ingestion -Popenapi org.springdoc:springdoc-openapi-maven-plugin:1.5:generate -Dopenapi.apiDocsUrl=http://localhost:6767/v3/api-docs
+unset OCC_OPENAPI_EXPORT_TOKEN
 ```
 
-This writes `openapi/polling-ingestion.json` beside the service `pom.xml`. The export
-uses the same running application endpoint as Swagger UI, so it includes the
-actual controllers, DTOs, annotations and active Spring configuration.
+This writes `services/ingestion/openapi/ingestion.json`. The export uses the same
+running application endpoint as Swagger UI, so it includes the actual controllers,
+DTOs, annotations and active Spring configuration.
 
 A missing or invalid DataMall key can produce request errors even if the application starts. Stop the app with Ctrl+C.
 

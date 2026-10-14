@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -21,10 +22,12 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest(classes = IngestionApplication.class, properties = {
-        "spring.main.web-application-type=none", "spring.datasource.password=synthetic-ingestion",
+        "spring.profiles.active=test", "spring.main.web-application-type=none", "spring.datasource.password=synthetic-ingestion",
+        "spring.datasource.username=occ_ingestion",
         "occ.datamall.account-key=synthetic-only", "occ.ingestion.import-reference-on-startup=false",
         "occ.ingestion.seed-targets-on-startup=false"
 })
+@ActiveProfiles("test")
 @Testcontainers(disabledWithoutDocker = true)
 class IngestionWiringIT {
     @Container
@@ -32,10 +35,13 @@ class IngestionWiringIT {
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer(
             DockerImageName.parse("postgis/postgis:18-3.6").asCompatibleSubstituteFor("postgres"))
             .withDatabaseName("occ").withUsername("occ_admin").withPassword("synthetic-admin")
+            .withEnv("PGHOST", "")
             .withEnv("OCC_INGESTION_DB_PASSWORD", "synthetic-ingestion")
+            .withEnv("OCC_DISRUPTION_DB_PASSWORD", "synthetic-disruption")
+            .withEnv("OCC_PLANNING_DB_PASSWORD", "synthetic-planning")
             .withCopyFileToContainer(MountableFile.forHostPath(Path.of(
-                    "../../infra/local/postgres/init/01_schemas_and_roles.sh").toAbsolutePath()),
-                    "/docker-entrypoint-initdb.d/01_schemas_and_roles.sh");
+                    "../../infra/local/postgres/bootstrap.sh").toAbsolutePath()),
+                    "/docker-entrypoint-initdb.d/01-setup.sh");
 
     @MockitoBean DataMallAdapter dataMall;
     @MockitoBean BusArrivalSchedule schedule;

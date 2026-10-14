@@ -1,0 +1,51 @@
+spring:
+  application:
+    name: gateway
+  web:
+    resources:
+      add-mappings: ${OCC_GATEWAY_AUTH_TEST_ENABLED:false}
+  cloud:
+    gateway:
+      server:
+        webmvc:
+          routes:
+            - id: ingestion-api
+              uri: ${OCC_INGESTION_INTERNAL_URL}
+              predicates:
+                - Path=/api/v1/ingestion/**
+              filters:
+                - RewritePath=/api/v1/ingestion/(?<remaining>.*), /api/v1/$\{remaining}
+            - id: disruption-api
+              uri: ${OCC_DISRUPTION_INTERNAL_URL}
+              predicates:
+                - Path=/api/v1/disruption/**
+            - id: planning-api
+              uri: ${OCC_PLANNING_INTERNAL_URL}
+              predicates:
+                - Path=/api/v1/planning/**
+server:
+  port: ${OCC_GATEWAY_INTERNAL_PORT}
+occ:
+  gateway:
+    auth-test-enabled: ${OCC_GATEWAY_AUTH_TEST_ENABLED:false}
+  security:
+    supabase:
+      project-url: ${SUPABASE_PROJECT_URL}
+      jwks-url: ${SUPABASE_JWKS_URL}
+      audience: ${SUPABASE_JWT_AUDIENCE:authenticated}
+      clock-skew: ${SUPABASE_JWT_CLOCK_SKEW:30s}
+      allowed-algorithms: ${SUPABASE_JWT_ALLOWED_ALGORITHMS:ES256}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState

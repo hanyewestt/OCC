@@ -14,6 +14,7 @@ import com.csd.occ.ingestion.domain.DemoModeService;
 import com.csd.occ.ingestion.domain.DemoReplayScenario;
 import com.csd.occ.ingestion.domain.DemoReplayService;
 import com.csd.occ.ingestion.domain.DemoRunDetails;
+import com.csd.occ.ingestion.domain.TrafficIncidentPollFeedService;
 import com.csd.occ.ingestion.domain.DemoRunService;
 import com.csd.occ.ingestion.domain.PollRunRepository;
 import com.csd.occ.ingestion.domain.ReferenceTopologyPort;
@@ -32,6 +33,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -42,16 +44,20 @@ import org.testcontainers.utility.MountableFile;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE,
         properties = {"spring.profiles.active=test", "occ.datamall.account-key=synthetic-key",
                 "occ.ingestion.import-reference-on-startup=false", "occ.ingestion.seed-targets-on-startup=false"})
+@ActiveProfiles("test")
 @Testcontainers(disabledWithoutDocker = true)
 class IngestionStartupIT {
     @Container
     static final PostgreSQLContainer postgres = new PostgreSQLContainer(
             DockerImageName.parse("postgis/postgis:18-3.6").asCompatibleSubstituteFor("postgres"))
             .withDatabaseName("occ").withUsername("occ_admin").withPassword("synthetic-admin")
+            .withEnv("PGHOST", "")
             .withEnv("OCC_INGESTION_DB_PASSWORD", "synthetic-ingestion")
+            .withEnv("OCC_DISRUPTION_DB_PASSWORD", "synthetic-disruption")
+            .withEnv("OCC_PLANNING_DB_PASSWORD", "synthetic-planning")
             .withCopyFileToContainer(MountableFile.forHostPath(Path.of(
-                    "../../infra/local/postgres/init/01_schemas_and_roles.sh").toAbsolutePath()),
-                    "/docker-entrypoint-initdb.d/01_schemas_and_roles.sh");
+                    "../../infra/local/postgres/bootstrap.sh").toAbsolutePath()),
+                    "/docker-entrypoint-initdb.d/01-setup.sh");
 
     @DynamicPropertySource
     static void databaseProperties(DynamicPropertyRegistry registry) {
@@ -75,6 +81,7 @@ class IngestionStartupIT {
     @Autowired DemoModeService demoMode;
     @Autowired ReferenceTopologyPort topology;
     @Autowired com.csd.occ.ingestion.domain.RetentionService retention;
+    @Autowired TrafficIncidentPollFeedService trafficIncidentPollFeed;
     @Autowired org.springframework.context.ApplicationContext context;
 
     @Test
@@ -169,6 +176,11 @@ class IngestionStartupIT {
         assertThat(arrivals.findHistory("44251", "190", null, null, PageRequest.of(0, 50)).getContent()).isEmpty();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM ingestion.traffic_incident_observation "
                 + "WHERE demo_run_id=? AND classification='SIMULATION'", Integer.class, started.id())).isEqualTo(2);
+        var trafficPolls = trafficIncidentPollFeed.page(null, null, 250).polls().stream()
+                .filter(poll -> started.id().equals(poll.demoRunId())).toList();
+        assertThat(trafficPolls).hasSize(DemoReplayScenario.STEP_COUNT).allMatch(poll -> poll.complete()
+                && "SIMULATION".equals(poll.classification()));
+        assertThat(trafficPolls.stream().flatMap(poll -> poll.incidents().stream())).hasSize(2);
 
         DemoRunDetails closed = demoRuns.close(started.id());
 
