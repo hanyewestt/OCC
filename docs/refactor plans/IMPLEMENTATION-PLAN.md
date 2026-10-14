@@ -1,6 +1,6 @@
 # OCC service-based refactor: executable implementation plan
 
-Prepared 14 October 2026; reorganized 15 October 2026 into two core phases. Status: **core phase 1 implementation and verification are complete in this change; phase 2 remains deferred**. The full Maven reactor passes `clean verify`, the local Compose stack passed service readiness and authentication smoke checks, and phase-one OpenAPI snapshots were exported. Refer to the current root README and `infra/local/README.md` for the as-built local commands and Compose layout. Release research remains dated 14 October; this rewrite does not claim a fresh release check.
+Prepared 14 October 2026; reorganized 15 October 2026 into two core phases. Status: **core phase 1 is in progress; phase 2 remains deferred**. The four-service reactor and initial gateway authorization checks exist, but database privilege isolation/migration jobs, the Nginx production edge, full system/capacity and recovery evidence, and final unused-file cleanup remain open. Do not treat earlier local smoke checks or the current Maven build as proof that all phase-1 acceptance gates pass. Update this status only when the corresponding saved evidence supports it. Release research must be refreshed before pinning new tools and images.
 
 Read [RESEARCH.md](RESEARCH.md) for verified releases, rationale and primary sources. Follow root `AGENTS.md` and `docs/CONVENTIONS.md` throughout. Paths below are repository-relative instructions for the implementing agent.
 
