@@ -101,16 +101,19 @@ public class DiagnosisRequestPersistenceService {
         if (existing.inputSnapshot() == null) {
             if (inputSnapshot == null) throw new DiagnosisRequestService.IdempotencyConflictException();
             existing.retainInput(inputSnapshot);
-            return existing;
-        }
-        if (inputSnapshot != null && !sameProducerFacts(existing.inputSnapshot(), submission.eventSnapshot()))
+        } else if (inputSnapshot != null && !sameProducerFacts(existing.inputSnapshot(), submission)) {
             throw new DiagnosisRequestService.IdempotencyConflictException();
+        }
+        if (submission.eventType() == EventType.TRAFFIC_INCIDENT)
+            existing.completeNoAction("TRAFFIC_INCIDENT_NO_OPERATIONAL_ACTION", clock.instant());
         return existing;
     }
 
-    private boolean sameProducerFacts(String inputSnapshot, BunchingEventFacts event) {
+    private boolean sameProducerFacts(String inputSnapshot, ProducerEventSubmission submission) {
         try {
-            return snapshots.decode(inputSnapshot).event().equals(event);
+            if (submission.eventType() == EventType.BUS_BUNCHING)
+                return snapshots.decode(inputSnapshot).event().equals(submission.eventSnapshot());
+            return snapshots.decodeProducerEvent(inputSnapshot).equals(submission);
         } catch (RuntimeException malformedSnapshot) {
             return false;
         }

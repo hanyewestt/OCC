@@ -33,7 +33,7 @@ class DiagnosisRequestServiceTest {
         when(persistence.findById(key)).thenReturn(Optional.empty());
         when(persistence.findByEvent("BUS_BUNCHING", "disruption", submission.eventId(),
                 DiagnosisRequestService.SCHEMA_VERSION)).thenReturn(Optional.empty());
-        when(inputs.capture(submission.eventSnapshot())).thenReturn("immutable-input-snapshot");
+        when(inputs.capture(submission)).thenReturn("immutable-input-snapshot");
         when(persistence.enqueueProducer(submission, key, "immutable-input-snapshot")).thenReturn(stored);
 
         DiagnosisRequest accepted = service.enqueue(submission, key, FINGERPRINT);
@@ -89,13 +89,47 @@ class DiagnosisRequestServiceTest {
         stored.retainInput("original-snapshot");
         when(fingerprints.fingerprint(submission)).thenReturn(FINGERPRINT);
         when(persistence.findById(key)).thenReturn(Optional.of(stored));
-        when(inputs.matchesProducerFacts("original-snapshot", submission.eventSnapshot())).thenReturn(false);
+        when(inputs.matchesProducerFacts("original-snapshot", submission)).thenReturn(false);
 
         assertThatThrownBy(() -> service.enqueue(submission, key, FINGERPRINT))
                 .isInstanceOf(DiagnosisRequestService.IdempotencyConflictException.class);
 
-        verify(inputs, never()).capture(submission.eventSnapshot());
+        verify(inputs, never()).capture(submission);
         assertThat(stored.inputSnapshot()).isEqualTo("original-snapshot");
+    }
+
+    @Test
+    void trafficIncidentSubmissionIsTypedAndCapturedWithoutBunchingContext() {
+        DiagnosisInputService inputs = mock(DiagnosisInputService.class);
+        EventSubmissionFingerprintPort fingerprints = mock(EventSubmissionFingerprintPort.class);
+        DiagnosisRequestPersistenceService persistence = mock(DiagnosisRequestPersistenceService.class);
+        DiagnosisRequestService service = new DiagnosisRequestService(persistence, inputs, fingerprints);
+        UUID eventId = UUID.randomUUID();
+        UUID disruptionId = UUID.randomUUID();
+        UUID observationId = UUID.randomUUID();
+        Instant at = NOW;
+        TrafficIncidentEventFacts traffic = new TrafficIncidentEventFacts(eventId, disruptionId, "OPENED",
+                "OBSERVATION_ONLY", null, observationId, UUID.randomUUID(), "LTA", "a".repeat(64),
+                "Road Obstruction", "Westbound lane blocked", new java.math.BigDecimal("1.38"),
+                new java.math.BigDecimal("103.75"), at.minusSeconds(1), at, at);
+        ProducerEventSubmission submission = new ProducerEventSubmission(DiagnosisRequestService.SCHEMA_VERSION,
+                EventType.TRAFFIC_INCIDENT, "disruption", eventId, disruptionId, "OBSERVATION_ONLY", null, at,
+                "traffic-incident-observation-v1", List.of(observationId.toString()), null, traffic);
+        UUID key = UUID.randomUUID();
+        DiagnosisRequest stored = new DiagnosisRequest(key, EventType.TRAFFIC_INCIDENT, "disruption", eventId,
+                DiagnosisRequestService.SCHEMA_VERSION, NOW);
+        when(fingerprints.fingerprint(submission)).thenReturn(FINGERPRINT);
+        when(persistence.findById(key)).thenReturn(Optional.empty());
+        when(persistence.findByEvent("TRAFFIC_INCIDENT", "disruption", eventId,
+                DiagnosisRequestService.SCHEMA_VERSION)).thenReturn(Optional.empty());
+        when(inputs.capture(submission)).thenReturn("immutable-traffic-input");
+        when(persistence.enqueueProducer(submission, key, "immutable-traffic-input")).thenReturn(stored);
+
+        DiagnosisRequest accepted = service.enqueue(submission, key, FINGERPRINT);
+
+        assertThat(accepted).isSameAs(stored);
+        verify(inputs).capture(submission);
+        verify(persistence).enqueueProducer(submission, key, "immutable-traffic-input");
     }
 
     private ProducerEventSubmission submission() {

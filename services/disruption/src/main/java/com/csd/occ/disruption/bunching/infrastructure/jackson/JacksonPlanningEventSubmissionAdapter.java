@@ -5,6 +5,7 @@ import com.csd.occ.disruption.bunching.domain.BunchingEventSnapshot;
 import com.csd.occ.disruption.bunching.domain.EncodedPlanningEventSubmission;
 import com.csd.occ.disruption.bunching.domain.PlanningEventSubmission;
 import com.csd.occ.disruption.bunching.domain.PlanningEventSubmissionPort;
+import com.csd.occ.disruption.traffic.domain.TrafficIncidentPlanningSnapshot;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -45,6 +46,19 @@ public class JacksonPlanningEventSubmissionAdapter implements PlanningEventSubmi
         PlanningEventSubmission submission = new PlanningEventSubmission(PlanningEventSubmission.SCHEMA_VERSION,
                 "BUS_BUNCHING", "disruption", event.id(), event.alertId(), event.classification(), event.demoRunId(),
                 event.triggeredAt(), event.detectionRuleVersion(), evidenceIds, facts);
+        return encode(submission);
+    }
+
+    @Override
+    public EncodedPlanningEventSubmission encodeTraffic(TrafficIncidentPlanningSnapshot facts) {
+        List<String> evidenceIds = List.of(facts.sourceObservationId().toString());
+        PlanningEventSubmission submission = new PlanningEventSubmission(PlanningEventSubmission.SCHEMA_VERSION,
+                "TRAFFIC_INCIDENT", "disruption", facts.eventId(), facts.disruptionId(), facts.classification(),
+                facts.demoRunId(), facts.eventAt(), "traffic-incident-observation-v1", evidenceIds, null, facts);
+        return encode(submission);
+    }
+
+    private EncodedPlanningEventSubmission encode(PlanningEventSubmission submission) {
         String payload = json.writeValueAsString(submission);
         return new EncodedPlanningEventSubmission(payload, sha256(payload), PlanningEventSubmission.SCHEMA_VERSION);
     }
@@ -62,18 +76,38 @@ public class JacksonPlanningEventSubmissionAdapter implements PlanningEventSubmi
 
     private void validate(PlanningEventSubmission submission, UUID expectedEventId) {
         if (submission == null || !PlanningEventSubmission.SCHEMA_VERSION.equals(submission.schemaVersion())
-                || !"BUS_BUNCHING".equals(submission.eventType()) || !"disruption".equals(submission.producer())
+                || !"disruption".equals(submission.producer())
                 || !Objects.equals(expectedEventId, submission.eventId()) || submission.disruptionId() == null
-                || !"SIMULATION".equals(submission.classification()) || submission.demoRunId() == null
-                || submission.detectedAt() == null || submission.eventSnapshot() == null
-                || !Objects.equals(submission.eventId(), submission.eventSnapshot().eventId())
-                || !Objects.equals(submission.disruptionId(), submission.eventSnapshot().bunchingEventId())
-                || !Objects.equals(submission.classification(), submission.eventSnapshot().classification())
-                || !Objects.equals(submission.demoRunId(), submission.eventSnapshot().demoRunId())
-                || !Objects.equals(submission.detectionRuleVersion(), submission.eventSnapshot().detectionRuleVersion())
-                || !Objects.equals(submission.evidenceIds(), submission.eventSnapshot().evidenceIds())) {
+                || submission.detectedAt() == null) {
             throw new IllegalArgumentException("Persisted Planning event payload identity is invalid");
         }
+        if ("BUS_BUNCHING".equals(submission.eventType())) {
+            var facts = submission.eventSnapshot();
+            if (!"SIMULATION".equals(submission.classification()) || submission.demoRunId() == null || facts == null
+                    || submission.trafficSnapshot() != null
+                    || !Objects.equals(submission.eventId(), facts.eventId())
+                    || !Objects.equals(submission.disruptionId(), facts.bunchingEventId())
+                    || !Objects.equals(submission.classification(), facts.classification())
+                    || !Objects.equals(submission.demoRunId(), facts.demoRunId())
+                    || !Objects.equals(submission.detectionRuleVersion(), facts.detectionRuleVersion())
+                    || !Objects.equals(submission.evidenceIds(), facts.evidenceIds()))
+                throw new IllegalArgumentException("Persisted bunching Planning event identity is invalid");
+            return;
+        }
+        if ("TRAFFIC_INCIDENT".equals(submission.eventType())) {
+            TrafficIncidentPlanningSnapshot facts = submission.trafficSnapshot();
+            if (facts == null || submission.eventSnapshot() != null
+                    || !Objects.equals(submission.eventId(), facts.eventId())
+                    || !Objects.equals(submission.disruptionId(), facts.disruptionId())
+                    || !Objects.equals(submission.classification(), facts.classification())
+                    || !Objects.equals(submission.demoRunId(), facts.demoRunId())
+                    || !Objects.equals(submission.detectedAt(), facts.eventAt())
+                    || !"traffic-incident-observation-v1".equals(submission.detectionRuleVersion())
+                    || !Objects.equals(submission.evidenceIds(), List.of(facts.sourceObservationId().toString())))
+                throw new IllegalArgumentException("Persisted traffic Planning event identity is invalid");
+            return;
+        }
+        throw new IllegalArgumentException("Persisted Planning event type is unsupported");
     }
 
     private String sha256(String value) {

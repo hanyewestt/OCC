@@ -37,7 +37,7 @@ public class DiagnosisRequestController {
     @PostMapping("/internal/v1/planning/requests")
     @ResponseStatus(HttpStatus.ACCEPTED)
     @Operation(operationId = "createDiagnosisRequest", summary = "Queue diagnosis for an immutable producer event",
-            description = "The producer submits a versioned event snapshot. Planning enriches it from Ingestion and stores the input before accepting the request.")
+            description = "The producer submits versioned immutable event facts. Planning stores the input before acknowledging. Bunching events are enriched from Ingestion; traffic incident events receive the explicit phase-1 no-action policy.")
     @ApiResponse(responseCode = "202", description = "Diagnosis request accepted or an existing request was returned")
     @ApiResponse(responseCode = "400", description = "Request validation failed, including a missing or invalid idempotency key or event fingerprint",
             content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
@@ -55,7 +55,8 @@ public class DiagnosisRequestController {
             @RequestHeader(name = "X-OCC-Event-Fingerprint") String fingerprint) {
         var request = requests.enqueue(body.toDomain(), idempotencyKey, fingerprint);
         var view = query.findRequest(request.id());
-        return new DiagnosisRequestResponse(view.requestId(), view.diagnosisId(), view.status(), view.failureCode(), view.createdAt());
+        return new DiagnosisRequestResponse(view.requestId(), view.diagnosisId(), view.status(), view.failureCode(),
+                view.createdAt(), view.policyOutcome());
     }
 
     @GetMapping("/api/v1/planning/requests/{requestId}")
@@ -64,6 +65,7 @@ public class DiagnosisRequestController {
     @ApiResponse(responseCode = "404", description = "Diagnosis request not found")
     public DiagnosisRequestResponse get(@PathVariable UUID requestId) {
         var request = query.findRequest(requestId);
-        return new DiagnosisRequestResponse(request.requestId(), request.diagnosisId(), request.status(), request.failureCode(), request.createdAt());
+        return new DiagnosisRequestResponse(request.requestId(), request.diagnosisId(), request.status(),
+                request.failureCode(), request.createdAt(), request.policyOutcome());
     }
 }

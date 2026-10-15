@@ -6,6 +6,12 @@ bunching alerts and traffic incidents through the same API and security boundary
 Legacy bunching data is migrated by the checked-in Flyway migration; the old
 service and schema are not runtime dependencies.
 
+Every traffic incident `OPENED`, `UPDATED`, and `CLEARED` transition is recorded
+with its immutable provider snapshot and a Planning outbox row in one database
+transaction. Delivery reuses the durable, idempotent Planning dispatcher used by
+bunching. Traffic transitions keep their own typed event facts and are never
+sent through bunching-specific recommendation rules.
+
 From the repository root, verify the service with the root Maven Wrapper:
 
 ```powershell

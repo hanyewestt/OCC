@@ -8,13 +8,16 @@ Stack: **Java 25**, **Spring Boot 4.1.1**, Maven, PostgreSQL 18.6, Docker and Do
 
 ## 1. Folder structure
 
-Create exactly these directories. Services may be grouped beneath a domain directory
-such as `services/planning/`; do not invent other siblings without updating this file.
+Each runnable service has its own POM and source tree under
+`services/<service-name>/`. Domain-focused source packages may be nested beneath
+the canonical `api/`, `domain/`, and `infrastructure/` layers (for example,
+Planning's diagnosis and recommendation packages or Disruption's bunching and
+traffic packages). Do not create another service directory or a parallel
+wrapper for a capability that belongs inside an existing service.
 
 ```
-services/[<domain>/]<service-name>/
-├── pom.xml                            ← dependencies and Maven build settings
-├── Dockerfile                         ← instructions to package the service as a container
+services/<service-name>/
+├── pom.xml                            ← service dependencies and build settings
 ├── src/main/java/com/csd/occ/<servicepackage>/
 │   ├── ServiceNameApplication.java    ← starts the Spring Boot application
 │   ├── api/                           ← HTTP endpoints: receives requests, returns responses
@@ -33,6 +36,12 @@ services/[<domain>/]<service-name>/
     ├── api/                           ← tests endpoints, validation, and HTTP responses
     └── integration/                   ← tests components working together, including the DB
 ```
+
+The root Maven POM is the parent reactor for all services. The repository has
+one root `mvnw`/`mvnw.cmd` pair and one shared `infra/java.Dockerfile`. Compose
+points each Java service at that Dockerfile and passes the service module as its
+build input. Do not add a service-local Dockerfile or wrapper. The root
+wrapper's distribution is pinned in `.mvn/wrapper/maven-wrapper.properties`.
 
 ### Which file goes where
 
@@ -177,7 +186,9 @@ Bind config to these, never `@Value` on a field.
 
 ### Local configuration and build entry points
 
-Use the Maven wrapper in each runnable service (`mvnw` / `mvnw.cmd`), pinned by `.mvn/wrapper/maven-wrapper.properties`. Build with `./mvnw verify` or `.\mvnw.cmd verify`.
+Use the one repository-root Maven wrapper (`./mvnw` or `.\mvnw.cmd`) for every
+service and reactor build. Run it from the repository root and select modules
+with `-pl services/<service-name>`; do not add or use service-local wrappers.
 
 Local development uses one ignored repository-root `.env`, documented by the root `.env.example`. `application-local.yml` imports that file using a path relative to its service directory: `optional:file:../../.env[.properties]` for `services/<service-name>` and `optional:file:../../../.env[.properties]` for `services/<domain>/<service-name>`. Run with the `local` profile and the service directory as working directory. Use unquoted values compatible with both Java properties and Compose. Do not put the local import in the default deployment configuration.
 

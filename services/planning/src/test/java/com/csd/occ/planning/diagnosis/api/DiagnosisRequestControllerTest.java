@@ -17,6 +17,7 @@ import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestView;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestService;
 import com.csd.occ.planning.diagnosis.domain.EventType;
 import com.csd.occ.planning.diagnosis.domain.ProducerEventSubmission;
+import com.csd.occ.planning.diagnosis.domain.TrafficIncidentEventFacts;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -72,7 +73,7 @@ class DiagnosisRequestControllerTest {
         when(requests.enqueue(eq(submission), eq(idempotencyKey), eq(FINGERPRINT)))
                 .thenReturn(request);
         when(query.findRequest(requestId)).thenReturn(new DiagnosisRequestView(
-                requestId, null, DiagnosisRequestStatus.PENDING, null, createdAt));
+                requestId, null, DiagnosisRequestStatus.PENDING, null, createdAt, null));
 
         mvc.perform(post("/internal/v1/planning/requests")
                         .header("X-OCC-Peer-Token", "test-peer-token")
@@ -86,6 +87,43 @@ class DiagnosisRequestControllerTest {
 
         verify(requests).enqueue(submission, idempotencyKey, FINGERPRINT);
         verify(query).findRequest(requestId);
+    }
+
+    @Test
+    void acceptsTypedTrafficIncidentAndReturnsItsNoActionOutcome() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
+        UUID disruptionId = UUID.randomUUID();
+        UUID observationId = UUID.randomUUID();
+        UUID pollRunId = UUID.randomUUID();
+        UUID idempotencyKey = UUID.randomUUID();
+        Instant eventAt = Instant.parse("2026-09-28T00:00:00Z");
+        var facts = new TrafficIncidentEventFacts(eventId, disruptionId, "OPENED", "OBSERVATION_ONLY", null,
+                observationId, pollRunId, "LTA", "d".repeat(64), "Road Obstruction", "Westbound lane blocked",
+                new java.math.BigDecimal("1.38"), new java.math.BigDecimal("103.75"), eventAt.minusSeconds(1),
+                eventAt, eventAt);
+        var submission = new ProducerEventSubmission("planning-event-v1", EventType.TRAFFIC_INCIDENT, "disruption",
+                eventId, disruptionId, "OBSERVATION_ONLY", null, eventAt, "traffic-incident-observation-v1",
+                java.util.List.of(observationId.toString()), null, facts);
+        DiagnosisRequest request = new DiagnosisRequest(requestId, EventType.TRAFFIC_INCIDENT,
+                "disruption", eventId, DiagnosisRequestService.SCHEMA_VERSION, eventAt);
+        request.completeNoAction("TRAFFIC_INCIDENT_NO_OPERATIONAL_ACTION", eventAt);
+        when(requests.enqueue(eq(submission), eq(idempotencyKey), eq(FINGERPRINT))).thenReturn(request);
+        when(query.findRequest(requestId)).thenReturn(new DiagnosisRequestView(requestId, null,
+                DiagnosisRequestStatus.COMPLETED, null, eventAt, "TRAFFIC_INCIDENT_NO_OPERATIONAL_ACTION"));
+
+        mvc.perform(post("/internal/v1/planning/requests")
+                        .header("X-OCC-Peer-Token", "test-peer-token")
+                        .header("Idempotency-Key", idempotencyKey)
+                        .header("X-OCC-Event-Fingerprint", FINGERPRINT)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(trafficSubmissionJson(eventId, disruptionId, observationId, pollRunId, eventAt)))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.diagnosisId").doesNotExist())
+                .andExpect(jsonPath("$.policyOutcome").value("TRAFFIC_INCIDENT_NO_OPERATIONAL_ACTION"));
+
+        verify(requests).enqueue(submission, idempotencyKey, FINGERPRINT);
     }
 
     @Test
@@ -175,5 +213,20 @@ class DiagnosisRequestControllerTest {
                  "confirmingObservationIds":[%s],"evidenceIds":[%s],"detectionRuleVersion":"bunching-gap-v1"}}
                 """.formatted(eventId, disruptionId, demoRunId, eventEvidence, eventId, disruptionId, demoRunId,
                 observationIds[2], observationIds[3], observationValues, eventEvidence);
+    }
+
+    private String trafficSubmissionJson(UUID eventId, UUID disruptionId, UUID observationId, UUID pollRunId,
+            Instant eventAt) {
+        return """
+                {"schemaVersion":"planning-event-v1","eventType":"TRAFFIC_INCIDENT","producer":"disruption",
+                 "eventId":"%s","disruptionId":"%s","classification":"OBSERVATION_ONLY",
+                 "detectedAt":"%s","detectionRuleVersion":"traffic-incident-observation-v1",
+                 "evidenceIds":["%s"],"trafficSnapshot":{"eventId":"%s","disruptionId":"%s",
+                 "action":"OPENED","classification":"OBSERVATION_ONLY","sourceObservationId":"%s",
+                 "pollRunId":"%s","source":"LTA","sourceIncidentKey":"%s",
+                 "incidentType":"Road Obstruction","message":"Westbound lane blocked",
+                 "latitude":1.38,"longitude":103.75,"observedAt":"%s","fetchedAt":"%s","eventAt":"%s"}}
+                """.formatted(eventId, disruptionId, eventAt, observationId, eventId, disruptionId,
+                observationId, pollRunId, "d".repeat(64), eventAt.minusSeconds(1), eventAt, eventAt);
     }
 }

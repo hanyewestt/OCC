@@ -1,6 +1,9 @@
 package com.csd.occ.disruption.traffic.domain;
 
 import com.csd.occ.disruption.bunching.domain.DisruptionRepository;
+import com.csd.occ.disruption.bunching.domain.DiagnosisOutbox;
+import com.csd.occ.disruption.bunching.domain.DiagnosisOutboxRepository;
+import com.csd.occ.disruption.bunching.domain.PlanningEventSubmissionPort;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -24,14 +27,18 @@ public class TrafficIncidentSyncService {
     private final TrafficIncidentEventRepository events;
     private final EventEvidenceRepository evidence;
     private final DisruptionRepository disruptions;
+    private final DiagnosisOutboxRepository planningOutbox;
+    private final PlanningEventSubmissionPort planningSubmissions;
     private final TrafficIncidentEvidencePort evidenceCodec;
     private final Clock clock;
 
     public TrafficIncidentSyncService(TrafficPollCheckpointRepository checkpoints, TrafficIncidentStateRepository states,
             TrafficIncidentEventRepository events, EventEvidenceRepository evidence, DisruptionRepository disruptions,
+            DiagnosisOutboxRepository planningOutbox, PlanningEventSubmissionPort planningSubmissions,
             TrafficIncidentEvidencePort evidenceCodec, Clock clock) {
         this.checkpoints = checkpoints; this.states = states; this.events = events; this.evidence = evidence;
-        this.disruptions = disruptions; this.evidenceCodec = evidenceCodec; this.clock = clock;
+        this.disruptions = disruptions; this.planningOutbox = planningOutbox;
+        this.planningSubmissions = planningSubmissions; this.evidenceCodec = evidenceCodec; this.clock = clock;
     }
 
     @Transactional(readOnly = true)
@@ -128,6 +135,10 @@ public class TrafficIncidentSyncService {
                 snapshot.sourceObservationId(), poll.pollRunId(), snapshot.fetchedAt() == null ? poll.completedAt() : snapshot.fetchedAt(),
                 poll.completedAt(), eventJson));
         evidence.save(new EventEvidence(eventId, snapshot.sourceObservationId(), eventJson, poll.completedAt()));
+        var submission = planningSubmissions.encodeTraffic(
+                TrafficIncidentPlanningSnapshot.of(eventId, disruptionId, action, poll, snapshot));
+        planningOutbox.save(new DiagnosisOutbox(eventId, eventId, submission.payloadJson(),
+                submission.payloadFingerprint(), submission.schemaVersion(), poll.completedAt()));
     }
 
     private java.util.Optional<TrafficIncidentState> findState(

@@ -4,4 +4,4 @@ import java.time.Instant;
 import java.util.UUID;
 
 public record DiagnosisRequestView(UUID requestId, UUID diagnosisId, DiagnosisRequestStatus status,
-                                   String failureCode, Instant createdAt) { }
+                                   String failureCode, Instant createdAt, String policyOutcome) { }

@@ -5,6 +5,12 @@ Boot service. Disruption submits work to `/internal/v1/planning/requests`; the
 diagnosis worker gathers evidence and calls the recommendation domain directly
 inside this process. There is no diagnosis-to-recommendation HTTP call.
 
+Planning accepts versioned `BUS_BUNCHING` and `TRAFFIC_INCIDENT` submissions from
+Disruption. Bunching requests follow the existing diagnosis and safe
+recommendation workflow. Traffic lifecycle snapshots are retained as immutable
+request evidence and finish with `policyOutcome=TRAFFIC_INCIDENT_NO_OPERATIONAL_ACTION`;
+phase 1 deliberately defines no traffic intervention policy.
+
 The public API uses `/api/v1/planning/...` and accepts Supabase JWTs with an
 `occ_role` claim of `ADMIN` or `CONTROLLER`. The internal request endpoint only
 accepts the configured `X-OCC-Peer-Token` from Disruption. Driver and unassigned

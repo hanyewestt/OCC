@@ -43,7 +43,7 @@ public class DiagnosisRequestService {
             if (existing.get().inputSnapshot() != null) return existing.get();
         }
 
-        String inputSnapshot = inputs.capture(submission.eventSnapshot());
+        String inputSnapshot = inputs.capture(submission);
         return persistence.enqueueProducer(submission, id, inputSnapshot);
     }
 
@@ -70,17 +70,27 @@ public class DiagnosisRequestService {
         if (!sameRequest(existing, submission.eventType(), submission.producer(), submission.eventId()))
             throw new IdempotencyConflictException();
         if (existing.inputSnapshot() != null
-                && !inputs.matchesProducerFacts(existing.inputSnapshot(), submission.eventSnapshot()))
+                && !inputs.matchesProducerFacts(existing.inputSnapshot(), submission))
             throw new IdempotencyConflictException();
     }
 
     private void validate(ProducerEventSubmission submission) {
         if (submission == null || !SCHEMA_VERSION.equals(submission.schemaVersion())
-                || submission.eventType() != EventType.BUS_BUNCHING || !EVENT_PRODUCER.equals(submission.producer())
+                || submission.eventType() == null || !EVENT_PRODUCER.equals(submission.producer())
                 || submission.eventId() == null || submission.disruptionId() == null
+                || submission.classification() == null || submission.detectedAt() == null
+                || submission.detectionRuleVersion() == null || submission.detectionRuleVersion().isBlank()
+                || submission.evidenceIds() == null || submission.evidenceIds().isEmpty()
+                || submission.evidenceIds().size() > 100
+                || submission.evidenceIds().stream().anyMatch(java.util.Objects::isNull))
+            throw new UnsupportedEventTypeException("Event submission is not a supported confirmed simulation event");
+
+        if (submission.eventType() == EventType.TRAFFIC_INCIDENT) {
+            validateTrafficIncident(submission);
+            return;
+        }
+        if (submission.eventType() != EventType.BUS_BUNCHING || submission.trafficSnapshot() != null
                 || !"SIMULATION".equals(submission.classification()) || submission.demoRunId() == null
-                || submission.detectedAt() == null || submission.detectionRuleVersion() == null
-                || submission.detectionRuleVersion().isBlank() || submission.evidenceIds() == null
                 || submission.eventSnapshot() == null)
             throw new UnsupportedEventTypeException("Event submission is not a supported confirmed simulation event");
 
@@ -104,6 +114,19 @@ public class DiagnosisRequestService {
                 || event.confirmingObservationTimes().getLast().isBefore(event.firstConfirmedAt())) {
             throw new IllegalArgumentException("Event submission facts are inconsistent or incomplete");
         }
+    }
+
+    private void validateTrafficIncident(ProducerEventSubmission submission) {
+        TrafficIncidentEventFacts event = submission.trafficSnapshot();
+        if (event == null || submission.eventSnapshot() != null
+                || !submission.eventId().equals(event.eventId())
+                || !submission.disruptionId().equals(event.disruptionId())
+                || !submission.classification().equals(event.classification())
+                || !java.util.Objects.equals(submission.demoRunId(), event.demoRunId())
+                || !submission.detectedAt().equals(event.eventAt())
+                || !"traffic-incident-observation-v1".equals(submission.detectionRuleVersion())
+                || !submission.evidenceIds().equals(List.of(event.sourceObservationId().toString())))
+            throw new IllegalArgumentException("Traffic incident event submission facts are inconsistent or incomplete");
     }
 
     private boolean sameRequest(DiagnosisRequest existing, EventType eventType, String producer, UUID eventId) {

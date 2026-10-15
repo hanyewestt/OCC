@@ -36,6 +36,7 @@ public class DiagnosisRequest {
     private Instant nextAttemptAt;
     private Instant leaseUntil;
     private String failureCode;
+    @jakarta.persistence.Column(name = "policy_outcome") private String policyOutcome;
     private Instant createdAt;
     private Instant updatedAt;
     @Version private long version;
@@ -54,6 +55,7 @@ public class DiagnosisRequest {
     public Instant nextAttemptAt() { return nextAttemptAt; }
     public Instant leaseUntil() { return leaseUntil; }
     public String failureCode() { return failureCode; }
+    public String policyOutcome() { return policyOutcome; }
     public Instant createdAt() { return createdAt; }
 
     public void claim(Instant until, Instant now) {
@@ -67,6 +69,15 @@ public class DiagnosisRequest {
         status = DiagnosisRequestStatus.COMPLETED.name();
         leaseUntil = null;
         failureCode = null;
+        updatedAt = now;
+    }
+
+    public void completeNoAction(String outcome, Instant now) {
+        if (status().equals(DiagnosisRequestStatus.COMPLETED) && outcome.equals(policyOutcome)) return;
+        status = DiagnosisRequestStatus.COMPLETED.name();
+        leaseUntil = null;
+        failureCode = null;
+        policyOutcome = java.util.Objects.requireNonNull(outcome);
         updatedAt = now;
     }
 

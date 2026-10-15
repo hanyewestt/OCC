@@ -3,6 +3,7 @@ package com.csd.occ.planning.diagnosis.infrastructure.jackson;
 import com.csd.occ.planning.diagnosis.domain.EvidenceSnapshot;
 import com.csd.occ.planning.diagnosis.domain.SnapshotCodecPort;
 import com.csd.occ.planning.diagnosis.domain.ConfidenceComponents;
+import com.csd.occ.planning.diagnosis.domain.ProducerEventSubmission;
 import java.util.List;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
@@ -23,6 +24,14 @@ public class JacksonSnapshotCodecAdapter implements SnapshotCodecPort {
     @Override public String encodeConfidenceComponents(ConfidenceComponents components) {
         try { return json.writeValueAsString(components); }
         catch (Exception failure) { throw new IllegalStateException("Cannot encode confidence components", failure); }
+    }
+    @Override public String encodeProducerEvent(ProducerEventSubmission submission) {
+        try { return json.writeValueAsString(submission); }
+        catch (Exception failure) { throw new IllegalStateException("Cannot encode producer event snapshot", failure); }
+    }
+    @Override public ProducerEventSubmission decodeProducerEvent(String value) {
+        try { return json.readValue(value, ProducerEventSubmission.class); }
+        catch (Exception failure) { throw new IllegalStateException("Persisted producer event snapshot is invalid", failure); }
     }
     @Override public List<String> decodeStringList(String value) {
         try { return List.of(json.readValue(value, String[].class)); }

@@ -31,13 +31,13 @@ The browser does not call bunching directly; the proxy obtains the immutable ope
 From the repository root:
 
 ```powershell
-cd services/ingestion
-.\mvnw.cmd spring-boot:run '-Dspring-boot.run.profiles=local'
+Set-Location services/ingestion
+..\..\mvnw.cmd spring-boot:run '-Dspring-boot.run.profiles=local'
 ```
 
 ```bash
 cd services/ingestion
-./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+../../mvnw spring-boot:run -Dspring-boot.run.profiles=local
 ```
 
 A global Maven installation is optional; the wrapper downloads Maven on first use.
@@ -70,16 +70,17 @@ Import `pom.xml` as a Maven project. Run `com.csd.occ.ingestion.IngestionApplica
 Without the `local` profile, the app does not read the root `.env`; supply deployment configuration through environment variables. Custom properties use `occ.datamall.*`. The DataMall API key remains supplied through `DATAMALL_API_KEY`.
 
 ```powershell
-.\mvnw.cmd verify
-docker build -t occ-ingestion .
+.\mvnw.cmd -pl services/ingestion verify
+docker compose --env-file .env build ingestion
 ```
 
 ```bash
-./mvnw verify
-docker build -t occ-ingestion .
+./mvnw -pl services/ingestion verify
+docker compose --env-file .env build ingestion
 ```
 
-Build the JAR before building the image. The Dockerfile copies only the packaged JAR, not local credentials. Runtime database and API credentials must be provided separately.
+Compose builds the service with the shared root `infra/java.Dockerfile`. Runtime
+database and API credentials are supplied through deployment configuration.
 
 ## Startup behavior and API
 

@@ -11,6 +11,7 @@ import com.csd.occ.planning.diagnosis.domain.BunchingEventFacts;
 import com.csd.occ.planning.diagnosis.domain.EvidenceSnapshot;
 import com.csd.occ.planning.diagnosis.domain.EventSubmissionFingerprintPort;
 import com.csd.occ.planning.diagnosis.domain.ProducerEventSubmission;
+import com.csd.occ.planning.diagnosis.domain.TrafficIncidentEventFacts;
 import com.csd.occ.planning.diagnosis.domain.RootCauseContext;
 import com.csd.occ.planning.diagnosis.domain.SnapshotCodecPort;
 import com.csd.occ.planning.diagnosis.domain.ConfidenceComponents;
@@ -108,8 +109,8 @@ class DiagnosisRequestPersistenceIT {
         ProducerEventSubmission submission = producerSubmission(390);
         String inputSnapshot = snapshots.encode(new EvidenceSnapshot(submission.eventSnapshot(), context(submission),
                 submission.evidenceIds(), submission.classification()));
-        org.mockito.Mockito.when(inputs.capture(submission.eventSnapshot())).thenReturn(inputSnapshot);
-        org.mockito.Mockito.when(inputs.matchesProducerFacts(inputSnapshot, submission.eventSnapshot())).thenReturn(true);
+        org.mockito.Mockito.when(inputs.capture(submission)).thenReturn(inputSnapshot);
+        org.mockito.Mockito.when(inputs.matchesProducerFacts(inputSnapshot, submission)).thenReturn(true);
         String fingerprint = fingerprints.fingerprint(submission);
 
         var original = requests.enqueue(submission, key, fingerprint);
@@ -120,10 +121,41 @@ class DiagnosisRequestPersistenceIT {
         assertThat(repository.findById(key).orElseThrow().inputSnapshot()).isEqualTo(inputSnapshot);
 
         ProducerEventSubmission changed = producerSubmission(submission, 391);
-        org.mockito.Mockito.when(inputs.matchesProducerFacts(inputSnapshot, changed.eventSnapshot())).thenReturn(false);
+        org.mockito.Mockito.when(inputs.matchesProducerFacts(inputSnapshot, changed)).thenReturn(false);
         assertThatThrownBy(() -> requests.enqueue(changed, key, fingerprints.fingerprint(changed)))
                 .isInstanceOf(DiagnosisRequestService.IdempotencyConflictException.class);
         assertThat(repository.findById(key).orElseThrow().inputSnapshot()).isEqualTo(inputSnapshot);
+    }
+
+    @Test
+    void trafficIncidentIsPersistedWithAnExplicitNoActionOutcomeAndStableReplay() {
+        UUID eventId = UUID.randomUUID();
+        UUID disruptionId = UUID.randomUUID();
+        UUID observationId = UUID.randomUUID();
+        UUID key = UUID.randomUUID();
+        Instant eventAt = NOW.minusSeconds(2);
+        var facts = new TrafficIncidentEventFacts(eventId, disruptionId, "OPENED", "OBSERVATION_ONLY", null,
+                observationId, UUID.randomUUID(), "LTA", "c".repeat(64), "Road Obstruction",
+                "Westbound lane blocked", new java.math.BigDecimal("1.38"), new java.math.BigDecimal("103.75"),
+                eventAt.minusSeconds(1), eventAt, eventAt);
+        var submission = new ProducerEventSubmission(DiagnosisRequestService.SCHEMA_VERSION,
+                EventType.TRAFFIC_INCIDENT, PRODUCER, eventId, disruptionId, "OBSERVATION_ONLY", null, eventAt,
+                "traffic-incident-observation-v1", List.of(observationId.toString()), null, facts);
+        String inputSnapshot = snapshots.encodeProducerEvent(submission);
+        org.mockito.Mockito.when(inputs.capture(submission)).thenReturn(inputSnapshot);
+        org.mockito.Mockito.when(inputs.matchesProducerFacts(inputSnapshot, submission)).thenReturn(true);
+
+        var accepted = requests.enqueue(submission, key, fingerprints.fingerprint(submission));
+        var replay = requests.enqueue(submission, key, fingerprints.fingerprint(submission));
+
+        var stored = repository.findById(key).orElseThrow();
+        assertThat(replay.id()).isEqualTo(accepted.id());
+        assertThat(stored.status().name()).isEqualTo("COMPLETED");
+        assertThat(stored.policyOutcome()).isEqualTo("TRAFFIC_INCIDENT_NO_OPERATIONAL_ACTION");
+        assertThat(stored.inputSnapshot()).isEqualTo(inputSnapshot);
+        assertThat(diagnoses.count()).isZero();
+        assertThat(deliveries.count()).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM planning.recommendation_job", Integer.class)).isZero();
     }
 
     @Test

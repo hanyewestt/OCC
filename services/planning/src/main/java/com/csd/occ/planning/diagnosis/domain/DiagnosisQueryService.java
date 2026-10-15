@@ -35,7 +35,7 @@ public class DiagnosisQueryService {
         UUID diagnosisId = diagnoses.findByRequestId(request.id()).map(RootCauseDiagnosisEntity::id)
                 .orElse(null);
         return new DiagnosisRequestView(request.id(), diagnosisId, request.status(),
-                request.failureCode(), request.createdAt());
+                request.failureCode(), request.createdAt(), request.policyOutcome());
     }
 
     public static final class DiagnosisNotFoundException extends RuntimeException { }

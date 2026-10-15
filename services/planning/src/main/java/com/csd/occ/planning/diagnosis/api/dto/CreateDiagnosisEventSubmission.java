@@ -20,14 +20,16 @@ public record CreateDiagnosisEventSubmission(
         @Schema(example = "c7f94b1c-9a9d-4c22-a011-700123002001") @NotNull UUID eventId,
         @NotNull UUID disruptionId,
         @Schema(example = "SIMULATION") @NotBlank String classification,
-        @NotNull UUID demoRunId,
+        UUID demoRunId,
         @NotNull Instant detectedAt,
         @NotBlank String detectionRuleVersion,
         @NotNull @Size(min = 1, max = 100) List<@NotBlank @Size(max = 200) String> evidenceIds,
-        @NotNull @Valid BunchingEventFacts eventSnapshot) {
+        @Valid BunchingEventFacts eventSnapshot,
+        @Valid TrafficIncidentEventFactsRequest trafficSnapshot) {
 
     public ProducerEventSubmission toDomain() {
         return new ProducerEventSubmission(schemaVersion, eventType, producer, eventId, disruptionId, classification,
-                demoRunId, detectedAt, detectionRuleVersion, evidenceIds, eventSnapshot);
+                demoRunId, detectedAt, detectionRuleVersion, evidenceIds, eventSnapshot,
+                trafficSnapshot == null ? null : trafficSnapshot.toDomain());
     }
 }

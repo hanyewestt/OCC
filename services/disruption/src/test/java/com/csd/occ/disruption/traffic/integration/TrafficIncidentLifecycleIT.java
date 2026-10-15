@@ -1,9 +1,14 @@
 package com.csd.occ.disruption.traffic.integration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
 
 import com.csd.occ.disruption.traffic.domain.TrafficIncidentPollPort;
+import com.csd.occ.disruption.traffic.domain.TrafficIncidentEvidencePort;
 import com.csd.occ.disruption.traffic.domain.TrafficIncidentReadService;
 import com.csd.occ.disruption.traffic.domain.TrafficIncidentState;
 import com.csd.occ.disruption.traffic.domain.TrafficIncidentSyncService;
@@ -46,10 +51,12 @@ class TrafficIncidentLifecycleIT {
     @Autowired private TrafficIncidentReadService incidentReads;
     @Autowired private JdbcTemplate jdbc;
     @MockitoBean private TrafficIncidentPollPort feed;
+    @MockitoBean private TrafficIncidentEvidencePort evidenceCodec;
 
     @BeforeEach
     void resetRows() {
-        reset(feed);
+        reset(feed, evidenceCodec);
+        org.mockito.Mockito.when(evidenceCodec.encode(any(), any(), any())).thenReturn("{}");
         jdbc.execute("TRUNCATE disruption.planning_outbox, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption");
         jdbc.update("UPDATE disruption.traffic_poll_checkpoint SET completed_at = NULL, poll_run_id = NULL WHERE id = 1");
     }
@@ -94,6 +101,9 @@ class TrafficIncidentLifecycleIT {
         assertThat(jdbc.queryForObject("SELECT status FROM disruption.disruption", String.class)).isEqualTo("CLEARED");
         assertThat(eventActions()).containsExactly("OPENED", "UPDATED", "CLEARED");
         assertThat(count("disruption.event_evidence")).isEqualTo(3);
+        assertThat(count("disruption.planning_outbox")).isEqualTo(3);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM disruption.planning_outbox "
+                + "WHERE payload_json LIKE '%TRAFFIC_INCIDENT%' AND status = 'PENDING'", Integer.class)).isEqualTo(3);
     }
 
     @Test
@@ -121,6 +131,58 @@ class TrafficIncidentLifecycleIT {
         assertThat(jdbc.queryForObject("SELECT absence_count FROM disruption.traffic_incident_state", Integer.class)).isZero();
         assertThat(jdbc.queryForObject("SELECT status FROM disruption.disruption", String.class)).isEqualTo("ACTIVE");
         assertThat(eventActions()).containsExactly("OPENED");
+    }
+
+    @Test
+    void liveAndDemoIncidentsWithTheSameProviderKeyRemainIsolated() {
+        UUID demoRun = UUID.randomUUID();
+        String key = "c".repeat(64);
+        Instant start = Instant.now().minusSeconds(5);
+        synchronization.process(poll(UUID.randomUUID(), start, "SUCCESS", true, "OBSERVATION_ONLY", null,
+                List.of(fact(UUID.randomUUID(), key, "Road obstruction", "Live lane", start, null))),
+                java.time.Duration.ofMinutes(5), 2);
+        synchronization.process(poll(UUID.randomUUID(), start.plusSeconds(1), "SUCCESS", true, "SIMULATION", demoRun,
+                List.of(fact(UUID.randomUUID(), key, "Road obstruction", "Demo lane", start.plusSeconds(1), demoRun))),
+                java.time.Duration.ofMinutes(5), 2);
+
+        assertThat(count("disruption.traffic_incident_state")).isEqualTo(2);
+        assertThat(eventActions()).containsExactly("OPENED", "OPENED");
+        assertThat(jdbc.queryForObject("SELECT absence_count FROM disruption.traffic_incident_state WHERE classification='OBSERVATION_ONLY'", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT absence_count FROM disruption.traffic_incident_state WHERE classification='SIMULATION'", Integer.class)).isZero();
+
+        synchronization.process(poll(UUID.randomUUID(), start.plusSeconds(2), "SUCCESS", true, "OBSERVATION_ONLY", null,
+                List.of()), java.time.Duration.ofMinutes(5), 2);
+
+        assertThat(jdbc.queryForObject("SELECT absence_count FROM disruption.traffic_incident_state WHERE classification='OBSERVATION_ONLY'", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT absence_count FROM disruption.traffic_incident_state WHERE classification='SIMULATION'", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT status FROM disruption.disruption WHERE classification='SIMULATION'", String.class)).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void failedTrafficUpdateRollsBackTheIncidentStateAndEventTogether() {
+        UUID demoRun = UUID.randomUUID();
+        String key = "d".repeat(64);
+        Instant start = Instant.now().minusSeconds(5);
+        synchronization.process(poll(UUID.randomUUID(), start, "SUCCESS", true, "SIMULATION", demoRun,
+                List.of(fact(UUID.randomUUID(), key, "Road obstruction", "Original report", start, demoRun))),
+                java.time.Duration.ofMinutes(5), 2);
+        doThrow(new IllegalStateException("synthetic evidence encoding failure"))
+                .when(evidenceCodec).encode(any(), any(), eq("UPDATED"));
+
+        assertThatThrownBy(() -> synchronization.process(poll(UUID.randomUUID(), start.plusSeconds(1), "SUCCESS", true,
+                "SIMULATION", demoRun,
+                List.of(fact(UUID.randomUUID(), key, "Road obstruction", "Changed report", start.plusSeconds(1), demoRun))),
+                java.time.Duration.ofMinutes(5), 2)).isInstanceOf(IllegalStateException.class);
+
+        assertThat(jdbc.queryForObject("SELECT message FROM disruption.traffic_incident_state", String.class))
+                .isEqualTo("Original report");
+        Instant savedCursor = jdbc.queryForObject(
+                "SELECT completed_at FROM disruption.traffic_poll_checkpoint WHERE id=1",
+                (result, row) -> result.getTimestamp(1).toInstant());
+        assertThat(savedCursor).isEqualTo(start);
+        assertThat(eventActions()).containsExactly("OPENED");
+        assertThat(count("disruption.event_evidence")).isEqualTo(1);
+        assertThat(count("disruption.planning_outbox")).isEqualTo(1);
     }
 
     private TrafficIncidentPollPort.TrafficIncidentPoll poll(UUID id, Instant completedAt, String outcome,

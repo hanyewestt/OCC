@@ -19,7 +19,16 @@ public class DiagnosisInputService {
                 evidence.incidents().stream().map(IncidentEvidence::evidenceId)).flatMap(stream -> stream).distinct().toList();
         return codec.encode(new EvidenceSnapshot(event, evidence, ids, event.classification()));
     }
+    public String capture(ProducerEventSubmission submission) {
+        if (submission.eventType() == EventType.BUS_BUNCHING) return capture(submission.eventSnapshot());
+        return codec.encodeProducerEvent(submission);
+    }
     public boolean matchesProducerFacts(String inputSnapshot, BunchingEventFacts event) {
         return codec.decode(inputSnapshot).event().equals(event);
+    }
+    public boolean matchesProducerFacts(String inputSnapshot, ProducerEventSubmission submission) {
+        if (submission.eventType() == EventType.BUS_BUNCHING)
+            return matchesProducerFacts(inputSnapshot, submission.eventSnapshot());
+        return codec.decodeProducerEvent(inputSnapshot).equals(submission);
     }
 }
