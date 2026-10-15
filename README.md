@@ -47,7 +47,8 @@ Custom low-cardinality metrics report feed freshness/degradation and arrival
 sequence in Ingestion; consumed sequence, deferred work, pending Planning
 outbox age, retained attempts, and expired leases in Disruption; and pending
 request/job age plus retained model fallback/provider-failure counts in
-Planning. Standard Spring Boot and Micrometer metrics include JVM, HTTP server,
-and database-pool measurements where the service uses those components. These
-gauges query each service's own schema when scraped; they do not expose event
-IDs, user IDs, provider prompts, or payloads.
+Planning. Each service also exposes a process-lifetime counter for rows removed
+by its scheduled retention cleanup. Standard Spring Boot and Micrometer metrics
+include JVM, HTTP server, and database-pool measurements where the service uses
+those components. Database gauges query each service's own schema when scraped;
+they do not expose event IDs, user IDs, provider prompts, or payloads.

@@ -6,6 +6,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface BusServiceRepository extends JpaRepository<BusService, BusServiceId> {
-    void deleteByIdReferenceVersionId(UUID referenceVersionId);
+    long deleteByIdReferenceVersionId(UUID referenceVersionId);
     Page<BusService> findByIdReferenceVersionId(UUID referenceVersionId, Pageable pageable);
 }

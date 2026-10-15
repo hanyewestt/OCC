@@ -10,7 +10,7 @@ import org.springframework.data.repository.query.Param;
 
 public interface AlertEventRepository extends JpaRepository<AlertEvent, UUID> {
     java.util.Optional<AlertEvent> findByIdAndKind(UUID id, String kind);
-    void deleteByDemoRunId(UUID demoRunId);
+    long deleteByDemoRunId(UUID demoRunId);
     @Query(value = "select event.demo_run_id from disruption.disruption_event event join disruption.planning_outbox work on work.event_id = event.id where event.demo_run_id is not null union select demo_run_id from disruption.source_processing_state where demo_run_id is not null and status = 'DEFERRED' union select demo_run_id from disruption.consumer_state where mode = 'DEMO'", nativeQuery = true)
     List<UUID> findProtectedDemoRunIds();
     @org.springframework.data.jpa.repository.Modifying

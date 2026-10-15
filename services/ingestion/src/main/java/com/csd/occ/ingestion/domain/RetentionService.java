@@ -41,30 +41,36 @@ public class RetentionService {
     }
 
     @Transactional
-    public void purgeExpiredObservations() {
+    public long purgeExpiredObservations() {
         Instant cutoff = Instant.now(clock).minus(configuration.retention());
         versions.lockTopology();
-        arrivals.deleteExpiredLiveObservations(cutoff);
-        incidents.deleteExpiredLive(cutoff);
-        rawObservations.deleteExpiredLiveObservations(cutoff);
+        long deletedRows = arrivals.deleteExpiredLiveObservations(cutoff);
+        deletedRows += incidents.deleteExpiredLive(cutoff);
+        deletedRows += rawObservations.deleteExpiredLiveObservations(cutoff);
         var protectedRuns = bunching.protectedDemoRuns();
-        demos.findExpired(cutoff).stream().filter(run -> !protectedRuns.contains(run.id())).forEach(run -> {
-            arrivals.deleteByDemoRunId(run.id());
-            incidents.deleteByDemoRunId(run.id());
-            rawObservations.deleteByDemoRunId(run.id());
-            assignments.deleteByIdDemoRunId(run.id());
-            runs.deleteByDemoRunId(run.id());
+        for (var run : demos.findExpired(cutoff)) {
+            if (protectedRuns.contains(run.id())) continue;
+            deletedRows += arrivals.deleteByDemoRunId(run.id());
+            deletedRows += incidents.deleteByDemoRunId(run.id());
+            deletedRows += rawObservations.deleteByDemoRunId(run.id());
+            deletedRows += assignments.deleteByIdDemoRunId(run.id());
+            deletedRows += runs.deleteByDemoRunId(run.id());
             demos.delete(run);
-        });
-        runs.deleteCompletedWithoutRawBefore(cutoff);
-        targets.deleteDisabledLegacyTargets();
-        versions.findExpiredUnreferencedIds(cutoff).forEach(this::deleteTopology);
+            deletedRows++;
+        }
+        deletedRows += runs.deleteCompletedWithoutRawBefore(cutoff);
+        deletedRows += targets.deleteDisabledLegacyTargets();
+        for (var versionId : versions.findExpiredUnreferencedIds(cutoff)) {
+            deletedRows += deleteTopology(versionId);
+        }
+        return deletedRows;
     }
 
-    private void deleteTopology(java.util.UUID versionId) {
-        routeStops.deleteByIdReferenceVersionId(versionId);
-        services.deleteByIdReferenceVersionId(versionId);
-        stops.deleteByIdReferenceVersionId(versionId);
+    private long deleteTopology(java.util.UUID versionId) {
+        long deletedRows = routeStops.deleteByIdReferenceVersionId(versionId);
+        deletedRows += services.deleteByIdReferenceVersionId(versionId);
+        deletedRows += stops.deleteByIdReferenceVersionId(versionId);
         versions.deleteById(versionId);
+        return deletedRows + 1;
     }
 }

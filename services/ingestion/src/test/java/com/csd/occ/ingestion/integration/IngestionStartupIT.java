@@ -94,7 +94,9 @@ class IngestionStartupIT {
                         .jwt(token -> token.claim("occ_role", "ADMIN"))
                         .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
                 .andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("occ_ingestion_feed_unhealthy_count")));
+                .andExpect(content().string(org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString("occ_ingestion_feed_unhealthy_count"),
+                        org.hamcrest.Matchers.containsString("occ_ingestion_retention_deleted_rows_total"))));
     }
     @Autowired BusArrivalService polling;
     @Autowired BunchingFeedService bunchingFeed;
@@ -227,7 +229,7 @@ class IngestionStartupIT {
         retention.purgeExpiredObservations();
         assertThat(jdbc.queryForObject("select count(*) from ingestion.raw_observation where demo_run_id = ?", Integer.class, started.id())).isGreaterThan(0);
         when(bunching.protectedDemoRuns()).thenReturn(List.of());
-        retention.purgeExpiredObservations();
+        assertThat(retention.purgeExpiredObservations()).isGreaterThan(0);
         retention.purgeExpiredObservations();
         assertThat(jdbc.queryForObject("select count(*) from ingestion.demo_run where id = ?", Integer.class, started.id())).isZero();
         assertThat(jdbc.queryForObject("select count(*) from ingestion.traffic_incident_observation where demo_run_id = ?", Integer.class, started.id())).isZero();
@@ -255,9 +257,11 @@ class IngestionStartupIT {
                 context.getBean(com.csd.occ.ingestion.domain.DemoVehicleAssignmentRepository.class), bunching,
                 context.getBean(com.csd.occ.ingestion.domain.PollTargetRepository.class));
         var transaction = new org.springframework.transaction.support.TransactionTemplate(context.getBean(org.springframework.transaction.PlatformTransactionManager.class));
-        transaction.executeWithoutResult(status -> pruning.purgeExpiredObservations());
+        Long firstPurgeCount = transaction.execute(status -> pruning.purgeExpiredObservations());
+        assertThat(firstPurgeCount).isGreaterThan(0);
         assertThat(jdbc.queryForObject("select count(*) from ingestion.reference_dataset_version where id = ?", Integer.class, expired)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from ingestion.reference_dataset_version where id = ?", Integer.class, boundary)).isEqualTo(1);
-        transaction.executeWithoutResult(status -> pruning.purgeExpiredObservations());
+        Long secondPurgeCount = transaction.execute(status -> pruning.purgeExpiredObservations());
+        assertThat(secondPurgeCount).isZero();
     }
 }

@@ -97,7 +97,9 @@ class PlanningRecommendationPersistenceIT {
         mvc.perform(get("/actuator/prometheus").with(SecurityMockMvcRequestPostProcessors.jwt()
                         .jwt(token -> token.claim("occ_role", "ADMIN"))
                         .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().string(
+                        org.hamcrest.Matchers.containsString("occ_planning_retention_deleted_rows_total")));
     }
 
     @Test

@@ -12,7 +12,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
 public interface PollRunRepository extends JpaRepository<PollRun, UUID> {
-    void deleteByDemoRunId(UUID demoRunId);
+    long deleteByDemoRunId(UUID demoRunId);
     Optional<PollRun> findByIdempotencyKey(String idempotencyKey);
     Page<PollRun> findByClassification(String classification, Pageable pageable);
     Page<PollRun> findByClassificationAndStartedAtGreaterThanEqual(String classification, Instant cutoff, Pageable pageable);

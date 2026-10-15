@@ -35,22 +35,24 @@ public class BunchingRetentionService {
     }
 
     @Transactional
-    public void purgeExpiredOperationalState() {
+    public long purgeExpiredOperationalState() {
         var cutoff = clock.instant().minus(retention.duration());
-        outbox.deleteDeliveredOrTerminalBefore(cutoff);
-        events.deleteResolvedBefore(cutoff);
+        long deletedRows = outbox.deleteDeliveredOrTerminalBefore(cutoff);
+        deletedRows += events.deleteResolvedBefore(cutoff);
         var checkpoint = consumers.findWithLockById(1).orElseThrow();
         var protectedRuns = events.findProtectedDemoRunIds();
-        alerts.findExpiredDemoRunIds(cutoff).stream()
-                .filter(run -> !protectedRuns.contains(run))
-                .filter(sourceRetention::demoRunIsAbsent).forEach(run -> {
-                    alerts.deleteByDemoRunId(run);
-                    events.deleteByDemoRunId(run);
-                });
-        sources.findRetentionCandidates(cutoff).stream()
-                .filter(state -> !java.util.Objects.equals(state.demoRunId(), checkpoint.demoRunId())
-                        || state.sourceSequence() <= checkpoint.lastSequence())
-                .filter(state -> sourceRetention.sourceIsAbsent(state.demoRunId(), state.rawObservationId()))
-                .forEach(sources::delete);
+        for (var run : alerts.findExpiredDemoRunIds(cutoff)) {
+            if (protectedRuns.contains(run) || !sourceRetention.demoRunIsAbsent(run)) continue;
+            deletedRows += alerts.deleteByDemoRunId(run);
+            deletedRows += events.deleteByDemoRunId(run);
+        }
+        for (var state : sources.findRetentionCandidates(cutoff)) {
+            if (java.util.Objects.equals(state.demoRunId(), checkpoint.demoRunId())
+                    && state.sourceSequence() > checkpoint.lastSequence()) continue;
+            if (!sourceRetention.sourceIsAbsent(state.demoRunId(), state.rawObservationId())) continue;
+            sources.delete(state);
+            deletedRows++;
+        }
+        return deletedRows;
     }
 }

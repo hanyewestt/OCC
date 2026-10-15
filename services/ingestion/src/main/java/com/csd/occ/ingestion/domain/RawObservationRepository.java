@@ -11,7 +11,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface RawObservationRepository extends JpaRepository<RawObservation, UUID> {
-    void deleteByDemoRunId(UUID demoRunId);
+    long deleteByDemoRunId(UUID demoRunId);
     @Modifying
     @Query("delete from RawObservation raw where raw.classification = 'OBSERVATION_ONLY' and raw.fetchedAt < :cutoff and not exists (select arrival from BusArrivalObservation arrival where arrival.rawObservationId = raw.id) and not exists (select incident from TrafficIncidentObservation incident where incident.rawObservationId = raw.id)")
     int deleteExpiredLiveObservations(@Param("cutoff") Instant cutoff);

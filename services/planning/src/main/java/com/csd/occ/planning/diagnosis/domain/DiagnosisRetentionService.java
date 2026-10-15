@@ -11,9 +11,10 @@ public class DiagnosisRetentionService {
     public DiagnosisRetentionService(DiagnosisRequestRepository requests, RecommendationDeliveryRepository deliveries, Clock clock) {
         this.requests = requests; this.deliveries = deliveries; this.clock = clock;
     }
-    @Transactional public void purge(Duration duration) {
+    @Transactional public long purge(Duration duration) {
         var cutoff = clock.instant().minus(duration);
-        deliveries.deleteCompletedBefore(cutoff);
-        requests.deleteUnreferencedTerminalBefore(cutoff);
+        long deletedRows = deliveries.deleteCompletedBefore(cutoff);
+        deletedRows += requests.deleteUnreferencedTerminalBefore(cutoff);
+        return deletedRows;
     }
 }

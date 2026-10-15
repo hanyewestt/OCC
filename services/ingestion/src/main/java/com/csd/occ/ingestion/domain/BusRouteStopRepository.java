@@ -5,7 +5,7 @@ import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface BusRouteStopRepository extends JpaRepository<BusRouteStop, BusRouteStopId> {
-    void deleteByIdReferenceVersionId(UUID referenceVersionId);
+    long deleteByIdReferenceVersionId(UUID referenceVersionId);
     List<BusRouteStop> findByIdReferenceVersionIdAndIdServiceIdOrderByIdOperatorAscIdDirectionIdAscIdStopSequenceAsc(
             UUID referenceVersionId, String serviceId);
     List<BusRouteStop> findByIdReferenceVersionIdAndIdServiceIdAndIdOperatorOrderByIdDirectionIdAscIdStopSequenceAsc(
