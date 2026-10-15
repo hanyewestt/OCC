@@ -32,3 +32,22 @@ repository-root `.env` for local runs. Planning owns both diagnosis and
 recommendation generation; its setup and protected API details are in
 [`services/planning/README.md`](services/planning/README.md). Environment names
 and safe example values are listed in `.env.example`.
+
+## Operational metrics
+
+The services expose Prometheus-format metrics at `/actuator/prometheus` for
+authenticated `ADMIN` callers. Use a direct loopback service URL from the local
+Compose override (Ingestion `6767`, Disruption `6768`, Planning `6769`, Gateway
+`6770`) and an existing ADMIN access token. The Nginx edge denies management
+paths, and the Gateway does not forward them to backend services; the
+production Compose package does not publish the backend ports. Do not paste
+bearer tokens into source files, command history, or test evidence.
+
+Custom low-cardinality metrics report feed freshness/degradation and arrival
+sequence in Ingestion; consumed sequence, deferred work, pending Planning
+outbox age, retained attempts, and expired leases in Disruption; and pending
+request/job age plus retained model fallback/provider-failure counts in
+Planning. Standard Spring Boot and Micrometer metrics include JVM, HTTP server,
+and database-pool measurements where the service uses those components. These
+gauges query each service's own schema when scraped; they do not expose event
+IDs, user IDs, provider prompts, or payloads.

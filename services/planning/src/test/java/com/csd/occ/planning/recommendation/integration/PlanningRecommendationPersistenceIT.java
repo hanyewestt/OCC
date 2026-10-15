@@ -21,14 +21,21 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors;
+import org.springframework.test.web.servlet.MockMvc;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -49,6 +56,7 @@ import tools.jackson.databind.json.JsonMapper;
         "SUPABASE_PROJECT_URL=https://example.supabase.co",
         "SUPABASE_JWKS_URL=https://example.supabase.co/auth/v1/.well-known/jwks.json"
 })
+@AutoConfigureMockMvc
 @Testcontainers(disabledWithoutDocker = true)
 class PlanningRecommendationPersistenceIT {
     private static final String IDEMPOTENCY_KEY = "f07c921a-bd3b-4a97-8b17-a384ef1269a7";
@@ -66,6 +74,8 @@ class PlanningRecommendationPersistenceIT {
     }
 
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private MeterRegistry meterRegistry;
+    @Autowired private MockMvc mvc;
     @Autowired private PlanningRecommendationAdapter planningRecommendations;
     @Autowired private ModelInvocationRecordPort modelInvocations;
     @Autowired private RecommendationAiProperties aiProperties;
@@ -78,6 +88,16 @@ class PlanningRecommendationPersistenceIT {
     void clearPlanningRecommendationRows() {
         jdbc.update("DELETE FROM planning.model_invocation_record");
         jdbc.update("DELETE FROM planning.recommendation");
+    }
+
+    @Test
+    void exposesPlanningQueueMetricsOnlyToAdministrators() throws Exception {
+        assertThat(meterRegistry.get("occ.planning.request.pending_count").gauge().value()).isEqualTo(0.0);
+        mvc.perform(get("/actuator/prometheus")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/actuator/prometheus").with(SecurityMockMvcRequestPostProcessors.jwt()
+                        .jwt(token -> token.claim("occ_role", "ADMIN"))
+                        .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isOk());
     }
 
     @Test

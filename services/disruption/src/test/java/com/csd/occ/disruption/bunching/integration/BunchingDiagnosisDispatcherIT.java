@@ -6,6 +6,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 
 import com.csd.occ.disruption.bunching.domain.DiagnosisOutbox;
 import com.csd.occ.disruption.bunching.domain.DiagnosisOutboxRepository;
@@ -25,18 +26,23 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors;
+import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.web.client.RestClient;
@@ -53,6 +59,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
         "spring.datasource.password=synthetic-test-only"
 })
 @Testcontainers(disabledWithoutDocker = true)
+@AutoConfigureMockMvc
 @Import(BunchingDiagnosisDispatcherIT.FixedClockConfiguration.class)
 class BunchingDiagnosisDispatcherIT {
     private static final Instant NOW = Instant.parse("2026-09-28T00:00:00Z");
@@ -67,10 +74,26 @@ class BunchingDiagnosisDispatcherIT {
     @Autowired PlanningEventSubmissionPort submissions;
     @Autowired JsonMapper json;
     @Autowired JdbcTemplate jdbc;
+    @Autowired MeterRegistry meterRegistry;
+    @Autowired MockMvc mvc;
 
     @BeforeEach
     void clearOutbox() {
         jdbc.execute("TRUNCATE disruption.planning_outbox, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption");
+    }
+
+    @Test
+    void exposesPlanningOutboxMetricsOnlyToAdministrators() throws Exception {
+        insertDueOutbox();
+
+        assertThat(meterRegistry.get("occ.disruption.planning_outbox.pending_count").gauge().value())
+                .isEqualTo(1.0);
+        mvc.perform(get("/actuator/prometheus"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnauthorized());
+        mvc.perform(get("/actuator/prometheus").with(SecurityMockMvcRequestPostProcessors.jwt()
+                        .jwt(token -> token.claim("occ_role", "ADMIN"))
+                        .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
     }
 
     @Test

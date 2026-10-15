@@ -3,6 +3,7 @@ package com.csd.occ.gateway.integration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import org.junit.jupiter.api.Test;
@@ -60,6 +61,21 @@ class GatewayAuthorizationTest {
                         .with(jwt().jwt(token -> token.claim("occ_role", "ADMIN"))
                                 .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void exposesPrometheusMetricsOnlyToAdministrators() throws Exception {
+        mvc.perform(get("/actuator/prometheus"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/actuator/prometheus")
+                        .with(jwt().jwt(token -> token.claim("occ_role", "CONTROLLER"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"))))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/actuator/prometheus")
+                        .with(jwt().jwt(token -> token.claim("occ_role", "ADMIN"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("jvm_memory_used_bytes")));
     }
 
     @Test

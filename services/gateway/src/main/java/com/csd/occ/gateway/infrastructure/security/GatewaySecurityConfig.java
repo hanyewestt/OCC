@@ -33,6 +33,7 @@ public class GatewaySecurityConfig {
                 .authorizeHttpRequests(authorize -> {
                     authorize.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll();
                     authorize.requestMatchers("/actuator/health", "/actuator/health/**").permitAll();
+                    authorize.requestMatchers(HttpMethod.GET, "/actuator/prometheus").hasRole("ADMIN");
                     authorize.requestMatchers("/actuator/**").denyAll();
                     authorize.requestMatchers("/demo.html").permitAll();
                     if (gatewayProperties.authTestEnabled()) {

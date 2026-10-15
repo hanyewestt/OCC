@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 
 import com.csd.occ.ingestion.domain.BusArrivalObservationRepository;
 import com.csd.occ.ingestion.domain.BusArrivalSnapshot;
@@ -34,6 +35,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -70,9 +73,29 @@ class IngestionStartupIT {
     @MockitoBean BunchingControlPort bunching;
     @Autowired JdbcTemplate jdbc;
     @Autowired MockMvc mvc;
+    @Autowired MeterRegistry meterRegistry;
     @Autowired PollRunRepository runs;
     @Autowired RawObservationRepository observations;
     @Autowired BusArrivalObservationRepository arrivals;
+
+    @Test
+    void exposesFeedMetricsOnlyToAdministrators() throws Exception {
+        jdbc.update("""
+                INSERT INTO ingestion.feed_status
+                    (source, scope_key, status, last_attempt_at, consecutive_failures, stale_after_seconds, updated_at)
+                VALUES ('METRICS_TEST', 'scope', 'FAILED', CURRENT_TIMESTAMP, 1, 60, CURRENT_TIMESTAMP)
+                ON CONFLICT (source, scope_key) DO UPDATE SET status = 'FAILED', last_success_at = NULL
+                """);
+
+        assertThat(meterRegistry.get("occ.ingestion.feed.unhealthy_count").gauge().value())
+                .isGreaterThanOrEqualTo(1.0);
+        mvc.perform(get("/actuator/prometheus")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/actuator/prometheus").with(jwt()
+                        .jwt(token -> token.claim("occ_role", "ADMIN"))
+                        .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("occ_ingestion_feed_unhealthy_count")));
+    }
     @Autowired BusArrivalService polling;
     @Autowired BunchingFeedService bunchingFeed;
     @Autowired DemoRunService demoRuns;
@@ -111,6 +134,8 @@ class IngestionStartupIT {
             assertThat(observation.getFetchedAt()).isNotNull();
         });
         assertThat(bunchingFeed.page(0, 100).items()).hasSize(1);
+        assertThat(meterRegistry.get("occ.ingestion.arrival.feed_sequence").gauge().value())
+                .isGreaterThan(0.0);
     }
 
     @Test

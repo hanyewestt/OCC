@@ -33,6 +33,7 @@ public class DisruptionSecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/actuator/prometheus").hasRole("ADMIN")
                         .requestMatchers("/actuator/**").denyAll()
                         .requestMatchers(HttpMethod.GET, "/internal/v1/disruption/retention-protection",
                                 "/internal/v1/disruption/demo-runs/**", "/internal/v1/disruption/live-bunching-alerts")
