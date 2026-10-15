@@ -18,7 +18,8 @@ public class DiagnosisOutboxService {
         Instant now = clock.instant();
         return outbox.findClaimable(now, batchSize).stream().map(item -> {
             item.claimed(now.plus(leaseDuration));
-            return new DiagnosisOutboxClaim(item.id(), item.eventId(), item.attemptCount());
+            return new DiagnosisOutboxClaim(item.id(), item.eventId(), item.attemptCount(), item.payloadJson(),
+                    item.payloadFingerprint(), item.schemaVersion());
         }).toList();
     }
 
@@ -33,5 +34,11 @@ public class DiagnosisOutboxService {
     @Transactional
     public void fail(UUID id, Integer status, String code) {
         outbox.findById(id).ifPresent(item -> item.fail(status, code));
+    }
+    @Transactional
+    public String retainFingerprintIfAbsent(UUID id, String fingerprint) {
+        DiagnosisOutbox item = outbox.findById(id).orElseThrow();
+        item.retainFingerprint(fingerprint);
+        return item.payloadFingerprint();
     }
 }

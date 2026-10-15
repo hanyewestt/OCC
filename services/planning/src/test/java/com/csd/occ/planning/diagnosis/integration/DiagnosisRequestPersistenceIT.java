@@ -5,7 +5,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestRepository;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestService;
+import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestPersistenceService;
 import com.csd.occ.planning.diagnosis.domain.EventType;
+import com.csd.occ.planning.diagnosis.domain.BunchingEventFacts;
+import com.csd.occ.planning.diagnosis.domain.EvidenceSnapshot;
+import com.csd.occ.planning.diagnosis.domain.EventSubmissionFingerprintPort;
+import com.csd.occ.planning.diagnosis.domain.ProducerEventSubmission;
+import com.csd.occ.planning.diagnosis.domain.RootCauseContext;
+import com.csd.occ.planning.diagnosis.domain.SnapshotCodecPort;
 import com.csd.occ.planning.diagnosis.domain.ConfidenceComponents;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisCompletionService;
 import com.csd.occ.planning.diagnosis.domain.ModelInvocationDetails;
@@ -13,6 +20,7 @@ import com.csd.occ.planning.diagnosis.domain.RecommendationDeliveryRepository;
 import com.csd.occ.planning.diagnosis.domain.RootCauseDiagnosis;
 import com.csd.occ.planning.diagnosis.domain.RootCauseDiagnosisRepository;
 import com.csd.occ.planning.diagnosis.infrastructure.jackson.JacksonSnapshotCodecAdapter;
+import com.csd.occ.planning.diagnosis.infrastructure.jackson.JacksonEventSubmissionFingerprintAdapter;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.Clock;
@@ -41,7 +49,8 @@ import tools.jackson.databind.json.JsonMapper;
 @DataJpaTest(properties = "spring.flyway.enabled=true")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import({DiagnosisRequestService.class, DiagnosisCompletionService.class, JacksonSnapshotCodecAdapter.class,
+@Import({DiagnosisRequestService.class, DiagnosisRequestPersistenceService.class, DiagnosisCompletionService.class,
+        JacksonSnapshotCodecAdapter.class, JacksonEventSubmissionFingerprintAdapter.class,
         DiagnosisRequestPersistenceIT.ClockConfiguration.class})
 @Testcontainers(disabledWithoutDocker = true)
 class DiagnosisRequestPersistenceIT {
@@ -58,6 +67,8 @@ class DiagnosisRequestPersistenceIT {
     @Autowired RecommendationDeliveryRepository deliveries;
     @Autowired DiagnosisCompletionService completion;
     @Autowired JdbcTemplate jdbc;
+    @Autowired EventSubmissionFingerprintPort fingerprints;
+    @Autowired SnapshotCodecPort snapshots;
     @org.springframework.test.context.bean.override.mockito.MockitoBean
     com.csd.occ.planning.diagnosis.domain.DiagnosisInputService inputs;
 
@@ -89,6 +100,30 @@ class DiagnosisRequestPersistenceIT {
 
         assertThat(replay.id()).isEqualTo(original.id());
         assertThat(repository.count()).isEqualTo(1);
+    }
+
+    @Test
+    void producerSnapshotIsPersistedBeforeAcceptanceAndChangedReplayConflicts() {
+        UUID key = UUID.randomUUID();
+        ProducerEventSubmission submission = producerSubmission(390);
+        String inputSnapshot = snapshots.encode(new EvidenceSnapshot(submission.eventSnapshot(), context(submission),
+                submission.evidenceIds(), submission.classification()));
+        org.mockito.Mockito.when(inputs.capture(submission.eventSnapshot())).thenReturn(inputSnapshot);
+        org.mockito.Mockito.when(inputs.matchesProducerFacts(inputSnapshot, submission.eventSnapshot())).thenReturn(true);
+        String fingerprint = fingerprints.fingerprint(submission);
+
+        var original = requests.enqueue(submission, key, fingerprint);
+        var replay = requests.enqueue(submission, key, fingerprint);
+
+        assertThat(replay.id()).isEqualTo(original.id());
+        assertThat(repository.count()).isEqualTo(1);
+        assertThat(repository.findById(key).orElseThrow().inputSnapshot()).isEqualTo(inputSnapshot);
+
+        ProducerEventSubmission changed = producerSubmission(submission, 391);
+        org.mockito.Mockito.when(inputs.matchesProducerFacts(inputSnapshot, changed.eventSnapshot())).thenReturn(false);
+        assertThatThrownBy(() -> requests.enqueue(changed, key, fingerprints.fingerprint(changed)))
+                .isInstanceOf(DiagnosisRequestService.IdempotencyConflictException.class);
+        assertThat(repository.findById(key).orElseThrow().inputSnapshot()).isEqualTo(inputSnapshot);
     }
 
     @Test
@@ -194,6 +229,45 @@ class DiagnosisRequestPersistenceIT {
                 "Available evidence is insufficient.", 0.0, 0.0, List.of("evidence-1"), List.of(),
                 new ConfidenceComponents(1, 0, 0, 0, 0), "{}", "evidence-hash", "GOOGLE_GENAI", model,
                 "prompt-v1", "schema-v1", NOW);
+    }
+
+    private ProducerEventSubmission producerSubmission(int secondHeadway) {
+        UUID eventId = UUID.randomUUID();
+        UUID disruptionId = UUID.randomUUID();
+        UUID demoRunId = UUID.randomUUID();
+        List<UUID> observations = List.of(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        List<String> evidenceIds = java.util.stream.Stream.concat(
+                java.util.stream.Stream.of("bunching-alert-event:" + eventId),
+                observations.stream().map(id -> "bus-arrival:" + id)).toList();
+        Instant first = NOW.minusSeconds(300);
+        BunchingEventFacts facts = new BunchingEventFacts(eventId, disruptionId, "SIMULATION", demoRunId, "190", 1,
+                "44009", observations.get(2), observations.get(3), "CONFIRMED", 600, List.of(360, secondHeadway),
+                first, List.of(first, NOW), observations, evidenceIds, "bunching-gap-v1");
+        return new ProducerEventSubmission(DiagnosisRequestService.SCHEMA_VERSION, EventType.BUS_BUNCHING, PRODUCER,
+                eventId, disruptionId, "SIMULATION", demoRunId, NOW, "bunching-gap-v1", evidenceIds, facts);
+    }
+
+    private ProducerEventSubmission producerSubmission(ProducerEventSubmission original, int secondHeadway) {
+        BunchingEventFacts previous = original.eventSnapshot();
+        BunchingEventFacts changedFacts = new BunchingEventFacts(previous.eventId(), previous.bunchingEventId(),
+                previous.classification(), previous.demoRunId(), previous.serviceId(), previous.directionId(),
+                previous.monitoredStopCode(), previous.leadingObservationId(), previous.followingObservationId(),
+                previous.status(), previous.expectedHeadwaySeconds(), List.of(360, secondHeadway),
+                previous.firstConfirmedAt(), previous.confirmingObservationTimes(),
+                previous.confirmingObservationIds(), previous.evidenceIds(), previous.detectionRuleVersion());
+        return new ProducerEventSubmission(original.schemaVersion(), original.eventType(), original.producer(),
+                original.eventId(), original.disruptionId(), original.classification(), original.demoRunId(),
+                original.detectedAt(), original.detectionRuleVersion(), original.evidenceIds(), changedFacts);
+    }
+
+    private RootCauseContext context(ProducerEventSubmission submission) {
+        Instant at = submission.eventSnapshot().firstConfirmedAt().minusSeconds(2);
+        List<com.csd.occ.planning.diagnosis.domain.ArrivalEvidence> arrivals =
+                submission.eventSnapshot().confirmingObservationIds().stream().map(id ->
+                        new com.csd.occ.planning.diagnosis.domain.ArrivalEvidence("bus-arrival:" + id, id,
+                                UUID.randomUUID(), UUID.randomUUID(), "190", "44009", 1, at, at,
+                                null, null, "LOW", "BUS", "SIMULATION", submission.demoRunId(), null)).toList();
+        return new RootCauseContext("SIMULATION", submission.demoRunId(), null, arrivals, List.of(), List.of());
     }
 
     @Test void failedAttemptRetainsInputAndActualResponseWithoutAnEvidenceHashOrResult() {

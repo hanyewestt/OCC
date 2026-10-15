@@ -7,6 +7,7 @@ import com.csd.occ.disruption.bunching.domain.AlertProcessingStateRepository;
 import com.csd.occ.disruption.bunching.domain.ConsumerSelectionService;
 import com.csd.occ.disruption.bunching.domain.DiagnosisOutbox;
 import com.csd.occ.disruption.bunching.domain.DiagnosisOutboxRepository;
+import com.csd.occ.disruption.bunching.domain.PlanningEventSubmissionPort;
 import com.csd.occ.disruption.bunching.domain.DisruptionRepository;
 import com.csd.occ.disruption.bunching.domain.BunchingAlertPolicy;
 import com.csd.occ.disruption.bunching.domain.BunchingAlertPort;
@@ -31,6 +32,7 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
     private final Clock clock;
     private final ConsumerSelectionService selection;
     private final DiagnosisOutboxRepository diagnosisOutbox;
+    private final PlanningEventSubmissionPort planningSubmissions;
     private final DisruptionRepository disruptions;
     private final BunchingConfirmationProperties confirmation;
     private final BunchingAlertPolicy policy = new BunchingAlertPolicy();
@@ -38,6 +40,7 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
     public JpaBunchingAlertAdapter(AlertProcessingStateRepository states, AlertEventRepository events,
                                    BunchingEvidencePort evidence, Clock clock, ConsumerSelectionService selection,
                                    DiagnosisOutboxRepository diagnosisOutbox,
+                                   PlanningEventSubmissionPort planningSubmissions,
                                    BunchingConfirmationProperties confirmation, DisruptionRepository disruptions) {
         this.states = states;
         this.events = events;
@@ -45,6 +48,7 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
         this.clock = clock;
         this.selection = selection;
         this.diagnosisOutbox = diagnosisOutbox;
+        this.planningSubmissions = planningSubmissions;
         this.confirmation = confirmation;
         this.disruptions = disruptions;
     }
@@ -141,7 +145,9 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
                     previous.pendingLeadingObservationId(), previous.pendingFollowingObservationId(),
                     current.leadingObservationId(), current.followingObservationId(), "bunching-gap-v1"));
             events.notifyListeners(event.id().toString());
-            diagnosisOutbox.save(new DiagnosisOutbox(UUID.randomUUID(), event.id(), confirmedAt));
+            var submission = planningSubmissions.encode(event);
+            diagnosisOutbox.save(new DiagnosisOutbox(UUID.randomUUID(), event.id(), submission.payloadJson(),
+                    submission.payloadFingerprint(), submission.schemaVersion(), confirmedAt));
             previous.update(fetchedAt, episode, current.leadingObservationId(), current.followingObservationId());
             previous.clearCandidate();
             return;

@@ -42,7 +42,7 @@ class DisruptionLegacyImportIT {
 
         Flyway target = Flyway.configure().dataSource(dataSource).defaultSchema("disruption").schemas("disruption")
                 .createSchemas(true).locations("classpath:db/target-migration").load();
-        assertThat(target.migrate().migrationsExecuted).isEqualTo(2);
+        assertThat(target.migrate().migrationsExecuted).isEqualTo(3);
 
         assertThat(jdbc.queryForObject("SELECT last_sequence FROM disruption.consumer_state WHERE id=1", Long.class))
                 .isEqualTo(42L);
@@ -77,9 +77,12 @@ class DisruptionLegacyImportIT {
         assertThat(jdbc.queryForObject("SELECT attempt_count FROM disruption.planning_outbox WHERE id=?",
                 Integer.class, OUTBOX_ID)).isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT payload_json FROM disruption.planning_outbox WHERE id=?",
-                String.class, OUTBOX_ID)).contains("BUS_BUNCHING", EVENT_ID.toString());
+                String.class, OUTBOX_ID)).contains("BUS_BUNCHING", EVENT_ID.toString(), "eventSnapshot",
+                "planning-event-v1", "bunching-gap-v1");
+        assertThat(jdbc.queryForObject("SELECT schema_version FROM disruption.planning_outbox WHERE id=?",
+                String.class, OUTBOX_ID)).isEqualTo("planning-event-v1");
         assertThat(jdbc.queryForObject("SELECT payload_fingerprint FROM disruption.planning_outbox WHERE id=?",
-                String.class, OUTBOX_ID)).matches("[0-9a-f]{64}");
+                String.class, OUTBOX_ID)).isNull();
 
         assertThat(jdbc.queryForObject("""
                 SELECT ledger.source_row_hash = encode(sha256(convert_to(to_jsonb(source)::text, 'UTF8')), 'hex')

@@ -1,6 +1,7 @@
 package com.csd.occ.planning.diagnosis.api;
 
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -15,6 +16,7 @@ import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestStatus;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestView;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestService;
 import com.csd.occ.planning.diagnosis.domain.EventType;
+import com.csd.occ.planning.diagnosis.domain.ProducerEventSubmission;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -38,6 +40,7 @@ import com.csd.occ.planning.infrastructure.security.SupabaseRoleConverter;
 })
 @Import({GlobalExceptionHandler.class, PlanningSecurityConfig.class, SupabaseRoleConverter.class})
 class DiagnosisRequestControllerTest {
+    private static final String FINGERPRINT = "a".repeat(64);
     @Autowired MockMvc mvc;
     @MockitoBean DiagnosisRequestService requests;
     @MockitoBean DiagnosisQueryService query;
@@ -48,8 +51,7 @@ class DiagnosisRequestControllerTest {
 
         mvc.perform(post("/internal/v1/planning/requests")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"eventType\":\"BUS_BUNCHING\",\"eventId\":\"" + eventId
-                                + "\",\"producer\":\"disruption\"}"))
+                        .content(submissionJson(eventId, UUID.randomUUID(), UUID.randomUUID(), observations())))
                 .andExpect(status().isUnauthorized());
 
         verifyNoInteractions(requests, query);
@@ -59,11 +61,15 @@ class DiagnosisRequestControllerTest {
     void acceptsABunchingEventAndForwardsTheStableIdempotencyKey() throws Exception {
         UUID requestId = UUID.randomUUID();
         UUID eventId = UUID.randomUUID();
+        UUID disruptionId = UUID.randomUUID();
+        UUID demoRunId = UUID.randomUUID();
+        UUID[] observations = observations();
         UUID idempotencyKey = UUID.randomUUID();
         Instant createdAt = Instant.parse("2026-09-27T12:00:00Z");
         DiagnosisRequest request = new DiagnosisRequest(requestId, EventType.BUS_BUNCHING,
                 "disruption", eventId, DiagnosisRequestService.SCHEMA_VERSION, createdAt);
-        when(requests.enqueue(EventType.BUS_BUNCHING, "disruption", eventId, idempotencyKey))
+        ProducerEventSubmission submission = submission(eventId, disruptionId, demoRunId, observations);
+        when(requests.enqueue(eq(submission), eq(idempotencyKey), eq(FINGERPRINT)))
                 .thenReturn(request);
         when(query.findRequest(requestId)).thenReturn(new DiagnosisRequestView(
                 requestId, null, DiagnosisRequestStatus.PENDING, null, createdAt));
@@ -71,26 +77,28 @@ class DiagnosisRequestControllerTest {
         mvc.perform(post("/internal/v1/planning/requests")
                         .header("X-OCC-Peer-Token", "test-peer-token")
                         .header("Idempotency-Key", idempotencyKey)
+                        .header("X-OCC-Event-Fingerprint", FINGERPRINT)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"eventType\":\"BUS_BUNCHING\",\"eventId\":\"" + eventId
-                                + "\",\"producer\":\"disruption\"}"))
+                        .content(submissionJson(eventId, disruptionId, demoRunId, observations)))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.requestId").value(requestId.toString()))
                 .andExpect(jsonPath("$.status").value("PENDING"));
 
-        verify(requests).enqueue(EventType.BUS_BUNCHING, "disruption", eventId, idempotencyKey);
+        verify(requests).enqueue(submission, idempotencyKey, FINGERPRINT);
         verify(query).findRequest(requestId);
     }
 
     @Test
     void rejectsAMissingIdempotencyKeyBeforeQueuingWork() throws Exception {
         UUID eventId = UUID.randomUUID();
+        UUID disruptionId = UUID.randomUUID();
+        UUID demoRunId = UUID.randomUUID();
 
         mvc.perform(post("/internal/v1/planning/requests")
                         .header("X-OCC-Peer-Token", "test-peer-token")
+                        .header("X-OCC-Event-Fingerprint", FINGERPRINT)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"eventType\":\"BUS_BUNCHING\",\"eventId\":\"" + eventId
-                                + "\",\"producer\":\"disruption\"}"))
+                        .content(submissionJson(eventId, disruptionId, demoRunId, observations())))
                 .andExpect(status().isBadRequest());
 
         verifyNoInteractions(requests);
@@ -99,17 +107,73 @@ class DiagnosisRequestControllerTest {
     @Test
     void returnsConflictWhenAnIdempotencyKeyIsReusedForAnotherEvent() throws Exception {
         UUID eventId = UUID.randomUUID();
+        UUID disruptionId = UUID.randomUUID();
+        UUID demoRunId = UUID.randomUUID();
+        UUID[] observations = observations();
         UUID idempotencyKey = UUID.randomUUID();
-        when(requests.enqueue(eq(EventType.BUS_BUNCHING), eq("disruption"), eq(eventId), eq(idempotencyKey)))
+        ProducerEventSubmission submission = submission(eventId, disruptionId, demoRunId, observations);
+        when(requests.enqueue(eq(submission), eq(idempotencyKey), eq(FINGERPRINT)))
                 .thenThrow(new DiagnosisRequestService.IdempotencyConflictException());
 
         mvc.perform(post("/internal/v1/planning/requests")
                         .header("X-OCC-Peer-Token", "test-peer-token")
                         .header("Idempotency-Key", idempotencyKey)
+                        .header("X-OCC-Event-Fingerprint", FINGERPRINT)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"eventType\":\"BUS_BUNCHING\",\"eventId\":\"" + eventId
-                                + "\",\"producer\":\"disruption\"}"))
+                        .content(submissionJson(eventId, disruptionId, demoRunId, observations)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.title").value("Idempotency conflict"));
+    }
+
+    @Test
+    void rejectsAMissingEventFingerprintBeforeQueuingWork() throws Exception {
+        mvc.perform(post("/internal/v1/planning/requests")
+                        .header("X-OCC-Peer-Token", "test-peer-token")
+                        .header("Idempotency-Key", UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(submissionJson(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), observations())))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(requests);
+    }
+
+    private UUID[] observations() {
+        return new UUID[] {UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()};
+    }
+
+    private ProducerEventSubmission submission(UUID eventId, UUID disruptionId, UUID demoRunId, UUID[] observationIds) {
+        Instant firstConfirmedAt = Instant.parse("2026-09-27T23:55:00Z");
+        var evidenceIds = java.util.stream.Stream.concat(
+                java.util.stream.Stream.of("bunching-alert-event:" + eventId),
+                java.util.Arrays.stream(observationIds).map(id -> "bus-arrival:" + id)).toList();
+        var facts = new com.csd.occ.planning.diagnosis.domain.BunchingEventFacts(eventId, disruptionId, "SIMULATION",
+                demoRunId, "190", 1, "44009", observationIds[2], observationIds[3], "CONFIRMED", 600,
+                java.util.List.of(360, 390), firstConfirmedAt,
+                java.util.List.of(firstConfirmedAt, Instant.parse("2026-09-28T00:00:00Z")),
+                java.util.List.of(observationIds), evidenceIds, "bunching-gap-v1");
+        return new ProducerEventSubmission("planning-event-v1", EventType.BUS_BUNCHING, "disruption", eventId,
+                disruptionId, "SIMULATION", demoRunId, Instant.parse("2026-09-28T00:00:00Z"),
+                "bunching-gap-v1", evidenceIds, facts);
+    }
+
+    private String submissionJson(UUID eventId, UUID disruptionId, UUID demoRunId, UUID[] observationIds) {
+        String eventEvidence = "\"bunching-alert-event:" + eventId + "\","
+                + java.util.Arrays.stream(observationIds).map(id -> "\"bus-arrival:" + id + "\"")
+                        .collect(java.util.stream.Collectors.joining(","));
+        String observationValues = java.util.Arrays.stream(observationIds).map(UUID::toString)
+                .map(id -> "\"" + id + "\"").collect(java.util.stream.Collectors.joining(","));
+        return """
+                {"schemaVersion":"planning-event-v1","eventType":"BUS_BUNCHING","producer":"disruption",
+                 "eventId":"%s","disruptionId":"%s","classification":"SIMULATION","demoRunId":"%s",
+                 "detectedAt":"2026-09-28T00:00:00Z","detectionRuleVersion":"bunching-gap-v1",
+                 "evidenceIds":[%s],"eventSnapshot":{"eventId":"%s","bunchingEventId":"%s",
+                 "classification":"SIMULATION","demoRunId":"%s","serviceId":"190","directionId":1,
+                 "monitoredStopCode":"44009","leadingObservationId":"%s","followingObservationId":"%s",
+                 "status":"CONFIRMED","expectedHeadwaySeconds":600,"observedHeadwaySeconds":[360,390],
+                 "firstConfirmedAt":"2026-09-27T23:55:00Z",
+                 "confirmingObservationTimes":["2026-09-27T23:55:00Z","2026-09-28T00:00:00Z"],
+                 "confirmingObservationIds":[%s],"evidenceIds":[%s],"detectionRuleVersion":"bunching-gap-v1"}}
+                """.formatted(eventId, disruptionId, demoRunId, eventEvidence, eventId, disruptionId, demoRunId,
+                observationIds[2], observationIds[3], observationValues, eventEvidence);
     }
 }

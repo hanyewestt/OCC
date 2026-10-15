@@ -2,6 +2,8 @@ package com.csd.occ.disruption.bunching.infrastructure.scheduling;
 
 import com.csd.occ.disruption.bunching.domain.DiagnosisOutboxClaim;
 import com.csd.occ.disruption.bunching.domain.DiagnosisOutboxService;
+import com.csd.occ.disruption.bunching.domain.PlanningEventSubmission;
+import com.csd.occ.disruption.bunching.domain.PlanningEventSubmissionPort;
 import com.csd.occ.disruption.bunching.domain.RetryBackoffPolicy;
 import com.csd.occ.disruption.bunching.infrastructure.config.DiagnosisOutboxProperties;
 import java.time.Clock;
@@ -23,11 +25,14 @@ public class BunchingDiagnosisDispatcher {
     private final DiagnosisOutboxProperties properties;
     private final RestClient client;
     private final Clock clock;
+    private final PlanningEventSubmissionPort submissions;
     private final RetryBackoffPolicy retryBackoff = new RetryBackoffPolicy();
 
     public BunchingDiagnosisDispatcher(DiagnosisOutboxService outbox, DiagnosisOutboxProperties properties,
-                                      @Qualifier("diagnosisRestClient") RestClient diagnosisRestClient, Clock clock) {
+                                      @Qualifier("diagnosisRestClient") RestClient diagnosisRestClient, Clock clock,
+                                      PlanningEventSubmissionPort submissions) {
         this.outbox = outbox; this.properties = properties; this.client = diagnosisRestClient; this.clock = clock;
+        this.submissions = submissions;
     }
 
     @Scheduled(fixedDelayString = "${occ.disruption.planning.delivery-interval}")
@@ -38,8 +43,25 @@ public class BunchingDiagnosisDispatcher {
 
     private void dispatch(DiagnosisOutboxClaim claim) {
         try {
+            if (!PlanningEventSubmission.SCHEMA_VERSION.equals(claim.schemaVersion()) || claim.payloadJson() == null) {
+                outbox.fail(claim.id(), null, "PLANNING_OUTBOX_PAYLOAD_INVALID");
+                return;
+            }
+            String computedFingerprint = submissions.fingerprint(claim.payloadJson(), claim.eventId());
+            if (claim.payloadFingerprint() == null) {
+                String persisted = outbox.retainFingerprintIfAbsent(claim.id(), computedFingerprint);
+                if (!computedFingerprint.equals(persisted)) {
+                    outbox.fail(claim.id(), null, "PLANNING_OUTBOX_FINGERPRINT_MISMATCH");
+                    return;
+                }
+            } else if (!computedFingerprint.equals(claim.payloadFingerprint())) {
+                outbox.fail(claim.id(), null, "PLANNING_OUTBOX_FINGERPRINT_MISMATCH");
+                return;
+            }
             int status = client.post().uri(DIAGNOSIS_PATH).header("Idempotency-Key", claim.id().toString())
-                    .body(new DiagnosisRequest("BUS_BUNCHING", "disruption", claim.eventId()))
+                    .header("X-OCC-Event-Fingerprint", computedFingerprint)
+                    .header("Content-Type", "application/json")
+                    .body(claim.payloadJson())
                     .exchange((request, response) -> response.getStatusCode().value());
             if (status == 202 || status == 200) {
                 outbox.delivered(claim.id(), status);
@@ -64,5 +86,4 @@ public class BunchingDiagnosisDispatcher {
         outbox.retry(claim.id(), status, code, retryAt);
     }
 
-    private record DiagnosisRequest(String eventType, String producer, UUID eventId) { }
 }

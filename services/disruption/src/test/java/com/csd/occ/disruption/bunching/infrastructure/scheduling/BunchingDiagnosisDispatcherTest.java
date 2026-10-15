@@ -1,6 +1,8 @@
 package com.csd.occ.disruption.bunching.infrastructure.scheduling;
 
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -13,6 +15,8 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 import com.csd.occ.disruption.bunching.domain.DiagnosisOutboxClaim;
 import com.csd.occ.disruption.bunching.domain.DiagnosisOutboxService;
+import com.csd.occ.disruption.bunching.domain.PlanningEventSubmission;
+import com.csd.occ.disruption.bunching.domain.PlanningEventSubmissionPort;
 import com.csd.occ.disruption.bunching.infrastructure.config.DiagnosisOutboxProperties;
 import java.io.IOException;
 import java.net.URI;
@@ -30,6 +34,8 @@ import org.springframework.web.client.RestClient;
 
 class BunchingDiagnosisDispatcherTest {
     private static final Instant NOW = Instant.parse("2026-09-28T00:00:00Z");
+    private static final String PAYLOAD = "{\"schemaVersion\":\"planning-event-v1\",\"eventType\":\"BUS_BUNCHING\"}";
+    private static final String FINGERPRINT = "a".repeat(64);
 
     @Test
     void acceptedRequestMarksOutboxItemDelivered() {
@@ -39,9 +45,9 @@ class BunchingDiagnosisDispatcherTest {
         fixture.server.expect(requestTo("http://diagnosis.test/internal/v1/planning/requests"))
                 .andExpect(method(HttpMethod.POST))
                 .andExpect(header("Idempotency-Key", claim.id().toString()))
-                .andExpect(content().json("""
-                        {"eventType":"BUS_BUNCHING","producer":"disruption","eventId":"%s"}
-                        """.formatted(claim.eventId())))
+                .andExpect(header("X-OCC-Event-Fingerprint", FINGERPRINT))
+                .andExpect(header("Content-Type", "application/json"))
+                .andExpect(content().string(PAYLOAD))
                 .andRespond(withStatus(HttpStatus.ACCEPTED));
 
         fixture.dispatcher.dispatchPending();
@@ -109,20 +115,23 @@ class BunchingDiagnosisDispatcherTest {
 
     private Fixture fixture(int maxAttempts) {
         DiagnosisOutboxService outbox = mock(DiagnosisOutboxService.class);
+        PlanningEventSubmissionPort submissions = mock(PlanningEventSubmissionPort.class);
+        when(submissions.fingerprint(anyString(), any(UUID.class))).thenReturn(FINGERPRINT);
         RestClient.Builder builder = RestClient.builder().baseUrl("http://diagnosis.test");
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         DiagnosisOutboxProperties properties = new DiagnosisOutboxProperties(URI.create("http://diagnosis.test"),
                 true, Duration.ofSeconds(2), Duration.ofSeconds(5), Duration.ofMinutes(1), 10, maxAttempts,
                 Duration.ofSeconds(2), Duration.ofSeconds(60));
         BunchingDiagnosisDispatcher dispatcher = new BunchingDiagnosisDispatcher(outbox, properties,
-                builder.build(), Clock.fixed(NOW, ZoneOffset.UTC));
-        return new Fixture(dispatcher, outbox, server);
+                builder.build(), Clock.fixed(NOW, ZoneOffset.UTC), submissions);
+        return new Fixture(dispatcher, outbox, server, submissions);
     }
 
     private DiagnosisOutboxClaim claim(int attempt) {
-        return new DiagnosisOutboxClaim(UUID.randomUUID(), UUID.randomUUID(), attempt);
+        return new DiagnosisOutboxClaim(UUID.randomUUID(), UUID.fromString("00000000-0000-0000-0000-000000000001"),
+                attempt, PAYLOAD, FINGERPRINT, PlanningEventSubmission.SCHEMA_VERSION);
     }
 
     private record Fixture(BunchingDiagnosisDispatcher dispatcher, DiagnosisOutboxService outbox,
-                           MockRestServiceServer server) { }
+                           MockRestServiceServer server, PlanningEventSubmissionPort submissions) { }
 }
