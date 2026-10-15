@@ -3,6 +3,9 @@ package com.csd.occ.ingestion.integration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.csd.occ.ingestion.domain.BusArrivalObservationRepository;
 import com.csd.occ.ingestion.domain.BusArrivalSnapshot;
@@ -28,8 +31,10 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.ActiveProfiles;
@@ -39,11 +44,12 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE,
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK,
         properties = {"spring.profiles.active=test", "occ.datamall.account-key=synthetic-key",
                 "occ.ingestion.import-reference-on-startup=false", "occ.ingestion.seed-targets-on-startup=false"})
 @ActiveProfiles("test")
 @Testcontainers(disabledWithoutDocker = true)
+@AutoConfigureMockMvc
 class IngestionStartupIT {
     @Container
     static final PostgreSQLContainer postgres = new PostgreSQLContainer(
@@ -63,6 +69,7 @@ class IngestionStartupIT {
     @MockitoBean DemoReplaySchedule demoReplaySchedule;
     @MockitoBean BunchingControlPort bunching;
     @Autowired JdbcTemplate jdbc;
+    @Autowired MockMvc mvc;
     @Autowired PollRunRepository runs;
     @Autowired RawObservationRepository observations;
     @Autowired BusArrivalObservationRepository arrivals;
@@ -104,6 +111,15 @@ class IngestionStartupIT {
             assertThat(observation.getFetchedAt()).isNotNull();
         });
         assertThat(bunchingFeed.page(0, 100).items()).hasSize(1);
+    }
+
+    @Test
+    void demoPageIsPublicButDemoApiRequiresAnAuthorizedUser() throws Exception {
+        mvc.perform(get("/demo.html"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith("text/html"));
+        mvc.perform(get("/api/v1/demo-mode"))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

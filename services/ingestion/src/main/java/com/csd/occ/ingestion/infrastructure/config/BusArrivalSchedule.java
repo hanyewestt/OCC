@@ -16,18 +16,24 @@ public class BusArrivalSchedule {
     private final ReferenceTopologyPort topology;
     private final ReferenceImportService imports;
     private final PollTargetService targets;
+    private final IngestionScheduleProperties scheduleProperties;
 
     public BusArrivalSchedule(BusArrivalService arrivals, ReferenceTopologyPort topology,
-            ReferenceImportService imports, PollTargetService targets) {
+            ReferenceImportService imports, PollTargetService targets,
+            IngestionScheduleProperties scheduleProperties) {
         this.arrivals = arrivals;
         this.topology = topology;
         this.imports = imports;
         this.targets = targets;
+        this.scheduleProperties = scheduleProperties;
     }
 
     @Scheduled(fixedRateString = "${occ.ingestion.schedule.bus-arrival-poll-interval}",
             initialDelayString = "${occ.ingestion.schedule.bus-arrival-initial-delay}")
     public void poll() {
+        if (!scheduleProperties.busArrivalEnabled()) {
+            return;
+        }
         if (topology.activeVersion().isEmpty() && !restoreReferenceTopology()) return;
         arrivals.poll();
     }

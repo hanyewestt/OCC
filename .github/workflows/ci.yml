@@ -195,6 +195,121 @@ jobs:
               "$OASDIFF_IMAGE" breaking --fail-on ERR "/baseline/openapi-baseline.json" "/workspace/${spec}"
           done < "$RUNNER_TEMP/openapi-changes.zlist"
 
+  nginx-edge-smoke:
+    name: Nginx public-edge black-box checks
+    runs-on: ubuntu-24.04
+    needs: verify
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Start isolated application stack
+        run: >-
+          docker compose -p occ-edge-ci --env-file .env.example
+          -f compose.yaml -f infra/compose.test.yaml up -d --build
+      - name: Configure an ephemeral local JWKS issuer for end-to-end role checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/system/create_es256_auth_fixtures.mjs "$RUNNER_TEMP/occ-edge-jwks"
+          mkdir -p "$RUNNER_TEMP/occ-edge-jwks-conf"
+          cat > "$RUNNER_TEMP/occ-edge-jwks-conf/default.conf" <<'EOF'
+          server {
+            listen 8080;
+            server_tokens off;
+            location = /auth/v1/.well-known/jwks.json {
+              default_type application/json;
+              alias /var/www/jwks.json;
+            }
+            location / { return 404; }
+          }
+          EOF
+          chmod 644 "$RUNNER_TEMP/occ-edge-jwks-conf/default.conf"
+          docker run --detach --name occ-edge-ci-jwks \
+            --user 101:101 --read-only --security-opt no-new-privileges --cap-drop ALL \
+            --tmpfs /var/cache/nginx:uid=101,gid=101,mode=0755 \
+            --tmpfs /var/log/nginx:uid=101,gid=101,mode=0755 \
+            --tmpfs /var/run:uid=101,gid=101,mode=0755 \
+            --tmpfs /tmp:uid=101,gid=101,mode=1777 \
+            --network occ-edge-ci_egress --network-alias jwks-test \
+            --mount "type=bind,source=$RUNNER_TEMP/occ-edge-jwks/auth/v1/.well-known,target=/var/www,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/occ-edge-jwks-conf,target=/etc/nginx/conf.d,readonly" \
+            --entrypoint nginx \
+            nginx:1.30.6-alpine@sha256:750f6c5456af731b47295d124fbed55664eeb1daab4f6bac0b092b7406235091 -g 'daemon off;'
+          jwks_ready=false
+          for attempt in $(seq 1 30); do
+            if docker compose -p occ-edge-ci --env-file .env.example \
+              -f compose.yaml -f infra/compose.test.yaml exec -T gateway \
+              curl --fail --silent http://jwks-test:8080/auth/v1/.well-known/jwks.json >/dev/null; then
+              jwks_ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$jwks_ready" != true ]]; then
+            docker logs occ-edge-ci-jwks
+            exit 1
+          fi
+          SUPABASE_PROJECT_URL=http://jwks-test:8080 \
+          SUPABASE_JWKS_URL=http://jwks-test:8080/auth/v1/.well-known/jwks.json \
+            docker compose -p occ-edge-ci --env-file .env.example \
+              -f compose.yaml -f infra/compose.test.yaml up -d --force-recreate \
+              gateway ingestion disruption planning
+      - name: Start pinned Nginx edge with a disposable test certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
+            -keyout "$RUNNER_TEMP/occ-edge-test.key" \
+            -out "$RUNNER_TEMP/occ-edge-test.crt" \
+            -subj "/CN=localhost"
+          chmod 644 "$RUNNER_TEMP/occ-edge-test.key" "$RUNNER_TEMP/occ-edge-test.crt"
+          docker run --detach --name occ-edge-ci-nginx \
+            --user 101:101 --read-only --security-opt no-new-privileges --cap-drop ALL \
+            --tmpfs /etc/nginx/conf.d:uid=101,gid=101,mode=0755 \
+            --tmpfs /var/cache/nginx:uid=101,gid=101,mode=0755 \
+            --tmpfs /var/run:uid=101,gid=101,mode=0755 \
+            --tmpfs /tmp:uid=101,gid=101,mode=1777 \
+            --network occ-edge-ci_edge --publish 127.0.0.1:18443:8443 \
+            --env 'NGINX_ENVSUBST_FILTER=^(OCC_GATEWAY_INTERNAL_URL|OCC_NGINX_SERVER_NAME|OCC_NGINX_CLIENT_MAX_BODY_SIZE|OCC_NGINX_RATE_LIMIT_PER_SECOND|OCC_NGINX_RATE_LIMIT_BURST|OCC_NGINX_RATE_LIMIT_ZONE_SIZE|OCC_NGINX_PROXY_CONNECT_TIMEOUT|OCC_NGINX_PROXY_READ_TIMEOUT|OCC_NGINX_PROXY_SEND_TIMEOUT)$' \
+            --env OCC_GATEWAY_INTERNAL_URL=http://gateway:8004 \
+            --env OCC_NGINX_SERVER_NAME=localhost \
+            --env OCC_NGINX_CLIENT_MAX_BODY_SIZE=1m \
+            --env OCC_NGINX_RATE_LIMIT_PER_SECOND=20r/s \
+            --env OCC_NGINX_RATE_LIMIT_BURST=40 \
+            --env OCC_NGINX_RATE_LIMIT_ZONE_SIZE=10m \
+            --env OCC_NGINX_PROXY_CONNECT_TIMEOUT=5s \
+            --env OCC_NGINX_PROXY_READ_TIMEOUT=30s \
+            --env OCC_NGINX_PROXY_SEND_TIMEOUT=30s \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/default.conf.template,target=/etc/nginx/templates/default.conf.template,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/occ-edge-test.crt,target=/run/secrets/occ_tls_certificate,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/occ-edge-test.key,target=/run/secrets/occ_tls_private_key,readonly" \
+            nginx:1.30.6-alpine@sha256:750f6c5456af731b47295d124fbed55664eeb1daab4f6bac0b092b7406235091
+          for attempt in $(seq 1 30); do
+            status=$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' \
+              https://127.0.0.1:18443/_occ_edge_health || true)
+            if [[ "$status" == 204 ]]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs occ-edge-ci-nginx
+          exit 1
+      - name: Verify TLS edge routing, access boundaries and rate limiting
+        run: >-
+          python3 tests/system/nginx_edge_smoke.py --base-url https://127.0.0.1:18443
+          --token-dir "$RUNNER_TEMP/occ-edge-jwks"
+      - name: Remove disposable containers and networks
+        if: always()
+        run: |
+          docker rm --force occ-edge-ci-nginx 2>/dev/null || true
+          docker rm --force occ-edge-ci-jwks 2>/dev/null || true
+          docker compose -p occ-edge-ci --env-file .env.example \
+            -f compose.yaml -f infra/compose.test.yaml down --remove-orphans
+          rm -rf "$RUNNER_TEMP/occ-edge-jwks" "$RUNNER_TEMP/occ-edge-jwks-conf" \
+            "$RUNNER_TEMP/occ-edge-test.key" "$RUNNER_TEMP/occ-edge-test.crt"
+
   container-scan:
     name: Build and scan ${{ matrix.service }}
     runs-on: ubuntu-24.04
@@ -253,5 +368,42 @@ jobs:
           path: |
             ${{ runner.temp }}/trivy-${{ matrix.service }}.txt
             ${{ runner.temp }}/sbom-${{ matrix.service }}.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  nginx-container-scan:
+    name: Scan pinned Nginx edge image
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Pull pinned Nginx edge image
+        run: docker pull nginx:1.30.6-alpine@sha256:750f6c5456af731b47295d124fbed55664eeb1daab4f6bac0b092b7406235091
+      - name: Fail on HIGH or CRITICAL OS/library findings
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: nginx:1.30.6-alpine@sha256:750f6c5456af731b47295d124fbed55664eeb1daab4f6bac0b092b7406235091
+          version: v0.76.0
+          format: table
+          output: ${{ runner.temp }}/trivy-nginx.txt
+          exit-code: '1'
+          ignore-unfixed: 'false'
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - name: Generate Nginx image SBOM
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: nginx:1.30.6-alpine@sha256:750f6c5456af731b47295d124fbed55664eeb1daab4f6bac0b092b7406235091
+          version: v0.76.0
+          format: cyclonedx
+          output: ${{ runner.temp }}/sbom-nginx.json
+          exit-code: '0'
+      - name: Upload Nginx scan report and SBOM
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-security-nginx
+          path: |
+            ${{ runner.temp }}/trivy-nginx.txt
+            ${{ runner.temp }}/sbom-nginx.json
           if-no-files-found: warn
           retention-days: 7

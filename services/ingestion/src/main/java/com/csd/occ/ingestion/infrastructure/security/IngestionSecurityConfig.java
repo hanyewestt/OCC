@@ -34,6 +34,7 @@ public class IngestionSecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         .requestMatchers("/actuator/**").denyAll()
+                        .requestMatchers(HttpMethod.GET, "/demo.html").permitAll()
                         .requestMatchers(HttpMethod.GET, "/internal/v1/arrival-snapshots/**",
                                 "/internal/v1/demo-runs/*/arrival-snapshots/**", "/internal/v1/traffic-incident-polls")
                         .hasAuthority(PeerCapabilityAuthenticationFilter.DISRUPTION_AUTHORITY)

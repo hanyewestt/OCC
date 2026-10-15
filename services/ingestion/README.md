@@ -87,7 +87,9 @@ Compose runs the `ingestion-migrate` Flyway job before starting the service; Hib
 
 If the active reference topology is absent, the scheduler first retries the reference import and target seeding. If that import fails, it skips the poll cycle without sending per-stop arrival requests; the terminal log records the single import failure.
 
-The polling schedule is externally configurable: `OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL`
+The arrival poller is enabled by `OCC_INGESTION_BUS_ARRIVAL_ENABLED` (default `true`);
+set it to `false` in an isolated test stack to prevent calls to DataMall. When enabled,
+its schedule is externally configurable: `OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL`
 and `OCC_INGESTION_BUS_ARRIVAL_INITIAL_DELAY` default to `60s`; retention cleanup uses
 `OCC_INGESTION_RETENTION_INTERVAL=1h` after `OCC_INGESTION_RETENTION_INITIAL_DELAY=5m`.
 Poll intervals are validated from 1 second to 1 hour and retention intervals from

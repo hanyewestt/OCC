@@ -8,6 +8,8 @@ Read the [local development guide](docs/LOCAL-DEVELOPMENT.md).
 The production edge, immutable image inputs, and TLS file mapping are prepared
 in [`infra/compose.production.yaml`](infra/compose.production.yaml); set real
 registry digests and operator-managed certificates before deploying.
+Use the [deployment and recovery runbook](docs/DEPLOYMENT-AND-RECOVERY.md) for
+the single-host cutover, backup, restore, and rollback procedure.
 
 ## Build and verify the Phase 1 service reactor
 

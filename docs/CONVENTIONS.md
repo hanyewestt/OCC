@@ -283,6 +283,6 @@ Never log a password, token, MFA secret, verification code, or session identifie
 
 ## 9. Git workflow
 
-Follow the repository-wide [`commit-convention.md`](docs/commit-convention.md)
+Follow the repository-wide [`commit-convention.md`](commit-convention.md)
 for commit messages and Git workflow. Before committing service code, run
 `mvn verify` and state what was or was not verified in the commit body.

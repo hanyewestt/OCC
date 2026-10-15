@@ -333,7 +333,8 @@ volumes:
 
 networks:
   edge:
-    internal: true
+    # Nginx needs a host-published ingress port; only Nginx publishes one.
+    internal: false
   app:
   database:
     internal: true

@@ -57,6 +57,7 @@ occ:
     stale-after-seconds: ${OCC_INGESTION_STALE_AFTER_SECONDS:180}
     retention: ${OCC_INGESTION_RETENTION:12h}
     schedule:
+      bus-arrival-enabled: ${OCC_INGESTION_BUS_ARRIVAL_ENABLED:true}
       bus-arrival-poll-interval: ${OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL:60s}
       bus-arrival-initial-delay: ${OCC_INGESTION_BUS_ARRIVAL_INITIAL_DELAY:60s}
       retention-interval: ${OCC_INGESTION_RETENTION_INTERVAL:1h}

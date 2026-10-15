@@ -4,7 +4,7 @@ import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties("occ.ingestion.schedule")
-public record IngestionScheduleProperties(Duration busArrivalPollInterval,
+public record IngestionScheduleProperties(boolean busArrivalEnabled, Duration busArrivalPollInterval,
         Duration busArrivalInitialDelay, Duration retentionInterval, Duration retentionInitialDelay) {
     public IngestionScheduleProperties {
         bounded(busArrivalPollInterval, Duration.ofSeconds(1), Duration.ofHours(1), "bus-arrival-poll-interval");
