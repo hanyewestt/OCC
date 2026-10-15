@@ -13,6 +13,7 @@ import com.csd.occ.disruption.traffic.domain.TrafficIncidentReadService;
 import com.csd.occ.disruption.traffic.domain.TrafficIncidentState;
 import com.csd.occ.disruption.traffic.domain.TrafficIncidentSyncService;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -179,7 +180,7 @@ class TrafficIncidentLifecycleIT {
         Instant savedCursor = jdbc.queryForObject(
                 "SELECT completed_at FROM disruption.traffic_poll_checkpoint WHERE id=1",
                 (result, row) -> result.getTimestamp(1).toInstant());
-        assertThat(savedCursor).isEqualTo(start);
+        assertThat(Duration.between(start, savedCursor).abs()).isLessThanOrEqualTo(Duration.ofNanos(500));
         assertThat(eventActions()).containsExactly("OPENED");
         assertThat(count("disruption.event_evidence")).isEqualTo(1);
         assertThat(count("disruption.planning_outbox")).isEqualTo(1);
@@ -194,9 +195,10 @@ class TrafficIncidentLifecycleIT {
 
     private TrafficIncidentPollPort.TrafficIncidentFact fact(UUID id, String key, String type, String message,
             Instant at, UUID demoRunId) {
+        String classification = demoRunId == null ? "OBSERVATION_ONLY" : "SIMULATION";
         return new TrafficIncidentPollPort.TrafficIncidentFact(id, UUID.randomUUID(), key, type, message,
                 new BigDecimal("1.3802550"), new BigDecimal("103.7550750"), at.minusMillis(200), at,
-                "SIMULATION", demoRunId);
+                classification, demoRunId);
     }
 
     private int count(String table) { return jdbc.queryForObject("SELECT count(*) FROM " + table, Integer.class); }

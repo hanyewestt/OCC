@@ -1,10 +1,11 @@
 # Phase 1 traffic lifecycle and Planning dispatch
 
 Implementation status: typed traffic lifecycle submission and the Planning
-no-action result are implemented. Unit and MVC tests passed on 15 October 2026.
-Database-backed and Compose execution remain pending.
+no-action result are implemented. The database-backed integration tests passed
+on 15 October 2026. Full Compose system delivery remains pending because Docker
+Desktop's engine stopped during the Compose smoke run.
 
-Disruption now creates a versioned `TRAFFIC_INCIDENT` Planning envelope and a
+Disruption creates a versioned `TRAFFIC_INCIDENT` Planning envelope and a
 durable outbox row in the same transaction as each `OPENED`, `UPDATED`, or
 `CLEARED` event and its evidence. The envelope carries the event and disruption
 IDs, lifecycle action, classification/demo scope, source observation and poll
@@ -22,38 +23,28 @@ recommendation policy. Bunching submissions keep the existing workflow.
 Verification run:
 
 ```text
-.\mvnw.cmd -pl services/disruption,services/planning -am -DskipITs verify
-BUILD SUCCESS; Disruption 56 tests, Planning 71 tests; coverage gates passed.
+.\mvnw.cmd -pl services/ingestion,services/gateway,services/disruption,services/planning verify
+BUILD SUCCESS; 200 Surefire tests and 52 Failsafe integration tests passed.
+Ingestion, Disruption and Planning coverage gates passed.
 ```
 
-The command compiled the integration-test sources and ran all Surefire tests.
-Failsafe integration execution was explicitly skipped. The two focused suites
-also passed: `TrafficIncidentSyncServiceTest` and
-`JacksonPlanningEventSubmissionAdapterTest` (5 tests total), plus
-`DiagnosisRequestServiceTest` and `DiagnosisRequestControllerTest` (11 tests
-total).
+This run included PostgreSQL-backed lifecycle, persistence and receiver
+integration tests. `TrafficIncidentLifecycleIT` passed all four tests after
+fixing two test assumptions: PostgreSQL `TIMESTAMPTZ` precision is microseconds,
+and live facts use `OBSERVATION_ONLY` classification while demo facts use
+`SIMULATION`. No integration-test suite was skipped in this successful run.
 
-The complete four-service root reactor was then verified with
-`mvnw.cmd -pl services/ingestion,services/gateway,services/disruption,services/planning -am -DskipITs verify`:
-56 Ingestion, 56 Disruption, 71 Planning and 17 Gateway Surefire tests passed.
-Coverage gates passed for Ingestion, Disruption and Planning. Failsafe remained
-skipped because Docker and local database/service ports were unavailable.
+The Compose smoke run used an isolated project and synthetic ES256 auth/JWKS
+fixtures, not real Supabase credentials. All four application/migration images
+built; database bootstrap and all schema migrations completed, and Ingestion
+became healthy. Docker Desktop then returned Engine errors and stopped before
+the complete edge-to-service workflow could be verified. After restart, the
+Desktop UI reported a Windows `dockerInference` socket initialization error,
+and the Docker Engine pipe was unavailable. The user is resetting containers
+and volumes; rebuild and rerun the full Compose workflow after the Engine is
+available.
 
-The following tests are present but still need execution against PostgreSQL and
-the full Compose topology:
-
-- `TrafficIncidentLifecycleIT`: verifies OPENED/UPDATED/CLEARED outbox rows,
-  incomplete-feed behavior, LIVE/DEMO isolation and transaction rollback when
-  evidence encoding fails.
-- `DiagnosisRequestPersistenceIT`: verifies durable no-action result, retained
-  traffic snapshot, idempotent replay and absence of diagnosis/recommendation
-  rows.
-- Full Disruption-to-Planning outbox delivery and queryable request status.
-
-On this run, `docker version` did not return within the bounded wait, and
-`http://localhost:6768/v3/api-docs` and
-`http://localhost:6769/v3/api-docs` did not respond. The checked-in generated
-Planning OpenAPI contract has therefore not yet been refreshed for the additive
-traffic request fields and `policyOutcome` response field. Do not mark A07 or
-the API-contract portion of A11 complete until the database/system tests and
-generated-contract review pass.
+The checked-in generated Planning OpenAPI contract has not yet been refreshed
+for the additive traffic request fields and `policyOutcome` response field.
+Do not mark A07 or the API-contract portion of A11 complete until a full Compose
+delivery run and generated-contract review pass.
