@@ -26,4 +26,5 @@ server:
   port: 0
 spring:
   flyway:
+    enabled: true
     create-schemas: true

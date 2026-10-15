@@ -9,6 +9,10 @@ spring:
       server:
         webmvc:
           routes:
+            - id: ingestion-demo-page
+              uri: ${OCC_INGESTION_INTERNAL_URL}
+              predicates:
+                - Path=/demo.html
             - id: ingestion-api
               uri: ${OCC_INGESTION_INTERNAL_URL}
               predicates:
@@ -23,6 +27,10 @@ spring:
               uri: ${OCC_PLANNING_INTERNAL_URL}
               predicates:
                 - Path=/api/v1/planning/**
+            - id: ingestion-root-api
+              uri: ${OCC_INGESTION_INTERNAL_URL}
+              predicates:
+                - Path=/api/v1/**
 server:
   port: ${OCC_GATEWAY_INTERNAL_PORT}
 occ:

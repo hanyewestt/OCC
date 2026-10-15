@@ -1,5 +1,7 @@
-# Local OCC MVP stack. Run from the repository root with the ignored .env.
-# Compose apps call service DNS/internal ports; host ports are for local testing.
+name: local
+
+# Canonical OCC stack. Compose apps call service DNS/internal ports. The default
+# local override adds image builds and loopback-only host ports.
 
 x-supabase-environment: &supabase-environment
   SUPABASE_PROJECT_URL: ${SUPABASE_PROJECT_URL:?set the Supabase project URL}
@@ -7,6 +9,12 @@ x-supabase-environment: &supabase-environment
   SUPABASE_JWT_AUDIENCE: ${SUPABASE_JWT_AUDIENCE:-authenticated}
   SUPABASE_JWT_CLOCK_SKEW: ${SUPABASE_JWT_CLOCK_SKEW:-30s}
   SUPABASE_JWT_ALLOWED_ALGORITHMS: ${SUPABASE_JWT_ALLOWED_ALGORITHMS:-ES256}
+
+x-flyway-environment: &flyway-environment
+  FLYWAY_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}
+  FLYWAY_CREATE_SCHEMAS: "false"
+  FLYWAY_CONNECT_RETRIES: ${OCC_DB_MIGRATION_CONNECT_RETRIES:-60}
+  FLYWAY_VALIDATE_MIGRATION_NAMING: "true"
 
 services:
   postgres:
@@ -18,10 +26,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       TZ: UTC
       PGTZ: UTC
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - occ_pgdata:/var/lib/postgresql
+    networks: [database]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: ${OCC_HEALTHCHECK_INTERVAL:-10s}
@@ -31,40 +38,104 @@ services:
 
   db-bootstrap:
     image: postgis/postgis:18-3.6@sha256:7e00e8c3539fdd43f513b98806c8204714dcd09dea683c259e333d7690317119
-    entrypoint: ["bash"]
-    command: ["/bootstrap.sh"]
+    entrypoint: ["psql"]
+    command: ["--no-psqlrc", "--host=postgres", "--username=${POSTGRES_USER:-occ_admin}", "--dbname=${POSTGRES_DB:-occ}", "--set=ON_ERROR_STOP=1", "--file=/bootstrap/bootstrap.sql"]
     restart: "no"
     environment:
       PGHOST: postgres
       POSTGRES_DB: ${POSTGRES_DB:-occ}
       POSTGRES_USER: ${POSTGRES_USER:-occ_admin}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      OCC_INGESTION_DB_USERNAME: ${OCC_INGESTION_DB_USERNAME:-occ_ingestion}
       OCC_INGESTION_DB_PASSWORD: ${OCC_INGESTION_DB_PASSWORD:?set OCC_INGESTION_DB_PASSWORD in .env}
+      OCC_INGESTION_DB_MIGRATOR_USERNAME: ${OCC_INGESTION_DB_MIGRATOR_USERNAME:-occ_ingestion_migrator}
+      OCC_INGESTION_DB_MIGRATOR_PASSWORD: ${OCC_INGESTION_DB_MIGRATOR_PASSWORD:?set OCC_INGESTION_DB_MIGRATOR_PASSWORD in .env}
+      OCC_DISRUPTION_DB_USERNAME: ${OCC_DISRUPTION_DB_USERNAME:-occ_disruption}
       OCC_DISRUPTION_DB_PASSWORD: ${OCC_DISRUPTION_DB_PASSWORD:?set OCC_DISRUPTION_DB_PASSWORD in .env}
+      OCC_DISRUPTION_DB_MIGRATOR_USERNAME: ${OCC_DISRUPTION_DB_MIGRATOR_USERNAME:-occ_disruption_migrator}
+      OCC_DISRUPTION_DB_MIGRATOR_PASSWORD: ${OCC_DISRUPTION_DB_MIGRATOR_PASSWORD:?set OCC_DISRUPTION_DB_MIGRATOR_PASSWORD in .env}
+      OCC_PLANNING_DB_USERNAME: ${OCC_PLANNING_DB_USERNAME:-occ_planning}
       OCC_PLANNING_DB_PASSWORD: ${OCC_PLANNING_DB_PASSWORD:?set OCC_PLANNING_DB_PASSWORD in .env}
+      OCC_PLANNING_DB_MIGRATOR_USERNAME: ${OCC_PLANNING_DB_MIGRATOR_USERNAME:-occ_planning_migrator}
+      OCC_PLANNING_DB_MIGRATOR_PASSWORD: ${OCC_PLANNING_DB_MIGRATOR_PASSWORD:?set OCC_PLANNING_DB_MIGRATOR_PASSWORD in .env}
     volumes:
-      - ./postgres/bootstrap.sh:/bootstrap.sh:ro
+      - ./infra/postgres/bootstrap.sql:/bootstrap/bootstrap.sql:ro
+    networks: [database]
     depends_on:
       postgres:
         condition: service_healthy
 
+  ingestion-migrate:
+    image: occ-ingestion-migrations:local
+    entrypoint: ["flyway"]
+    command: ["migrate"]
+    restart: "no"
+    environment:
+      <<: *flyway-environment
+      FLYWAY_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}?options=-c%20role%3Docc_ingestion_owner
+      FLYWAY_USER: ${OCC_INGESTION_DB_MIGRATOR_USERNAME:-occ_ingestion_migrator}
+      FLYWAY_PASSWORD: ${OCC_INGESTION_DB_MIGRATOR_PASSWORD:?set OCC_INGESTION_DB_MIGRATOR_PASSWORD in .env}
+      FLYWAY_DEFAULT_SCHEMA: ingestion
+      FLYWAY_SCHEMAS: ingestion
+      FLYWAY_LOCATIONS: filesystem:/migrations
+      FLYWAY_CALLBACK_LOCATIONS: filesystem:/callbacks
+      FLYWAY_PLACEHOLDERS_OCC_INGESTION_DB_USERNAME: ${OCC_INGESTION_DB_USERNAME:-occ_ingestion}
+    networks: [database]
+    depends_on:
+      db-bootstrap:
+        condition: service_completed_successfully
+
+  disruption-migrate:
+    image: occ-disruption-migrations:local
+    entrypoint: ["flyway"]
+    command: ["migrate"]
+    restart: "no"
+    environment:
+      <<: *flyway-environment
+      FLYWAY_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}?options=-c%20role%3Docc_disruption_owner
+      FLYWAY_USER: ${OCC_DISRUPTION_DB_MIGRATOR_USERNAME:-occ_disruption_migrator}
+      FLYWAY_PASSWORD: ${OCC_DISRUPTION_DB_MIGRATOR_PASSWORD:?set OCC_DISRUPTION_DB_MIGRATOR_PASSWORD in .env}
+      FLYWAY_DEFAULT_SCHEMA: disruption
+      FLYWAY_SCHEMAS: disruption
+      FLYWAY_LOCATIONS: filesystem:/migrations
+      FLYWAY_CALLBACK_LOCATIONS: filesystem:/callbacks
+      FLYWAY_PLACEHOLDERS_OCC_DISRUPTION_DB_USERNAME: ${OCC_DISRUPTION_DB_USERNAME:-occ_disruption}
+    networks: [database]
+    depends_on:
+      db-bootstrap:
+        condition: service_completed_successfully
+
+  planning-migrate:
+    image: occ-planning-migrations:local
+    entrypoint: ["flyway"]
+    command: ["migrate"]
+    restart: "no"
+    environment:
+      <<: *flyway-environment
+      FLYWAY_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}?options=-c%20role%3Docc_planning_owner
+      FLYWAY_USER: ${OCC_PLANNING_DB_MIGRATOR_USERNAME:-occ_planning_migrator}
+      FLYWAY_PASSWORD: ${OCC_PLANNING_DB_MIGRATOR_PASSWORD:?set OCC_PLANNING_DB_MIGRATOR_PASSWORD in .env}
+      FLYWAY_DEFAULT_SCHEMA: planning
+      FLYWAY_SCHEMAS: planning
+      FLYWAY_LOCATIONS: filesystem:/migrations
+      FLYWAY_CALLBACK_LOCATIONS: filesystem:/callbacks
+      FLYWAY_PLACEHOLDERS_OCC_PLANNING_DB_USERNAME: ${OCC_PLANNING_DB_USERNAME:-occ_planning}
+    networks: [database]
+    depends_on:
+      db-bootstrap:
+        condition: service_completed_successfully
+
   ingestion:
     image: occ-ingestion:local
-    build:
-      context: ../..
-      dockerfile: infra/java.Dockerfile
-      args:
-        OCC_SERVICE: ingestion
-        OCC_SERVICE_INTERNAL_PORT: ${OCC_INGESTION_INTERNAL_PORT:-8001}
     restart: unless-stopped
     environment:
       <<: *supabase-environment
       OCC_INGESTION_INTERNAL_PORT: ${OCC_INGESTION_INTERNAL_PORT:-8001}
-      OCC_INGESTION_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}
+      OCC_INGESTION_DB_INTERNAL_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}
       OCC_INGESTION_DB_USERNAME: ${OCC_INGESTION_DB_USERNAME:-occ_ingestion}
       OCC_INGESTION_DB_PASSWORD: ${OCC_INGESTION_DB_PASSWORD:?set OCC_INGESTION_DB_PASSWORD in .env}
       OCC_INGESTION_JPA_DDL_AUTO: ${OCC_INGESTION_JPA_DDL_AUTO:-validate}
-      OCC_INGESTION_FLYWAY_ENABLED: ${OCC_INGESTION_FLYWAY_ENABLED:-true}
       OCC_INGESTION_MONITORED_SERVICES: ${OCC_INGESTION_MONITORED_SERVICES:-190,972}
       OCC_INGESTION_STALE_AFTER_SECONDS: ${OCC_INGESTION_STALE_AFTER_SECONDS:-180}
       OCC_INGESTION_RETENTION: ${OCC_INGESTION_RETENTION:-12h}
@@ -92,10 +163,9 @@ services:
       OCC_INGESTION_TO_PLANNING_PEER_TOKEN: ${OCC_INGESTION_TO_PLANNING_PEER_TOKEN:?set peer token in .env}
       OCC_DISRUPTION_TO_INGESTION_PEER_TOKEN: ${OCC_DISRUPTION_TO_INGESTION_PEER_TOKEN:?set peer token in .env}
       OCC_PLANNING_TO_INGESTION_PEER_TOKEN: ${OCC_PLANNING_TO_INGESTION_PEER_TOKEN:?set peer token in .env}
-    ports:
-      - "${OCC_INGESTION_PORT:-6767}:${OCC_INGESTION_INTERNAL_PORT:-8001}"
+    networks: [app, database, egress]
     depends_on:
-      db-bootstrap:
+      ingestion-migrate:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:$${OCC_INGESTION_INTERNAL_PORT}/actuator/health/readiness >/dev/null"]
@@ -106,12 +176,6 @@ services:
 
   disruption:
     image: occ-disruption:local
-    build:
-      context: ../..
-      dockerfile: infra/java.Dockerfile
-      args:
-        OCC_SERVICE: disruption
-        OCC_SERVICE_INTERNAL_PORT: ${OCC_DISRUPTION_INTERNAL_PORT:-8002}
     restart: unless-stopped
     environment:
       <<: *supabase-environment
@@ -150,10 +214,9 @@ services:
       OCC_DISRUPTION_TO_PLANNING_PEER_TOKEN: ${OCC_DISRUPTION_TO_PLANNING_PEER_TOKEN:?set peer token in .env}
       OCC_INGESTION_TO_DISRUPTION_PEER_TOKEN: ${OCC_INGESTION_TO_DISRUPTION_PEER_TOKEN:?set peer token in .env}
       OCC_PLANNING_TO_DISRUPTION_PEER_TOKEN: ${OCC_PLANNING_TO_DISRUPTION_PEER_TOKEN:?set peer token in .env}
-    ports:
-      - "${OCC_DISRUPTION_PORT:-6768}:${OCC_DISRUPTION_INTERNAL_PORT:-8002}"
+    networks: [app, database, egress]
     depends_on:
-      db-bootstrap:
+      disruption-migrate:
         condition: service_completed_successfully
       ingestion:
         condition: service_healthy
@@ -166,12 +229,6 @@ services:
 
   planning:
     image: occ-planning:local
-    build:
-      context: ../..
-      dockerfile: infra/java.Dockerfile
-      args:
-        OCC_SERVICE: planning
-        OCC_SERVICE_INTERNAL_PORT: ${OCC_PLANNING_INTERNAL_PORT:-8003}
     restart: unless-stopped
     environment:
       <<: *supabase-environment
@@ -216,10 +273,9 @@ services:
       OCC_INGESTION_TO_PLANNING_PEER_TOKEN: ${OCC_INGESTION_TO_PLANNING_PEER_TOKEN:?set peer token in .env}
       OCC_PLANNING_TO_INGESTION_PEER_TOKEN: ${OCC_PLANNING_TO_INGESTION_PEER_TOKEN:?set peer token in .env}
       OCC_PLANNING_TO_DISRUPTION_PEER_TOKEN: ${OCC_PLANNING_TO_DISRUPTION_PEER_TOKEN:?set peer token in .env}
-    ports:
-      - "${OCC_PLANNING_PORT:-6769}:${OCC_PLANNING_INTERNAL_PORT:-8003}"
+    networks: [app, database, egress]
     depends_on:
-      db-bootstrap:
+      planning-migrate:
         condition: service_completed_successfully
       ingestion:
         condition: service_healthy
@@ -232,12 +288,6 @@ services:
 
   gateway:
     image: occ-gateway:local
-    build:
-      context: ../..
-      dockerfile: infra/java.Dockerfile
-      args:
-        OCC_SERVICE: gateway
-        OCC_SERVICE_INTERNAL_PORT: ${OCC_GATEWAY_INTERNAL_PORT:-8004}
     restart: unless-stopped
     environment:
       <<: *supabase-environment
@@ -246,8 +296,7 @@ services:
       OCC_INGESTION_INTERNAL_URL: http://ingestion:${OCC_INGESTION_INTERNAL_PORT:-8001}
       OCC_DISRUPTION_INTERNAL_URL: http://disruption:${OCC_DISRUPTION_INTERNAL_PORT:-8002}
       OCC_PLANNING_INTERNAL_URL: http://planning:${OCC_PLANNING_INTERNAL_PORT:-8003}
-    ports:
-      - "${OCC_GATEWAY_PORT:-6770}:${OCC_GATEWAY_INTERNAL_PORT:-8004}"
+    networks: [edge, app, egress]
     depends_on:
       ingestion:
         condition: service_healthy
@@ -270,11 +319,10 @@ services:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@example.com}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?set PGADMIN_DEFAULT_PASSWORD in .env}
       PGADMIN_DISABLE_POSTFIX: "true"
-    ports:
-      - "${PGADMIN_PORT:-6700}:80"
     volumes:
       - occ_pgadmin:/var/lib/pgadmin
-      - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - ./infra/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    networks: [database]
     depends_on:
       postgres:
         condition: service_healthy
@@ -282,3 +330,11 @@ services:
 volumes:
   occ_pgdata:
   occ_pgadmin:
+
+networks:
+  edge:
+    internal: true
+  app:
+  database:
+    internal: true
+  egress:

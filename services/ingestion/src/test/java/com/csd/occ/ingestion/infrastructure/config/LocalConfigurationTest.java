@@ -37,7 +37,7 @@ class LocalConfigurationTest {
         Files.writeString(temporaryRepository.resolve(".env"),
                 "OCC_INGESTION_DB_PASSWORD=synthetic-password\nDATAMALL_API_KEY=synthetic-key\n"
                 + "POSTGRES_DB=synthetic_db\nPOSTGRES_PORT=5544\n"
-                + (profile.equals("override") ? "OCC_INGESTION_DB_URL=jdbc:postgresql://example.test/override\n" : ""));
+                + (profile.equals("override") ? "OCC_INGESTION_DB_PUBLIC_URL=jdbc:postgresql://example.test/override\n" : ""));
         String separator = System.getProperty("path.separator");
         String classpath = Arrays.stream(System.getProperty("java.class.path").split(separator))
                 .map(entry -> Path.of(entry).toAbsolutePath().toString()).collect(Collectors.joining(separator));

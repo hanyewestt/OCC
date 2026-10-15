@@ -78,6 +78,26 @@ class GatewayRoutesTest {
     }
 
     @Test
+    void preservesExistingUnprefixedIngestionApiForTheDemoPage() {
+        ResponseEntity<String> response = get("/api/v1/arrivals", "CONTROLLER");
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getBody()).isEqualTo("/api/v1/arrivals");
+        assertThat(lastBackendPath.get()).isEqualTo("/api/v1/arrivals");
+    }
+
+    @Test
+    void servesTheExistingDemoPageThroughTheGatewayWithoutAuthentication() {
+        String url = "http://localhost:" + applicationContext.getEnvironment().getProperty("local.server.port")
+                + "/demo.html";
+        ResponseEntity<String> response = rest.getForEntity(URI.create(url), String.class);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getBody()).isEqualTo("/demo.html");
+        assertThat(lastBackendPath.get()).isEqualTo("/demo.html");
+    }
+
+    @Test
     void rejectsDriverBeforeForwardingToABackend() {
         lastBackendPath.set(null);
         ResponseEntity<String> response = get("/api/v1/disruption/bunching-alerts", "DRIVER");

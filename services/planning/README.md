@@ -35,7 +35,7 @@ Remove-Item Env:OCC_OPENAPI_EXPORT_TOKEN
 This updates `services/planning/openapi/planning.json` from the running API.
 Never save the token in `.env` or commit it.
 
-Start the local database using [the local setup guide](../../infra/local/README.md),
+Start the local database using [the local setup guide](../../docs/LOCAL-DEVELOPMENT.md),
 then run Planning from its service directory:
 
 ```powershell

@@ -32,6 +32,8 @@ jobs:
             .mvn/wrapper/maven-wrapper.properties
             pom.xml
             services/*/pom.xml
+      - name: Require the container runtime for database integration tests
+        run: docker info
       - name: Run the required four-service reactor
         run: ./mvnw --batch-mode --no-transfer-progress clean verify
         env:
@@ -69,8 +71,16 @@ jobs:
                   completed = 0
                   if summary.is_file():
                       completed = int(ET.parse(summary).getroot().findtext("completed", "0"))
-                  print(f"{module} integration: completed={completed}")
-                  valid &= completed > 0
+                  integration_reports = sorted((base / "failsafe-reports").glob("TEST-*.xml"))
+                  integration = {key: 0 for key in ("tests", "failures", "errors", "skipped")}
+                  for report in integration_reports:
+                      suite = ET.parse(report).getroot()
+                      for key in integration:
+                          integration[key] += int(suite.attrib.get(key, "0"))
+                  print(f"{module} integration: completed={completed}; {integration}; report_files={len(integration_reports)}")
+                  valid &= completed > 0 and bool(integration_reports) and integration["tests"] > 0
+                  valid &= integration["failures"] == 0 and integration["errors"] == 0
+                  valid &= integration["skipped"] == 0
               if not valid:
                   failed = True
           if failed:
@@ -99,7 +109,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Validate the safe example Compose configuration
-        run: docker compose --env-file .env.example -f infra/local/compose.yaml config -q
+        run: docker compose --env-file .env.example config -q
       - name: Validate generated contracts and source-to-target migration map
         shell: bash
         env:
@@ -219,6 +229,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ matrix.image }}
+          version: v0.76.0
           format: table
           output: ${{ runner.temp }}/trivy-${{ matrix.service }}.txt
           exit-code: '1'
@@ -230,6 +241,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ matrix.image }}
+          version: v0.76.0
           format: cyclonedx
           output: ${{ runner.temp }}/sbom-${{ matrix.service }}.json
           exit-code: '0'

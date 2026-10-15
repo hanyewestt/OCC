@@ -55,14 +55,6 @@ class GatewayAuthorizationTest {
     }
 
     @Test
-    void permitsControllerRolePastTheAuthorizationBoundary() throws Exception {
-        mvc.perform(get("/api/v1/unmapped-test-route")
-                        .with(jwt().jwt(token -> token.claim("occ_role", "CONTROLLER"))
-                                .authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"))))
-                .andExpect(status().isNotFound());
-    }
-
-    @Test
     void deniesPeerEndpointsAtThePublicGateway() throws Exception {
         mvc.perform(get("/internal/v1/ingestion/arrival-snapshots")
                         .with(jwt().jwt(token -> token.claim("occ_role", "ADMIN"))

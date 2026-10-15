@@ -181,7 +181,7 @@ Use the Maven wrapper in each runnable service (`mvnw` / `mvnw.cmd`), pinned by 
 
 Local development uses one ignored repository-root `.env`, documented by the root `.env.example`. `application-local.yml` imports that file using a path relative to its service directory: `optional:file:../../.env[.properties]` for `services/<service-name>` and `optional:file:../../../.env[.properties]` for `services/<domain>/<service-name>`. Run with the `local` profile and the service directory as working directory. Use unquoted values compatible with both Java properties and Compose. Do not put the local import in the default deployment configuration.
 
-Run the canonical Compose file from the root with `docker compose --env-file .env -f infra/local/compose.yaml up -d`. Explicitly map only required database variables into PostgreSQL. Deployment supplies each service's own environment variables rather than the shared local file.
+Run the canonical root stack with `docker compose --env-file .env up -d`; Compose also loads the root `compose.override.yaml` for local builds and host ports. Database bootstrap and per-schema Flyway jobs run before their owning applications. Runtime database credentials cannot perform DDL; deployment supplies each service's own runtime environment rather than the shared local file.
 
 Scheduling and startup callbacks belong in `infrastructure/config`; they delegate to domain services. Domain services access external systems through ports implemented by provider adapters.
 

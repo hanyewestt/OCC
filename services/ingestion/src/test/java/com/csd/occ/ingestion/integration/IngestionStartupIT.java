@@ -22,7 +22,6 @@ import com.csd.occ.ingestion.domain.RawObservationRepository;
 import com.csd.occ.ingestion.infrastructure.config.BusArrivalSchedule;
 import com.csd.occ.ingestion.infrastructure.config.DemoReplaySchedule;
 import com.csd.occ.ingestion.infrastructure.datamall.DataMallAdapter;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.List;
@@ -39,7 +38,6 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
-import org.testcontainers.utility.MountableFile;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE,
         properties = {"spring.profiles.active=test", "occ.datamall.account-key=synthetic-key",
@@ -51,13 +49,7 @@ class IngestionStartupIT {
     static final PostgreSQLContainer postgres = new PostgreSQLContainer(
             DockerImageName.parse("postgis/postgis:18-3.6").asCompatibleSubstituteFor("postgres"))
             .withDatabaseName("occ").withUsername("occ_admin").withPassword("synthetic-admin")
-            .withEnv("PGHOST", "")
-            .withEnv("OCC_INGESTION_DB_PASSWORD", "synthetic-ingestion")
-            .withEnv("OCC_DISRUPTION_DB_PASSWORD", "synthetic-disruption")
-            .withEnv("OCC_PLANNING_DB_PASSWORD", "synthetic-planning")
-            .withCopyFileToContainer(MountableFile.forHostPath(Path.of(
-                    "../../infra/local/postgres/bootstrap.sh").toAbsolutePath()),
-                    "/docker-entrypoint-initdb.d/01-setup.sh");
+            .withInitScript("db/ingestion-test-schema.sql");
 
     @DynamicPropertySource
     static void databaseProperties(DynamicPropertyRegistry registry) {

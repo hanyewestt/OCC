@@ -34,6 +34,7 @@ public class GatewaySecurityConfig {
                     authorize.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll();
                     authorize.requestMatchers("/actuator/health", "/actuator/health/**").permitAll();
                     authorize.requestMatchers("/actuator/**").denyAll();
+                    authorize.requestMatchers("/demo.html").permitAll();
                     if (gatewayProperties.authTestEnabled()) {
                         authorize.requestMatchers("/auth-test", "/auth-test/**").permitAll();
                     } else {

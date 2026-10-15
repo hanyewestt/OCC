@@ -1,0 +1,72 @@
+# Disposable integration stack. Always pass an isolated Compose project name.
+services:
+  ingestion-migrate:
+    build:
+      context: .
+      dockerfile: infra/flyway.Dockerfile
+      args:
+        OCC_SERVICE: ingestion
+        OCC_MIGRATION_SOURCE: services/ingestion/src/main/resources/db/migration
+
+  disruption-migrate:
+    build:
+      context: .
+      dockerfile: infra/flyway.Dockerfile
+      args:
+        OCC_SERVICE: disruption
+        OCC_MIGRATION_SOURCE: services/disruption/src/main/resources/db/target-migration
+
+  planning-migrate:
+    build:
+      context: .
+      dockerfile: infra/flyway.Dockerfile
+      args:
+        OCC_SERVICE: planning
+        OCC_MIGRATION_SOURCE: services/planning/src/main/resources/db/migration
+
+  ingestion:
+    build:
+      context: .
+      dockerfile: infra/java.Dockerfile
+      args:
+        OCC_SERVICE: ingestion
+        OCC_SERVICE_INTERNAL_PORT: ${OCC_INGESTION_INTERNAL_PORT:-8001}
+    environment:
+      OCC_INGESTION_IMPORT_REFERENCE_ON_STARTUP: "false"
+      OCC_INGESTION_SEED_TARGETS_ON_STARTUP: "false"
+      OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL: 1h
+
+  disruption:
+    build:
+      context: .
+      dockerfile: infra/java.Dockerfile
+      args:
+        OCC_SERVICE: disruption
+        OCC_SERVICE_INTERNAL_PORT: ${OCC_DISRUPTION_INTERNAL_PORT:-8002}
+    environment:
+      OCC_DISRUPTION_CONSUMER_ENABLED: "false"
+      OCC_DISRUPTION_TRAFFIC_POLL_ENABLED: "false"
+      OCC_DISRUPTION_PLANNING_WORKER_ENABLED: "false"
+
+  planning:
+    build:
+      context: .
+      dockerfile: infra/java.Dockerfile
+      args:
+        OCC_SERVICE: planning
+        OCC_SERVICE_INTERNAL_PORT: ${OCC_PLANNING_INTERNAL_PORT:-8003}
+    environment:
+      OCC_PLANNING_DIAGNOSIS_WORKER_ENABLED: "false"
+      # The model adapters are constructed at startup even with workers disabled;
+      # this synthetic value is never used to call the provider in this stack.
+      OCC_PLANNING_GEMINI_API_KEY: synthetic-ci-key
+
+  gateway:
+    build:
+      context: .
+      dockerfile: infra/java.Dockerfile
+      args:
+        OCC_SERVICE: gateway
+        OCC_SERVICE_INTERNAL_PORT: ${OCC_GATEWAY_INTERNAL_PORT:-8004}
+    environment:
+      OCC_GATEWAY_AUTH_TEST_ENABLED: "false"

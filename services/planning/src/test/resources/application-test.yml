@@ -1,3 +1,7 @@
+spring:
+  flyway:
+    enabled: true
+
 occ:
   security:
     supabase:

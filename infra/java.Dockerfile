@@ -6,14 +6,15 @@ ARG OCC_SERVICE
 ARG OCC_SERVICE_INTERNAL_PORT
 
 WORKDIR /workspace
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y unzip \
+    && rm -rf /var/lib/apt/lists/*
 COPY .mvn/ .mvn/
 COPY mvnw mvnw.cmd pom.xml ./
 COPY services/ services/
 
-RUN apt-get update \
-    && apt-get install --no-install-recommends -y unzip \
-    && rm -rf /var/lib/apt/lists/*
-RUN case "${OCC_SERVICE}" in ingestion|disruption|planning|gateway) ;; \
+RUN --mount=type=cache,id=occ-maven-${OCC_SERVICE},target=/root/.m2 \
+    case "${OCC_SERVICE}" in ingestion|disruption|planning|gateway) ;; \
       *) echo "OCC_SERVICE must name one of the four phase-one applications" >&2; exit 1 ;; \
     esac \
     && test -n "${OCC_SERVICE_INTERNAL_PORT}" \

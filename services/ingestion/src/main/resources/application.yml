@@ -2,14 +2,14 @@ spring:
   application:
     name: ingestion
   datasource:
-    url: ${OCC_INGESTION_DB_URL}
+    url: ${OCC_INGESTION_DB_INTERNAL_URL}
     username: ${OCC_INGESTION_DB_USERNAME:occ_ingestion}
     password: ${OCC_INGESTION_DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: ${OCC_INGESTION_JPA_DDL_AUTO:validate}
   flyway:
-    enabled: ${OCC_INGESTION_FLYWAY_ENABLED:true}
+    enabled: false
     default-schema: ingestion
     create-schemas: false
     locations: classpath:db/migration

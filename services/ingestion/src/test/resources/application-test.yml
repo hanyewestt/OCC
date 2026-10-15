@@ -1,3 +1,10 @@
+spring:
+  flyway:
+    enabled: true
+    default-schema: ingestion
+    create-schemas: false
+    locations: classpath:db/migration
+
 occ:
   ingestion:
     demo:
