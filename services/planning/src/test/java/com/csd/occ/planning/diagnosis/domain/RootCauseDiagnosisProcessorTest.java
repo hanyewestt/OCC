@@ -90,6 +90,33 @@ class RootCauseDiagnosisProcessorTest {
     }
 
     @Test
+    void acceptsConfirmingArrivalsFetchedAfterTheFirstConfirmationTime() {
+        Instant lastConfirmation = NOW.plusSeconds(10);
+        event = new BunchingEventFacts(event.eventId(), event.bunchingEventId(), event.classification(), demoRunId,
+                event.serviceId(), event.directionId(), event.monitoredStopCode(), firstObservationId,
+                secondObservationId, event.status(), event.expectedHeadwaySeconds(), event.observedHeadwaySeconds(),
+                NOW, List.of(NOW, lastConfirmation), List.of(firstObservationId, secondObservationId),
+                event.evidenceIds(), event.detectionRuleVersion());
+        context = new RootCauseContext("SIMULATION", demoRunId, null,
+                List.of(arrivalAt(firstObservationId, "arrival-evidence-1", NOW),
+                        arrivalAt(secondObservationId, "arrival-evidence-2", lastConfirmation)), List.of(), List.of());
+        when(eventFacts.findConfirmedEvent(request.eventId())).thenReturn(event);
+        when(contextEvidence.findContext(event)).thenReturn(context);
+        when(payloads.encode(any(UUID.class), eq(event), any(RootCauseDiagnosis.class), eq("SIMULATION")))
+                .thenReturn("persisted-recommendation-payload");
+        when(model.diagnose(any(EvidenceSnapshot.class), eq(List.of()), eq(1)))
+                .thenReturn(new RootCauseModelPort.ModelCallResult(
+                        new ModelOutput("UNKNOWN", null, null, event.evidenceIds(), List.of()), invocation(1)));
+
+        processor.process(requestId);
+
+        verify(completion).complete(eq(requestId), any(RootCauseDiagnosis.class), anyList(), anyString(),
+                eq("persisted-recommendation-payload"), any(UUID.class));
+        verify(completion, never()).fail(any(UUID.class), anyString(), anyBoolean(), anyBoolean(),
+                any(Instant.class), anyList(), any());
+    }
+
+    @Test
     void unsupportedModelCitationGetsOneRepairAttemptBeforeCompletion() {
         ModelInvocationDetails firstInvocation = invocation(1);
         ModelInvocationDetails repairedInvocation = invocation(2);
@@ -137,6 +164,12 @@ class RootCauseDiagnosisProcessorTest {
     private ArrivalEvidence arrival(UUID observationId, String evidenceId) {
         return new ArrivalEvidence(evidenceId, observationId, UUID.randomUUID(), UUID.randomUUID(),
                 "190", "44009", 1, NOW.plusSeconds(60), NOW.minusSeconds(60),
+                BigDecimal.ONE, BigDecimal.ONE, "LOW", "DD", "SIMULATION", demoRunId, null);
+    }
+
+    private ArrivalEvidence arrivalAt(UUID observationId, String evidenceId, Instant fetchedAt) {
+        return new ArrivalEvidence(evidenceId, observationId, UUID.randomUUID(), UUID.randomUUID(),
+                "190", "44009", 1, fetchedAt, fetchedAt,
                 BigDecimal.ONE, BigDecimal.ONE, "LOW", "DD", "SIMULATION", demoRunId, null);
     }
 

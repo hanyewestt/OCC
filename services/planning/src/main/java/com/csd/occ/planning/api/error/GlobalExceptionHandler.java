@@ -1,6 +1,7 @@
 package com.csd.occ.planning.api.error;
 
 import com.csd.occ.planning.diagnosis.domain.DiagnosisQueryService;
+import com.csd.occ.planning.diagnosis.domain.DiagnosisFailureException;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestService;
 import com.csd.occ.planning.recommendation.domain.IdempotencyConflictException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -28,6 +29,18 @@ public class GlobalExceptionHandler {
             HttpServletRequest request) {
         return problem(HttpStatus.UNPROCESSABLE_ENTITY, "Unsupported event type", exception.getMessage(),
                 "urn:occ:problem:unsupported-event-type", request);
+    }
+
+    @ExceptionHandler(DiagnosisFailureException.class)
+    ProblemDetail handleDiagnosisFailure(DiagnosisFailureException exception, HttpServletRequest request) {
+        HttpStatus status = exception.isRetryable() ? HttpStatus.SERVICE_UNAVAILABLE : HttpStatus.UNPROCESSABLE_ENTITY;
+        String title = exception.isRetryable() ? "Planning context unavailable" : "Planning input rejected";
+        String detail = exception.isRetryable()
+                ? "Planning could not capture the event evidence snapshot; retry the same request."
+                : "Planning could not capture a valid event evidence snapshot.";
+        ProblemDetail problem = problem(status, title, detail, "urn:occ:problem:planning-context", request);
+        problem.setProperty("failureCode", exception.failureCode());
+        return problem;
     }
 
     @ExceptionHandler({DiagnosisRequestService.IdempotencyConflictException.class, IdempotencyConflictException.class})

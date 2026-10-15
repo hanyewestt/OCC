@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.csd.occ.planning.api.error.GlobalExceptionHandler;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisQueryService;
+import com.csd.occ.planning.diagnosis.domain.DiagnosisFailureException;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequest;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestStatus;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestView;
@@ -161,6 +162,44 @@ class DiagnosisRequestControllerTest {
                         .content(submissionJson(eventId, disruptionId, demoRunId, observations)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.title").value("Idempotency conflict"));
+    }
+
+    @Test
+    void reportsNonRetryableSnapshotFailuresAsUnprocessableEntity() throws Exception {
+        UUID eventId = UUID.randomUUID();
+        UUID disruptionId = UUID.randomUUID();
+        UUID demoRunId = UUID.randomUUID();
+        when(requests.enqueue(any(ProducerEventSubmission.class), any(UUID.class), eq(FINGERPRINT)))
+                .thenThrow(new DiagnosisFailureException("CONTEXT_HTTP_400", false));
+
+        mvc.perform(post("/internal/v1/planning/requests")
+                        .header("X-OCC-Peer-Token", "test-peer-token")
+                        .header("Idempotency-Key", UUID.randomUUID())
+                        .header("X-OCC-Event-Fingerprint", FINGERPRINT)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(submissionJson(eventId, disruptionId, demoRunId, observations())))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.title").value("Planning input rejected"))
+                .andExpect(jsonPath("$.failureCode").value("CONTEXT_HTTP_400"));
+    }
+
+    @Test
+    void reportsRetryableSnapshotFailuresAsServiceUnavailable() throws Exception {
+        UUID eventId = UUID.randomUUID();
+        UUID disruptionId = UUID.randomUUID();
+        UUID demoRunId = UUID.randomUUID();
+        when(requests.enqueue(any(ProducerEventSubmission.class), any(UUID.class), eq(FINGERPRINT)))
+                .thenThrow(new DiagnosisFailureException("CONTEXT_UNAVAILABLE", true));
+
+        mvc.perform(post("/internal/v1/planning/requests")
+                        .header("X-OCC-Peer-Token", "test-peer-token")
+                        .header("Idempotency-Key", UUID.randomUUID())
+                        .header("X-OCC-Event-Fingerprint", FINGERPRINT)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(submissionJson(eventId, disruptionId, demoRunId, observations())))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.title").value("Planning context unavailable"))
+                .andExpect(jsonPath("$.failureCode").value("CONTEXT_UNAVAILABLE"));
     }
 
     @Test

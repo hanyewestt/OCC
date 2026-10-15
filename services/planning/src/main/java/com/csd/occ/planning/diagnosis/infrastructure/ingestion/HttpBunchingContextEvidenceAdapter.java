@@ -28,7 +28,7 @@ public class HttpBunchingContextEvidenceAdapter implements ContextEvidencePort {
         try {
             ContextResponse result = client.get().uri(uri -> uri
                     .path("/internal/v1/ingestion/demo-runs/{demoRunId}/planning-context")
-                    .queryParam("at", event.firstConfirmedAt())
+                    .queryParam("at", event.confirmingObservationTimes().getLast())
                     .queryParam("serviceId", event.serviceId())
                     .queryParam("stopCode", event.monitoredStopCode())
                     .queryParam("directionId", event.directionId())

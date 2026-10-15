@@ -43,7 +43,9 @@ public class DiagnosisRequestController {
             content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "409", description = "The idempotency key or event identity has different immutable facts",
             content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
-    @ApiResponse(responseCode = "422", description = "Recognized event type does not yet have a fact adapter",
+    @ApiResponse(responseCode = "422", description = "Event type is unsupported or its evidence snapshot cannot be captured",
+            content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "503", description = "Temporary dependency failure while capturing the event evidence snapshot",
             content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
     public DiagnosisRequestResponse create(@Valid @RequestBody CreateDiagnosisEventSubmission body,
             @Parameter(name = "Idempotency-Key", in = ParameterIn.HEADER, required = true,

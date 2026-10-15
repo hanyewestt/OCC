@@ -50,12 +50,13 @@ public class RootCauseDiagnosisProcessor {
             RootCauseContext context = bound(retained == null ? evidenceContext.findContext(event) : retained.context(), event);
             if (!event.demoRunId().equals(context.demoRunId()) || !"SIMULATION".equals(context.classification()))
                 throw new DiagnosisFailureException("EVIDENCE_PROVENANCE_MISMATCH", false);
+            Instant latestConfirmationAt = event.confirmingObservationTimes().getLast();
             if (context.arrivals().stream().anyMatch(arrival -> !"SIMULATION".equals(arrival.classification())
                     || !event.demoRunId().equals(arrival.demoRunId())
                     || !event.serviceId().equals(arrival.serviceId())
                     || !event.monitoredStopCode().equals(arrival.stopCode())
                     || !java.util.Objects.equals(event.directionId(), arrival.directionId())
-                    || arrival.fetchedAt() == null || arrival.fetchedAt().isAfter(event.firstConfirmedAt()))
+                    || arrival.fetchedAt() == null || arrival.fetchedAt().isAfter(latestConfirmationAt))
                     || context.incidents().stream().anyMatch(incident -> !"SIMULATION".equals(incident.classification())
                     || !event.demoRunId().equals(incident.demoRunId()) || incident.fetchedAt() == null
                     || incident.fetchedAt().isAfter(event.firstConfirmedAt())
