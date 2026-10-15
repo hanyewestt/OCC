@@ -15,6 +15,7 @@ import com.csd.occ.disruption.bunching.domain.PlanningEventSubmission;
 import com.csd.occ.disruption.bunching.domain.PlanningEventSubmissionPort;
 import com.csd.occ.disruption.bunching.infrastructure.config.DiagnosisOutboxProperties;
 import com.csd.occ.disruption.bunching.infrastructure.scheduling.BunchingDiagnosisDispatcher;
+import java.io.IOException;
 import java.net.URI;
 import java.sql.Timestamp;
 import java.time.Clock;
@@ -23,6 +24,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -99,6 +101,41 @@ class BunchingDiagnosisDispatcherIT {
         assertThat(failureCode(claim.id())).isEqualTo("PLANNING_REQUEST_TRANSIENT_HTTP_FAILURE");
         assertThat(Duration.between(NOW, nextAttempt(claim.id())))
                 .isBetween(Duration.ofMillis(1_600), Duration.ofMillis(2_400));
+        fixture.server.verify();
+    }
+
+    @Test
+    void retryAfterReceiverCommitAndLostResponseReusesTheSameRequest() throws IOException {
+        Fixture fixture = fixture(0);
+        DiagnosisOutbox claim = insertDueOutbox();
+        UUID committedRequestId = UUID.randomUUID();
+        var committedRequests = new ConcurrentHashMap<UUID, UUID>();
+
+        fixture.server.expect(requestTo("http://diagnosis.test/internal/v1/planning/requests"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(header("Idempotency-Key", claim.id().toString()))
+                .andExpect(header("X-OCC-Event-Fingerprint", submissions.fingerprint(claim.payloadJson(), claim.eventId())))
+                .andExpect(content().json(claim.payloadJson()))
+                .andRespond(request -> {
+                    UUID key = UUID.fromString(request.getHeaders().getFirst("Idempotency-Key"));
+                    committedRequests.putIfAbsent(key, committedRequestId);
+                    throw new IOException("synthetic response loss after receiver commit");
+                });
+        expectRequest(fixture.server, claim, HttpStatus.ACCEPTED);
+
+        fixture.dispatcher.dispatchPending();
+
+        assertThat(status(claim.id())).isEqualTo("PENDING");
+        assertThat(attemptCount(claim.id())).isEqualTo(1);
+        assertThat(failureCode(claim.id())).isEqualTo("PLANNING_REQUEST_UNAVAILABLE");
+        jdbc.update("UPDATE disruption.planning_outbox SET next_attempt_at = ? WHERE id = ?",
+                Timestamp.from(NOW), claim.id());
+
+        fixture.dispatcher.dispatchPending();
+
+        assertThat(status(claim.id())).isEqualTo("DELIVERED");
+        assertThat(attemptCount(claim.id())).isEqualTo(2);
+        assertThat(committedRequests).containsOnlyKeys(claim.id()).containsEntry(claim.id(), committedRequestId);
         fixture.server.verify();
     }
 

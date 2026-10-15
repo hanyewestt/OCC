@@ -26,10 +26,11 @@ recommendation policy. Bunching submissions keep the existing workflow.
 Latest verification run:
 
 ```text
-.\mvnw.cmd --batch-mode --no-transfer-progress -pl services/ingestion,services/gateway,services/disruption,services/planning verify
-BUILD SUCCESS; 204 Surefire tests and 52 Failsafe integration tests passed,
-with zero failures, errors, or skips. Ingestion, Disruption and Planning
-coverage gates passed.
+.\mvnw.cmd --batch-mode --no-transfer-progress -pl services/ingestion,services/gateway,services/disruption,services/planning clean verify
+BUILD SUCCESS; 204 Surefire tests and 53 Failsafe integration tests passed,
+with zero failures, errors, or skips. The configured Ingestion and Disruption
+JaCoCo coverage gates passed; Planning and Gateway have no configured coverage
+thresholds.
 ```
 
 This run included PostgreSQL-backed lifecycle, persistence and receiver
@@ -53,3 +54,7 @@ response field. Duplicate delivery after receiver commit, restart recovery at
 each documented crash point, capacity/soak, and hosted CI remain open; do not
 mark A07 complete from the current unit, integration, or bunching workflow
 evidence alone.
+
+## Lost-response retry test
+
+On 15 October 2026, `BunchingDiagnosisDispatcherIT.retryAfterReceiverCommitAndLostResponseReusesTheSameRequest` passed in the Docker-backed Disruption integration suite. Its HTTP receiver harness records one stable request ID under the incoming idempotency key, then drops the first response after that record is made. The dispatcher leaves the outbox pending, retries the same payload/key/fingerprint, and marks it delivered on attempt two; the receiver harness contains exactly one record. The existing `DiagnosisRequestPersistenceIT` independently verifies stable database replay for the Planning receiver. Together these cover sender retry and receiver idempotency, but the receiver in the lost-response test is a test harness, not the Planning application. Full multi-container receiver-commit fault injection and restart-at-each-crash-point checks remain open.
