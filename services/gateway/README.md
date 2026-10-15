@@ -37,3 +37,19 @@ The local password-grant test page is served at
 `OCC_GATEWAY_AUTH_TEST_ENABLED=true`. It is disabled by default in the application
 configuration and should stay disabled in deployed environments. The page keeps
 the access token in memory and sends protected API requests through this Gateway.
+
+For an opt-in live check, set the optional test values listed in the root
+`.env.example` in the ignored `.env`, then run from the repository root:
+
+```powershell
+node --env-file=.env tests/system/supabase_live_auth_smoke.mjs
+```
+
+The runner uses Node's environment-file option (Node 20.6 or later) without
+printing the file. It signs in each temporary account, verifies the JWT against
+the configured JWKS and issuer/audience/time/role claims, calls the protected
+read through the Gateway, tests refresh, and signs out. It prints account labels
+and HTTP outcomes only. This is an explicit live test; ordinary CI uses its
+synthetic issuer and does not need these credentials. Change
+`OCC_SUPABASE_TEST_GATEWAY_URL` only when testing a different local Gateway or
+TLS edge origin.

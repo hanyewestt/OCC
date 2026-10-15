@@ -102,6 +102,17 @@ Development project settings last supplied for this setup: publishable key `sb_p
 
 For the opt-in live check, sign in with each account using the publishable key and password authentication. Verify signatures and issuer/audience/subject, then assert the expected claim above. Call the same protected operational read through the Gateway: ADMIN and CONTROLLER should succeed; DRIVER and UNASSIGNED should receive 403. Verify a missing bearer token receives 401, refresh preserves the expected claim, and sign-out clears the harness session. Keep tokens in memory and record only account labels, assertions and HTTP outcomes. Configure the test runner through documented environment variables; do not hard-code these values into application code or production defaults. Ordinary CI remains deterministic and offline.
 
+For the repeatable local runner, add the temporary account values to the ignored root `.env` using the matching `OCC_SUPABASE_TEST_*` names from `.env.example`. The table above is the source for those account values; leave the template credentials blank. Set `OCC_SUPABASE_TEST_GATEWAY_URL` to the local Gateway origin, then start the normal local stack and run from the repository root:
+
+```powershell
+docker compose --env-file .env up -d --build
+node --env-file=.env tests/system/supabase_live_auth_smoke.mjs
+```
+
+The Node runner requires Node 20.6 or later. It reads the environment file into its process without printing it, and emits only labels, checks and HTTP status codes. Do not paste the output of `docker compose config`, `process.env`, or token responses into evidence. Keep this test opt-in; ordinary CI does not contact this project.
+
+The first live verification on 15 October 2026 confirmed password sign-in, ES256 signature and role claims, refresh and Gateway authorization for ADMIN, CONTROLLER and DRIVER. The unassigned test account returned HTTP 400 `invalid_credentials`, so its sign-in and expected 403 remain unverified until that temporary account's credentials are corrected. See [live-auth evidence](evidence/phase1-supabase-live-auth.md).
+
 ## 6. Send back the public setup details
 
 Provide the following handoff in chat or a non-secret setup note:
