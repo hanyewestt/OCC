@@ -1,5 +1,6 @@
 package com.csd.occ.planning.diagnosis.infrastructure.config;
 
+import com.csd.occ.planning.infrastructure.config.GeminiEndpointProperties;
 import com.google.genai.Client;
 import com.google.genai.types.HttpOptions;
 import com.google.genai.types.HttpRetryOptions;
@@ -12,9 +13,13 @@ import org.springframework.context.annotation.Configuration;
 @Configuration(proxyBeanMethods = false)
 public class GeminiDiagnosisConfig {
     @Bean(destroyMethod = "close")
-    Client diagnosisGeminiClient(DiagnosisGeminiProperties properties) {
+    Client diagnosisGeminiClient(DiagnosisGeminiProperties properties, GeminiEndpointProperties endpointProperties) {
         HttpRetryOptions retry = HttpRetryOptions.builder().attempts(properties.retryAttempts()).build();
-        HttpOptions http = HttpOptions.builder().timeout(properties.requestTimeoutMillis()).retryOptions(retry).build();
+        HttpOptions.Builder httpBuilder = HttpOptions.builder()
+                .timeout(properties.requestTimeoutMillis())
+                .retryOptions(retry);
+        if (endpointProperties.isConfigured()) httpBuilder.baseUrl(endpointProperties.baseUrl());
+        HttpOptions http = httpBuilder.build();
         return Client.builder().apiKey(properties.requiredApiKey()).httpOptions(http).build();
     }
 

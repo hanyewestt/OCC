@@ -3,6 +3,7 @@ package com.csd.occ.planning.recommendation.infrastructure.config;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.google.genai.Client;
+import com.csd.occ.planning.infrastructure.config.GeminiEndpointProperties;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.google.genai.GoogleGenAiChatModel;
@@ -23,7 +24,7 @@ class GeminiRecommendationConfigTest {
                 Duration.ofSeconds(30),
                 2);
 
-        try (Client client = config.recommendationGeminiClient(properties)) {
+        try (Client client = config.recommendationGeminiClient(properties, new GeminiEndpointProperties(""))) {
             GoogleGenAiChatModel model = config.recommendationGeminiChatModel(client, properties);
 
             assertThat(model.getOptions().getModel()).isEqualTo("gemini-3.1-flash-lite");

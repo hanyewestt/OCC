@@ -222,7 +222,35 @@ jobs:
               default_type application/json;
               alias /var/www/jwks.json;
             }
-            location / { return 404; }
+            location ~ ^/v1beta/models/[^/]+:generateContent$ {
+              default_type application/json;
+              return 200 '{"candidates":[{"content":{"role":"model","parts":[{"text":"{\\\"causeCode\\\":\\\"UNKNOWN\\\",\\\"causeSubtype\\\":null,\\\"likelyCause\\\":null,\\\"supportingEvidenceIds\\\":[],\\\"limitations\\\":[\\\"Synthetic Phase 1 workflow diagnosis.\\\"]}"}]},"finishReason":"STOP","index":0}],"modelVersion":"gemini-3.1-flash-lite","responseId":"local-workflow-test","usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}';
+            }
+            location ~ /BusStops$ {
+              default_type application/json;
+              if ($args ~ skip=0$) {
+                return 200 '{"value":[{"BusStopCode":"44241","RoadName":"Clementi Road","Description":"Opposite Clementi Road","Latitude":"1.3210","Longitude":"103.7720"},{"BusStopCode":"44251","RoadName":"Clementi Road","Description":"Clementi Road","Latitude":"1.3770","Longitude":"103.7710"}]}';
+              }
+              return 200 '{"value":[]}';
+            }
+            location ~ /BusServices$ {
+              default_type application/json;
+              if ($args ~ skip=0$) {
+                return 200 '{"value":[{"ServiceNo":"190","Operator":"SBST","Category":"TRUNK"}]}';
+              }
+              return 200 '{"value":[]}';
+            }
+            location ~ /BusRoutes$ {
+              default_type application/json;
+              if ($args ~ skip=0$) {
+                return 200 '{"value":[{"ServiceNo":"190","Operator":"SBST","Direction":1,"StopSequence":1,"BusStopCode":"44241","Distance":"0"},{"ServiceNo":"190","Operator":"SBST","Direction":1,"StopSequence":2,"BusStopCode":"44251","Distance":"0.5"}]}';
+              }
+              return 200 '{"value":[]}';
+            }
+            location / {
+              default_type application/json;
+              return 200 '{"value":[]}';
+            }
           }
           EOF
           chmod 644 "$RUNNER_TEMP/occ-edge-jwks-conf/default.conf"
@@ -254,7 +282,8 @@ jobs:
           SUPABASE_PROJECT_URL=http://jwks-test:8080 \
           SUPABASE_JWKS_URL=http://jwks-test:8080/auth/v1/.well-known/jwks.json \
             docker compose -p occ-edge-ci --env-file .env.example \
-              -f compose.yaml -f infra/compose.test.yaml up -d --force-recreate \
+              -f compose.yaml -f infra/compose.test.yaml -f infra/compose.workflow-test.yaml \
+              up -d --force-recreate \
               gateway ingestion disruption planning
       - name: Start pinned Nginx edge with a disposable test certificate
         shell: bash
@@ -296,6 +325,10 @@ jobs:
           done
           docker logs occ-edge-ci-nginx
           exit 1
+      - name: Verify end-to-end simulated detection and planning
+        run: >-
+          python3 tests/system/demo_workflow_smoke.py --base-url https://127.0.0.1:18443
+          --token-dir "$RUNNER_TEMP/occ-edge-jwks"
       - name: Verify TLS edge routing, access boundaries and rate limiting
         run: >-
           python3 tests/system/nginx_edge_smoke.py --base-url https://127.0.0.1:18443

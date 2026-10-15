@@ -2,6 +2,7 @@ package com.csd.occ.planning.recommendation.infrastructure.config;
 
 import com.csd.occ.planning.recommendation.infrastructure.config.RecommendationInputProperties;
 import com.csd.occ.planning.recommendation.infrastructure.gemini.GeminiMitigationCandidateAdapter;
+import com.csd.occ.planning.infrastructure.config.GeminiEndpointProperties;
 import com.google.genai.Client;
 import com.google.genai.types.HttpOptions;
 import com.google.genai.types.HttpRetryOptions;
@@ -19,17 +20,18 @@ import tools.jackson.databind.json.JsonMapper;
 public class GeminiRecommendationConfig {
 
     @Bean(destroyMethod = "close")
-    Client recommendationGeminiClient(RecommendationGeminiProperties properties) {
+    Client recommendationGeminiClient(
+            RecommendationGeminiProperties properties, GeminiEndpointProperties endpointProperties) {
         HttpRetryOptions retryOptions = HttpRetryOptions.builder()
                 .attempts(properties.retryAttempts())
                 .build();
-        HttpOptions httpOptions = HttpOptions.builder()
+        HttpOptions.Builder httpBuilder = HttpOptions.builder()
                 .timeout(properties.requestTimeoutMillis())
-                .retryOptions(retryOptions)
-                .build();
+                .retryOptions(retryOptions);
+        if (endpointProperties.isConfigured()) httpBuilder.baseUrl(endpointProperties.baseUrl());
         return Client.builder()
                 .apiKey(properties.requiredApiKey())
-                .httpOptions(httpOptions)
+                .httpOptions(httpBuilder.build())
                 .build();
     }
 

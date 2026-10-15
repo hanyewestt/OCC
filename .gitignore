@@ -37,6 +37,10 @@ infra/local/.env
 **/bin/
 .vscode/settings.json
 
+# Python test and tool caches
+__pycache__/
+*.py[cod]
+
 docs/
 !docs/CONVENTIONS.md
 !docs/commit-convention.md

@@ -49,6 +49,9 @@ management:
           include: readinessState,db
 
 occ:
+  planning:
+    gemini:
+      base-url: ${OCC_PLANNING_GEMINI_BASE_URL:}
   security:
     supabase:
       project-url: ${SUPABASE_PROJECT_URL}
