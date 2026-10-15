@@ -6,7 +6,7 @@
   "operations": [
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/api/v1/demo-mode",
       "sourceOperationId": "getDemoMode",
@@ -21,7 +21,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "PUT",
       "sourcePath": "/api/v1/demo-mode",
       "sourceOperationId": "setDemoMode",
@@ -36,7 +36,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "POST",
       "sourcePath": "/api/v1/demo-runs",
       "sourceOperationId": "startDemoRun",
@@ -51,7 +51,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "POST",
       "sourcePath": "/api/v1/demo-runs/{id}/close",
       "sourceOperationId": "closeDemoRun",
@@ -66,7 +66,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/internal/v1/demo-runs/{demoRunId}/root-cause-context",
       "sourceOperationId": "getSimulationRootCauseContext",
@@ -81,7 +81,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/internal/v1/demo-runs/{demoRunId}/arrival-snapshots",
       "sourceOperationId": "page",
@@ -96,7 +96,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/internal/v1/demo-runs/{demoRunId}/arrival-snapshots/{rawObservationId}",
       "sourceOperationId": "snapshot",
@@ -111,7 +111,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/internal/v1/arrival-snapshots",
       "sourceOperationId": "listBunchingArrivalSnapshots",
@@ -126,7 +126,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/internal/v1/arrival-snapshots/{rawObservationId}",
       "sourceOperationId": "getBunchingArrivalSnapshot",
@@ -141,7 +141,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/internal/v1/arrival-snapshots/head",
       "sourceOperationId": "getBunchingLiveFeedHead",
@@ -156,7 +156,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/demo.html",
       "sourceOperationId": "page_1",
@@ -171,7 +171,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/api/v1/reference-topology",
       "sourceOperationId": "activeReferenceTopology",
@@ -186,7 +186,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/api/v1/poll-runs",
       "sourceOperationId": "listPollRuns",
@@ -201,7 +201,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/api/v1/live-bunching-alerts",
       "sourceOperationId": "listCurrentLiveBunchingAlertsFromIngestion",
@@ -216,7 +216,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/api/v1/feed-status",
       "sourceOperationId": "listFeedStatuses",
@@ -231,7 +231,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/api/v1/demo-runs/{id}",
       "sourceOperationId": "getDemoRun",
@@ -246,7 +246,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/api/v1/demo-runs/{id}/recommendation",
       "sourceOperationId": "getDemoRecommendation",
@@ -261,7 +261,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/api/v1/demo-runs/active",
       "sourceOperationId": "getActiveDemoRun",
@@ -276,7 +276,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/api/v1/bus-stops",
       "sourceOperationId": "listBusStops",
@@ -291,7 +291,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/api/v1/bus-stops/{stopCode}",
       "sourceOperationId": "getBusStop",
@@ -306,7 +306,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/api/v1/bus-routes",
       "sourceOperationId": "listBusRoutes",
@@ -321,7 +321,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/api/v1/bus-routes/{serviceId}",
       "sourceOperationId": "getBusRoute",
@@ -336,7 +336,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/api/v1/arrivals",
       "sourceOperationId": "listCurrentArrivals",
@@ -351,7 +351,7 @@
     },
     {
       "sourceService": "ingestion",
-      "sourceContract": "services/ingestion/openapi/polling-ingestion.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/polling-ingestion.json",
       "sourceMethod": "GET",
       "sourcePath": "/api/v1/arrivals/history",
       "sourceOperationId": "listArrivalHistory",
@@ -366,7 +366,7 @@
     },
     {
       "sourceService": "disruption",
-      "sourceContract": "services/operations/bus-bunching-detection/openapi/bus-bunching-detection.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/bus-bunching-detection.json",
       "sourceMethod": "PUT",
       "sourcePath": "/internal/v1/consumer-selection",
       "sourceOperationId": "selectBunchingConsumer",
@@ -381,7 +381,7 @@
     },
     {
       "sourceService": "disruption",
-      "sourceContract": "services/operations/bus-bunching-detection/openapi/bus-bunching-detection.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/bus-bunching-detection.json",
       "sourceMethod": "GET",
       "sourcePath": "/internal/v1/retention-protection",
       "sourceOperationId": "getRetentionProtection",
@@ -396,7 +396,7 @@
     },
     {
       "sourceService": "disruption",
-      "sourceContract": "services/operations/bus-bunching-detection/openapi/bus-bunching-detection.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/bus-bunching-detection.json",
       "sourceMethod": "GET",
       "sourcePath": "/internal/v1/demo-runs/{demoRunId}/alerts",
       "sourceOperationId": "listSimulationBunchingAlerts",
@@ -411,7 +411,7 @@
     },
     {
       "sourceService": "disruption",
-      "sourceContract": "services/operations/bus-bunching-detection/openapi/bus-bunching-detection.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/bus-bunching-detection.json",
       "sourceMethod": "GET",
       "sourcePath": "/internal/v1/bunching-alert-events/{eventId}",
       "sourceOperationId": "getCanonicalBunchingEventFacts",
@@ -426,7 +426,7 @@
     },
     {
       "sourceService": "disruption",
-      "sourceContract": "services/operations/bus-bunching-detection/openapi/bus-bunching-detection.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/bus-bunching-detection.json",
       "sourceMethod": "GET",
       "sourcePath": "/api/v1/live-bunching-alerts",
       "sourceOperationId": "listCurrentLiveBunchingAlerts",
@@ -441,7 +441,7 @@
     },
     {
       "sourceService": "planning",
-      "sourceContract": "services/planning/root-cause-diagnosis/openapi/root-cause-diagnosis.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/root-cause-diagnosis.json",
       "sourceMethod": "POST",
       "sourcePath": "/internal/v1/diagnosis-requests",
       "sourceOperationId": "createDiagnosisRequest",
@@ -456,7 +456,7 @@
     },
     {
       "sourceService": "planning",
-      "sourceContract": "services/planning/root-cause-diagnosis/openapi/root-cause-diagnosis.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/root-cause-diagnosis.json",
       "sourceMethod": "GET",
       "sourcePath": "/internal/v1/diagnosis-requests/{requestId}",
       "sourceOperationId": "getDiagnosisRequest",
@@ -471,7 +471,7 @@
     },
     {
       "sourceService": "planning",
-      "sourceContract": "services/planning/root-cause-diagnosis/openapi/root-cause-diagnosis.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/root-cause-diagnosis.json",
       "sourceMethod": "GET",
       "sourcePath": "/internal/v1/diagnoses/{diagnosisId}",
       "sourceOperationId": "getDiagnosis",
@@ -486,7 +486,7 @@
     },
     {
       "sourceService": "planning",
-      "sourceContract": "services/planning/recommendation-engine/openapi/recommendation-engine.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/recommendation-engine.json",
       "sourceMethod": "POST",
       "sourcePath": "/internal/v1/bunching-recommendations",
       "sourceOperationId": "createBunchingRecommendation",
@@ -501,7 +501,7 @@
     },
     {
       "sourceService": "planning",
-      "sourceContract": "services/planning/recommendation-engine/openapi/recommendation-engine.json",
+      "sourceContract": "docs/refactor plans/evidence/source-contracts/recommendation-engine.json",
       "sourceMethod": "GET",
       "sourcePath": "/internal/v1/bunching-recommendations/by-bunching-event/{bunchingEventId}",
       "sourceOperationId": "getBunchingRecommendation",
