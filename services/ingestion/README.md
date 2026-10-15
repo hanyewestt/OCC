@@ -49,7 +49,7 @@ OCC_INGESTION_DB_PASSWORD=your-database-password
 DATAMALL_API_KEY=your-datamall-key
 ```
 
-Use unquoted values, without `export`. The host-facing local URL is `OCC_INGESTION_DB_PUBLIC_URL`; Compose uses `OCC_INGESTION_DB_INTERNAL_URL`. The runtime username and password must match the account provisioned by `infra/postgres/bootstrap.sql`. Schema changes run through the `ingestion-migrate` Compose job using `OCC_INGESTION_DB_MIGRATOR_USERNAME` and `OCC_INGESTION_DB_MIGRATOR_PASSWORD`; the application does not run Flyway at startup.
+Use unquoted values, without `export`. The host-facing local URL is `OCC_INGESTION_DB_PUBLIC_URL`; Compose uses `OCC_INGESTION_DB_INTERNAL_URL`. The runtime username and password must match the account provisioned by `infra/postgres/bootstrap.sql`. On a Compose startup that recreates the bootstrap job, it reconciles existing runtime and migrator role passwords with the configured environment values before Flyway or the services start; updating a local role password therefore requires the matching root `.env` value. Schema changes run through the `ingestion-migrate` Compose job using `OCC_INGESTION_DB_MIGRATOR_USERNAME` and `OCC_INGESTION_DB_MIGRATOR_PASSWORD`; the application does not run Flyway at startup.
 
 PostgreSQL must be running before the app starts. To start the shared local database, run this from the repository root:
 

@@ -1,18 +1,24 @@
 import { createPublicKey, verify } from 'node:crypto';
 
+const accountSettings = {
+  ADMIN: ['OCC_SUPABASE_TEST_ADMIN_EMAIL', 'OCC_SUPABASE_TEST_ADMIN_PASSWORD'],
+  CONTROLLER: ['OCC_SUPABASE_TEST_CONTROLLER_EMAIL', 'OCC_SUPABASE_TEST_CONTROLLER_PASSWORD'],
+  DRIVER: ['OCC_SUPABASE_TEST_DRIVER_EMAIL', 'OCC_SUPABASE_TEST_DRIVER_PASSWORD'],
+  UNASSIGNED: ['OCC_SUPABASE_TEST_UNASSIGNED_EMAIL', 'OCC_SUPABASE_TEST_UNASSIGNED_PASSWORD'],
+};
+const requestedAccounts = process.argv.slice(2).map((name) => name.toUpperCase());
+const unknownAccounts = requestedAccounts.filter((name) => !Object.hasOwn(accountSettings, name));
+if (unknownAccounts.length) {
+  console.error(`Unknown account labels: ${unknownAccounts.join(', ')}.`);
+  process.exit(2);
+}
+const accountNamesToCheck = requestedAccounts.length ? requestedAccounts : Object.keys(accountSettings);
 const required = [
   'SUPABASE_PROJECT_URL',
   'SUPABASE_JWKS_URL',
   'SUPABASE_SB_PUBLISHABLE',
   'OCC_SUPABASE_TEST_GATEWAY_URL',
-  'OCC_SUPABASE_TEST_ADMIN_EMAIL',
-  'OCC_SUPABASE_TEST_ADMIN_PASSWORD',
-  'OCC_SUPABASE_TEST_CONTROLLER_EMAIL',
-  'OCC_SUPABASE_TEST_CONTROLLER_PASSWORD',
-  'OCC_SUPABASE_TEST_DRIVER_EMAIL',
-  'OCC_SUPABASE_TEST_DRIVER_PASSWORD',
-  'OCC_SUPABASE_TEST_UNASSIGNED_EMAIL',
-  'OCC_SUPABASE_TEST_UNASSIGNED_PASSWORD',
+  ...accountNamesToCheck.flatMap((name) => accountSettings[name]),
 ];
 const missing = required.filter((name) => !process.env[name]?.trim());
 if (missing.length) {
@@ -47,6 +53,9 @@ const accounts = [
   { name: 'DRIVER', email: process.env.OCC_SUPABASE_TEST_DRIVER_EMAIL, password: process.env.OCC_SUPABASE_TEST_DRIVER_PASSWORD, role: 'DRIVER', status: 403 },
   { name: 'UNASSIGNED', email: process.env.OCC_SUPABASE_TEST_UNASSIGNED_EMAIL, password: process.env.OCC_SUPABASE_TEST_UNASSIGNED_PASSWORD, role: null, status: 403 },
 ];
+const accountsToTest = requestedAccounts.length
+  ? accounts.filter((account) => requestedAccounts.includes(account.name))
+  : accounts;
 
 const decodeBase64Url = (value) => Buffer.from(value.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
 async function request(url, options = {}) {
@@ -110,7 +119,9 @@ async function checkProtectedRead(accessToken, expectedStatus) {
     headers: accessToken ? { authorization: `Bearer ${accessToken}` } : {},
   });
   await response.arrayBuffer();
-  if (response.status !== expectedStatus) throw new Error(`Gateway returned HTTP ${response.status}.`);
+  if (response.status !== expectedStatus) {
+    throw Object.assign(new Error('Gateway status mismatch.'), { observedStatus: response.status });
+  }
 }
 
 let failures = 0;
@@ -123,7 +134,7 @@ try {
   console.error('FAIL JWKS or missing-token Gateway check (details withheld).');
 }
 
-for (const account of accounts) {
+for (const account of accountsToTest) {
   let accessToken;
   let refreshToken;
   let stage = 'sign-in';
@@ -142,7 +153,9 @@ for (const account of accounts) {
     accessToken = session.access_token;
     refreshToken = session.refresh_token;
     if (!accessToken || !refreshToken) throw new Error('Supabase returned no complete session.');
+    stage = 'token validation';
     await validateToken(accessToken, account.role);
+    stage = 'Gateway authorization';
     await checkProtectedRead(accessToken, account.status);
     console.log(`PASS ${account.name} sign-in token validated; Gateway returned HTTP ${account.status}.`);
 
@@ -157,13 +170,25 @@ for (const account of accounts) {
     accessToken = refreshed.access_token;
     refreshToken = refreshed.refresh_token;
     if (!accessToken || !refreshToken) throw new Error('Supabase returned no refreshed session.');
+    stage = 'refreshed-token validation';
     await validateToken(accessToken, account.role);
+    stage = 'refreshed Gateway authorization';
     await checkProtectedRead(accessToken, account.status);
     console.log(`PASS ${account.name} refreshed token validated; Gateway returned HTTP ${account.status}.`);
-  } catch {
+  } catch (error) {
     failures += 1;
-    const status = failureStatus ? ` HTTP ${failureStatus}` : '';
-    console.error(`FAIL ${account.name} ${stage} check${status} (response details withheld).`);
+    const observedStatus = failureStatus ?? error?.observedStatus;
+    const status = observedStatus ? ` HTTP ${observedStatus}` : '';
+    const safeReason = new Map([
+      ['JWT is malformed.', 'malformed JWT'],
+      ['JWT algorithm or signing key is not allowed.', 'signing algorithm/key mismatch'],
+      ['JWT signature is invalid.', 'signature validation failed'],
+      ['JWT issuer, audience, subject, or time claims are invalid.', 'issuer/audience/time validation failed'],
+      ['JWT OCC role claim does not match.', 'OCC role claim mismatch'],
+      ['Gateway status mismatch.', 'Gateway authorization outcome mismatch'],
+    ]).get(error?.message);
+    const reason = safeReason ? ` (${safeReason})` : '';
+    console.error(`FAIL ${account.name} ${stage} check${status}${reason} (response details withheld).`);
   } finally {
     if (accessToken) {
       try {

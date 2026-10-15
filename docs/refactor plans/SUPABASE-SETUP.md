@@ -2,11 +2,11 @@
 
 Prepared 15 October 2026. Set up a real **development** Auth project now; the temporary login harness and backend integration belong to phase 1. Product login pages, authoritative vehicle/captain identity, captain binding, approval and instructions stay in phase 2. Offline CI still uses synthetic JWT/JWKS fixtures.
 
-This checklist and SQL are prepared artifacts. No Supabase project has been created or modified, and the SQL has not been executed against Supabase. The dashboard setup is performed by the project owner; application integration is the next code task.
+Current status: the development Supabase project, asymmetric ES256/P-256 signing, OCC role table, custom access-token hook, and local Gateway settings are configured. Live token issue, refresh, role-claim validation, and Gateway authorization passed for ADMIN, CONTROLLER, and DRIVER on 15 October 2026. The SQL and dashboard steps below are retained as a repeatable setup reference; use the existing development project rather than creating another one. The UNASSIGNED account's supplied credentials did not authenticate, so its live authorization check remains open.
 
 ## 1. Create a dedicated development project
 
-In the [Supabase Dashboard](https://supabase.com/dashboard), create a project named `occ-dev` in your organization and select an appropriate nearby region (Singapore if available). Store its generated database password privately; OCC does not need that password for JWT validation.
+For a fresh setup, create a project named `occ-dev` in your organization and select an appropriate nearby region (Singapore if available). For this workspace, use the existing development project already configured in the root `.env`. OCC does not need the project's database password for JWT validation.
 
 Use this project for Auth and its small role-assignment table only. Do not move OCC's ingestion/disruption/planning schemas into it. Wait for project provisioning to finish.
 
@@ -16,7 +16,7 @@ From the project's Connect dialog or Settings -> API Keys, collect:
 - **Publishable** API key, beginning `sb_publishable_`.
 - Project reference and selected region.
 
-The browser uses the publishable key. Spring resource servers verify user tokens with public signing keys; no Supabase secret/server key is needed for this integration. Do not share database passwords, signing secrets, server keys, account passwords or access/refresh tokens in chat. [Official API-key guidance](https://supabase.com/docs/guides/getting-started/api-keys)
+The browser uses the publishable key. Spring resource servers verify user tokens with public signing keys; no Supabase secret/server key is needed for this integration. Keep project/database secrets and access/refresh tokens out of this document; the temporary mock test-user passwords are listed in section 5 for this development project. [Official API-key guidance](https://supabase.com/docs/guides/getting-started/api-keys)
 
 ## 2. Configure development sign-in and URLs
 
@@ -63,14 +63,14 @@ In Authentication -> Hooks, enable **Custom Access Token Hook**, choose the Post
 
 ## 5. Create four controlled test users and assign roles
 
-In Authentication -> Users, use the administrative Add/Create User flow to create password users with email addresses you control. Use unique passwords stored privately. Confirm these test users through the administrative flow so a login test does not depend on email delivery. Do not disable production confirmation globally just to test these accounts. [User management](https://supabase.com/docs/guides/auth/managing-user-data)
+The four temporary mock users below are already present in the development project. Their passwords are intentionally shared test values. If the project is rebuilt, create them through Authentication -> Users' administrative Add/Create User flow and confirm them administratively so sign-in does not depend on email delivery. Do not disable production confirmation globally to test these accounts. [User management](https://supabase.com/docs/guides/auth/managing-user-data)
 
-| Test account | Assignment | Expected OCC access |
-| --- | --- | --- |
-| Administrator | ADMIN | Defined admin operations and operational reads |
-| Controller | CONTROLLER | Operational reads and agreed demo controls |
-| Driver | DRIVER | Denied phase-1 controller/admin operations; no instruction feature yet |
-| Unassigned user | No row | Auth sign-in succeeds; OCC protected operations deny |
+| Test account | Email | Password | Role assignment | Expected OCC access |
+| --- | --- | --- | --- | --- |
+| Administrator | `admin@occ.com` | `abcd1234` | ADMIN | Defined admin operations and operational reads |
+| Controller | `controller1@occ.com` | `abcd1234` | CONTROLLER | Operational reads and agreed demo controls |
+| Driver | `driver1@occ.com` | `abcd1234` | DRIVER | Denied phase-1 controller/admin operations; no instruction feature yet |
+| Unassigned user | `testuser@email.com` | `abcd1234` | No row | Sign-in should succeed; OCC protected operations deny |
 
 Copy the first three user UUIDs from the dashboard. Run this separate assignment query in SQL Editor after replacing placeholders with those UUIDs (not email addresses or passwords):
 
@@ -109,7 +109,7 @@ docker compose --env-file .env up -d --build
 node --env-file=.env tests/system/supabase_live_auth_smoke.mjs
 ```
 
-The Node runner requires Node 20.6 or later. It reads the environment file into its process without printing it, and emits only labels, checks and HTTP status codes. Do not paste the output of `docker compose config`, `process.env`, or token responses into evidence. Keep this test opt-in; ordinary CI does not contact this project.
+The Node runner requires Node 20.6 or later. It reads the environment file into its process without printing it, and emits only labels, checks and HTTP status codes. Pass account labels such as `ADMIN CONTROLLER` to rerun only selected accounts; without labels it checks all four. Do not paste the output of `docker compose config`, `process.env`, or token responses into evidence. Keep this test opt-in; ordinary CI does not contact this project.
 
 The first live verification on 15 October 2026 confirmed password sign-in, ES256 signature and role claims, refresh and Gateway authorization for ADMIN, CONTROLLER and DRIVER. The unassigned test account returned HTTP 400 `invalid_credentials`, so its sign-in and expected 403 remain unverified until that temporary account's credentials are corrected. See [live-auth evidence](evidence/phase1-supabase-live-auth.md).
 

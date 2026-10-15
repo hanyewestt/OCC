@@ -2,21 +2,23 @@
 
 Date: 15 October 2026, local Asia/Singapore. Source checkout: `fix/mvp-refactor`.
 
-The latest four-service verification ran from the repository root with Java 25.0.4:
+The final four-service verification used Java 25.0.4. A first clean reactor attempt encountered a transient Testcontainers/Ryuk host-port reset, which skipped database tests and caused the Disruption coverage gate to fail. After retrying Disruption with Ryuk enabled and Ingestion with the documented local Ryuk-disabled setting, the final Surefire/Failsafe reports for all four service targets show 270 tests with zero failures, errors, or skips. The successful module commands were:
 
 ```powershell
-.\mvnw.cmd --batch-mode --no-transfer-progress -pl services/ingestion,services/gateway,services/disruption,services/planning verify
+$env:TESTCONTAINERS_RYUK_DISABLED='true'
+.\mvnw.cmd --batch-mode --no-transfer-progress -pl services/ingestion verify
+.\mvnw.cmd --batch-mode --no-transfer-progress -rf :disruption verify
 ```
 
-Result: exit code 0; Maven reported `BUILD SUCCESS` in 6:29. All four phase-one services compiled and packaged. The configured Ingestion and Disruption JaCoCo gates passed; Planning and Gateway do not currently have configured coverage thresholds. Fresh Surefire and Failsafe reports for the four target services contain 269 tests with zero failures, errors, or skips:
+Both commands completed with `BUILD SUCCESS`. All four phase-one services compiled and packaged. The configured Ingestion and Disruption JaCoCo gates passed; Planning and Gateway do not currently have configured coverage thresholds. The local Ryuk override was limited to the Ingestion test command; project and CI defaults are unchanged. Final Surefire and Failsafe reports for the four target services contain:
 
 | Service | Unit/slice | PostgreSQL integration | Total |
 | --- | ---: | ---: | ---: |
-| Ingestion | 58 | 10 | 68 |
+| Ingestion | 58 | 11 | 69 |
 | Disruption | 59 | 25 | 84 |
 | Planning | 78 | 21 | 99 |
 | Gateway | 18 | 0 | 18 |
-| **Total** | **213** | **56** | **269** |
+| **Total** | **213** | **57** | **270** |
 
 After that reactor run, the Ingestion feed-sequence gauge query was aligned with the consumer's durable feed criteria, including both stop-scope formats and successful poll-run status. The focused follow-up command `.\mvnw.cmd --batch-mode --no-transfer-progress -pl services/ingestion '-Dit.test=IngestionStartupIT' verify` passed all 56 Ingestion unit/slice tests and all 6 selected `IngestionStartupIT` tests; its Ingestion JaCoCo gate passed.
 
@@ -29,8 +31,14 @@ All four services now expose `/actuator/prometheus` and authorize it for `ADMIN`
 - Planning: pending request/job counts and ages, retained deterministic-fallback count, and retained provider-failure count.
 - All three business services: process-lifetime counters for rows removed by their scheduled retention cleanup.
 
-Custom gauges and retention counters use no per-event, user, or provider-payload labels. Nginx denies management paths, Gateway does not proxy backend actuator paths, and production Compose does not publish the backend service ports. These metrics provide operational visibility but do not close A13: representative-host capacity/load and retention-soak results, hardware details, and k6 scenarios remain outstanding.
+Custom gauges and retention counters use no per-event, user, or provider-payload labels. Nginx denies management paths, Gateway does not proxy backend actuator paths, and production Compose does not publish the backend service ports. An isolated local Compose run used a disposable PostGIS volume, ephemeral ES256/JWKS fixtures, and the same hardened Nginx TLS setup as CI. All 18 edge route/JWT assertions passed; the latest 100-request rate-limit check returned 46 unauthorized and 54 rate-limited responses. A warmed 4-VU, 15-second k6 poll through the TLS edge completed 60 requests with 120/120 response checks passing, 0% request errors, and 94.71 ms p95 against the 1,000 ms threshold. A cold poll immediately after restarting Gateway exceeded that latency threshold at 1.23 s while still returning valid authorized responses; CI runs the authenticated workflow before k6 to warm the JWKS/auth path. Hosted CI has not run this change yet. These metrics and the short smoke profile do not close A13: representative-host capacity/load and retention-soak results and hardware details remain outstanding.
 
 This Maven reactor run uses test fixtures and does not establish live-provider behavior or hosted CI status. The local `.env` contains non-empty `DATAMALL_API_KEY` and `OCC_PLANNING_GEMINI_API_KEY`; no credential values are recorded here. The read-only DataMall request using `DATAMALL_API_KEY` returned HTTP 200 with a valid 500-row page. A separate one-request Gemini smoke using `OCC_PLANNING_GEMINI_API_KEY` and synthetic evidence returned HTTP 200 in 4.8 seconds; the JSON response validated with `causeCode=UNKNOWN`. That smoke verified key/model connectivity and structured output only, not the Planning service workflow. `OCC_PLANNING_RECOMMENDATION_AI_ENABLED=false`, so the deterministic end-to-end recommendation verification used its configured fixture. Live auth and provider results are recorded in [functional workflow evidence](phase1-functional-workflow.md) and [Supabase evidence](phase1-supabase-live-auth.md). The separate synthetic Nginx edge checks remain in [edge evidence](phase1-nginx-edge-smoke-test.md).
 
-Compose configuration validation passed with the safe root `.env.example` for both the base stack and the production merge. Direct validation with the user's `.env` currently stops because `OCC_INGESTION_DB_MIGRATOR_PASSWORD` and `OCC_DISRUPTION_DB_MIGRATOR_PASSWORD` are unset; those local values are required before the unoverridden base stack can be started from that file.
+Compose configuration validation passes with the safe root `.env.example` for both the base stack and production merge. The ignored root `.env` contains distinct development passwords for the three migrator accounts; no values are recorded here. The first `.env`-backed restart exposed that bootstrap created configured passwords only for new roles and did not reconcile existing accounts. `infra/postgres/bootstrap.sql` now rotates the passwords of already-existing runtime and migrator roles after validating their attributes. The regression test seeds six stale passwords and verifies the old values fail and the configured values pass over SCRAM-authenticated TCP. Its three database privilege tests pass. Recreating the local `.env` stack then let all three migration jobs exit successfully and all five application/database services become healthy, with the existing named database volume preserved. Ingestion imported 5,211 stops, 602 services, and 26,835 route-stop records; all 118 provider polling targets were healthy. The live Supabase/Gateway authorization result is recorded in [functional workflow evidence](phase1-functional-workflow.md). The production merge against the real `.env` still requires immutable service image digests, which are deployment inputs.
+
+The initial `clean verify` attempt skipped Testcontainers suites after a Ryuk connection reset. The retry commands above produced current successful reports for every service, with the 11 Ingestion, 25 Disruption and 21 Planning integration tests executed and no skips. The updated Compose merge still passes `docker compose --env-file .env.example ... config -q`, and `git diff --check` passes.
+
+The source configuration inventory check covered 11 active `src` YAML files and found 115 unique environment placeholders; all are present in the 174-entry root `.env.example`. Safe Compose resolution reports the expected core internal ports. A broader scan encountered ignored generated output from the retired `services/planning/recommendation-engine` and `services/planning/root-cause-diagnosis` trees (173 generated files total). They are not active configuration sources and remain outstanding local cleanup under A15; see [the unused-file review](phase1-unused-files-review.md).
+
+CI contract validation was corrected after replaying its source-to-target operation check. The manifest now maps four retained historical source contracts to their exact paths at baseline revision `0f2cd49`, and CI compares each retained JSON snapshot against that revision before checking operation mappings. The equivalent local check passed for 34 source operations and three target contracts. The live Ingestion, Disruption and Planning OpenAPI documents were exported from running services using a synthetic ADMIN token; all three exactly matched their committed contracts. CI also scans repository secrets/misconfigurations with Trivy and sanitizes the raw report before artifact upload; the sanitizer's seeded HIGH/MEDIUM and value-redaction checks passed. The four-file dispatch recovery Compose merge resolves successfully, and the recovery harness CLI and k6 smoke script pass syntax checks. Workflow YAML parsing, action-SHA checks, `git diff --check` and safe Compose config passed. Hosted CI and the actual Trivy scan remain unrun.

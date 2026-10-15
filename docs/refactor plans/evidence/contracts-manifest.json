@@ -1,6 +1,12 @@
 {
   "baselineRevision": "0f2cd49",
   "targetBaselineRevision": "b19dbf9",
+  "sourceBaselinePaths": {
+    "docs/refactor plans/evidence/source-contracts/bus-bunching-detection.json": "services/operations/bus-bunching-detection/openapi/bus-bunching-detection.json",
+    "docs/refactor plans/evidence/source-contracts/polling-ingestion.json": "services/ingestion/openapi/polling-ingestion.json",
+    "docs/refactor plans/evidence/source-contracts/recommendation-engine.json": "services/planning/recommendation-engine/openapi/recommendation-engine.json",
+    "docs/refactor plans/evidence/source-contracts/root-cause-diagnosis.json": "services/planning/root-cause-diagnosis/openapi/root-cause-diagnosis.json"
+  },
   "capturedAt": "2026-10-15",
   "status": "complete legacy-operation inventory and generated phase-one service contracts",
   "operations": [

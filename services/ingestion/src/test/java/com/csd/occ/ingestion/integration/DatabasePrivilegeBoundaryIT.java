@@ -38,10 +38,21 @@ class DatabasePrivilegeBoundaryIT {
 
     @BeforeAll
     static void upgradesLegacyOwnerAndBootstrapsRoles() throws Exception {
+        var hbaFile = POSTGRES.execInContainer("psql", "--username=occ_admin", "--dbname=occ", "--tuples-only",
+                "--no-align", "--command=SHOW hba_file");
+        assertThat(hbaFile.getExitCode()).as(hbaFile.getStderr()).isZero();
+        var requireScram = POSTGRES.execInContainer("sed", "-i",
+                "1i host all all 127.0.0.1/32 scram-sha-256", hbaFile.getStdout().trim());
+        assertThat(requireScram.getExitCode()).as(requireScram.getStderr()).isZero();
+        successful("occ_admin", "SELECT pg_reload_conf()");
+
         successful("occ_admin", """
-                CREATE ROLE occ_ingestion LOGIN PASSWORD 'synthetic-ingestion';
-                CREATE ROLE occ_disruption LOGIN PASSWORD 'synthetic-disruption';
-                CREATE ROLE occ_planning LOGIN PASSWORD 'synthetic-planning';
+                CREATE ROLE occ_ingestion LOGIN PASSWORD 'stale-ingestion';
+                CREATE ROLE occ_disruption LOGIN PASSWORD 'stale-disruption';
+                CREATE ROLE occ_planning LOGIN PASSWORD 'stale-planning';
+                CREATE ROLE occ_ingestion_migrator LOGIN PASSWORD 'stale-ingestion-migrator';
+                CREATE ROLE occ_disruption_migrator LOGIN PASSWORD 'stale-disruption-migrator';
+                CREATE ROLE occ_planning_migrator LOGIN PASSWORD 'stale-planning-migrator';
                 CREATE SCHEMA ingestion AUTHORIZATION occ_ingestion;
                 CREATE SCHEMA disruption AUTHORIZATION occ_disruption;
                 CREATE SCHEMA planning AUTHORIZATION occ_planning;
@@ -110,6 +121,16 @@ class DatabasePrivilegeBoundaryIT {
                 .isNotZero();
     }
 
+    @Test
+    void reconcilesExistingRuntimeAndMigratorPasswordsWithConfiguredValues() throws Exception {
+        assertPasswordRotated("occ_ingestion", "stale-ingestion", "synthetic-ingestion");
+        assertPasswordRotated("occ_disruption", "stale-disruption", "synthetic-disruption");
+        assertPasswordRotated("occ_planning", "stale-planning", "synthetic-planning");
+        assertPasswordRotated("occ_ingestion_migrator", "stale-ingestion-migrator", "synthetic-ingestion-migrator");
+        assertPasswordRotated("occ_disruption_migrator", "stale-disruption-migrator", "synthetic-disruption-migrator");
+        assertPasswordRotated("occ_planning_migrator", "stale-planning-migrator", "synthetic-planning-migrator");
+    }
+
     private static Path bootstrapScript() {
         Path current = Path.of("").toAbsolutePath();
         while (current != null && !Files.exists(current.resolve("infra/postgres/bootstrap.sql"))) {
@@ -138,6 +159,20 @@ class DatabasePrivilegeBoundaryIT {
         System.arraycopy(args, 0, command, 1, args.length);
         var result = POSTGRES.execInContainer(command);
         assertThat(result.getExitCode()).as(result.getStderr()).isZero();
+    }
+
+    private static void assertPasswordRotated(String username, String stalePassword, String configuredPassword)
+            throws Exception {
+        assertThat(connectWithPassword(username, stalePassword).getExitCode()).isNotZero();
+        var result = connectWithPassword(username, configuredPassword);
+        assertThat(result.getExitCode()).as(result.getStderr()).isZero();
+    }
+
+    private static org.testcontainers.containers.Container.ExecResult connectWithPassword(String username,
+                                                                                           String password)
+            throws Exception {
+        return POSTGRES.execInContainer("env", "PGPASSWORD=" + password, "psql", "--host=127.0.0.1",
+                "--username=" + username, "--dbname=occ", "--no-psqlrc", "--command=SELECT 1");
     }
 
     private static org.testcontainers.containers.Container.ExecResult run(String username, String... args)

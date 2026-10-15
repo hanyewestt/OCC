@@ -26,11 +26,13 @@ recommendation policy. Bunching submissions keep the existing workflow.
 Latest verification run:
 
 ```text
-.\mvnw.cmd --batch-mode --no-transfer-progress -pl services/ingestion,services/gateway,services/disruption,services/planning clean verify
-BUILD SUCCESS; 204 Surefire tests and 53 Failsafe integration tests passed,
-with zero failures, errors, or skips. The configured Ingestion and Disruption
-JaCoCo coverage gates passed; Planning and Gateway have no configured coverage
-thresholds.
+$env:TESTCONTAINERS_RYUK_DISABLED='true'
+.\mvnw.cmd --batch-mode --no-transfer-progress -pl services/ingestion verify
+.\mvnw.cmd --batch-mode --no-transfer-progress -rf :disruption verify
+BUILD SUCCESS across the module retries; 213 Surefire tests and 57 Failsafe
+integration tests passed, with zero failures, errors, or skips. The configured
+Ingestion and Disruption JaCoCo coverage gates passed; Planning and Gateway
+have no configured coverage thresholds.
 ```
 
 This run included PostgreSQL-backed lifecycle, persistence and receiver
@@ -58,3 +60,7 @@ evidence alone.
 ## Lost-response retry test
 
 On 15 October 2026, `BunchingDiagnosisDispatcherIT.retryAfterReceiverCommitAndLostResponseReusesTheSameRequest` passed in the Docker-backed Disruption integration suite. Its HTTP receiver harness records one stable request ID under the incoming idempotency key, then drops the first response after that record is made. The dispatcher leaves the outbox pending, retries the same payload/key/fingerprint, and marks it delivered on attempt two; the receiver harness contains exactly one record. The existing `DiagnosisRequestPersistenceIT` independently verifies stable database replay for the Planning receiver. Together these cover sender retry and receiver idempotency, but the receiver in the lost-response test is a test harness, not the Planning application. Full multi-container receiver-commit fault injection and restart-at-each-crash-point checks remain open.
+
+The Java fault proxy also passed its host-only smoke on 15 October. After Docker became available, the multi-container recovery smoke passed against the isolated Compose project `occ-dispatch-20261015`: Planning committed the request before the proxy dropped HTTP 202, then Planning and Disruption restarted. The outbox remained durable and was either pending its retry or already delivered on attempt two by the time the check ran. In both cases, the proxy observed the same idempotency key, fingerprint, and body; Planning retained exactly one durable request, the recommendation remained queryable after recovery, and the simulation closed successfully. The smoke now accepts both valid retry timing states while checking the same durability and idempotency invariants.
+
+This closes the injected receiver-commit/lost-response/restart scenario only. Restart-at-each-other-documented-crash-point coverage, live traffic-incident lifecycle through Compose, capacity/soak, hosted CI, and cloud deployment remain open; do not mark A07 complete from this one recovery scenario.

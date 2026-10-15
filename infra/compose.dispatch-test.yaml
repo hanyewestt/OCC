@@ -1,0 +1,39 @@
+# Isolated receiver-commit/restart test. Use only with an isolated Compose project.
+services:
+  planning-fault-proxy:
+    image: eclipse-temurin:25.0.4_7-jdk-noble@sha256:6ee50f6bf158f3f5bb43b8b52985448743b5d3bfbcb0e99f3780c83d58ffa287
+    init: true
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      HOME: /tmp
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=1777
+    entrypoint: ["/bin/sh", "-lc"]
+    command:
+      - mkdir -p /tmp/classes && javac -d /tmp/classes /test/PlanningCommitFaultProxy.java && exec java -cp /tmp/classes PlanningCommitFaultProxy 8080 8081 http://planning:${OCC_PLANNING_INTERNAL_PORT:-8003}
+    volumes:
+      - ./tests/system/PlanningCommitFaultProxy.java:/test/PlanningCommitFaultProxy.java:ro
+    ports:
+      - "127.0.0.1:${OCC_PHASE1_DISPATCH_RECOVERY_CONTROL_PORT:-16902}:8081"
+    networks: [app]
+    depends_on:
+      planning:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "java", "-cp", "/tmp/classes", "PlanningCommitFaultProxy", "healthcheck", "8081"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  disruption:
+    environment:
+      OCC_DISRUPTION_PLANNING_INTERNAL_URL: http://planning-fault-proxy:8080
+      OCC_DISRUPTION_PLANNING_RETRY_INITIAL_DELAY: ${OCC_PHASE1_DISPATCH_RECOVERY_RETRY_DELAY:-1m}
+      OCC_DISRUPTION_PLANNING_RETRY_MAX_DELAY: ${OCC_PHASE1_DISPATCH_RECOVERY_RETRY_DELAY:-1m}
+    depends_on:
+      planning-fault-proxy:
+        condition: service_healthy

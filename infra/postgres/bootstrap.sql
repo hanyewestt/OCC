@@ -92,6 +92,8 @@ BEGIN
         ELSIF EXISTS (SELECT 1 FROM pg_roles WHERE oid = runtime_oid
                        AND (NOT rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls)) THEN
             RAISE EXCEPTION 'Existing runtime role % has unsafe attributes; review it manually', service.runtime_role;
+        ELSE
+            EXECUTE format('ALTER ROLE %I PASSWORD %L', service.runtime_role, service.runtime_password);
         END IF;
 
         IF EXISTS (SELECT 1 FROM pg_auth_members WHERE member = runtime_oid) THEN
@@ -106,6 +108,8 @@ BEGIN
         ELSIF EXISTS (SELECT 1 FROM pg_roles WHERE oid = migrator_oid
                        AND (NOT rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls)) THEN
             RAISE EXCEPTION 'Existing migrator role % has unsafe attributes; review it manually', service.migrator_role;
+        ELSE
+            EXECUTE format('ALTER ROLE %I PASSWORD %L', service.migrator_role, service.migrator_password);
         END IF;
 
         IF EXISTS (
