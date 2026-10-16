@@ -380,16 +380,36 @@ jobs:
           - service: gateway
             port: 8004
             image: occ-gateway:ci
+          - service: ingestion-migrations
+            module: ingestion
+            migration_source: services/ingestion/src/main/resources/db/migration
+            image: occ-ingestion-migrations:ci
+          - service: disruption-migrations
+            module: disruption
+            migration_source: services/disruption/src/main/resources/db/migration
+            image: occ-disruption-migrations:ci
+          - service: planning-migrations
+            module: planning
+            migration_source: services/planning/src/main/resources/db/migration
+            image: occ-planning-migrations:ci
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Build shared Java application image
+        if: ${{ !matrix.migration_source }}
         run: >-
           docker build --pull --file infra/java.Dockerfile
           --build-arg OCC_SERVICE=${{ matrix.service }}
           --build-arg OCC_SERVICE_INTERNAL_PORT=${{ matrix.port }}
+          --tag ${{ matrix.image }} .
+      - name: Build owned-schema migration image
+        if: ${{ matrix.migration_source }}
+        run: >-
+          docker build --pull --file infra/flyway.Dockerfile
+          --build-arg OCC_SERVICE=${{ matrix.module }}
+          --build-arg OCC_MIGRATION_SOURCE=${{ matrix.migration_source }}
           --tag ${{ matrix.image }} .
       - name: Fail on HIGH or CRITICAL OS/library findings
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

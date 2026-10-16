@@ -79,6 +79,8 @@ The repository secret/misconfiguration job sets the CI-tool-only
 It still scans source files and enforces HIGH/CRITICAL findings through the
 sanitizer. Separate image vulnerability jobs use current vulnerability databases
 and retain their HIGH/CRITICAL failure gates and SBOM output.
+The image matrix covers all four applications and all three schema-migration
+images; the pinned Nginx image has its own scan and SBOM job.
 
 The isolated CI workflow also routes Disruption-to-Planning submissions through
 [`infra/compose.dispatch-test.yaml`](infra/compose.dispatch-test.yaml). Its

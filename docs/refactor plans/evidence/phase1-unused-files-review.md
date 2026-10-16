@@ -52,3 +52,23 @@ The audit also found that `.gitignore` hid the required
 despite tracked README links to them. Added explicit exceptions so those two
 existing guides are visible to Git and can be included in the final change.
 They are required runbooks rather than unused documents.
+
+## Final local A15 audit, 16 October
+
+The owner removed the two retired Planning build-output directories. Verified
+that both `services/planning/recommendation-engine` and
+`services/planning/root-cause-diagnosis` are absent. The repository has 604
+tracked files and only the four active service roots. No tracked files exist
+under retired service roots or `infra/local/init`; no nested Maven wrappers
+remain. All 180 application environment variables referenced by the 14 audited
+application/Compose YAML files have inventory entries. The ignored `.env` and
+external opt-in verification helpers remain outside the tracked source set.
+
+The final audit no longer has the previously rejected-delete blocker. Current
+source verification uses the recorded 290-test local reactor result, contract
+checks and the hosted four-service workflow on `fix/mvp-refactor`. The removed
+directories were ignored/untracked and contributed no source to those builds.
+Historical migration fixtures and source contracts remain because current
+migration/contract gates consume them. Code rollback is available at `4b672d0`
+and the subsequent recorded implementation commits; database recovery retains
+its separate tested backup/restore procedure.
