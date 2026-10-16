@@ -10,8 +10,10 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -33,15 +35,15 @@ class SupabaseJwtDecoderTest {
     private static ECKey signingKey;
     private static HttpServer jwksServer;
     private static URI jwksUri;
+    private static AtomicReference<String> currentJwks;
 
     @BeforeAll
     static void startLocalJwksServer() throws Exception {
         signingKey = new ECKeyGenerator(Curve.P_256).keyID("gateway-test-key").generate();
-        byte[] body = signingKey.toPublicJWK().toJSONString().getBytes(StandardCharsets.UTF_8);
-        String jwks = "{\"keys\":[" + new String(body, StandardCharsets.UTF_8) + "]}";
+        currentJwks = new AtomicReference<>(jwksJson(signingKey));
         jwksServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         jwksServer.createContext("/jwks", exchange -> {
-            byte[] response = jwks.getBytes(StandardCharsets.UTF_8);
+            byte[] response = currentJwks.get().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, response.length);
             try (var output = exchange.getResponseBody()) {
@@ -64,6 +66,20 @@ class SupabaseJwtDecoderTest {
         assertThat(jwt.getIssuer().toString()).isEqualTo(ISSUER);
         assertThat(jwt.getAudience()).contains(AUDIENCE);
         assertThat(jwt.getSubject()).isEqualTo("synthetic-user");
+    }
+
+    @Test
+    void acceptsANewSigningKeyAfterTheIssuerPublishesAnOverlappingJwksSet() throws Exception {
+        org.springframework.security.oauth2.jwt.JwtDecoder decoder = decoder();
+        decoder.decode(token(ISSUER, AUDIENCE, Instant.now().plusSeconds(60), JWSAlgorithm.ES256));
+        ECKey rotatedKey = new ECKeyGenerator(Curve.P_256).keyID("gateway-rotated-key").generate();
+        currentJwks.set(jwksJson(signingKey, rotatedKey));
+
+        Jwt rotatedJwt = decoder.decode(token(rotatedKey, ISSUER, AUDIENCE,
+                Instant.now().plusSeconds(60), JWSAlgorithm.ES256));
+
+        assertThat(rotatedJwt.getHeaders().get("kid")).isEqualTo("gateway-rotated-key");
+        assertThat(rotatedJwt.getSubject()).isEqualTo("synthetic-user");
     }
 
     @Test
@@ -104,6 +120,11 @@ class SupabaseJwtDecoderTest {
 
     private static String token(String issuer, String audience, Instant expiresAt,
                                 JWSAlgorithm algorithm) throws Exception {
+        return token(signingKey, issuer, audience, expiresAt, algorithm);
+    }
+
+    private static String token(ECKey key, String issuer, String audience, Instant expiresAt,
+                                JWSAlgorithm algorithm) throws Exception {
         JWTClaimsSet claims = new JWTClaimsSet.Builder()
                 .issuer(issuer)
                 .subject("synthetic-user")
@@ -112,9 +133,14 @@ class SupabaseJwtDecoderTest {
                 .expirationTime(Date.from(expiresAt))
                 .claim("occ_role", "CONTROLLER")
                 .build();
-        SignedJWT jwt = new SignedJWT(new JWSHeader.Builder(algorithm).keyID("gateway-test-key").build(), claims);
+        SignedJWT jwt = new SignedJWT(new JWSHeader.Builder(algorithm).keyID(key.getKeyID()).build(), claims);
         if (JWSAlgorithm.HS256.equals(algorithm)) jwt.sign(new MACSigner(new byte[32]));
-        else jwt.sign(new ECDSASigner(signingKey));
+        else jwt.sign(new ECDSASigner(key));
         return jwt.serialize();
+    }
+
+    private static String jwksJson(ECKey... keys) {
+        List<String> publicKeys = Arrays.stream(keys).map(key -> key.toPublicJWK().toJSONString()).toList();
+        return "{\"keys\":[" + String.join(",", publicKeys) + "]}";
     }
 }

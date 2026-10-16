@@ -42,6 +42,10 @@ public class BunchingRecommendationService {
         Objects.requireNonNull(event, "event is required");
         Objects.requireNonNull(diagnosis, "diagnosis is required");
 
+        if (classification != SourceClassification.SIMULATION) {
+            return Optional.empty();
+        }
+
         return mitigationContext.findFor(event)
                 .flatMap(inputs -> orchestrator.evaluate(
                         recommendationId,

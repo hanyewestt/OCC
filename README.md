@@ -5,6 +5,13 @@ An agentic dispatch and incident mitigation system for Singapore public bus oper
 ## Local quick start
 Read the [local development guide](docs/LOCAL-DEVELOPMENT.md).
 
+From the repository root, build and start the local stack with its automatically
+loaded development override:
+
+```powershell
+docker compose --env-file .env up -d --build
+```
+
 The production edge, immutable image inputs, and TLS file mapping are prepared
 in [`infra/compose.production.yaml`](infra/compose.production.yaml); set real
 registry digests and operator-managed certificates before deploying.
@@ -32,6 +39,10 @@ repository-root `.env` for local runs. Planning owns both diagnosis and
 recommendation generation; its setup and protected API details are in
 [`services/planning/README.md`](services/planning/README.md). Environment names
 and safe example values are listed in `.env.example`.
+
+The local Compose override builds the service and migration images. Migration
+images retain the PostgreSQL JDBC driver and omit unused Databricks, Couchbase,
+and SQL Server drivers because this stack migrates PostgreSQL only.
 
 ## Operational metrics
 

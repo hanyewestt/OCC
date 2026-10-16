@@ -19,6 +19,7 @@ import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -64,6 +65,24 @@ public final class PlanningCommitFaultProxy {
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         server.createContext("/__test/health", exchange -> respond(exchange, 200, "ok"));
         server.createContext("/__test/status", exchange -> respond(exchange, 200, state.json()));
+        server.createContext("/__test/arm", exchange -> {
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                respond(exchange, 405, "method not allowed");
+                return;
+            }
+            String key = new String(exchange.getRequestBody().readNBytes(80), StandardCharsets.US_ASCII).trim();
+            try {
+                if (key.length() != 36 || !UUID.fromString(key).toString().equalsIgnoreCase(key)) {
+                    respond(exchange, 400, "invalid idempotency key");
+                    return;
+                }
+            } catch (IllegalArgumentException invalidKey) {
+                respond(exchange, 400, "invalid idempotency key");
+                return;
+            }
+            state.arm(key);
+            respond(exchange, 200, state.json());
+        });
         server.start();
     }
 
@@ -123,7 +142,8 @@ public final class PlanningCommitFaultProxy {
             if (SUBMISSION_PATH.equals(target.split("\\?", 2)[0]) && "POST".equalsIgnoreCase(parts[0])) {
                 state.record(headers.get("idempotency-key"), headers.get("x-occ-event-fingerprint"), body,
                         response.statusCode());
-                if (response.statusCode() == 202 && state.dropFirstCommittedResponse()) {
+                if (response.statusCode() == 202
+                        && state.dropFirstCommittedResponse(headers.get("idempotency-key"))) {
                     System.out.println("Injected lost response after Planning returned HTTP 202");
                     return;
                 }
@@ -245,8 +265,26 @@ public final class PlanningCommitFaultProxy {
         private volatile boolean sameKeys = true;
         private volatile boolean sameFingerprints = true;
         private volatile boolean sameBodies = true;
+        private volatile boolean armed;
+        private volatile String armedKey;
+
+        private synchronized void arm(String key) {
+            calls.set(0);
+            firstReceiverStatus.set(0);
+            lastResponseStatus.set(0);
+            dropped.set(0);
+            firstKey.set(null);
+            firstFingerprint.set(null);
+            firstBodyHash.set(null);
+            sameKeys = true;
+            sameFingerprints = true;
+            sameBodies = true;
+            armedKey = key;
+            armed = true;
+        }
 
         private synchronized void record(String key, String fingerprint, byte[] body, int status) throws Exception {
+            if (!armed || !Objects.equals(armedKey, key)) return;
             lastResponseStatus.set(status);
             String digest = sha256(body);
             if (calls.getAndIncrement() == 0) {
@@ -261,8 +299,8 @@ public final class PlanningCommitFaultProxy {
             }
         }
 
-        private boolean dropFirstCommittedResponse() {
-            return dropped.compareAndSet(0, 1);
+        private boolean dropFirstCommittedResponse(String key) {
+            return armed && Objects.equals(armedKey, key) && dropped.compareAndSet(0, 1);
         }
 
         private synchronized String json() {
@@ -270,6 +308,7 @@ public final class PlanningCommitFaultProxy {
                     + ",\"firstReceiverStatus\":" + firstReceiverStatus.get()
                     + ",\"firstResponseDropped\":" + (dropped.get() == 1)
                     + ",\"lastResponseStatus\":" + lastResponseStatus.get()
+                    + ",\"armedIdempotencyKey\":" + jsonString(armedKey)
                     + ",\"idempotencyKey\":" + jsonString(firstKey.get())
                     + ",\"sameIdempotencyKey\":" + sameKeys
                     + ",\"sameFingerprint\":" + sameFingerprints

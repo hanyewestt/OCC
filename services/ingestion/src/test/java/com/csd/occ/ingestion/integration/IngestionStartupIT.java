@@ -19,12 +19,15 @@ import com.csd.occ.ingestion.domain.DemoReplayScenario;
 import com.csd.occ.ingestion.domain.DemoReplayService;
 import com.csd.occ.ingestion.domain.DemoRunDetails;
 import com.csd.occ.ingestion.domain.TrafficIncidentPollFeedService;
+import com.csd.occ.ingestion.domain.TrafficIncidentFeedPort;
+import com.csd.occ.ingestion.domain.TrafficIncidentPollingService;
 import com.csd.occ.ingestion.domain.DemoRunService;
 import com.csd.occ.ingestion.domain.PollRunRepository;
 import com.csd.occ.ingestion.domain.ReferenceTopologyPort;
 import com.csd.occ.ingestion.domain.RawObservationRepository;
 import com.csd.occ.ingestion.infrastructure.config.BusArrivalSchedule;
 import com.csd.occ.ingestion.infrastructure.config.DemoReplaySchedule;
+import com.csd.occ.ingestion.infrastructure.config.TrafficIncidentSchedule;
 import com.csd.occ.ingestion.infrastructure.datamall.DataMallAdapter;
 import java.time.Instant;
 import java.util.UUID;
@@ -69,6 +72,7 @@ class IngestionStartupIT {
 
     @MockitoBean DataMallAdapter dataMall;
     @MockitoBean BusArrivalSchedule schedule;
+    @MockitoBean TrafficIncidentSchedule trafficIncidentSchedule;
     @MockitoBean DemoReplaySchedule demoReplaySchedule;
     @MockitoBean BunchingControlPort bunching;
     @Autowired JdbcTemplate jdbc;
@@ -106,6 +110,7 @@ class IngestionStartupIT {
     @Autowired ReferenceTopologyPort topology;
     @Autowired com.csd.occ.ingestion.domain.RetentionService retention;
     @Autowired TrafficIncidentPollFeedService trafficIncidentPollFeed;
+    @Autowired TrafficIncidentPollingService trafficIncidentPolling;
     @Autowired org.springframework.context.ApplicationContext context;
 
     @Test
@@ -138,6 +143,36 @@ class IngestionStartupIT {
         assertThat(bunchingFeed.page(0, 100).items()).hasSize(1);
         assertThat(meterRegistry.get("occ.ingestion.arrival.feed_sequence").gauge().value())
                 .isGreaterThan(0.0);
+    }
+
+    @Test
+    void trafficIncidentPollIsStoredAndExposedAsAnObservationOnlyCompletedFeed() {
+        String payload = "[{\"Type\":\"Road Works\",\"Latitude\":1.3000000,"
+                + "\"Longitude\":103.8000000,\"Message\":\"Road works near test junction\"}]";
+        when(dataMall.trafficIncidents()).thenReturn(new TrafficIncidentFeedPort.TrafficIncidentBatch(200,
+                payload, List.of(new TrafficIncidentFeedPort.TrafficIncident("a".repeat(64), "Road Works",
+                        new java.math.BigDecimal("1.3000000"), new java.math.BigDecimal("103.8000000"),
+                        "Road works near test junction", null)), List.of()));
+
+        trafficIncidentPolling.pollOnce();
+
+        UUID pollId = jdbc.queryForObject("SELECT id FROM ingestion.poll_run "
+                + "WHERE source='TRAFFIC_DATAMALL' AND outcome='SUCCESS' "
+                + "ORDER BY completed_at DESC, id DESC LIMIT 1", UUID.class);
+        var poll = trafficIncidentPollFeed.page(null, null, 100).polls().stream()
+                .filter(value -> value.pollRunId().equals(pollId)).findFirst().orElseThrow();
+        assertThat(poll.complete()).isTrue();
+        assertThat(poll.classification()).isEqualTo("OBSERVATION_ONLY");
+        assertThat(poll.incidents()).singleElement().satisfies(incident -> {
+            assertThat(incident.sourceIncidentKey()).isEqualTo("a".repeat(64));
+            assertThat(incident.classification()).isEqualTo("OBSERVATION_ONLY");
+            assertThat(incident.demoRunId()).isNull();
+        });
+        assertThat(jdbc.queryForObject("SELECT payload FROM ingestion.raw_observation "
+                + "WHERE poll_run_id=?", String.class, pollId))
+                .contains("Road Works", "Road works near test junction");
+        assertThat(meterRegistry.get("occ.ingestion.traffic_incident.latest_poll_success").gauge().value())
+                .isEqualTo(1.0);
     }
 
     @Test

@@ -319,6 +319,12 @@ jobs:
           --compose-project occ-edge-ci
           --env-file .env.example
           --token-file "$RUNNER_TEMP/occ-edge-jwks/admin.jwt"
+      - name: Verify traffic incident lifecycle through the application
+        run: >-
+          python3 tests/system/traffic_incident_workflow_smoke.py
+          --base-url https://127.0.0.1:18443
+          --token-file "$RUNNER_TEMP/occ-edge-jwks/admin.jwt"
+          --compose-project occ-edge-ci
       - name: Verify receiver-commit retry and restart recovery
         run: >-
           python3 tests/system/dispatch_recovery_smoke.py --base-url https://127.0.0.1:18443

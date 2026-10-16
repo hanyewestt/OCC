@@ -1,7 +1,7 @@
 # Isolated receiver-commit/restart test. Use only with an isolated Compose project.
 services:
   planning-fault-proxy:
-    image: eclipse-temurin:25.0.4_7-jdk-noble@sha256:6ee50f6bf158f3f5bb43b8b52985448743b5d3bfbcb0e99f3780c83d58ffa287
+    image: eclipse-temurin:25.0.4.1_1-jdk-noble@sha256:589ff4cc3f71aab462e7048a47a0d10edf57fbccde3fceea2281e610bf5880b4
     init: true
     user: "1000:1000"
     read_only: true

@@ -35,6 +35,7 @@ services:
       OCC_INGESTION_IMPORT_REFERENCE_ON_STARTUP: "false"
       OCC_INGESTION_SEED_TARGETS_ON_STARTUP: "false"
       OCC_INGESTION_BUS_ARRIVAL_ENABLED: "false"
+      OCC_INGESTION_TRAFFIC_INCIDENT_ENABLED: "false"
 
   disruption:
     build:

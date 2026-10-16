@@ -1,10 +1,10 @@
 # Refactor research and recommended stack
 
-Research date: **15 October 2026 (Asia/Singapore)**. This is a dated research snapshot, not permission to deploy or erase existing data. Recommendations below are project decisions inferred from the supplied design and current repository; linked release and framework facts come from primary sources.
+Research date: **16 October 2026 (Asia/Singapore)**. This is a dated research snapshot, not permission to deploy or erase existing data. Recommendations below are project decisions inferred from the supplied design and current repository; linked release and framework facts come from primary sources.
 
 Read [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) for the executable agent instructions.
 
-**Scope clarification accepted 15 October 2026:** the implementation plan supersedes earlier naming assumptions in this research snapshot. Disruption combines bunching and traffic incident detection under canonical `disruption` service/schema/API names; Ingestion retains source collection/normalization. Planning combines diagnosis and recommendation with no redundant self-HTTP or duplicate mutable context catalog. Live vehicle/captain identity integration, binding and instructions are phase 2 work. Single-host MVP migration with a planned pause is accepted; HA is not a requirement. Relevant build-stack releases were rechecked on 15 October; Maven 3.10.0 is still a release candidate and is excluded.
+**Scope clarification accepted 15 October 2026:** the implementation plan supersedes earlier naming assumptions in this research snapshot. Disruption combines bunching and traffic incident detection under canonical `disruption` service/schema/API names; Ingestion retains source collection/normalization. Planning combines diagnosis and recommendation with no redundant self-HTTP or duplicate mutable context catalog. Live vehicle/captain identity integration, binding and instructions are phase 2 work. Single-host MVP migration with a planned pause is accepted; HA is not a requirement. Relevant build-stack releases were rechecked on 16 October; Maven 3.10.0 is still a release candidate and is excluded.
 
 ## 1. What the repository and design actually require
 
@@ -63,6 +63,23 @@ Use released artifacts, not milestones, RCs, snapshots, React canaries, or float
 | Image/repository scan | **Trivy 0.76.0** stable, released 14 October. [Maintainer release](https://github.com/aquasecurity/trivy/releases/tag/v0.76.0), [filesystem and misconfiguration scanning](https://trivy.dev/docs/latest/scanner/misconfiguration/), [secret scanning](https://www.trivy.dev/docs/latest/guide/scanner/secret/), [GitHub Action v0.36.0](https://github.com/aquasecurity/trivy-action/tree/v0.36.0) | Pin scanner version and action SHA independently. Scan final images for OS/library vulnerabilities and the checked-out repository for secrets/misconfigurations. |
 | API compatibility | **oasdiff 1.33.0** stable; 1.33.1 is RC. [Maintainer releases](https://github.com/oasdiff/oasdiff/releases) | Upgrade current 1.32.1 tooling only after validating CLI/image commands; compare generated contracts against a manifest of old contract paths. |
 | Load tests | **k6 2.3.0** latest mainline GA; 1.8.2 is a newer maintenance release of the older line. [Maintainer release](https://github.com/grafana/k6/releases/tag/v2.3.0) | CI pins the official multi-platform image `grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34`; use released APIs, with broad load/soak on representative staging hardware. |
+
+### Release refresh on 16 October 2026
+
+Before pinning the refreshed images and managed libraries, I rechecked the
+official release sources. Spring Boot 4.1.1 remains the current project release,
+and Spring Cloud 2025.1.3 is GA and supports Boot 4.1.x; Tomcat 11.0.27 is the
+latest entry in its stable 11.0 changelog. Jackson 2.21.7 and 3.1.7 are the
+current selected patch releases. The official Eclipse Temurin image manifest
+lists `25.0.4.1_1` as the current Java 25 image tag; PostgreSQL lists 18.6 as
+the current 18 minor, and the maintained PostGIS image documents the
+`18-3.6` tag as PostgreSQL 18 with PostGIS 3.6.4. Nginx 1.30.6 is the current
+stable release (1.31.7 is mainline), and Maven 3.9.16 remains the current
+stable Maven release. These checks confirmed the selected application and
+production-image pins; the dispatch-recovery helper now uses the same pinned
+Temurin JDK image as the application build.
+
+Primary release sources: [Spring Boot 4.1.1](https://spring.io/blog/2026/08/20/spring-boot-4-1-1-available-now/), [Spring Cloud 2025.1.3 and Boot compatibility](https://spring.io/blog/2026/08/20/spring-cloud-2025-1-3-has-been-released/), [Tomcat 11 changelog](https://tomcat.apache.org/tomcat-11.0-doc/changelog.html), [Jackson 2.21](https://github.com/FasterXML/jackson/wiki/Jackson-Release-2.21), [Jackson 3.1.7](https://github.com/FasterXML/jackson/wiki/Jackson-Release-3.1.7), [Temurin official image manifest](https://github.com/docker-library/official-images/blob/master/library/eclipse-temurin), [PostgreSQL version policy](https://www.postgresql.org/support/versioning/), [PostGIS image version table](https://hub.docker.com/r/postgis/postgis), [Nginx release news](https://nginx.org/news.html), and [Maven 3.9.16 release notes](https://maven.apache.org/docs/3.9.16/release-notes.html).
 
 For managed services, there is no package-version pin for EC2, SSM, ECR, S3, Secrets Manager, CloudWatch, or hosted Supabase Auth. Record region, resource identifiers, account/project settings, key algorithms, API assumptions, deployment date, AMI identifier, and cost/operational ownership instead.
 

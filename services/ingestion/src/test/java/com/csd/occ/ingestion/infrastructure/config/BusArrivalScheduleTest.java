@@ -19,7 +19,8 @@ class BusArrivalScheduleTest {
     private final ReferenceImportService imports = mock(ReferenceImportService.class);
     private final PollTargetService targets = mock(PollTargetService.class);
     private final IngestionScheduleProperties enabled = new IngestionScheduleProperties(true,
-            Duration.ofMinutes(1), Duration.ofMinutes(1), Duration.ofHours(1), Duration.ofMinutes(5));
+            Duration.ofMinutes(1), Duration.ofMinutes(1), true, Duration.ofMinutes(2), Duration.ofSeconds(30),
+            Duration.ofHours(1), Duration.ofMinutes(5));
     private final BusArrivalSchedule schedule = new BusArrivalSchedule(arrivals, topology, imports, targets, enabled);
 
     @Test
@@ -42,7 +43,8 @@ class BusArrivalScheduleTest {
     @Test
     void disabledScheduleDoesNotReadTopologyOrCallProviders() {
         var disabled = new IngestionScheduleProperties(false,
-                Duration.ofMinutes(1), Duration.ofMinutes(1), Duration.ofHours(1), Duration.ofMinutes(5));
+                Duration.ofMinutes(1), Duration.ofMinutes(1), false, Duration.ofMinutes(2), Duration.ofSeconds(30),
+                Duration.ofHours(1), Duration.ofMinutes(5));
         new BusArrivalSchedule(arrivals, topology, imports, targets, disabled).poll();
         verifyNoInteractions(arrivals, topology, imports, targets);
     }

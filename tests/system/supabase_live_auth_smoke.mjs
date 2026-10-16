@@ -6,7 +6,9 @@ const accountSettings = {
   DRIVER: ['OCC_SUPABASE_TEST_DRIVER_EMAIL', 'OCC_SUPABASE_TEST_DRIVER_PASSWORD'],
   UNASSIGNED: ['OCC_SUPABASE_TEST_UNASSIGNED_EMAIL', 'OCC_SUPABASE_TEST_UNASSIGNED_PASSWORD'],
 };
-const requestedAccounts = process.argv.slice(2).map((name) => name.toUpperCase());
+const args = process.argv.slice(2);
+const supabaseOnly = args.includes('--supabase-only');
+const requestedAccounts = args.filter((name) => name !== '--supabase-only').map((name) => name.toUpperCase());
 const unknownAccounts = requestedAccounts.filter((name) => !Object.hasOwn(accountSettings, name));
 if (unknownAccounts.length) {
   console.error(`Unknown account labels: ${unknownAccounts.join(', ')}.`);
@@ -17,9 +19,9 @@ const required = [
   'SUPABASE_PROJECT_URL',
   'SUPABASE_JWKS_URL',
   'SUPABASE_SB_PUBLISHABLE',
-  'OCC_SUPABASE_TEST_GATEWAY_URL',
   ...accountNamesToCheck.flatMap((name) => accountSettings[name]),
 ];
+if (!supabaseOnly) required.push('OCC_SUPABASE_TEST_GATEWAY_URL');
 const missing = required.filter((name) => !process.env[name]?.trim());
 if (missing.length) {
   console.error(`Missing live-auth settings: ${missing.join(', ')}`);
@@ -33,11 +35,13 @@ if (projectUrl.protocol !== 'https:' || projectUrl.pathname !== '/' || projectUr
 const projectBase = projectUrl.origin;
 const issuer = `${projectBase}/auth/v1`;
 const jwksUrl = new URL(process.env.SUPABASE_JWKS_URL);
-const gatewayUrl = new URL(process.env.OCC_SUPABASE_TEST_GATEWAY_URL);
-if (jwksUrl.protocol !== 'https:' || jwksUrl.username || jwksUrl.password || jwksUrl.hash
-    || gatewayUrl.protocol !== 'http:' && gatewayUrl.protocol !== 'https:'
-    || gatewayUrl.username || gatewayUrl.password || gatewayUrl.search || gatewayUrl.hash) {
-  throw new Error('JWKS and Gateway URLs must be valid HTTP(S) endpoints without embedded credentials.');
+const gatewayUrl = supabaseOnly ? undefined : new URL(process.env.OCC_SUPABASE_TEST_GATEWAY_URL);
+if (jwksUrl.protocol !== 'https:' || jwksUrl.username || jwksUrl.password || jwksUrl.hash) {
+  throw new Error('JWKS URL must be a valid HTTPS endpoint without embedded credentials.');
+}
+if (gatewayUrl && ((gatewayUrl.protocol !== 'http:' && gatewayUrl.protocol !== 'https:')
+    || gatewayUrl.username || gatewayUrl.password || gatewayUrl.search || gatewayUrl.hash)) {
+  throw new Error('Gateway URL must be a valid HTTP(S) endpoint without embedded credentials.');
 }
 
 const timeoutMs = Number(process.env.OCC_SUPABASE_TEST_TIMEOUT_MS || 20000);
@@ -127,11 +131,18 @@ async function checkProtectedRead(accessToken, expectedStatus) {
 let failures = 0;
 try {
   await fetchJwks();
-  await checkProtectedRead(null, 401);
-  console.log('PASS missing bearer token is denied with HTTP 401.');
 } catch {
   failures += 1;
-  console.error('FAIL JWKS or missing-token Gateway check (details withheld).');
+  console.error('FAIL Supabase JWKS check (details withheld).');
+}
+if (jwks && !supabaseOnly) {
+  try {
+    await checkProtectedRead(null, 401);
+    console.log('PASS missing bearer token is denied with HTTP 401.');
+  } catch {
+    failures += 1;
+    console.error('FAIL missing-token Gateway check (details withheld).');
+  }
 }
 
 for (const account of accountsToTest) {
@@ -155,9 +166,13 @@ for (const account of accountsToTest) {
     if (!accessToken || !refreshToken) throw new Error('Supabase returned no complete session.');
     stage = 'token validation';
     await validateToken(accessToken, account.role);
-    stage = 'Gateway authorization';
-    await checkProtectedRead(accessToken, account.status);
-    console.log(`PASS ${account.name} sign-in token validated; Gateway returned HTTP ${account.status}.`);
+    if (!supabaseOnly) {
+      stage = 'Gateway authorization';
+      await checkProtectedRead(accessToken, account.status);
+    }
+    console.log(supabaseOnly
+      ? `PASS ${account.name} sign-in and Supabase token validation.`
+      : `PASS ${account.name} sign-in token validated; Gateway returned HTTP ${account.status}.`);
 
     stage = 'refresh';
     const refreshedResponse = await authPost('token?grant_type=refresh_token', { refresh_token: refreshToken });
@@ -172,9 +187,13 @@ for (const account of accountsToTest) {
     if (!accessToken || !refreshToken) throw new Error('Supabase returned no refreshed session.');
     stage = 'refreshed-token validation';
     await validateToken(accessToken, account.role);
-    stage = 'refreshed Gateway authorization';
-    await checkProtectedRead(accessToken, account.status);
-    console.log(`PASS ${account.name} refreshed token validated; Gateway returned HTTP ${account.status}.`);
+    if (!supabaseOnly) {
+      stage = 'refreshed Gateway authorization';
+      await checkProtectedRead(accessToken, account.status);
+    }
+    console.log(supabaseOnly
+      ? `PASS ${account.name} refreshed Supabase token validation.`
+      : `PASS ${account.name} refreshed token validated; Gateway returned HTTP ${account.status}.`);
   } catch (error) {
     failures += 1;
     const observedStatus = failureStatus ?? error?.observedStatus;
@@ -192,7 +211,7 @@ for (const account of accountsToTest) {
   } finally {
     if (accessToken) {
       try {
-        const signOut = await authPost('logout', {}, accessToken);
+        const signOut = await authPost('logout?scope=local', {}, accessToken);
         if (!signOut.ok) throw new Error('sign-out failed');
         console.log(`PASS ${account.name} sign-out.`);
       } catch {

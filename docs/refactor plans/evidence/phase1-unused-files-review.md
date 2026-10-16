@@ -26,3 +26,29 @@ Tracked-file/reference audit: 15 October 2026. The repository contains 579 track
 A follow-up workspace audit found ignored generated output under `services/planning/recommendation-engine/target` (149 files, about 59 MB) and `services/planning/root-cause-diagnosis/target` (24 files, about 87 MB). Both parent directories contain only their `target` directory; neither has tracked files, active source, or build references. These are retired-service build outputs, not part of the deployable artifact.
 
 I attempted to remove both verified generated-only trees, first recursively and then by deleting each generated file and empty directory individually. The workspace safety policy rejected both deletion attempts without a specific reason, so no files were removed. **A15 remains open for this workspace** until these ignored outputs are removed and the final cleanup audit is rerun. The earlier tracked-file audit and its build result do not establish cleanup of this later-discovered local residue.
+
+On 16 October 2026, a further removal request was rejected after resolving both target paths and confirming they are inside the workspace, ignored, untracked, and contain no reparse points. The two generated-only trees remain unchanged. No alternate deletion mechanism was used; A15 remains open.
+
+## 16 October unused-container cleanup
+
+At the owner's request, inspected container names, Compose/Testcontainers labels,
+helper mounts/networks and memory use, then removed 27 identified unused
+containers. These comprised the old `occ-dispatch-20261015` test project, the
+duplicate `occ-phase1-traffic-20261016` stack and their standalone edge/JWKS
+helpers, a retired provider stub, and two abandoned Testcontainers databases.
+The previously unconfirmed `stoic_tesla` container was removed successfully.
+No named volumes were removed or pruned.
+
+The `.env` app project was retained and subsequently rebuilt/recreated for
+current-image verification. Only its five healthy app/database containers run;
+the four exited-successful bootstrap/migration jobs belong to that retained
+project. Normal Ryuk cleanup removed the new reactor's test containers. The
+local guide documents one application stack at a time on constrained Docker
+engines and teardown after test failures. This container cleanup does not close
+the separate A15 filesystem residue recorded above.
+
+The audit also found that `.gitignore` hid the required
+`docs/LOCAL-DEVELOPMENT.md` and `docs/DEPLOYMENT-AND-RECOVERY.md` deliverables
+despite tracked README links to them. Added explicit exceptions so those two
+existing guides are visible to Git and can be included in the final change.
+They are required runbooks rather than unused documents.

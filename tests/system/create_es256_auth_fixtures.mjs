@@ -23,7 +23,7 @@ function encode(value) {
 function makeToken(role, subject) {
   const header = encode({ alg: 'ES256', typ: 'JWT', kid: keyId });
   const now = Math.floor(Date.now() / 1000);
-  const payload = encode({ iss: issuer, aud: audience, sub: subject, iat: now, exp: now + 300, occ_role: role });
+  const payload = encode({ iss: issuer, aud: audience, sub: subject, iat: now, exp: now + 1800, occ_role: role });
   const content = `${header}.${payload}`;
   const signature = sign('sha256', Buffer.from(content), {
     key: privateKey,

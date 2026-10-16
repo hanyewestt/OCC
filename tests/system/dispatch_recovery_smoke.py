@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import ssl
 import subprocess
@@ -22,12 +23,13 @@ COMPOSE_FILES = (
 )
 
 
-def compose(project: str, *arguments: str, timeout: int = 30) -> str:
+def compose(project: str, *arguments: str, timeout: int = 30,
+            environment: dict[str, str] | None = None) -> str:
     command = ["docker", "compose", "-p", project, "--env-file", ".env.example"]
     for compose_file in COMPOSE_FILES:
         command.extend(("-f", compose_file))
     result = subprocess.run(command + list(arguments), cwd=ROOT, capture_output=True,
-                            text=True, timeout=timeout, check=False)
+                            text=True, timeout=timeout, check=False, env=environment)
     if result.returncode:
         detail = (result.stderr or result.stdout).strip()
         raise RuntimeError(f"Compose {' '.join(arguments[:2])} failed ({result.returncode}): {detail[-2000:]}")
@@ -58,6 +60,29 @@ def proxy_status(url: str) -> dict:
         if response.status != 200:
             raise RuntimeError(f"fault-proxy status returned HTTP {response.status}")
         return json.loads(response.read().decode("utf-8"))
+
+
+def arm_fault_proxy(status_url: str, idempotency_key: str) -> dict:
+    arm_url = status_url.rsplit("/", 1)[0] + "/arm"
+    message = urllib.request.Request(arm_url, data=idempotency_key.encode("ascii"),
+                                     headers={"Content-Type": "text/plain"},
+                                     method="POST")
+    with urllib.request.urlopen(message, timeout=5) as response:
+        if response.status != 200:
+            raise RuntimeError(f"fault-proxy arm endpoint returned HTTP {response.status}")
+        return json.loads(response.read().decode("utf-8"))
+
+
+def outbox_id_for_event(project: str, event_id: uuid.UUID) -> str:
+    key = str(event_id)
+    query = f"SELECT id::text FROM disruption.planning_outbox WHERE event_id = '{key}'::uuid"
+    value = compose(project, "exec", "-T", "postgres", "psql", "--no-psqlrc", "--username=occ_admin",
+                    "--dbname=occ", "--set=ON_ERROR_STOP=1", "--tuples-only", "--no-align",
+                    f"--command={query}", timeout=20)
+    try:
+        return str(uuid.UUID(value))
+    except ValueError as error:
+        raise AssertionError("target event has no single valid Planning outbox identity") from error
 
 
 def wait_until(description: str, predicate, timeout: int, interval: float = 1.0):
@@ -96,6 +121,23 @@ def database_state(project: str, request_id: uuid.UUID) -> tuple[str, int, int, 
     return fields[0], int(fields[1]), int(fields[2]), int(fields[3])
 
 
+def event_outbox_state(project: str, event_id: uuid.UUID) -> tuple[str, int, int]:
+    key = str(event_id)
+    query = f"""
+        SELECT COALESCE((SELECT status FROM disruption.planning_outbox WHERE event_id = '{key}'::uuid), 'MISSING')
+            || '|' || COALESCE((SELECT attempt_count::text FROM disruption.planning_outbox WHERE event_id = '{key}'::uuid), '-1')
+            || '|' || (SELECT count(*)::text FROM planning.planning_request
+                        WHERE id = (SELECT id FROM disruption.planning_outbox WHERE event_id = '{key}'::uuid))
+    """
+    value = compose(project, "exec", "-T", "postgres", "psql", "--no-psqlrc", "--username=occ_admin",
+                    "--dbname=occ", "--set=ON_ERROR_STOP=1", "--tuples-only", "--no-align",
+                    f"--command={query}", timeout=20)
+    fields = value.split("|")
+    if len(fields) != 3:
+        raise AssertionError(f"Database outbox query returned an unexpected result: {value!r}")
+    return fields[0], int(fields[1]), int(fields[2])
+
+
 def wait_healthy(project: str, service: str, timeout: int = 75) -> None:
     container = compose(project, "ps", "-q", service).strip()
     if not container:
@@ -108,6 +150,17 @@ def wait_healthy(project: str, service: str, timeout: int = 75) -> None:
 
     wait_until(f"{service} health after restart", lambda: health() == "healthy", timeout, 2.0)
     print(f"PASS {service} returns healthy after restart")
+
+
+def set_disruption_delivery_worker(project: str, enabled: bool) -> None:
+    environment = os.environ.copy()
+    environment["SUPABASE_PROJECT_URL"] = "http://jwks-test:8080"
+    environment["SUPABASE_JWKS_URL"] = "http://jwks-test:8080/auth/v1/.well-known/jwks.json"
+    environment["OCC_DISRUPTION_PLANNING_WORKER_ENABLED"] = str(enabled).lower()
+    compose(project, "up", "-d", "--no-deps", "--force-recreate", "disruption",
+            timeout=90, environment=environment)
+    wait_healthy(project, "disruption")
+    print(f"PASS Disruption Planning-delivery worker is {'enabled' if enabled else 'paused'}")
 
 
 def main() -> int:
@@ -126,6 +179,10 @@ def main() -> int:
         raise AssertionError(f"fault-proxy control port must be loopback-only, got {port!r}")
     control_url = f"http://127.0.0.1:{raw_port}/__test/status"
     wait_until("fault-proxy control endpoint", lambda: proxy_status(control_url), 30, 0.5)
+
+    # Freeze the sender before creating an event so its durable outbox commit can
+    # be observed independently of the receiver's later commit/drop scenario.
+    set_disruption_delivery_worker(args.compose_project, False)
 
     status, run = request(base_url, "/api/v1/demo-runs", token, "POST")
     if status != 201 or not isinstance(run, dict) or not run.get("id"):
@@ -146,6 +203,26 @@ def main() -> int:
     event = next(item for item in completed["alerts"]
                  if item.get("classification") == "SIMULATION" and item.get("action") == "OPENED")
     print("PASS Ingestion and Disruption persist one simulation bunching event")
+
+    event_id = uuid.UUID(event["eventId"])
+    initial_outbox = event_outbox_state(args.compose_project, event_id)
+    if initial_outbox != ("PENDING", 0, 0):
+        raise AssertionError(
+            "expected a committed pending outbox and no Planning request before delivery, "
+            f"got {initial_outbox}"
+        )
+    print("PASS event and pending Planning outbox are durable before delivery starts")
+
+    idempotency_key = outbox_id_for_event(args.compose_project, event_id)
+    armed = arm_fault_proxy(control_url, idempotency_key)
+    if (armed.get("calls") != 0 or armed.get("firstResponseDropped")
+            or armed.get("armedIdempotencyKey") != idempotency_key):
+        raise AssertionError("fault proxy did not arm for the target event delivery")
+    print("PASS fault proxy is armed for the target bunching outbox")
+
+    # Restart Disruption with its sender enabled. Its first delivery will be
+    # committed by Planning and then dropped by the fault proxy below.
+    set_disruption_delivery_worker(args.compose_project, True)
 
     first = wait_until(
         "Planning commit followed by a dropped first response",
@@ -203,7 +280,22 @@ def main() -> int:
     )
     if recommendation.get("status") not in {"RECOMMENDED", "NO_ACTIONABLE_RECOMMENDATION"}:
         raise AssertionError(f"unexpected recovered recommendation status: {recommendation.get('status')!r}")
+    recommendation_id = recommendation["recommendationId"]
     print("PASS recovered recommendation is queryable through the existing Gateway workflow")
+
+    compose(args.compose_project, "restart", "planning", "disruption", timeout=45)
+    wait_healthy(args.compose_project, "planning")
+    wait_healthy(args.compose_project, "disruption")
+    persisted = wait_until(
+        "same recommendation after result-commit restart",
+        lambda: (lambda result: result[1] if result[0] == 200 and isinstance(result[1], dict)
+                 and result[1].get("recommendationId") == recommendation_id else None)(
+                     request(base_url, recommendation_path, token)),
+        args.timeout,
+    )
+    if persisted.get("recommendationId") != recommendation_id:
+        raise AssertionError("the recommendation identity changed after both services restarted")
+    print("PASS committed recommendation remains queryable with the same identity after restart")
 
     close_status, _ = request(base_url, f"{run_path}/close", token, "POST")
     if close_status != 200:

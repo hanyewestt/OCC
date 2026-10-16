@@ -50,6 +50,8 @@ docs/
 docs/*
 !docs/CONVENTIONS.md
 !docs/commit-convention.md
+!docs/LOCAL-DEVELOPMENT.md
+!docs/DEPLOYMENT-AND-RECOVERY.md
 !docs/refactor plans/
 docs/refactor plans/*
 !docs/refactor plans/evidence/

@@ -2,7 +2,7 @@
 
 Prepared 15 October 2026. Set up a real **development** Auth project now; the temporary login harness and backend integration belong to phase 1. Product login pages, authoritative vehicle/captain identity, captain binding, approval and instructions stay in phase 2. Offline CI still uses synthetic JWT/JWKS fixtures.
 
-Current status: the development Supabase project, asymmetric ES256/P-256 signing, OCC role table, custom access-token hook, and local Gateway settings are configured. Live token issue, refresh, role-claim validation, and Gateway authorization passed for ADMIN, CONTROLLER, and DRIVER on 15 October 2026. The SQL and dashboard steps below are retained as a repeatable setup reference; use the existing development project rather than creating another one. The UNASSIGNED account's supplied credentials did not authenticate, so its live authorization check remains open.
+Current status: the development Supabase project, asymmetric ES256/P-256 signing, OCC role table, custom access-token hook, and local Gateway settings are configured. Live token issue, refresh, role-claim validation, and Gateway authorization passed for ADMIN, CONTROLLER, and DRIVER. On 16 October 2026, the corrected UNASSIGNED account (`testrandom@email.com`) also passed sign-in, token validation, initial/refreshed Gateway denial with 403, and sign-out. The SQL and dashboard steps below are retained as a repeatable setup reference; use the existing development project rather than creating another one. See [live verification evidence](evidence/phase1-supabase-live-auth.md).
 
 ## 1. Create a dedicated development project
 
@@ -70,7 +70,7 @@ The four temporary mock users below are already present in the development proje
 | Administrator | `admin@occ.com` | `abcd1234` | ADMIN | Defined admin operations and operational reads |
 | Controller | `controller1@occ.com` | `abcd1234` | CONTROLLER | Operational reads and agreed demo controls |
 | Driver | `driver1@occ.com` | `abcd1234` | DRIVER | Denied phase-1 controller/admin operations; no instruction feature yet |
-| Unassigned user | `testuser@email.com` | `abcd1234` | No row | Sign-in should succeed; OCC protected operations deny |
+| Unassigned user | `testrandom@email.com` | `abcd1234` | No row | Sign-in should succeed; OCC protected operations deny |
 
 Copy the first three user UUIDs from the dashboard. Run this separate assignment query in SQL Editor after replacing placeholders with those UUIDs (not email addresses or passwords):
 
@@ -96,7 +96,7 @@ The project owner explicitly approved recording these temporary mock credentials
 | Admin | admin@occ.com | abcd1234 | ADMIN |
 | Controller | controller1@occ.com | abcd1234 | CONTROLLER |
 | Driver | driver1@occ.com | abcd1234 | DRIVER |
-| Unassigned | testuser@email.com | abcd1234 | Absent |
+| Unassigned | testrandom@email.com | abcd1234 | Absent |
 
 Development project settings last supplied for this setup: publishable key `sb_publishable_5MVyFbf0il3Go2tTrTKMGg_1Dl46EAf`, issuer `https://lldbezcwwotvtytnddgf.supabase.co/auth/v1`, JWKS `https://lldbezcwwotvtytnddgf.supabase.co/auth/v1/.well-known/jwks.json`, algorithm `ES256`, Site URL `http://localhost:6770`, allowed callback `http://localhost:6770/auth-test/callback`, hook `public.occ_custom_access_token_hook`, claim `occ_role`. Confirm the URL settings in the dashboard if they have since changed. The JWKS endpoint was fetched successfully and advertised an EC P-256 / ES256 public key; that alone does not verify issued tokens or hook execution.
 

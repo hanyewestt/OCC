@@ -28,6 +28,14 @@ public final class IngestionOperationalMetrics implements MeterBinder {
                         IngestionOperationalMetrics::latestArrivalFeedSequence)
                 .description("Highest durable bus-arrival feed sequence available to consumers")
                 .register(registry);
+        Gauge.builder("occ.ingestion.traffic_incident.latest_poll_success_age_seconds", this,
+                        IngestionOperationalMetrics::latestTrafficIncidentSuccessAgeSeconds)
+                .description("Age of the most recent successful DataMall traffic incident poll, or zero when none succeeded")
+                .register(registry);
+        Gauge.builder("occ.ingestion.traffic_incident.latest_poll_success", this,
+                        IngestionOperationalMetrics::latestTrafficIncidentPollSuccess)
+                .description("Whether the latest completed DataMall traffic incident poll succeeded")
+                .register(registry);
     }
 
     private double oldestSuccessfulFeedAgeSeconds() {
@@ -56,6 +64,26 @@ public final class IngestionOperationalMetrics implements MeterBinder {
                   AND raw.classification = 'OBSERVATION_ONLY'
                   AND raw.http_status BETWEEN 200 AND 299
                   AND run.outcome = 'SUCCESS'
+                """);
+    }
+
+    private double latestTrafficIncidentSuccessAgeSeconds() {
+        return queryNumber("""
+                SELECT COALESCE(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - MAX(completed_at))), 0)
+                FROM ingestion.poll_run
+                WHERE source = 'TRAFFIC_DATAMALL' AND outcome = 'SUCCESS' AND completed_at IS NOT NULL
+                """);
+    }
+
+    private double latestTrafficIncidentPollSuccess() {
+        return queryNumber("""
+                SELECT COALESCE((
+                    SELECT CASE WHEN outcome = 'SUCCESS' THEN 1 ELSE 0 END
+                    FROM ingestion.poll_run
+                    WHERE source = 'TRAFFIC_DATAMALL' AND completed_at IS NOT NULL
+                    ORDER BY completed_at DESC, id DESC
+                    LIMIT 1
+                ), 0)
                 """);
     }
 

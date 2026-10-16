@@ -52,6 +52,9 @@ occ:
     account-key: ${DATAMALL_API_KEY}
     connect-timeout: ${OCC_DATAMALL_CONNECT_TIMEOUT:5s}
     response-timeout: ${OCC_DATAMALL_RESPONSE_TIMEOUT:20s}
+    traffic-incident-page-size: ${OCC_DATAMALL_TRAFFIC_INCIDENT_PAGE_SIZE:500}
+    traffic-incident-max-pages: ${OCC_DATAMALL_TRAFFIC_INCIDENT_MAX_PAGES:10}
+    max-response-bytes: ${OCC_DATAMALL_MAX_RESPONSE_BYTES:5000000}
   ingestion:
     monitored-services: ${OCC_INGESTION_MONITORED_SERVICES:190,972}
     stale-after-seconds: ${OCC_INGESTION_STALE_AFTER_SECONDS:180}
@@ -60,6 +63,9 @@ occ:
       bus-arrival-enabled: ${OCC_INGESTION_BUS_ARRIVAL_ENABLED:true}
       bus-arrival-poll-interval: ${OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL:60s}
       bus-arrival-initial-delay: ${OCC_INGESTION_BUS_ARRIVAL_INITIAL_DELAY:60s}
+      traffic-incident-enabled: ${OCC_INGESTION_TRAFFIC_INCIDENT_ENABLED:true}
+      traffic-incident-poll-interval: ${OCC_INGESTION_TRAFFIC_INCIDENT_POLL_INTERVAL:2m}
+      traffic-incident-initial-delay: ${OCC_INGESTION_TRAFFIC_INCIDENT_INITIAL_DELAY:30s}
       retention-interval: ${OCC_INGESTION_RETENTION_INTERVAL:1h}
       retention-initial-delay: ${OCC_INGESTION_RETENTION_INITIAL_DELAY:5m}
     import-reference-on-startup: ${OCC_INGESTION_IMPORT_REFERENCE_ON_STARTUP:true}

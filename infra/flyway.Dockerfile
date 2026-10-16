@@ -9,5 +9,12 @@ RUN case "${OCC_SERVICE}" in ingestion|disruption|planning) ;; \
     esac \
     && test -n "${OCC_MIGRATION_SOURCE}"
 
+# This stack migrates PostgreSQL only; omit unused vendor drivers and their
+# vulnerable transitive dependencies from the one-shot migration image.
+RUN rm -f /flyway/drivers/databricks-jdbc-*.jar /flyway/drivers/mssql-jdbc-*.jar \
+    && rm -rf /flyway/drivers/couchbase
+
 COPY ${OCC_MIGRATION_SOURCE}/ /migrations/
 COPY infra/flyway/${OCC_SERVICE}/ /callbacks/
+
+USER 10001:10001

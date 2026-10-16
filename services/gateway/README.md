@@ -48,8 +48,19 @@ node --env-file=.env tests/system/supabase_live_auth_smoke.mjs
 The runner uses Node's environment-file option (Node 20.6 or later) without
 printing the file. It signs in each temporary account, verifies the JWT against
 the configured JWKS and issuer/audience/time/role claims, calls the protected
-read through the Gateway, tests refresh, and signs out. It prints account labels
-and HTTP outcomes only. This is an explicit live test; ordinary CI uses its
+read through the Gateway, tests refresh, and signs out only the test account's
+local session. It prints account labels and HTTP outcomes only. This is an
+explicit live test; ordinary CI uses its
 synthetic issuer and does not need these credentials. Change
 `OCC_SUPABASE_TEST_GATEWAY_URL` only when testing a different local Gateway or
 TLS edge origin.
+
+To isolate Supabase Auth/JWKS from local application availability, add
+`--supabase-only`. This mode does not require or call the Gateway; it still
+checks password sign-in, the ES256 signature and issuer/audience/time/`occ_role`
+claims, refresh, and local-session sign-out. An optional account label narrows
+the run:
+
+```powershell
+node --env-file=.env tests/system/supabase_live_auth_smoke.mjs --supabase-only ADMIN
+```
