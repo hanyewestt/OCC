@@ -4,8 +4,14 @@ An agentic dispatch and incident mitigation system for Singapore public bus oper
 
 ## Local development: setup, build and start
 
-Run all commands from the repository root in PowerShell. Install Docker Desktop
-with its Linux container engine running and Docker Compose 2.24.4 or newer.
+Run all commands from the repository root in PowerShell or Bash (Linux, macOS,
+WSL, or Git Bash). Docker Compose and Node commands in the shared `shell` blocks
+work unchanged in both shells. Environment-file creation and Maven commands
+are shown separately where their syntax differs.
+
+Use a running Docker Engine with Linux containers and Docker Compose 2.24.4 or
+newer. On Windows/macOS, start Docker Desktop; on Linux, Docker Engine with the
+Compose plugin is sufficient.
 Docker builds include Java and Maven; a host Java installation is needed only
 for running Maven directly. For host builds/tests, use JDK 25 and the root
 Maven Wrapper. Node.js 20.6 or newer is needed for the optional browser-auth
@@ -15,8 +21,16 @@ and live Supabase test scripts.
 
 Create the ignored root `.env` only if it does not already exist:
 
+PowerShell:
+
 ```powershell
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+```
+
+Bash:
+
+```bash
+if [ ! -f .env ]; then cp .env.example .env; fi
 ```
 
 Fill in the settings described in `.env.example`:
@@ -40,7 +54,7 @@ Check Docker and existing Compose projects first. Reuse the project already
 running this checkout; if it was created with `-p <name>`, keep that same option
 in subsequent commands. The default project name is `local`.
 
-```powershell
+```shell
 docker info
 docker compose ls
 docker compose --env-file .env config -q
@@ -59,19 +73,19 @@ migration containers should show `Exited (0)`; they are one-shot jobs.
 
 Start existing images without rebuilding:
 
-```powershell
+```shell
 docker compose --env-file .env up -d --wait
 ```
 
 After Java, dependency, Dockerfile or migration changes, rebuild and start:
 
-```powershell
+```shell
 docker compose --env-file .env up -d --build --wait
 ```
 
 To rebuild just one changed application, for example Gateway:
 
-```powershell
+```shell
 docker compose --env-file .env up -d --build gateway
 ```
 
@@ -81,7 +95,7 @@ After changing an Nginx configuration template, restart Nginx to regenerate its
 configuration. After changing Compose environment settings, use `up -d` so
 Compose can recreate affected containers.
 
-```powershell
+```shell
 docker compose --env-file .env restart nginx
 docker compose --env-file .env logs --tail 100 nginx gateway ingestion disruption planning
 ```
@@ -89,13 +103,13 @@ docker compose --env-file .env logs --tail 100 nginx gateway ingestion disruptio
 If startup fails, inspect `ps -a` and the failed service's logs. For a migration
 failure, inspect its one-shot container, for example:
 
-```powershell
+```shell
 docker compose --env-file .env logs ingestion-migrate
 ```
 
 Stop the stack while retaining database data:
 
-```powershell
+```shell
 docker compose --env-file .env down --remove-orphans
 ```
 
@@ -141,7 +155,7 @@ AWS deployment remains deferred.
 
 For browser authentication checks, run:
 
-```powershell
+```shell
 node --test tests/system/frontend_auth.test.mjs
 ```
 
@@ -155,9 +169,13 @@ in `tests/contracts/`; CI does not depend on the ignored `docs/` folder.
 The repository-root Maven Wrapper pins Apache Maven 3.9.16. From the repository root,
 build and run the unit and integration test lifecycle for the four target services:
 
+PowerShell:
+
 ```powershell
 .\mvnw.cmd verify
 ```
+
+Bash:
 
 ```bash
 ./mvnw verify
