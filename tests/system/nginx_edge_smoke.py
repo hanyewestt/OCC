@@ -34,11 +34,30 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="https://127.0.0.1:18443")
     parser.add_argument("--token-dir", type=Path)
+    parser.add_argument("--static-only", action="store_true")
+    parser.add_argument("--local", action="store_true", help="Expect the local-only auth test page")
     args = parser.parse_args()
     base_url = args.base_url.rstrip("/")
 
+    root = Path(__file__).resolve().parents[2]
+    for route, asset in (("/demo.html", "frontend/static/demo.html"), ("/auth.js", "frontend/static/auth.js")):
+        with urllib.request.urlopen(base_url + route, context=ssl._create_unverified_context(), timeout=10) as response:
+            if response.read() != (root / asset).read_bytes():
+                raise AssertionError(f"{route}: response differs from the Nginx static asset")
+        print(f"PASS direct Nginx asset {route}")
+    auth_status = 200 if args.local else 404
+    for route in ("/auth-test", "/auth-test/", "/auth-test/index.html", "/auth-test/callback"):
+        assert_status(base_url, "auth-test policy " + route, route, auth_status)
+    if args.local:
+        with urllib.request.urlopen(base_url + "/auth-test/", timeout=10) as response:
+            if response.read() != (root / "frontend/static/auth-test/index.html").read_bytes():
+                raise AssertionError("Local auth-test response differs from the Nginx asset")
+    if args.static_only:
+        return 0
+
     cases = [
         ("edge health", "/_occ_edge_health", 204, None, "GET"),
+        ("public frontend configuration", "/frontend-config", 200, None, "GET"),
         ("existing demo page", "/demo.html", 200, None, "GET"),
         ("protected API without token", "/api/v1/arrivals?page=0&size=1", 401, None, "GET"),
         ("forged peer token cannot authorize a public API", "/api/v1/arrivals", 401,
@@ -47,7 +66,7 @@ def main() -> int:
         ("management API hidden", "/actuator/health/readiness", 404, None, "GET"),
         ("OpenAPI hidden", "/v3/api-docs", 404, None, "GET"),
         ("Swagger UI hidden", "/swagger-ui/index.html", 404, None, "GET"),
-        ("temporary auth harness hidden at the production edge", "/auth-test/index.html", 404, None, "GET"),
+        ("temporary auth harness policy", "/auth-test/index.html", auth_status, None, "GET"),
         ("encoded traversal to internal API blocked", "/api/v1/%2e%2e/internal/v1/arrival-snapshots", 404, None, "GET"),
         ("double-slash internal path blocked", "/internal//v1/arrival-snapshots", 404, None, "GET"),
         ("internal API remains hidden for mutations", "/internal/v1/arrival-snapshots", 404, None, "POST"),

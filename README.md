@@ -3,20 +3,62 @@
 An agentic dispatch and incident mitigation system for Singapore public bus operations (SMRT / SBS Transit / LTA Bus 4.0) that correlates live transit telemetry, road incidents, weather hazards, and rail disruptions to facilitate orchestration of real-time fleet adjustments. Each Spring Boot service owns its code, database schema and migrations.
 
 ## Local quick start
-Read the [local development guide](docs/LOCAL-DEVELOPMENT.md).
+Create the ignored root `.env` from `.env.example` if needed, then fill in the
+database passwords, peer tokens, Supabase URLs and public publishable key,
+DataMall key and Planning settings. Never overwrite an existing `.env`.
 
 From the repository root, build and start the local stack with its automatically
 loaded development override:
 
 ```powershell
+docker compose --env-file .env config -q
 docker compose --env-file .env up -d --build
 ```
+
+Nginx starts automatically and serves [the demo](http://localhost/demo.html)
+and [the temporary authentication test](http://localhost/auth-test/). Set
+`OCC_NGINX_PORT` to change the local loopback HTTP port (default `80`);
+`OCC_NGINX_HTTP_INTERNAL_PORT` and `OCC_NGINX_HTTPS_INTERNAL_PORT` configure
+the container listeners (defaults `8080` and `8443`). Sign in
+on either page with a Supabase test account; ADMIN and CONTROLLER can use the
+demo. Tokens stay in that page's memory, so reloads or switching pages require
+another sign-in. The demo sends bearer tokens with all protected API calls.
+`SUPABASE_SB_PUBLISHABLE` must be an `sb_publishable_...` public key; service-role
+and secret keys are rejected. Gateway exposes only the project URL and this
+publishable key at `/frontend-config`.
+
+The pages and shared authentication JavaScript live in `frontend/static/` and
+are served directly by Nginx. Java services host APIs only. Nginx forwards
+`/api/v1/**` to Gateway while preserving bearer authentication, and blocks
+internal and management routes. Direct service development ports remain on
+loopback (`6767`–`6770`). Docker Compose 2.24.4 or newer is required for the
+profile reset used by the edge overrides. Explicit backend test stacks leave
+Nginx in the optional `edge` profile, while local and production overrides
+activate it automatically.
 
 The production edge, immutable image inputs, and TLS file mapping are prepared
 in [`infra/compose.production.yaml`](infra/compose.production.yaml); set real
 registry digests and operator-managed certificates before deploying.
-Use the [deployment and recovery runbook](docs/DEPLOYMENT-AND-RECOVERY.md) for
-the single-host cutover, backup, restore, and rollback procedure.
+Production uses `docker compose --env-file .env -f compose.yaml -f
+infra/compose.production.yaml up -d`. Set `OCC_NGINX_SERVER_NAME`, TLS certificate
+and private-key file paths, `OCC_NGINX_PUBLIC_PORT` (default `443`), and immutable
+application/migration image digests first. The HTTPS configuration serves the
+demo and `/auth.js`, and always blocks `/auth-test` and its descendants. Local
+HTTP and production TLS listeners reuse `infra/nginx/routes.inc.template`.
+Set DNS cache validity (`OCC_NGINX_DNS_VALIDITY`, default `30s`), request limits
+and proxy timeouts through the settings documented in `.env.example`.
+AWS deployment remains deferred.
+
+For browser authentication checks, run:
+
+```powershell
+node --test tests/system/frontend_auth.test.mjs
+```
+
+CI also compares Nginx responses byte-for-byte with the static files, checks
+role restrictions and hidden routes through the TLS edge, and verifies static
+pages remain available with Gateway stopped. Contract migration fixtures live
+in `tests/contracts/`; CI does not depend on the ignored `docs/` folder.
 
 ## Build and verify the Phase 1 service reactor
 

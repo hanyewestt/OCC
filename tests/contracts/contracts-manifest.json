@@ -169,13 +169,14 @@
       "sourcePath": "/demo.html",
       "sourceOperationId": "page_1",
       "targetService": "edge",
-      "targetContract": "Nginx static/demo asset manifest",
+      "targetContract": "frontend/static/demo.html",
       "targetMethod": "GET",
       "targetPath": "/demo.html",
       "targetOperationId": "page_1",
       "classification": "static-route-preserved",
       "targetAuthorization": "static-content",
-      "retirementRule": "Serve through Nginx; browser API requests still use authenticated gateway/backend routes."
+      "retirementRule": "Nginx serves the static asset directly; browser API calls carry a Supabase bearer token through Gateway.",
+      "targetAsset": "frontend/static/demo.html"
     },
     {
       "sourceService": "ingestion",
@@ -538,5 +539,8 @@
     "targetPath identifies the canonical Gateway-facing path; the ingestion Gateway route rewrites its prefix to the service-local path represented in the Ingestion OpenAPI snapshot.",
     "The current read-only Ingestion live-bunching proxy remains only for the phase-one demo page; Disruption owns detection and its canonical public route. Retire the proxy when the demo client is replaced or explicitly migrated.",
     "Service OpenAPI snapshots are generated from running target code. Old source paths in this manifest refer to the recorded baseline revision, not compatibility routes that remain active by default."
+  ],
+  "introducedContracts": [
+    "services/gateway/openapi/gateway.json"
   ]
 }
