@@ -33,4 +33,3 @@ by its scheduled retention cleanup. Standard Spring Boot and Micrometer metrics
 include JVM, HTTP server, and database-pool measurements where the service uses
 those components. Database gauges query each service's own schema when scraped;
 they do not expose event IDs, user IDs, provider prompts, or payloads.
-
