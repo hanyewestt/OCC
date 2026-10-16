@@ -111,3 +111,24 @@ The external artifact directory contains `k6.log`, `memory-samples.json`,
 health snapshot. The opt-in runner keeps generated fixtures outside Git and
 tears down its isolated containers before restoring the real `.env` project;
 named database volumes are preserved.
+
+## Final hosted and post-relocation checks
+
+[Hosted run 38851208234](https://github.com/hanyewestt/OCC/actions/runs/38851208234)
+passed all 12 jobs at source `9d6bd8f`, including 290 reactor tests, exact runtime
+OpenAPI comparison, the demo-to-recommendation workflow, traffic lifecycle,
+receiver-commit/restart recovery, k6 and Nginx role/routing/security checks.
+See [the hosted result](reactor-build.md) for counts and profile measurements.
+
+After relocating Disruption resources to `db/migration` and rebuilding its
+application/migration images, the real `.env` stack was restored and all five
+app/database containers became healthy. The migration job exited 0 with an
+identical before/after Flyway history. The external live read helper correlated
+a real LTA raw observation, successful poll, normalized incident, event
+evidence, delivered outbox and completed Planning no-action request. A real
+Supabase ADMIN session then read the incident and terminal outcome through
+Gateway and signed out. The first read exceeded its 20-second client deadline;
+the retry with the existing configurable 60-second test deadline passed without
+changing application settings. Direct JWKS probes from Gateway and Disruption
+both returned 200. This read-only verification made no Gemini request and did
+not modify `.env`; logs remain in `../OCC-verification/`.

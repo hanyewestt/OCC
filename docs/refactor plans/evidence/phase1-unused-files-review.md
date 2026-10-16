@@ -72,3 +72,9 @@ Historical migration fixtures and source contracts remain because current
 migration/contract gates consume them. Code rollback is available at `4b672d0`
 and the subsequent recorded implementation commits; database recovery retains
 its separate tested backup/restore procedure.
+
+The post-cleanup [hosted run](https://github.com/hanyewestt/OCC/actions/runs/38851208234)
+passed all 12 jobs and all 290 required tests, including the final canonical
+Disruption migration directory. The local packaged JAR contains exactly three
+SQL resources under `db/migration`; all active resource references agree.
+The working tree is free of the retired output directories. A15 is closed.

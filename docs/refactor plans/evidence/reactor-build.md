@@ -293,3 +293,37 @@ versions, script names, checksums and success flags were unchanged. No database
 reset, new migration version, checksum repair or compatibility alias was used.
 The temporary test/build logs, SQL hashes and before/after history snapshots
 are outside the checkout in `../OCC-verification/`.
+
+## Final hosted result
+
+[Run 38851208234](https://github.com/hanyewestt/OCC/actions/runs/38851208234)
+completed successfully for executable source `9d6bd8fae94edacdd45f0b3da7587e5b13faf584`
+on `fix/mvp-refactor`, with all 12 jobs passing. The Linux reactor completed in
+2 minutes 56 seconds. Required-suite enforcement confirmed:
+
+| Service | Unit/slice | Database integration | Failures/errors/skips |
+| --- | ---: | ---: | --- |
+| Ingestion | 75 | 12 | 0 |
+| Disruption | 59 | 25 | 0 |
+| Planning | 79 | 21 | 0 |
+| Gateway | 19 | Not required | 0 |
+| Total | 232 | 58 | 0 |
+
+The seven application/migration image jobs and separate pinned Nginx image job
+passed their HIGH/CRITICAL vulnerability gates and generated SBOMs. The
+repository secret/misconfiguration gate and sanitized artifact upload passed.
+All 34 legacy source operations mapped to the three target contracts; current
+contract validation/compatibility and runtime contract comparison passed.
+
+The Nginx edge job passed the deterministic demo-to-recommendation workflow,
+traffic lifecycle checks, receiver-commit retry and restart recovery, signed
+role allow/deny and forged-signature checks, hidden internal/management/docs
+routes, and rate limiting. Its separate 4-reader/15-second k6 smoke completed
+60 requests with zero errors and p95 31.42 ms. These are hosted smoke results;
+the earlier 20-reader/ten-minute local capacity profile is a different workload.
+JUnit/coverage, sanitized security reports and SBOMs were uploaded by the jobs.
+
+The final status update changes Markdown evidence only. Executable source,
+migrations, generated contracts, dependencies and CI configuration remain those
+of the passing revision above. AWS qualification is deferred by the owner;
+no cloud deployment or representative AWS-host result is claimed.
