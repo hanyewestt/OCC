@@ -18,9 +18,9 @@ public class PlanningOpenApiConfig {
                 .version("1.0.0")
                 .description("Diagnosis and validated mitigation recommendations for operational disruptions."))
                 .components(new Components()
-                        .addSecuritySchemes("Supabase JWT", new SecurityScheme()
+                        .addSecuritySchemes("SupabaseJWT", new SecurityScheme()
                                 .type(SecurityScheme.Type.HTTP).scheme("bearer").bearerFormat("JWT"))
-                        .addSecuritySchemes("Disruption peer token", new SecurityScheme()
+                        .addSecuritySchemes("DisruptionPeerToken", new SecurityScheme()
                                 .type(SecurityScheme.Type.APIKEY).in(SecurityScheme.In.HEADER)
                                 .name("X-OCC-Peer-Token")));
     }
@@ -30,7 +30,7 @@ public class PlanningOpenApiConfig {
         return GroupedOpenApi.builder().group("planning")
                 .pathsToMatch("/api/v1/planning/**")
                 .addOpenApiCustomizer(openApi -> openApi.addSecurityItem(
-                        new SecurityRequirement().addList("Supabase JWT")))
+                        new SecurityRequirement().addList("SupabaseJWT")))
                 .build();
     }
 
@@ -39,7 +39,7 @@ public class PlanningOpenApiConfig {
         return GroupedOpenApi.builder().group("planning-internal")
                 .pathsToMatch("/internal/v1/planning/**")
                 .addOpenApiCustomizer(openApi -> openApi.addSecurityItem(
-                        new SecurityRequirement().addList("Disruption peer token")))
+                        new SecurityRequirement().addList("DisruptionPeerToken")))
                 .build();
     }
 }

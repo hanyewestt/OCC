@@ -40,6 +40,9 @@ Remove-Item Env:OCC_OPENAPI_EXPORT_TOKEN
 
 This updates `services/planning/openapi/planning.json` from the running API.
 Never save the token in `.env` or commit it.
+The OpenAPI security identifiers are `SupabaseJWT` and `DisruptionPeerToken`;
+these describe the existing bearer/peer-header authentication and do not change
+the API routes, role checks or header names.
 
 Start the local database using [the local setup guide](../../docs/LOCAL-DEVELOPMENT.md),
 then run Planning from its service directory:

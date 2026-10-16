@@ -74,6 +74,12 @@ are listed at the bottom of `.env.example`; never put a real Supabase token ther
 This smoke catches regressions in the authenticated read path. It is not a
 capacity or retention-soak result; those still require a representative staging host.
 
+The repository secret/misconfiguration job sets the CI-tool-only
+`TRIVY_OFFLINE_SCAN=true` to prevent unrelated remote Maven dependency lookups.
+It still scans source files and enforces HIGH/CRITICAL findings through the
+sanitizer. Separate image vulnerability jobs use current vulnerability databases
+and retain their HIGH/CRITICAL failure gates and SBOM output.
+
 The isolated CI workflow also routes Disruption-to-Planning submissions through
 [`infra/compose.dispatch-test.yaml`](infra/compose.dispatch-test.yaml). Its
 test-only proxy drops the first response after Planning returns HTTP 202, then

@@ -242,3 +242,37 @@ summary under `%TEMP%/occ-phase1-current-source-20261016/`. Node syntax checking
 the saved live traffic runner with `--restart`, and `git diff --check` passed.
 The required local-development and deployment/recovery guides are now explicitly
 allowed by `.gitignore`; they were previously hidden despite README links.
+
+## Hosted verification follow-up, 16 October
+
+Published the reviewed implementation on `fix/mvp-refactor`. Initial hosted run
+`38849749778` exposed three CI issues: the root Linux Maven wrapper was tracked
+without its executable bit; Planning's security-scheme identifiers contained
+spaces, which OpenAPI rejects; and the source secret/misconfiguration scan made
+unnecessary remote Maven lookups and hit HTTP 429. All four application-image
+build/vulnerability/SBOM jobs and the pinned Nginx image scan passed in that run.
+
+The follow-up preserves the wrapper executable bit in Git, uses valid
+`SupabaseJWT` and `DisruptionPeerToken` OpenAPI identifiers, and enables
+dependency-offline analysis only for the repository secret/misconfiguration
+scan. Image vulnerability databases and HIGH/CRITICAL failure gates remain
+enabled. The regenerated Planning contract was exported from the rebuilt,
+healthy application using a real development Supabase session, then compared
+structurally: only the two security identifiers changed from the preceding
+contract. The export session signed out and tokens remained in memory.
+
+Reviewed the stale target comparison baseline `b19dbf9` against regenerated
+revision `23e244a`: the original DTO already annotated `schemaVersion` with
+`@NotBlank`, while the regenerated contract now correctly reports `minLength=1`.
+The manifest now uses that reviewed target contract revision, retains the
+previous baseline and rationale, and preserves the original `0f2cd49` legacy
+baseline/operation inventory. The current Planning contract passes pinned
+oasdiff validation and reports no breaking changes from `23e244a`.
+
+The current local audit covers 180 inventoried environment variables across
+14 application/Compose YAML files, with zero missing variable entries, four
+tracked service roots, zero tracked retired-service paths and no nested Maven
+wrappers. Workflow YAML, 19 shell scripts and embedded Python parsed
+successfully; the scan sanitizer's seeded HIGH/MEDIUM policy self-test passed.
+AWS work is deferred at the owner's explicit request. Hosted results after
+these repairs are recorded when the new run completes.

@@ -1,6 +1,8 @@
 {
   "baselineRevision": "0f2cd49",
-  "targetBaselineRevision": "b19dbf9",
+  "targetBaselineRevision": "23e244a",
+  "previousTargetBaselineRevision": "b19dbf9",
+  "targetBaselineRationale": "Use the reviewed regenerated phase-one contracts. The original Planning DTO at b19dbf9 already required nonblank schemaVersion; 23e244a documents that existing validation as minLength=1. The legacy source baseline and complete operation migration inventory remain unchanged.",
   "sourceBaselinePaths": {
     "docs/refactor plans/evidence/source-contracts/bus-bunching-detection.json": "services/operations/bus-bunching-detection/openapi/bus-bunching-detection.json",
     "docs/refactor plans/evidence/source-contracts/polling-ingestion.json": "services/ingestion/openapi/polling-ingestion.json",
