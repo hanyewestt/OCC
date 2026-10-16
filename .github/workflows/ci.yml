@@ -121,7 +121,7 @@ jobs:
           import pathlib
           import subprocess
 
-          manifest_path = pathlib.Path("docs/refactor plans/evidence/contracts-manifest.json")
+          manifest_path = pathlib.Path("tests/contracts/contracts-manifest.json")
           manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
           source_revision = manifest["baselineRevision"]
           target_revision = manifest["targetBaselineRevision"]
@@ -193,7 +193,7 @@ jobs:
           done
 
           git diff --name-only -z \
-            "$(python3 -c 'import json; print(json.load(open("docs/refactor plans/evidence/contracts-manifest.json"))["targetBaselineRevision"])')" \
+            "$(python3 -c 'import json; print(json.load(open("tests/contracts/contracts-manifest.json"))["targetBaselineRevision"])')" \
             HEAD -- 'services/**/openapi/*.json' > "$RUNNER_TEMP/openapi-changes.zlist"
           while IFS= read -r -d '' spec; do
             if [[ ! -f "$spec" ]]; then
@@ -201,7 +201,7 @@ jobs:
               exit 1
             fi
             baseline="$RUNNER_TEMP/openapi-baseline.json"
-            git show "$(python3 -c 'import json; print(json.load(open("docs/refactor plans/evidence/contracts-manifest.json"))["targetBaselineRevision"])'):${spec}" > "$baseline"
+            git show "$(python3 -c 'import json; print(json.load(open("tests/contracts/contracts-manifest.json"))["targetBaselineRevision"])'):${spec}" > "$baseline"
             docker run --rm -v "$PWD:/workspace:ro" -v "$RUNNER_TEMP:/baseline:ro" \
               "$OASDIFF_IMAGE" breaking --fail-on ERR "/baseline/openapi-baseline.json" "/workspace/${spec}"
           done < "$RUNNER_TEMP/openapi-changes.zlist"
