@@ -134,16 +134,35 @@ These are the default local addresses; use the configured ports if changed in `.
 | Demo | [http://localhost/demo.html](http://localhost/demo.html) | Run the simulation and inspect live observations and recommendations | Page is public; data and controls require ADMIN or CONTROLLER sign-in |
 | Authentication test | [http://localhost/auth-test/](http://localhost/auth-test/) | Test Supabase sign-in and protected API requests | Local development only; API permissions depend on the signed-in role |
 | Nginx public API | `http://localhost/api/v1/...` | Main entry point for application API requests | ADMIN/CONTROLLER bearer token for existing operational APIs |
-| Ingestion | [http://localhost:6767](http://localhost:6767) | Direct arrival, reference-data and demo API access | Loopback development interface; operational APIs require ADMIN/CONTROLLER |
-| Disruption | [http://localhost:6768](http://localhost:6768) | Direct bunching and traffic-disruption API access | Loopback development interface; operational APIs require ADMIN/CONTROLLER |
-| Planning | [http://localhost:6769](http://localhost:6769) | Direct diagnosis and recommendation API access | Loopback development interface; operational APIs require ADMIN/CONTROLLER |
-| Gateway | [http://localhost:6770](http://localhost:6770) | Direct API routing and authentication debugging | Loopback development interface; operational APIs require ADMIN/CONTROLLER |
-| pgAdmin | [http://localhost:6700](http://localhost:6700) | Inspect the local PostgreSQL database | Optional `tools` profile; separate pgAdmin login |
+| Ingestion | [http://localhost:6767](http://localhost:6767) | Direct arrival, reference-data and demo API access | Local loopback only; not published in production; operational APIs require ADMIN/CONTROLLER |
+| Disruption | [http://localhost:6768](http://localhost:6768) | Direct bunching and traffic-disruption API access | Local loopback only; not published in production; operational APIs require ADMIN/CONTROLLER |
+| Planning | [http://localhost:6769](http://localhost:6769) | Direct diagnosis and recommendation API access | Local loopback only; not published in production; operational APIs require ADMIN/CONTROLLER |
+| Gateway | [http://localhost:6770](http://localhost:6770) | Direct API routing and authentication debugging | Local loopback only; not published in production; operational APIs require ADMIN/CONTROLLER |
+| pgAdmin | [http://localhost:6700](http://localhost:6700) | Inspect the local PostgreSQL database | Local `tools` profile only; not published in production; separate pgAdmin login |
 
 Backend base URLs are API origins, not landing pages; append a documented API
 path. Opening a protected API in the address bar does not attach a bearer token.
-Nginx is the main browser entry point. For metrics endpoints, see
-[Monitoring](docs/MONITORING.md).
+Nginx is the main browser entry point. Gateway port `6770` is reachable only
+through the local development override; production does not publish it. Production
+clients access Gateway APIs through Nginx, not through a direct Gateway URL.
+
+The following routes are intentionally inaccessible through Nginx, even with an
+ADMIN token:
+
+| Route / endpoint | Nginx response | Reason |
+| --- | --- | --- |
+| `/internal` and `/internal/**` | `404` in local and production | Private service-to-service APIs; no public Gateway route |
+| `/actuator` and `/actuator/**` | `404` in local and production | Health, metrics and management access is separate from the public app |
+| `/v3/api-docs` and `/v3/api-docs/**` | `404` in local and production | OpenAPI documents are restricted to direct development service access |
+| `/swagger-ui.html` and `/swagger-ui/**` | `404` in local and production | Swagger is a developer interface, not a public app page |
+| `/auth-test` and `/auth-test/**` | `404` in production; available locally | Temporary authentication testing only |
+
+Direct backend, Gateway, PostgreSQL and pgAdmin ports are not published by the
+production configuration. Local development port access still follows each
+service's authentication rules; for example, readiness is anonymous on the
+direct service port, whereas Prometheus requires ADMIN. Protected operational
+APIs return `401` for missing/invalid tokens and `403` for insufficient roles.
+For metrics endpoints, see [Monitoring](docs/MONITORING.md).
 
 To start optional pgAdmin (PowerShell or Bash):
 
