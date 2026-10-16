@@ -5,6 +5,10 @@ detection. The service owns the canonical `disruption` schema and exposes both
 bunching alerts and traffic incidents through the same API and security boundary.
 Legacy bunching data is migrated by the checked-in Flyway migration; the old
 service and schema are not runtime dependencies.
+Flyway SQL resources live in `src/main/resources/db/migration`, matching the
+other services. Compose migration images and application/test classpaths use
+that same directory. Relocating these resources preserves the existing SQL
+filenames and contents, so applied migration versions and checksums stay valid.
 
 Every traffic incident `OPENED`, `UPDATED`, and `CLEARED` transition is recorded
 with its immutable provider snapshot and a Planning outbox row in one database

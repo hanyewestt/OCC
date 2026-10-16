@@ -276,3 +276,20 @@ wrappers. Workflow YAML, 19 shell scripts and embedded Python parsed
 successfully; the scan sanitizer's seeded HIGH/MEDIUM policy self-test passed.
 AWS work is deferred at the owner's explicit request. Hosted results after
 these repairs are recorded when the new run completes.
+
+## Canonical Disruption migration resources
+
+At the owner's request, moved the three Disruption SQL resources to the same
+`src/main/resources/db/migration` directory used by the other services and
+updated application, Compose, test and CI references together. All SQL filenames
+and SHA-256 content hashes remained identical; no active references to the old
+resource location remain. The local clean Disruption `verify` run passed 59
+unit/slice and 25 database integration tests with zero failures, errors or skips
+in 1 minute 21 seconds. Its application and migration images rebuilt.
+
+The rebuilt migration job exited 0 against the retained development database.
+Compared the complete Disruption Flyway history before/after: installed ranks,
+versions, script names, checksums and success flags were unchanged. No database
+reset, new migration version, checksum repair or compatibility alias was used.
+The temporary test/build logs, SQL hashes and before/after history snapshots
+are outside the checkout in `../OCC-verification/`.

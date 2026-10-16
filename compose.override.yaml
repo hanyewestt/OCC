@@ -18,7 +18,7 @@ services:
       dockerfile: infra/flyway.Dockerfile
       args:
         OCC_SERVICE: disruption
-        OCC_MIGRATION_SOURCE: services/disruption/src/main/resources/db/target-migration
+        OCC_MIGRATION_SOURCE: services/disruption/src/main/resources/db/migration
 
   planning-migrate:
     build:

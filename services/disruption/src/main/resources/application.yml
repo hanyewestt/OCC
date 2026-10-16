@@ -17,7 +17,7 @@ spring:
     enabled: false
     default-schema: disruption
     create-schemas: false
-    locations: classpath:db/target-migration
+    locations: classpath:db/migration
 server:
   port: ${OCC_DISRUPTION_INTERNAL_PORT}
 management:
