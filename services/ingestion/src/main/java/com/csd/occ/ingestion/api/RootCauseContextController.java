@@ -20,15 +20,15 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping(value = "/internal/v1/demo-runs", produces = MediaType.APPLICATION_JSON_VALUE)
-@Tag(name = "Root-cause evidence")
+@RequestMapping(value = "/internal/v1/ingestion/demo-runs", produces = MediaType.APPLICATION_JSON_VALUE)
+@Tag(name = "Planning context")
 public class RootCauseContextController {
     private final RootCauseContextService contexts;
 
     public RootCauseContextController(RootCauseContextService contexts) { this.contexts = contexts; }
 
-    @GetMapping("/{demoRunId}/root-cause-context")
-    @Operation(operationId = "getSimulationRootCauseContext", summary = "Get simulation evidence for a confirmed event")
+    @GetMapping("/{demoRunId}/planning-context")
+    @Operation(operationId = "getSimulationPlanningContext", summary = "Get simulation evidence for a confirmed event")
     @ApiResponse(responseCode = "200", description = "Simulation-scoped evidence context")
     @ApiResponse(responseCode = "400", description = "Evidence observations do not match the simulation event",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,

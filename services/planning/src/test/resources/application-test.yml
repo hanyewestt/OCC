@@ -1,0 +1,18 @@
+spring:
+  flyway:
+    enabled: true
+
+occ:
+  security:
+    supabase:
+      project-url: https://issuer.test
+      jwks-url: https://issuer.test/auth/v1/.well-known/jwks.json
+      audience: authenticated
+      clock-skew: 30s
+      allowed-algorithms: [ES256]
+    peer:
+      disruption-to-planning-token: test-disruption-to-planning-token
+      ingestion-to-planning-token: test-ingestion-to-planning-token
+    peer-clients:
+      ingestion-token: test-planning-to-ingestion-token
+      disruption-token: test-planning-to-disruption-token

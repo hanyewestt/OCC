@@ -1,0 +1,73 @@
+# Automatically loaded for local development. Production uses explicit -f files.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+
+  ingestion-migrate:
+    build:
+      context: .
+      dockerfile: infra/flyway.Dockerfile
+      args:
+        OCC_SERVICE: ingestion
+        OCC_MIGRATION_SOURCE: services/ingestion/src/main/resources/db/migration
+
+  disruption-migrate:
+    build:
+      context: .
+      dockerfile: infra/flyway.Dockerfile
+      args:
+        OCC_SERVICE: disruption
+        OCC_MIGRATION_SOURCE: services/disruption/src/main/resources/db/migration
+
+  planning-migrate:
+    build:
+      context: .
+      dockerfile: infra/flyway.Dockerfile
+      args:
+        OCC_SERVICE: planning
+        OCC_MIGRATION_SOURCE: services/planning/src/main/resources/db/migration
+
+  ingestion:
+    build:
+      context: .
+      dockerfile: infra/java.Dockerfile
+      args:
+        OCC_SERVICE: ingestion
+        OCC_SERVICE_INTERNAL_PORT: ${OCC_INGESTION_INTERNAL_PORT:-8001}
+    ports:
+      - "127.0.0.1:${OCC_INGESTION_PORT:-6767}:${OCC_INGESTION_INTERNAL_PORT:-8001}"
+
+  disruption:
+    build:
+      context: .
+      dockerfile: infra/java.Dockerfile
+      args:
+        OCC_SERVICE: disruption
+        OCC_SERVICE_INTERNAL_PORT: ${OCC_DISRUPTION_INTERNAL_PORT:-8002}
+    ports:
+      - "127.0.0.1:${OCC_DISRUPTION_PORT:-6768}:${OCC_DISRUPTION_INTERNAL_PORT:-8002}"
+
+  planning:
+    build:
+      context: .
+      dockerfile: infra/java.Dockerfile
+      args:
+        OCC_SERVICE: planning
+        OCC_SERVICE_INTERNAL_PORT: ${OCC_PLANNING_INTERNAL_PORT:-8003}
+    ports:
+      - "127.0.0.1:${OCC_PLANNING_PORT:-6769}:${OCC_PLANNING_INTERNAL_PORT:-8003}"
+
+  gateway:
+    build:
+      context: .
+      dockerfile: infra/java.Dockerfile
+      args:
+        OCC_SERVICE: gateway
+        OCC_SERVICE_INTERNAL_PORT: ${OCC_GATEWAY_INTERNAL_PORT:-8004}
+    ports:
+      - "127.0.0.1:${OCC_GATEWAY_PORT:-6770}:${OCC_GATEWAY_INTERNAL_PORT:-8004}"
+
+  pgadmin:
+    ports:
+      - "127.0.0.1:${PGADMIN_PORT:-6700}:80"

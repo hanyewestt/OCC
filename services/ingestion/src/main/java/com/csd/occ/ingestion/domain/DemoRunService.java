@@ -18,13 +18,16 @@ public class DemoRunService {
     private final BusArrivalObservationRepository arrivals;
     private final ReferenceTopologyPort topology;
     private final Clock clock;
+    private final PollingConfigurationPort configuration;
 
     public DemoRunService(DemoReplayService replay, DemoRunRepository runs, DemoModeService mode,
                           BunchingControlPort bunching, BusArrivalObservationRepository arrivals,
-                          ReferenceTopologyPort topology, RecommendationLookupPort recommendations, Clock clock) {
+                          ReferenceTopologyPort topology, RecommendationLookupPort recommendations, Clock clock,
+                          PollingConfigurationPort configuration) {
         this.replay = replay; this.runs = runs; this.mode = mode; this.bunching = bunching;
         this.arrivals = arrivals; this.topology = topology; this.clock = clock;
         this.recommendations = recommendations;
+        this.configuration = configuration;
     }
 
     public DemoRunDetails start() {
@@ -61,6 +64,7 @@ public class DemoRunService {
 
     public DemoRunDetails status(UUID id) {
         DemoRun run = runs.findById(id).orElseThrow(() -> new DemoRunNotFoundException(id));
+        if (run.expiredAt(clock.instant().minus(configuration.retention()))) throw new DemoRunNotFoundException(id);
         return details(run);
     }
 
@@ -76,7 +80,8 @@ public class DemoRunService {
     }
 
     public Optional<DemoRecommendationDetails> recommendation(UUID id) {
-        runs.findById(id).orElseThrow(() -> new DemoRunNotFoundException(id));
+        DemoRun run = runs.findById(id).orElseThrow(() -> new DemoRunNotFoundException(id));
+        if (run.expiredAt(clock.instant().minus(configuration.retention()))) throw new DemoRunNotFoundException(id);
         return bunching.alerts(id).stream()
                 .filter(alert -> "SIMULATION".equals(alert.classification()) && alert.bunchingEventId() != null)
                 .map(DemoBunchingAlert::bunchingEventId)

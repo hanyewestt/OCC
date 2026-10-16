@@ -4,33 +4,43 @@ import com.csd.occ.ingestion.domain.BusArrivalPort;
 import com.csd.occ.ingestion.domain.BusArrivalPrediction;
 import com.csd.occ.ingestion.domain.BusArrivalSnapshot;
 import com.csd.occ.ingestion.domain.BusReferencePort;
+import com.csd.occ.ingestion.domain.TrafficIncidentFeedPort;
 import com.csd.occ.ingestion.infrastructure.config.DataMallProperties;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
-import org.springframework.boot.restclient.RestTemplateBuilder;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
+import java.util.Locale;
+import java.util.Map;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
 @Component
-public class DataMallAdapter implements BusArrivalPort, BusReferencePort {
-    private final RestTemplate restTemplate;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+public class DataMallAdapter implements BusArrivalPort, BusReferencePort, TrafficIncidentFeedPort {
+    private final RestClient restClient;
+    private final JsonMapper objectMapper;
     private final DataMallProperties properties;
 
-    public DataMallAdapter(RestTemplateBuilder builder, DataMallProperties properties) {
-        this.restTemplate = builder.build();
+    public DataMallAdapter(@Qualifier("dataMallRestClient") RestClient restClient,
+            DataMallProperties properties, JsonMapper objectMapper) {
+        this.restClient = restClient;
         this.properties = properties;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -47,6 +57,67 @@ public class DataMallAdapter implements BusArrivalPort, BusReferencePort {
             return new BusArrivalSnapshot(response.getStatusCode().value(), payload, List.of(), List.of());
         }
         return parseArrivals(payload, response.getStatusCode().value());
+    }
+
+    @Override
+    public TrafficIncidentBatch trafficIncidents() {
+        List<String> rawPages = new ArrayList<>();
+        Map<String, TrafficIncident> bySourceKey = new LinkedHashMap<>();
+        List<String> errors = new ArrayList<>();
+        int pageSize = properties.trafficIncidentPageSize();
+        int maxPages = properties.trafficIncidentMaxPages();
+        boolean completeSnapshot = false;
+
+        for (int pageNumber = 0; pageNumber < maxPages; pageNumber++) {
+            int offset = pageNumber * pageSize;
+            String path = pageNumber == 0 ? "/TrafficIncidents" : "/TrafficIncidents?$skip=" + offset;
+            ResponseEntity<String> response;
+            try {
+                response = get(path);
+            } catch (RuntimeException failure) {
+                if (pageNumber == 0) throw failure;
+                errors.add("DataMall traffic incident page request failed");
+                break;
+            }
+            String pagePayload = response.getBody();
+            if (!response.getStatusCode().is2xxSuccessful() || pagePayload == null) {
+                if (pageNumber == 0) {
+                    return new TrafficIncidentBatch(response.getStatusCode().value(), pagePayload, List.of(),
+                            List.of("DataMall traffic incident request failed"));
+                }
+                errors.add("DataMall traffic incident page " + pageNumber + " returned HTTP "
+                        + response.getStatusCode().value());
+                break;
+            }
+
+            ParsedTrafficIncidents parsed = parseTrafficIncidents(pagePayload);
+            if (parsed.validJson()) rawPages.add(pagePayload);
+            errors.addAll(parsed.errors());
+            for (TrafficIncident incident : parsed.incidents()) {
+                TrafficIncident previous = bySourceKey.putIfAbsent(incident.sourceIncidentKey(), incident);
+                if (previous != null && !previous.equals(incident)) {
+                    errors.add("Traffic incident identity was duplicated with different facts");
+                }
+            }
+            if (!parsed.recordsArray()) break;
+            if (parsed.recordsReturned() > pageSize) {
+                errors.add("DataMall traffic incident response exceeded the configured page size");
+                break;
+            }
+            if (parsed.recordsReturned() < pageSize) {
+                completeSnapshot = true;
+                break;
+            }
+            if (pageNumber + 1 == maxPages) {
+                errors.add("DataMall traffic incident feed exceeded the configured maximum page count");
+            }
+        }
+
+        if (!completeSnapshot && errors.isEmpty()) {
+            errors.add("DataMall traffic incident feed did not reach its final page");
+        }
+        return new TrafficIncidentBatch(200, combineRawPages(rawPages), List.copyOf(bySourceKey.values()),
+                List.copyOf(errors));
     }
 
     @Override
@@ -108,6 +179,75 @@ public class DataMallAdapter implements BusArrivalPort, BusReferencePort {
         return new BusArrivalSnapshot(httpStatus, payload, List.copyOf(predictions), List.copyOf(errors));
     }
 
+    private ParsedTrafficIncidents parseTrafficIncidents(String payload) {
+        List<TrafficIncident> incidents = new ArrayList<>();
+        List<String> errors = new ArrayList<>();
+        try {
+            JsonNode root = objectMapper.readTree(payload);
+            JsonNode records = root.isArray() ? root : root.path("value");
+            if (!records.isArray()) {
+                errors.add("Traffic incident response was not a JSON array");
+                return new ParsedTrafficIncidents(0, true, false, List.of(), List.copyOf(errors));
+            }
+            for (JsonNode record : records) {
+                try {
+                    incidents.add(trafficIncident(record));
+                } catch (RuntimeException invalidRecord) {
+                    errors.add("Traffic incident record could not be normalized");
+                }
+            }
+            return new ParsedTrafficIncidents(records.size(), true, true, List.copyOf(incidents),
+                    List.copyOf(errors));
+        } catch (Exception invalidResponse) {
+            // Do not put malformed provider text into a PostgreSQL jsonb column.
+            return new ParsedTrafficIncidents(0, false, false, List.of(),
+                    List.of("Traffic incident response was not valid JSON"));
+        }
+    }
+
+    private String combineRawPages(List<String> rawPages) {
+        if (rawPages.isEmpty()) return null;
+        if (rawPages.size() == 1) return rawPages.getFirst();
+        var envelope = objectMapper.createObjectNode();
+        envelope.put("endpoint", "TrafficIncidents");
+        var responses = objectMapper.createArrayNode();
+        rawPages.forEach(responses::add);
+        envelope.set("responses", responses);
+        return envelope.toString();
+    }
+
+    private TrafficIncident trafficIncident(JsonNode node) {
+        String type = text(node, "Type");
+        String message = text(node, "Message");
+        BigDecimal latitude = decimal(node, "Latitude");
+        BigDecimal longitude = decimal(node, "Longitude");
+        if (type.isBlank() || type.length() > 60 || message.isBlank() || message.length() > 500
+                || latitude == null || longitude == null
+                || latitude.compareTo(BigDecimal.valueOf(-90)) < 0
+                || latitude.compareTo(BigDecimal.valueOf(90)) > 0
+                || longitude.compareTo(BigDecimal.valueOf(-180)) < 0
+                || longitude.compareTo(BigDecimal.valueOf(180)) > 0) {
+            throw new IllegalArgumentException("Traffic incident record is incomplete or outside the stored bounds");
+        }
+        latitude = latitude.setScale(7, RoundingMode.HALF_UP);
+        longitude = longitude.setScale(7, RoundingMode.HALF_UP);
+        String sourceKey = incidentKey(type, latitude, longitude);
+        return new TrafficIncident(sourceKey, type, latitude, longitude, message, null);
+    }
+
+    private String incidentKey(String type, BigDecimal latitude, BigDecimal longitude) {
+        String normalizedType = type.toLowerCase(Locale.ROOT);
+        String canonical = normalizedType.length() + ":" + normalizedType
+                + latitude.toPlainString().length() + ":" + latitude.toPlainString()
+                + longitude.toPlainString().length() + ":" + longitude.toPlainString();
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is not available", impossible);
+        }
+    }
+
     private List<JsonNode> pages(String endpoint) {
         List<JsonNode> values = new ArrayList<>();
         for (int skip = 0; ; skip += 500) {
@@ -151,9 +291,25 @@ public class DataMallAdapter implements BusArrivalPort, BusReferencePort {
     }
 
     private ResponseEntity<String> get(String path) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("AccountKey", properties.accountKey());
-        return restTemplate.exchange(properties.baseUrl() + path, HttpMethod.GET,
-                new HttpEntity<>(headers), String.class);
+        return restClient.get().uri(path).header("AccountKey", properties.accountKey())
+                .exchange((request, response) -> ResponseEntity.status(response.getStatusCode())
+                        .headers(headers -> headers.addAll(response.getHeaders()))
+                        .body(readBoundedBody(response)));
     }
+
+    private String readBoundedBody(ClientHttpResponse response) {
+        try (var body = response.getBody()) {
+            byte[] payload = body.readNBytes(properties.maxResponseBytes() + 1);
+            if (payload.length > properties.maxResponseBytes()) {
+                throw new IllegalStateException("DataMall response exceeded configured maximum of "
+                        + properties.maxResponseBytes() + " bytes");
+            }
+            return payload.length == 0 ? null : new String(payload, StandardCharsets.UTF_8);
+        } catch (IOException failure) {
+            throw new IllegalStateException("Could not read DataMall response", failure);
+        }
+    }
+
+    private record ParsedTrafficIncidents(int recordsReturned, boolean validJson, boolean recordsArray,
+            List<TrafficIncident> incidents, List<String> errors) { }
 }

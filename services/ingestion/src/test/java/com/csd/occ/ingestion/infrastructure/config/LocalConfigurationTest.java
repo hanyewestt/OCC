@@ -37,7 +37,7 @@ class LocalConfigurationTest {
         Files.writeString(temporaryRepository.resolve(".env"),
                 "OCC_INGESTION_DB_PASSWORD=synthetic-password\nDATAMALL_API_KEY=synthetic-key\n"
                 + "POSTGRES_DB=synthetic_db\nPOSTGRES_PORT=5544\n"
-                + (profile.equals("override") ? "SPRING_DATASOURCE_URL=jdbc:postgresql://example.test/override\n" : ""));
+                + (profile.equals("override") ? "OCC_INGESTION_DB_PUBLIC_URL=jdbc:postgresql://example.test/override\n" : ""));
         String separator = System.getProperty("path.separator");
         String classpath = Arrays.stream(System.getProperty("java.class.path").split(separator))
                 .map(entry -> Path.of(entry).toAbsolutePath().toString()).collect(Collectors.joining(separator));
@@ -65,7 +65,10 @@ class LocalConfigurationTest {
                 if (!"synthetic-password".equals(environment.getProperty("spring.datasource.password"))
                         || !"synthetic-key".equals(environment.getProperty("occ.datamall.account-key"))
                         || !expectedUrl.equals(environment.getProperty("spring.datasource.url"))) {
-                    throw new AssertionError("Root local configuration was not loaded correctly");
+                    throw new AssertionError("Root local configuration was not loaded correctly: url="
+                            + environment.getProperty("spring.datasource.url") + ", passwordLoaded="
+                            + (environment.getProperty("spring.datasource.password") != null) + ", apiKeyLoaded="
+                            + (environment.getProperty("occ.datamall.account-key") != null));
                 }
             } else if (environment.containsProperty("DATAMALL_API_KEY")) {
                 throw new AssertionError("Deployment loaded local secrets");

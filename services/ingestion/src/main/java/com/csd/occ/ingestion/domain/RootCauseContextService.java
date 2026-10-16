@@ -13,10 +13,13 @@ public class RootCauseContextService {
     private final DemoRunRepository runs;
     private final BusArrivalObservationRepository arrivals;
     private final TrafficIncidentObservationRepository incidents;
+    private final PollingConfigurationPort configuration;
+    private final java.time.Clock clock;
 
     public RootCauseContextService(DemoRunRepository runs, BusArrivalObservationRepository arrivals,
-            TrafficIncidentObservationRepository incidents) {
+            TrafficIncidentObservationRepository incidents, PollingConfigurationPort configuration, java.time.Clock clock) {
         this.runs = runs; this.arrivals = arrivals; this.incidents = incidents;
+        this.configuration = configuration; this.clock = clock;
     }
 
     @Transactional(readOnly = true)
@@ -29,6 +32,7 @@ public class RootCauseContextService {
         if (observationIds.stream().distinct().count() != observationIds.size())
             throw new IllegalArgumentException("arrivalObservationIds must be unique");
         DemoRun run = runs.findById(runId).orElseThrow(() -> new DemoRunNotFoundException(runId));
+        if (run.expiredAt(clock.instant().minus(configuration.retention()))) throw new DemoRunNotFoundException(runId);
         if (!"SIMULATION".equals(run.classification()))
             throw new IllegalArgumentException("Only SIMULATION run context can be used for diagnosis");
         List<BusArrivalObservation> found = arrivals.findAllById(observationIds);

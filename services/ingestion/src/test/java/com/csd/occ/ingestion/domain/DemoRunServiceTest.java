@@ -29,13 +29,15 @@ class DemoRunServiceTest {
     @Mock private RecommendationLookupPort recommendations;
     @Mock private BusArrivalObservationRepository arrivals;
     @Mock private ReferenceTopologyPort topology;
+    @Mock private PollingConfigurationPort configuration;
 
     private DemoRunService service;
 
     @BeforeEach
     void setUp() {
         service = new DemoRunService(replay, runs, mode, bunching, arrivals, topology, recommendations,
-                Clock.fixed(Instant.parse("2026-09-26T00:00:00Z"), ZoneOffset.UTC));
+                Clock.fixed(Instant.parse("2026-09-26T00:00:00Z"), ZoneOffset.UTC), configuration);
+        org.mockito.Mockito.lenient().when(configuration.retention()).thenReturn(java.time.Duration.ofHours(12));
     }
 
     @Test

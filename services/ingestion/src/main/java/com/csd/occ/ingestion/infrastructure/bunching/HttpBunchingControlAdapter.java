@@ -6,6 +6,7 @@ import com.csd.occ.ingestion.domain.DemoBunchingUnavailableException;
 import com.csd.occ.ingestion.domain.LiveBunchingAlert;
 import com.csd.occ.ingestion.domain.LiveBunchingAlertPage;
 import com.csd.occ.ingestion.infrastructure.config.DemoProperties;
+import com.csd.occ.ingestion.infrastructure.security.PeerClientProperties;
 import java.net.http.HttpClient;
 import java.time.Instant;
 import java.util.List;
@@ -19,29 +20,39 @@ import org.springframework.web.client.RestClientException;
 public class HttpBunchingControlAdapter implements BunchingControlPort {
     private final RestClient bunching;
 
-    public HttpBunchingControlAdapter(DemoProperties settings) {
+    public HttpBunchingControlAdapter(DemoProperties settings, PeerClientProperties peers) {
         JdkClientHttpRequestFactory requests = new JdkClientHttpRequestFactory(HttpClient.newBuilder()
-                .connectTimeout(settings.bunchingControlTimeout()).build());
-        requests.setReadTimeout(settings.bunchingControlTimeout());
-        this.bunching = RestClient.builder().baseUrl(settings.bunchingInternalUrl().toString())
+                .connectTimeout(settings.disruptionControlTimeout()).build());
+        requests.setReadTimeout(settings.disruptionControlTimeout());
+        this.bunching = RestClient.builder().baseUrl(settings.disruptionInternalUrl().toString())
+                .defaultHeader("X-OCC-Peer-Token", peers.disruptionToken())
                 .requestFactory(requests).build();
     }
 
     @Override
     public void selectDemo(UUID runId) {
-        bunching.put().uri("/internal/v1/consumer-selection")
+        bunching.put().uri("/internal/v1/disruption/consumer-selection")
                 .body(new SelectionRequest("DEMO", runId)).retrieve().toBodilessEntity();
     }
 
     @Override
+    public List<UUID> protectedDemoRuns() {
+        ProtectionResponse response = bunching.get().uri("/internal/v1/disruption/retention-protection")
+                .retrieve().body(ProtectionResponse.class);
+        if (response == null) throw new IllegalStateException("Retention protection returned no body");
+        return response.demoRunIds();
+    }
+    private record ProtectionResponse(List<UUID> demoRunIds) { }
+
+    @Override
     public void selectLive() {
-        bunching.put().uri("/internal/v1/consumer-selection")
+        bunching.put().uri("/internal/v1/disruption/consumer-selection")
                 .body(new SelectionRequest("LIVE", null)).retrieve().toBodilessEntity();
     }
 
     @Override
     public List<DemoBunchingAlert> alerts(UUID runId) {
-        AlertPage page = bunching.get().uri("/internal/v1/demo-runs/{id}/alerts", runId)
+        AlertPage page = bunching.get().uri("/internal/v1/disruption/demo-runs/{id}/alerts", runId)
                 .retrieve().body(AlertPage.class);
         return page == null ? List.of() : page.alerts().stream()
                 .map(alert -> new DemoBunchingAlert(alert.eventId(), alert.bunchingEventId(), alert.action(), alert.serviceId(), alert.stopCode(),
@@ -52,7 +63,7 @@ public class HttpBunchingControlAdapter implements BunchingControlPort {
     @Override
     public LiveBunchingAlertPage currentLiveAlerts(int page, int size) {
         try {
-            LiveAlertPage response = bunching.get().uri(builder -> builder.path("/api/v1/live-bunching-alerts")
+            LiveAlertPage response = bunching.get().uri(builder -> builder.path("/internal/v1/disruption/live-bunching-alerts")
                     .queryParam("page", page).queryParam("size", size).build()).retrieve().body(LiveAlertPage.class);
             if (response == null) return new LiveBunchingAlertPage(List.of(), page, size, 0, 0);
             return new LiveBunchingAlertPage(response.items().stream().map(alert -> new LiveBunchingAlert(alert.eventId(),

@@ -1,0 +1,80 @@
+# Production-only image pins and public TLS edge. Use explicit files so the
+# loopback-only local development override is never merged into deployment.
+services:
+  ingestion:
+    image: ${OCC_INGESTION_IMAGE:?set OCC_INGESTION_IMAGE to an immutable registry digest}
+    pull_policy: always
+
+  disruption:
+    image: ${OCC_DISRUPTION_IMAGE:?set OCC_DISRUPTION_IMAGE to an immutable registry digest}
+    pull_policy: always
+
+  planning:
+    image: ${OCC_PLANNING_IMAGE:?set OCC_PLANNING_IMAGE to an immutable registry digest}
+    pull_policy: always
+
+  gateway:
+    image: ${OCC_GATEWAY_IMAGE:?set OCC_GATEWAY_IMAGE to an immutable registry digest}
+    pull_policy: always
+
+  ingestion-migrate:
+    image: ${OCC_INGESTION_MIGRATION_IMAGE:?set OCC_INGESTION_MIGRATION_IMAGE to an immutable registry digest}
+    pull_policy: always
+
+  disruption-migrate:
+    image: ${OCC_DISRUPTION_MIGRATION_IMAGE:?set OCC_DISRUPTION_MIGRATION_IMAGE to an immutable registry digest}
+    pull_policy: always
+
+  planning-migrate:
+    image: ${OCC_PLANNING_MIGRATION_IMAGE:?set OCC_PLANNING_MIGRATION_IMAGE to an immutable registry digest}
+    pull_policy: always
+
+  nginx:
+    image: nginx:1.30.6-alpine@sha256:750f6c5456af731b47295d124fbed55664eeb1daab4f6bac0b092b7406235091
+    user: "101:101"
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    tmpfs:
+      - /etc/nginx/conf.d:uid=101,gid=101,mode=0755
+      - /var/cache/nginx:uid=101,gid=101,mode=0755
+      - /var/run:uid=101,gid=101,mode=0755
+      - /tmp:uid=101,gid=101,mode=1777
+    environment:
+      NGINX_ENVSUBST_FILTER: '^(OCC_GATEWAY_INTERNAL_URL|OCC_NGINX_SERVER_NAME|OCC_NGINX_CLIENT_MAX_BODY_SIZE|OCC_NGINX_RATE_LIMIT_PER_SECOND|OCC_NGINX_RATE_LIMIT_BURST|OCC_NGINX_RATE_LIMIT_ZONE_SIZE|OCC_NGINX_PROXY_CONNECT_TIMEOUT|OCC_NGINX_PROXY_READ_TIMEOUT|OCC_NGINX_PROXY_SEND_TIMEOUT)$'
+      OCC_GATEWAY_INTERNAL_URL: ${OCC_GATEWAY_INTERNAL_URL:-http://gateway:8004}
+      OCC_NGINX_SERVER_NAME: ${OCC_NGINX_SERVER_NAME:?set OCC_NGINX_SERVER_NAME in .env}
+      OCC_NGINX_CLIENT_MAX_BODY_SIZE: ${OCC_NGINX_CLIENT_MAX_BODY_SIZE:-1m}
+      OCC_NGINX_RATE_LIMIT_PER_SECOND: ${OCC_NGINX_RATE_LIMIT_PER_SECOND:-20r/s}
+      OCC_NGINX_RATE_LIMIT_BURST: ${OCC_NGINX_RATE_LIMIT_BURST:-40}
+      OCC_NGINX_RATE_LIMIT_ZONE_SIZE: ${OCC_NGINX_RATE_LIMIT_ZONE_SIZE:-10m}
+      OCC_NGINX_PROXY_CONNECT_TIMEOUT: ${OCC_NGINX_PROXY_CONNECT_TIMEOUT:-5s}
+      OCC_NGINX_PROXY_READ_TIMEOUT: ${OCC_NGINX_PROXY_READ_TIMEOUT:-30s}
+      OCC_NGINX_PROXY_SEND_TIMEOUT: ${OCC_NGINX_PROXY_SEND_TIMEOUT:-30s}
+    ports:
+      - "${OCC_NGINX_PUBLIC_PORT:-443}:8443"
+    volumes:
+      - ./infra/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    secrets:
+      - source: occ_tls_certificate
+        target: occ_tls_certificate
+      - source: occ_tls_private_key
+        target: occ_tls_private_key
+    networks: [edge]
+    depends_on:
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: ${OCC_HEALTHCHECK_INTERVAL:-10s}
+      timeout: ${OCC_HEALTHCHECK_TIMEOUT:-3s}
+      retries: ${OCC_HEALTHCHECK_RETRIES:-12}
+      start_period: ${OCC_HEALTHCHECK_START_PERIOD:-10s}
+
+secrets:
+  occ_tls_certificate:
+    file: ${OCC_NGINX_TLS_CERTIFICATE_FILE:?set OCC_NGINX_TLS_CERTIFICATE_FILE in .env}
+  occ_tls_private_key:
+    file: ${OCC_NGINX_TLS_PRIVATE_KEY_FILE:?set OCC_NGINX_TLS_PRIVATE_KEY_FILE in .env}

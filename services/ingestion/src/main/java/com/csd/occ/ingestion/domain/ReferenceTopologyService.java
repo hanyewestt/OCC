@@ -49,6 +49,7 @@ public class ReferenceTopologyService implements ReferenceTopologyPort {
     @Override
     @Transactional
     public ReferenceTopologyVersion replaceIfChanged(BusReferencePort.BusReferenceData data, String checksum) {
+        versions.lockTopology();
         Optional<ReferenceDatasetVersion> active = versions.findByDatasetAndStatus(DATASET, ACTIVE);
         if (active.filter(version -> version.checksum().equals(checksum)).isPresent()) {
             ReferenceDatasetVersion version = active.orElseThrow();
@@ -61,14 +62,14 @@ public class ReferenceTopologyService implements ReferenceTopologyPort {
                 checksum.substring(0, 16), checksum, "CANDIDATE", now));
         stops.saveAll(data.stops().stream().map(stop -> new com.csd.occ.ingestion.domain.BusStop(new BusStopId(id, stop.stopCode()),
                 stop.roadName(), stop.description(), GEOMETRY_FACTORY.createPoint(
-                new Coordinate(stop.longitude().doubleValue(), stop.latitude().doubleValue())), now)).toList());
+                new Coordinate(stop.longitude().doubleValue(), stop.latitude().doubleValue())))).toList());
         services.saveAll(data.services().stream().map(service -> new BusService(new BusServiceId(id,
-                service.serviceId(), service.operator()), service.category(), now)).toList());
+                service.serviceId(), service.operator()), service.category())).toList());
         routeStops.saveAll(data.routeStops().stream().map(route -> new com.csd.occ.ingestion.domain.BusRouteStop(new BusRouteStopId(id,
                 route.serviceId(), route.operator(), (short) route.directionId(), route.stopSequence()),
-                route.stopCode(), route.distanceKm(), now)).toList());
+                route.stopCode(), route.distanceKm())).toList());
 
-        active.ifPresent(ReferenceDatasetVersion::supersede);
+        active.ifPresent(version -> version.supersede(now));
         candidate.activate(now);
         return new ReferenceTopologyVersion(id, checksum);
     }

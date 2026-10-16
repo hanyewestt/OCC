@@ -5,6 +5,7 @@ import com.csd.occ.ingestion.domain.DemoRecommendationImpact;
 import com.csd.occ.ingestion.domain.DemoRecommendationUnavailableException;
 import com.csd.occ.ingestion.domain.RecommendationLookupPort;
 import com.csd.occ.ingestion.infrastructure.config.DemoProperties;
+import com.csd.occ.ingestion.infrastructure.security.PeerClientProperties;
 import java.math.BigDecimal;
 import java.net.http.HttpClient;
 import java.util.List;
@@ -19,11 +20,12 @@ import org.springframework.web.client.RestClientResponseException;
 public class HttpRecommendationLookupAdapter implements RecommendationLookupPort {
     private final RestClient recommendations;
 
-    public HttpRecommendationLookupAdapter(DemoProperties settings) {
+    public HttpRecommendationLookupAdapter(DemoProperties settings, PeerClientProperties peers) {
         JdkClientHttpRequestFactory requests = new JdkClientHttpRequestFactory(HttpClient.newBuilder()
-                .connectTimeout(settings.recommendationTimeout()).build());
-        requests.setReadTimeout(settings.recommendationTimeout());
-        recommendations = RestClient.builder().baseUrl(settings.recommendationInternalUrl().toString())
+                .connectTimeout(settings.planningTimeout()).build());
+        requests.setReadTimeout(settings.planningTimeout());
+        recommendations = RestClient.builder().baseUrl(settings.planningInternalUrl().toString())
+                .defaultHeader("X-OCC-Peer-Token", peers.planningToken())
                 .requestFactory(requests).build();
     }
 
@@ -31,7 +33,7 @@ public class HttpRecommendationLookupAdapter implements RecommendationLookupPort
     public Optional<DemoRecommendationDetails> findByBunchingEventId(UUID bunchingEventId) {
         try {
             RecommendationResponse response = recommendations.get()
-                    .uri("/internal/v1/bunching-recommendations/by-bunching-event/{bunchingEventId}", bunchingEventId)
+                    .uri("/internal/v1/planning/recommendations/by-disruption-event/{bunchingEventId}", bunchingEventId)
                     .retrieve().body(RecommendationResponse.class);
             return response == null ? Optional.empty() : Optional.of(new DemoRecommendationDetails(
                     response.recommendationId(), response.classification(), response.status(), response.mitigationType(),

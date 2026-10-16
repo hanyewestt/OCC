@@ -14,14 +14,16 @@ public class IngestionQueryService {
     private final FeedStatusRepository feedStatuses;
     private final PollRunRepository runs;
     private final ReferenceTopologyPort topology;
+    private final PollingConfigurationPort configuration;
     private final Clock clock;
 
     public IngestionQueryService(BusArrivalObservationRepository arrivals, FeedStatusRepository feedStatuses,
-            PollRunRepository runs, ReferenceTopologyPort topology, Clock clock) {
+            PollRunRepository runs, ReferenceTopologyPort topology, PollingConfigurationPort configuration, Clock clock) {
         this.arrivals = arrivals;
         this.feedStatuses = feedStatuses;
         this.runs = runs;
         this.topology = topology;
+        this.configuration = configuration;
         this.clock = clock;
     }
 
@@ -31,11 +33,13 @@ public class IngestionQueryService {
 
     public Page<BusArrivalObservation> arrivalHistory(String stopCode, String serviceId, Instant from, Instant to,
             Pageable pageable) {
-        return arrivals.findHistory(blankToNull(stopCode), blankToNull(serviceId), from, to, pageable);
+        Instant cutoff = Instant.now(clock).minus(configuration.retention());
+        Instant boundedFrom = from == null || from.isBefore(cutoff) ? cutoff : from;
+        return arrivals.findHistory(blankToNull(stopCode), blankToNull(serviceId), boundedFrom, to, pageable);
     }
 
     public Page<PollRun> pollRuns(Pageable pageable) {
-        return runs.findByClassification("OBSERVATION_ONLY", pageable);
+        return runs.findByClassificationAndStartedAtGreaterThanEqual("OBSERVATION_ONLY", clock.instant().minus(configuration.retention()), pageable);
     }
 
     public List<FeedStatus> feedStatuses() {

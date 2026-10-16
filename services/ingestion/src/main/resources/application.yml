@@ -2,39 +2,83 @@ spring:
   application:
     name: ingestion
   datasource:
-    url: ${SPRING_DATASOURCE_URL:${OCC_INGESTION_DB_URL}}
+    url: ${OCC_INGESTION_DB_INTERNAL_URL}
     username: ${OCC_INGESTION_DB_USERNAME:occ_ingestion}
     password: ${OCC_INGESTION_DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: ${OCC_INGESTION_JPA_DDL_AUTO:validate}
   flyway:
-    enabled: ${OCC_INGESTION_FLYWAY_ENABLED:true}
+    enabled: false
     default-schema: ingestion
     create-schemas: false
     locations: classpath:db/migration
 server:
   port: ${OCC_INGESTION_INTERNAL_PORT:8001}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
 springdoc:
   api-docs:
     version: OPENAPI_3_1
 
 occ:
+  security:
+    supabase:
+      project-url: ${SUPABASE_PROJECT_URL}
+      jwks-url: ${SUPABASE_JWKS_URL}
+      audience: ${SUPABASE_JWT_AUDIENCE:authenticated}
+      clock-skew: ${SUPABASE_JWT_CLOCK_SKEW:30s}
+      allowed-algorithms: ${SUPABASE_JWT_ALLOWED_ALGORITHMS:ES256}
+    peer:
+      disruption-to-ingestion-token: ${OCC_DISRUPTION_TO_INGESTION_PEER_TOKEN}
+      planning-to-ingestion-token: ${OCC_PLANNING_TO_INGESTION_PEER_TOKEN}
+    peer-clients:
+      disruption-token: ${OCC_INGESTION_TO_DISRUPTION_PEER_TOKEN}
+      planning-token: ${OCC_INGESTION_TO_PLANNING_PEER_TOKEN}
   datamall:
-    base-url: ${OCC_DATAMALL_BASE_URL:${DATAMALL_BASE_URL:https://datamall2.mytransport.sg/ltaodataservice}}
-    account-key: ${DATAMALL_API_KEY:mock_key}
+    base-url: ${OCC_DATAMALL_BASE_URL:https://datamall2.mytransport.sg/ltaodataservice}
+    account-key: ${DATAMALL_API_KEY}
+    connect-timeout: ${OCC_DATAMALL_CONNECT_TIMEOUT:5s}
+    response-timeout: ${OCC_DATAMALL_RESPONSE_TIMEOUT:20s}
+    traffic-incident-page-size: ${OCC_DATAMALL_TRAFFIC_INCIDENT_PAGE_SIZE:500}
+    traffic-incident-max-pages: ${OCC_DATAMALL_TRAFFIC_INCIDENT_MAX_PAGES:10}
+    max-response-bytes: ${OCC_DATAMALL_MAX_RESPONSE_BYTES:5000000}
   ingestion:
     monitored-services: ${OCC_INGESTION_MONITORED_SERVICES:190,972}
     stale-after-seconds: ${OCC_INGESTION_STALE_AFTER_SECONDS:180}
-    retention: ${OCC_INGESTION_RETENTION:24h}
+    retention: ${OCC_INGESTION_RETENTION:12h}
+    schedule:
+      bus-arrival-enabled: ${OCC_INGESTION_BUS_ARRIVAL_ENABLED:true}
+      bus-arrival-poll-interval: ${OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL:60s}
+      bus-arrival-initial-delay: ${OCC_INGESTION_BUS_ARRIVAL_INITIAL_DELAY:60s}
+      traffic-incident-enabled: ${OCC_INGESTION_TRAFFIC_INCIDENT_ENABLED:true}
+      traffic-incident-poll-interval: ${OCC_INGESTION_TRAFFIC_INCIDENT_POLL_INTERVAL:2m}
+      traffic-incident-initial-delay: ${OCC_INGESTION_TRAFFIC_INCIDENT_INITIAL_DELAY:30s}
+      retention-interval: ${OCC_INGESTION_RETENTION_INTERVAL:1h}
+      retention-initial-delay: ${OCC_INGESTION_RETENTION_INITIAL_DELAY:5m}
     import-reference-on-startup: ${OCC_INGESTION_IMPORT_REFERENCE_ON_STARTUP:true}
     seed-targets-on-startup: ${OCC_INGESTION_SEED_TARGETS_ON_STARTUP:true}
+    traffic-feed:
+      default-page-size: ${OCC_INGESTION_TRAFFIC_POLL_PAGE_SIZE:100}
+      max-page-size: ${OCC_INGESTION_TRAFFIC_POLL_MAX_PAGE_SIZE:250}
     demo:
       scenario: ${OCC_INGESTION_DEMO_SCENARIO:route190-bunching-v1}
       seed: ${OCC_INGESTION_DEMO_SEED:190}
       step-interval: ${OCC_INGESTION_DEMO_STEP_INTERVAL:5s}
-      bunching-threshold: ${OCC_BUNCHING_THRESHOLD:90s}
-      bunching-internal-url: ${OCC_BUNCHING_INTERNAL_URL:http://bus-bunching-detection:8002}
-      bunching-control-timeout: ${OCC_BUNCHING_CONTROL_TIMEOUT:5s}
-      recommendation-internal-url: ${OCC_RECOMMENDATION_INTERNAL_URL:http://recommendation-engine:8003}
-      recommendation-timeout: ${OCC_INGESTION_RECOMMENDATION_TIMEOUT:5s}
+      bunching-threshold: ${OCC_INGESTION_DEMO_BUNCHING_THRESHOLD:90s}
+      disruption-internal-url: ${OCC_DISRUPTION_INTERNAL_URL}
+      disruption-control-timeout: ${OCC_INGESTION_DISRUPTION_TIMEOUT:5s}
+      planning-internal-url: ${OCC_PLANNING_INTERNAL_URL}
+      planning-timeout: ${OCC_INGESTION_PLANNING_TIMEOUT:5s}

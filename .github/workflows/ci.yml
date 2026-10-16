@@ -1,0 +1,520 @@
+name: Phase 1 verification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-one-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Reactor tests and migration checks
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source and contract baselines
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Java 25
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: |
+            .mvn/wrapper/maven-wrapper.properties
+            pom.xml
+            services/*/pom.xml
+      - name: Require the container runtime for database integration tests
+        run: docker info
+      - name: Run the required four-service reactor
+        run: ./mvnw --batch-mode --no-transfer-progress clean verify
+        env:
+          DATAMALL_API_KEY: synthetic-ci-key
+          OCC_PLANNING_GEMINI_API_KEY: synthetic-ci-key
+      - name: Require unit and database integration tests to execute
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import sys
+          import xml.etree.ElementTree as ET
+
+          modules = {
+              "ingestion": True,
+              "disruption": True,
+              "planning": True,
+              "gateway": False,
+          }
+          failed = False
+          for module, integration_required in modules.items():
+              base = pathlib.Path("services") / module / "target"
+              reports = sorted((base / "surefire-reports").glob("TEST-*.xml"))
+              totals = {key: 0 for key in ("tests", "failures", "errors", "skipped")}
+              for report in reports:
+                  suite = ET.parse(report).getroot()
+                  for key in totals:
+                      totals[key] += int(suite.attrib.get(key, "0"))
+              valid = bool(reports) and totals["tests"] > 0
+              valid &= totals["failures"] == 0 and totals["errors"] == 0
+              valid &= totals["skipped"] == 0
+              print(f"{module} unit/slice: {totals}; report_files={len(reports)}")
+              if integration_required:
+                  summary = base / "failsafe-reports" / "failsafe-summary.xml"
+                  completed = 0
+                  if summary.is_file():
+                      completed = int(ET.parse(summary).getroot().findtext("completed", "0"))
+                  integration_reports = sorted((base / "failsafe-reports").glob("TEST-*.xml"))
+                  integration = {key: 0 for key in ("tests", "failures", "errors", "skipped")}
+                  for report in integration_reports:
+                      suite = ET.parse(report).getroot()
+                      for key in integration:
+                          integration[key] += int(suite.attrib.get(key, "0"))
+                  print(f"{module} integration: completed={completed}; {integration}; report_files={len(integration_reports)}")
+                  valid &= completed > 0 and bool(integration_reports) and integration["tests"] > 0
+                  valid &= integration["failures"] == 0 and integration["errors"] == 0
+                  valid &= integration["skipped"] == 0
+              if not valid:
+                  failed = True
+          if failed:
+              sys.exit("A required test suite was missing, skipped, or failed.")
+          PY
+      - name: Upload sanitized test and coverage reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: phase-one-test-reports
+          path: |
+            services/*/target/surefire-reports/TEST-*.xml
+            services/*/target/failsafe-reports/TEST-*.xml
+            services/*/target/failsafe-reports/failsafe-summary.xml
+            services/*/target/site/jacoco/jacoco.xml
+          if-no-files-found: error
+          retention-days: 7
+
+  config-and-contracts:
+    name: Configuration and API contract checks
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source and contract baselines
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate the safe example Compose configuration
+        run: docker compose --env-file .env.example config -q
+      - name: Validate generated contracts and source-to-target migration map
+        shell: bash
+        env:
+          OASDIFF_IMAGE: tufin/oasdiff:v1.33.0@sha256:6263a96dd2ef0726c54e21fea9b8e1607eac4841add0079324b424c1f52b819c
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+
+          manifest_path = pathlib.Path("tests/contracts/contracts-manifest.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          source_revision = manifest["baselineRevision"]
+          target_revision = manifest["targetBaselineRevision"]
+          source_baseline_paths = manifest["sourceBaselinePaths"]
+          for revision in (source_revision, target_revision):
+              subprocess.run(["git", "cat-file", "-e", f"{revision}^{{commit}}"], check=True)
+
+          source_specs = {}
+          target_specs = {}
+          def source_spec(path):
+              if path not in source_specs:
+                  baseline_path = source_baseline_paths.get(path)
+                  if baseline_path is None:
+                      raise SystemExit(f"Source contract has no retained baseline path: {path}")
+                  raw = subprocess.run(["git", "show", f"{source_revision}:{baseline_path}"],
+                                       check=True, capture_output=True, text=True).stdout
+                  baseline = json.loads(raw)
+                  retained = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+                  if retained != baseline:
+                      raise SystemExit(f"Retained source contract differs from baseline: {path}")
+                  source_specs[path] = baseline
+              return source_specs[path]
+
+          def target_spec(path):
+              if path not in target_specs:
+                  target_specs[path] = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+              return target_specs[path]
+
+          def operation(spec, path, method):
+              return spec.get("paths", {}).get(path, {}).get(method.lower())
+
+          rows = manifest["operations"]
+          if not rows:
+              raise SystemExit("Contract migration manifest is empty.")
+          expected_source_paths = {row["sourceContract"] for row in rows}
+          if set(source_baseline_paths) != expected_source_paths:
+              raise SystemExit("Source baseline path map does not match the contract migration manifest.")
+          for row in rows:
+              previous = operation(source_spec(row["sourceContract"]),
+                                   row["sourcePath"], row["sourceMethod"])
+              if previous is None or previous.get("operationId") != row["sourceOperationId"]:
+                  raise SystemExit(f"Source operation does not match the baseline: {row['sourceOperationId']}")
+              classification = row["classification"]
+              if classification == "retired-self-http":
+                  if row.get("targetMethod") is not None or row.get("targetPath") is not None:
+                      raise SystemExit("Retired internal self-HTTP operation unexpectedly has a target route.")
+                  continue
+              if row["targetService"] == "edge":
+                  continue
+              current = target_spec(row["targetContract"])
+              matches = [candidate for path_item in current.get("paths", {}).values()
+                         for method, candidate in path_item.items()
+                         if isinstance(candidate, dict)
+                         and method.lower() == row["targetMethod"].lower()
+                         and candidate.get("operationId") == row["targetOperationId"]]
+              if len(matches) != 1:
+                  raise SystemExit(f"Target operation is missing or ambiguous: {row['targetOperationId']}")
+          print(f"Validated {len(rows)} source operations against {len(target_specs)} target contracts.")
+          PY
+
+          mapfile -d '' specs < <(find services -type f -path '*/openapi/*.json' -print0)
+          if ((${#specs[@]} == 0)); then
+            echo 'No generated OpenAPI contracts found.' >&2
+            exit 1
+          fi
+          for spec in "${specs[@]}"; do
+            docker run --rm -v "$PWD:/workspace:ro" -w /workspace "$OASDIFF_IMAGE" \
+              validate "/workspace/${spec}"
+          done
+
+          git diff --name-only -z \
+            "$(python3 -c 'import json; print(json.load(open("tests/contracts/contracts-manifest.json"))["targetBaselineRevision"])')" \
+            HEAD -- 'services/**/openapi/*.json' > "$RUNNER_TEMP/openapi-changes.zlist"
+          while IFS= read -r -d '' spec; do
+            if [[ ! -f "$spec" ]]; then
+              echo "An OpenAPI contract was removed or renamed without a replacement baseline: ${spec}" >&2
+              exit 1
+            fi
+            baseline="$RUNNER_TEMP/openapi-baseline.json"
+            git show "$(python3 -c 'import json; print(json.load(open("tests/contracts/contracts-manifest.json"))["targetBaselineRevision"])'):${spec}" > "$baseline"
+            docker run --rm -v "$PWD:/workspace:ro" -v "$RUNNER_TEMP:/baseline:ro" \
+              "$OASDIFF_IMAGE" breaking --fail-on ERR "/baseline/openapi-baseline.json" "/workspace/${spec}"
+          done < "$RUNNER_TEMP/openapi-changes.zlist"
+
+  nginx-edge-smoke:
+    name: Nginx public-edge black-box checks
+    runs-on: ubuntu-24.04
+    needs: verify
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Start isolated application stack
+        run: >-
+          docker compose -p occ-edge-ci --env-file .env.example
+          -f compose.yaml -f infra/compose.test.yaml up -d --build
+      - name: Configure an ephemeral local JWKS issuer for end-to-end role checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/system/create_es256_auth_fixtures.mjs "$RUNNER_TEMP/occ-edge-jwks"
+          cat > "$RUNNER_TEMP/occ-edge-nginx.conf" <<'EOF'
+          worker_processes 1;
+          pid /tmp/nginx.pid;
+          error_log /dev/stderr notice;
+          events { worker_connections 1024; }
+          http {
+            include /etc/nginx/mime.types;
+            default_type application/octet-stream;
+            access_log /dev/stdout;
+            client_body_temp_path /tmp/client_body_temp;
+            proxy_temp_path /tmp/proxy_temp;
+            fastcgi_temp_path /tmp/fastcgi_temp;
+            uwsgi_temp_path /tmp/uwsgi_temp;
+            scgi_temp_path /tmp/scgi_temp;
+            include /etc/nginx/conf.d/*.conf;
+          }
+          EOF
+          chmod 644 "$RUNNER_TEMP/occ-edge-nginx.conf"
+          docker run --detach --name occ-edge-ci-jwks \
+            --user 101:101 --read-only --security-opt no-new-privileges --cap-drop ALL \
+            --tmpfs /tmp:uid=101,gid=101,mode=1777 \
+            --network occ-edge-ci_egress --network-alias jwks-test \
+            --mount "type=bind,source=$RUNNER_TEMP/occ-edge-jwks/auth/v1/.well-known,target=/var/www,readonly" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/tests/system/provider_stubs.conf,target=/etc/nginx/conf.d/default.conf,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/occ-edge-nginx.conf,target=/etc/nginx/nginx.conf,readonly" \
+            --entrypoint nginx \
+            nginx:1.30.6-alpine@sha256:750f6c5456af731b47295d124fbed55664eeb1daab4f6bac0b092b7406235091 -g 'daemon off;'
+          jwks_ready=false
+          for attempt in $(seq 1 30); do
+            if docker compose -p occ-edge-ci --env-file .env.example \
+              -f compose.yaml -f infra/compose.test.yaml exec -T gateway \
+              curl --fail --silent http://jwks-test:8080/auth/v1/.well-known/jwks.json >/dev/null; then
+              jwks_ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$jwks_ready" != true ]]; then
+            docker logs occ-edge-ci-jwks
+            exit 1
+          fi
+          SUPABASE_PROJECT_URL=http://jwks-test:8080 \
+          SUPABASE_JWKS_URL=http://jwks-test:8080/auth/v1/.well-known/jwks.json \
+            docker compose -p occ-edge-ci --env-file .env.example \
+              -f compose.yaml -f infra/compose.test.yaml -f infra/compose.workflow-test.yaml \
+              -f infra/compose.dispatch-test.yaml \
+              up -d --force-recreate \
+              gateway ingestion disruption planning planning-fault-proxy
+      - name: Start pinned Nginx edge with a disposable test certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
+            -keyout "$RUNNER_TEMP/occ-edge-test.key" \
+            -out "$RUNNER_TEMP/occ-edge-test.crt" \
+            -subj "/CN=localhost"
+          chmod 644 "$RUNNER_TEMP/occ-edge-test.key" "$RUNNER_TEMP/occ-edge-test.crt"
+          docker run --detach --name occ-edge-ci-nginx \
+            --user 101:101 --read-only --security-opt no-new-privileges --cap-drop ALL \
+            --tmpfs /etc/nginx/conf.d:uid=101,gid=101,mode=1777 \
+            --tmpfs /tmp:uid=101,gid=101,mode=1777 \
+            --network occ-edge-ci_edge --publish 127.0.0.1:18443:8443 \
+            --env 'NGINX_ENVSUBST_FILTER=^(OCC_GATEWAY_INTERNAL_URL|OCC_NGINX_SERVER_NAME|OCC_NGINX_CLIENT_MAX_BODY_SIZE|OCC_NGINX_RATE_LIMIT_PER_SECOND|OCC_NGINX_RATE_LIMIT_BURST|OCC_NGINX_RATE_LIMIT_ZONE_SIZE|OCC_NGINX_PROXY_CONNECT_TIMEOUT|OCC_NGINX_PROXY_READ_TIMEOUT|OCC_NGINX_PROXY_SEND_TIMEOUT)$' \
+            --env OCC_GATEWAY_INTERNAL_URL=http://gateway:8004 \
+            --env OCC_NGINX_SERVER_NAME=localhost \
+            --env OCC_NGINX_CLIENT_MAX_BODY_SIZE=1m \
+            --env OCC_NGINX_RATE_LIMIT_PER_SECOND=20r/s \
+            --env OCC_NGINX_RATE_LIMIT_BURST=40 \
+            --env OCC_NGINX_RATE_LIMIT_ZONE_SIZE=10m \
+            --env OCC_NGINX_PROXY_CONNECT_TIMEOUT=5s \
+            --env OCC_NGINX_PROXY_READ_TIMEOUT=30s \
+            --env OCC_NGINX_PROXY_SEND_TIMEOUT=30s \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/default.conf.template,target=/etc/nginx/templates/default.conf.template,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/occ-edge-nginx.conf,target=/etc/nginx/nginx.conf,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/occ-edge-test.crt,target=/run/secrets/occ_tls_certificate,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/occ-edge-test.key,target=/run/secrets/occ_tls_private_key,readonly" \
+            nginx:1.30.6-alpine@sha256:750f6c5456af731b47295d124fbed55664eeb1daab4f6bac0b092b7406235091
+          for attempt in $(seq 1 30); do
+            status=$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' \
+              https://127.0.0.1:18443/_occ_edge_health || true)
+            if [[ "$status" == 204 ]]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs occ-edge-ci-nginx
+          exit 1
+      - name: Verify OpenAPI comparison gate detects deleted operations
+        run: python3 tests/system/openapi_runtime_contract_smoke.py --self-test
+      - name: Export and compare live service OpenAPI contracts
+        run: >-
+          python3 tests/system/openapi_runtime_contract_smoke.py
+          --compose-project occ-edge-ci
+          --env-file .env.example
+          --token-file "$RUNNER_TEMP/occ-edge-jwks/admin.jwt"
+      - name: Verify traffic incident lifecycle through the application
+        run: >-
+          python3 tests/system/traffic_incident_workflow_smoke.py
+          --base-url https://127.0.0.1:18443
+          --token-file "$RUNNER_TEMP/occ-edge-jwks/admin.jwt"
+          --compose-project occ-edge-ci
+      - name: Verify receiver-commit retry and restart recovery
+        run: >-
+          python3 tests/system/dispatch_recovery_smoke.py --base-url https://127.0.0.1:18443
+          --token-dir "$RUNNER_TEMP/occ-edge-jwks" --compose-project occ-edge-ci
+      # Run the authenticated workflow first so the Gateway has loaded the synthetic JWKS before measuring steady-state polling.
+      - name: Run authenticated query k6 smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          admin_token="$(cat "$RUNNER_TEMP/occ-edge-jwks/admin.jwt")"
+          docker run --rm --network occ-edge-ci_edge \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/tests/system/authorized_poll_smoke.js,target=/work/authorized_poll_smoke.js,readonly" \
+            grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34 \
+            run \
+            -e OCC_PHASE1_K6_BASE_URL=https://occ-edge-ci-nginx:8443 \
+            -e "OCC_PHASE1_K6_ADMIN_TOKEN=$admin_token" \
+            -e OCC_PHASE1_K6_VIRTUAL_USERS=4 \
+            -e OCC_PHASE1_K6_DURATION=15s \
+            -e OCC_PHASE1_K6_P95_TARGET_MS=1000 \
+            -e OCC_PHASE1_K6_ERROR_RATE_LIMIT=0.01 \
+            /work/authorized_poll_smoke.js
+      - name: Verify TLS edge routing, access boundaries and rate limiting
+        run: >-
+          python3 tests/system/nginx_edge_smoke.py --base-url https://127.0.0.1:18443
+          --token-dir "$RUNNER_TEMP/occ-edge-jwks"
+      - name: Remove disposable containers and networks
+        if: always()
+        run: |
+          docker rm --force occ-edge-ci-nginx 2>/dev/null || true
+          docker rm --force occ-edge-ci-jwks 2>/dev/null || true
+          docker compose -p occ-edge-ci --env-file .env.example \
+            -f compose.yaml -f infra/compose.test.yaml -f infra/compose.workflow-test.yaml \
+            -f infra/compose.dispatch-test.yaml down --remove-orphans
+          rm -rf "$RUNNER_TEMP/occ-edge-jwks" \
+            "$RUNNER_TEMP/occ-edge-test.key" "$RUNNER_TEMP/occ-edge-test.crt"
+
+  container-scan:
+    name: Build and scan ${{ matrix.service }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: ingestion
+            port: 8001
+            image: occ-ingestion:ci
+          - service: disruption
+            port: 8002
+            image: occ-disruption:ci
+          - service: planning
+            port: 8003
+            image: occ-planning:ci
+          - service: gateway
+            port: 8004
+            image: occ-gateway:ci
+          - service: ingestion-migrations
+            module: ingestion
+            migration_source: services/ingestion/src/main/resources/db/migration
+            image: occ-ingestion-migrations:ci
+          - service: disruption-migrations
+            module: disruption
+            migration_source: services/disruption/src/main/resources/db/migration
+            image: occ-disruption-migrations:ci
+          - service: planning-migrations
+            module: planning
+            migration_source: services/planning/src/main/resources/db/migration
+            image: occ-planning-migrations:ci
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build shared Java application image
+        if: ${{ !matrix.migration_source }}
+        run: >-
+          docker build --pull --file infra/java.Dockerfile
+          --build-arg OCC_SERVICE=${{ matrix.service }}
+          --build-arg OCC_SERVICE_INTERNAL_PORT=${{ matrix.port }}
+          --tag ${{ matrix.image }} .
+      - name: Build owned-schema migration image
+        if: ${{ matrix.migration_source }}
+        run: >-
+          docker build --pull --file infra/flyway.Dockerfile
+          --build-arg OCC_SERVICE=${{ matrix.module }}
+          --build-arg OCC_MIGRATION_SOURCE=${{ matrix.migration_source }}
+          --tag ${{ matrix.image }} .
+      - name: Fail on HIGH or CRITICAL OS/library findings
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ matrix.image }}
+          version: v0.76.0
+          format: table
+          output: ${{ runner.temp }}/trivy-${{ matrix.service }}.txt
+          exit-code: '1'
+          ignore-unfixed: 'false'
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - name: Generate image SBOM
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ matrix.image }}
+          version: v0.76.0
+          format: cyclonedx
+          output: ${{ runner.temp }}/sbom-${{ matrix.service }}.json
+          exit-code: '0'
+      - name: Upload scan report and SBOM
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-security-${{ matrix.service }}
+          path: |
+            ${{ runner.temp }}/trivy-${{ matrix.service }}.txt
+            ${{ runner.temp }}/sbom-${{ matrix.service }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+  repository-security-scan:
+    name: Scan repository secrets and configuration
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify repository report sanitization and severity policy
+        run: python3 tests/system/sanitize_trivy_report.py --self-test
+      - name: Scan repository for secrets and misconfigurations
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        # This source-only gate needs no remote Maven dependency resolution.
+        # Image vulnerability jobs still update their vulnerability databases.
+        env:
+          TRIVY_OFFLINE_SCAN: 'true'
+        with:
+          scan-type: fs
+          scan-ref: .
+          version: v0.76.0
+          scanners: secret,misconfig
+          severity: HIGH,CRITICAL
+          format: json
+          output: ${{ runner.temp }}/repository-scan-raw.json
+          exit-code: '0'
+      - name: Sanitize findings and enforce the severity gate
+        shell: bash
+        run: >-
+          python3 tests/system/sanitize_trivy_report.py
+          --input "$RUNNER_TEMP/repository-scan-raw.json"
+          --output "$RUNNER_TEMP/repository-scan-sanitized.json"
+      - name: Upload sanitized repository scan report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: repository-security-scan
+          path: ${{ runner.temp }}/repository-scan-sanitized.json
+          if-no-files-found: error
+          retention-days: 7
+
+  nginx-container-scan:
+    name: Scan pinned Nginx edge image
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Pull pinned Nginx edge image
+        run: docker pull nginx:1.30.6-alpine@sha256:750f6c5456af731b47295d124fbed55664eeb1daab4f6bac0b092b7406235091
+      - name: Fail on HIGH or CRITICAL OS/library findings
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: nginx:1.30.6-alpine@sha256:750f6c5456af731b47295d124fbed55664eeb1daab4f6bac0b092b7406235091
+          version: v0.76.0
+          format: table
+          output: ${{ runner.temp }}/trivy-nginx.txt
+          exit-code: '1'
+          ignore-unfixed: 'false'
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - name: Generate Nginx image SBOM
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: nginx:1.30.6-alpine@sha256:750f6c5456af731b47295d124fbed55664eeb1daab4f6bac0b092b7406235091
+          version: v0.76.0
+          format: cyclonedx
+          output: ${{ runner.temp }}/sbom-nginx.json
+          exit-code: '0'
+      - name: Upload Nginx scan report and SBOM
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-security-nginx
+          path: |
+            ${{ runner.temp }}/trivy-nginx.txt
+            ${{ runner.temp }}/sbom-nginx.json
+          if-no-files-found: error
+          retention-days: 7

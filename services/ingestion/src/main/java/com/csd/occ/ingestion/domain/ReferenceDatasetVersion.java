@@ -35,10 +35,11 @@ public class ReferenceDatasetVersion {
     private String status;
     private Instant importedAt;
     private Instant activatedAt;
+    private Instant retiredAt;
 
     public UUID id() { return id; }
     public String checksum() { return checksum; }
     public String status() { return status; }
-    public void supersede() { status = "SUPERSEDED"; }
+    public void supersede(Instant retiredAt) { status = "SUPERSEDED"; this.retiredAt = retiredAt; }
     public void activate(Instant activatedAt) { status = "ACTIVE"; this.activatedAt = activatedAt; }
 }

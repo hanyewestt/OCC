@@ -1,0 +1,81 @@
+spring:
+  application:
+    name: disruption
+  datasource:
+    url: ${OCC_DISRUPTION_DB_INTERNAL_URL}
+    username: ${OCC_DISRUPTION_DB_USERNAME}
+    password: ${OCC_DISRUPTION_DB_PASSWORD}
+    hikari:
+      transaction-isolation: TRANSACTION_READ_COMMITTED
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate.jdbc.time_zone: UTC
+  flyway:
+    enabled: false
+    default-schema: disruption
+    create-schemas: false
+    locations: classpath:db/migration
+server:
+  port: ${OCC_DISRUPTION_INTERNAL_PORT}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
+occ:
+  security:
+    supabase:
+      project-url: ${SUPABASE_PROJECT_URL}
+      jwks-url: ${SUPABASE_JWKS_URL}
+      audience: ${SUPABASE_JWT_AUDIENCE:authenticated}
+      clock-skew: ${SUPABASE_JWT_CLOCK_SKEW:30s}
+      allowed-algorithms: ${SUPABASE_JWT_ALLOWED_ALGORITHMS:ES256}
+    peer:
+      ingestion-to-disruption-token: ${OCC_INGESTION_TO_DISRUPTION_PEER_TOKEN}
+      planning-to-disruption-token: ${OCC_PLANNING_TO_DISRUPTION_PEER_TOKEN}
+    peer-clients:
+      ingestion-token: ${OCC_DISRUPTION_TO_INGESTION_PEER_TOKEN}
+      planning-token: ${OCC_DISRUPTION_TO_PLANNING_PEER_TOKEN}
+  disruption:
+    consumer-enabled: ${OCC_DISRUPTION_CONSUMER_ENABLED:true}
+    threshold: ${OCC_DISRUPTION_THRESHOLD:90s}
+    stale-after: ${OCC_DISRUPTION_STALE_AFTER:120s}
+    poll-interval: ${OCC_DISRUPTION_POLL_INTERVAL:1s}
+    batch-size: ${OCC_DISRUPTION_BATCH_SIZE:100}
+    retry-delay: ${OCC_DISRUPTION_RETRY_DELAY:30s}
+    expected-headway: ${OCC_DISRUPTION_EXPECTED_HEADWAY:600s}
+    ingestion-base-url: ${OCC_INGESTION_INTERNAL_URL}
+    ingestion-connect-timeout: ${OCC_DISRUPTION_INGESTION_CONNECT_TIMEOUT:2s}
+    ingestion-response-timeout: ${OCC_DISRUPTION_INGESTION_RESPONSE_TIMEOUT:5s}
+    retention:
+      duration: ${OCC_INGESTION_RETENTION:12h}
+      interval: ${OCC_DISRUPTION_RETENTION_INTERVAL:1h}
+      initial-delay: ${OCC_DISRUPTION_RETENTION_INITIAL_DELAY:5m}
+    planning:
+      internal-url: ${OCC_DISRUPTION_PLANNING_INTERNAL_URL}
+      worker-enabled: ${OCC_DISRUPTION_PLANNING_WORKER_ENABLED:true}
+      delivery-interval: ${OCC_DISRUPTION_PLANNING_DELIVERY_INTERVAL:2s}
+      request-timeout: ${OCC_DISRUPTION_PLANNING_REQUEST_TIMEOUT:5s}
+      lease-duration: ${OCC_DISRUPTION_PLANNING_LEASE_DURATION:1m}
+      batch-size: ${OCC_DISRUPTION_PLANNING_BATCH_SIZE:10}
+      max-attempts: ${OCC_DISRUPTION_PLANNING_MAX_ATTEMPTS:0}
+      retry-initial-delay: ${OCC_DISRUPTION_PLANNING_RETRY_INITIAL_DELAY:2s}
+      retry-max-delay: ${OCC_DISRUPTION_PLANNING_RETRY_MAX_DELAY:1m}
+    traffic:
+      poll-enabled: ${OCC_DISRUPTION_TRAFFIC_POLL_ENABLED:true}
+      poll-interval: ${OCC_DISRUPTION_TRAFFIC_POLL_INTERVAL:10s}
+      page-size: ${OCC_DISRUPTION_TRAFFIC_POLL_PAGE_SIZE:100}
+      stale-after: ${OCC_DISRUPTION_TRAFFIC_STALE_AFTER:5m}
+      clear-after-successful-absences: ${OCC_DISRUPTION_TRAFFIC_CLEAR_AFTER_SUCCESSFUL_ABSENCES:2}

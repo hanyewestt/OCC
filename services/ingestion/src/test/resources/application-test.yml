@@ -1,0 +1,25 @@
+spring:
+  flyway:
+    enabled: true
+    default-schema: ingestion
+    create-schemas: false
+    locations: classpath:db/migration
+
+occ:
+  ingestion:
+    demo:
+      disruption-internal-url: http://disruption.test
+      planning-internal-url: http://planning.test
+  security:
+    supabase:
+      project-url: https://issuer.test
+      jwks-url: https://issuer.test/auth/v1/.well-known/jwks.json
+      audience: authenticated
+      clock-skew: 30s
+      allowed-algorithms: [ES256]
+    peer:
+      disruption-to-ingestion-token: test-disruption-to-ingestion-token
+      planning-to-ingestion-token: test-planning-to-ingestion-token
+    peer-clients:
+      disruption-token: test-ingestion-to-disruption-token
+      planning-token: test-ingestion-to-planning-token

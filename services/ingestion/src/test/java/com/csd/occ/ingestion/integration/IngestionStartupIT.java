@@ -3,6 +3,10 @@ package com.csd.occ.ingestion.integration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 
 import com.csd.occ.ingestion.domain.BusArrivalObservationRepository;
 import com.csd.occ.ingestion.domain.BusArrivalSnapshot;
@@ -14,46 +18,50 @@ import com.csd.occ.ingestion.domain.DemoModeService;
 import com.csd.occ.ingestion.domain.DemoReplayScenario;
 import com.csd.occ.ingestion.domain.DemoReplayService;
 import com.csd.occ.ingestion.domain.DemoRunDetails;
+import com.csd.occ.ingestion.domain.TrafficIncidentPollFeedService;
+import com.csd.occ.ingestion.domain.TrafficIncidentFeedPort;
+import com.csd.occ.ingestion.domain.TrafficIncidentPollingService;
 import com.csd.occ.ingestion.domain.DemoRunService;
 import com.csd.occ.ingestion.domain.PollRunRepository;
 import com.csd.occ.ingestion.domain.ReferenceTopologyPort;
 import com.csd.occ.ingestion.domain.RawObservationRepository;
 import com.csd.occ.ingestion.infrastructure.config.BusArrivalSchedule;
 import com.csd.occ.ingestion.infrastructure.config.DemoReplaySchedule;
+import com.csd.occ.ingestion.infrastructure.config.TrafficIncidentSchedule;
 import com.csd.occ.ingestion.infrastructure.datamall.DataMallAdapter;
-import java.nio.file.Path;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
-import org.testcontainers.utility.MountableFile;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE,
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK,
         properties = {"spring.profiles.active=test", "occ.datamall.account-key=synthetic-key",
                 "occ.ingestion.import-reference-on-startup=false", "occ.ingestion.seed-targets-on-startup=false"})
+@ActiveProfiles("test")
 @Testcontainers(disabledWithoutDocker = true)
+@AutoConfigureMockMvc
 class IngestionStartupIT {
     @Container
     static final PostgreSQLContainer postgres = new PostgreSQLContainer(
             DockerImageName.parse("postgis/postgis:18-3.6").asCompatibleSubstituteFor("postgres"))
             .withDatabaseName("occ").withUsername("occ_admin").withPassword("synthetic-admin")
-            .withEnv("OCC_INGESTION_DB_PASSWORD", "synthetic-ingestion")
-            .withEnv("OCC_OPERATIONS_DB_PASSWORD", "synthetic-operations")
-            .withEnv("OCC_PLANNING_DB_PASSWORD", "synthetic-planning")
-            .withCopyFileToContainer(MountableFile.forHostPath(Path.of(
-                    "../../infra/local/postgres/init/01_schemas_and_roles.sh").toAbsolutePath()),
-                    "/docker-entrypoint-initdb.d/01_schemas_and_roles.sh");
+            .withInitScript("db/ingestion-test-schema.sql");
 
     @DynamicPropertySource
     static void databaseProperties(DynamicPropertyRegistry registry) {
@@ -64,18 +72,46 @@ class IngestionStartupIT {
 
     @MockitoBean DataMallAdapter dataMall;
     @MockitoBean BusArrivalSchedule schedule;
+    @MockitoBean TrafficIncidentSchedule trafficIncidentSchedule;
     @MockitoBean DemoReplaySchedule demoReplaySchedule;
     @MockitoBean BunchingControlPort bunching;
     @Autowired JdbcTemplate jdbc;
+    @Autowired MockMvc mvc;
+    @Autowired MeterRegistry meterRegistry;
     @Autowired PollRunRepository runs;
     @Autowired RawObservationRepository observations;
     @Autowired BusArrivalObservationRepository arrivals;
+
+    @Test
+    void exposesFeedMetricsOnlyToAdministrators() throws Exception {
+        jdbc.update("""
+                INSERT INTO ingestion.feed_status
+                    (source, scope_key, status, last_attempt_at, consecutive_failures, stale_after_seconds, updated_at)
+                VALUES ('METRICS_TEST', 'scope', 'FAILED', CURRENT_TIMESTAMP, 1, 60, CURRENT_TIMESTAMP)
+                ON CONFLICT (source, scope_key) DO UPDATE SET status = 'FAILED', last_success_at = NULL
+                """);
+
+        assertThat(meterRegistry.get("occ.ingestion.feed.unhealthy_count").gauge().value())
+                .isGreaterThanOrEqualTo(1.0);
+        mvc.perform(get("/actuator/prometheus")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/actuator/prometheus").with(jwt()
+                        .jwt(token -> token.claim("occ_role", "ADMIN"))
+                        .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isOk())
+                .andExpect(content().string(org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString("occ_ingestion_feed_unhealthy_count"),
+                        org.hamcrest.Matchers.containsString("occ_ingestion_retention_deleted_rows_total"))));
+    }
     @Autowired BusArrivalService polling;
     @Autowired BunchingFeedService bunchingFeed;
     @Autowired DemoRunService demoRuns;
     @Autowired DemoReplayService replay;
     @Autowired DemoModeService demoMode;
     @Autowired ReferenceTopologyPort topology;
+    @Autowired com.csd.occ.ingestion.domain.RetentionService retention;
+    @Autowired TrafficIncidentPollFeedService trafficIncidentPollFeed;
+    @Autowired TrafficIncidentPollingService trafficIncidentPolling;
+    @Autowired org.springframework.context.ApplicationContext context;
 
     @Test
     void migrationsAndPollingWorkWithServiceCredentials() {
@@ -104,9 +140,48 @@ class IngestionStartupIT {
             assertThat(observation.getPayloadChecksum()).hasSize(64);
             assertThat(observation.getFetchedAt()).isNotNull();
         });
-        assertThat(jdbc.queryForObject("select count(*) from ingestion.bunching_snapshot", Integer.class))
-                .isEqualTo(1);
         assertThat(bunchingFeed.page(0, 100).items()).hasSize(1);
+        assertThat(meterRegistry.get("occ.ingestion.arrival.feed_sequence").gauge().value())
+                .isGreaterThan(0.0);
+    }
+
+    @Test
+    void trafficIncidentPollIsStoredAndExposedAsAnObservationOnlyCompletedFeed() {
+        String payload = "[{\"Type\":\"Road Works\",\"Latitude\":1.3000000,"
+                + "\"Longitude\":103.8000000,\"Message\":\"Road works near test junction\"}]";
+        when(dataMall.trafficIncidents()).thenReturn(new TrafficIncidentFeedPort.TrafficIncidentBatch(200,
+                payload, List.of(new TrafficIncidentFeedPort.TrafficIncident("a".repeat(64), "Road Works",
+                        new java.math.BigDecimal("1.3000000"), new java.math.BigDecimal("103.8000000"),
+                        "Road works near test junction", null)), List.of()));
+
+        trafficIncidentPolling.pollOnce();
+
+        UUID pollId = jdbc.queryForObject("SELECT id FROM ingestion.poll_run "
+                + "WHERE source='TRAFFIC_DATAMALL' AND outcome='SUCCESS' "
+                + "ORDER BY completed_at DESC, id DESC LIMIT 1", UUID.class);
+        var poll = trafficIncidentPollFeed.page(null, null, 100).polls().stream()
+                .filter(value -> value.pollRunId().equals(pollId)).findFirst().orElseThrow();
+        assertThat(poll.complete()).isTrue();
+        assertThat(poll.classification()).isEqualTo("OBSERVATION_ONLY");
+        assertThat(poll.incidents()).singleElement().satisfies(incident -> {
+            assertThat(incident.sourceIncidentKey()).isEqualTo("a".repeat(64));
+            assertThat(incident.classification()).isEqualTo("OBSERVATION_ONLY");
+            assertThat(incident.demoRunId()).isNull();
+        });
+        assertThat(jdbc.queryForObject("SELECT payload FROM ingestion.raw_observation "
+                + "WHERE poll_run_id=?", String.class, pollId))
+                .contains("Road Works", "Road works near test junction");
+        assertThat(meterRegistry.get("occ.ingestion.traffic_incident.latest_poll_success").gauge().value())
+                .isEqualTo(1.0);
+    }
+
+    @Test
+    void demoPageIsPublicButDemoApiRequiresAnAuthorizedUser() throws Exception {
+        mvc.perform(get("/demo.html"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith("text/html"));
+        mvc.perform(get("/api/v1/demo-mode"))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
@@ -171,6 +246,11 @@ class IngestionStartupIT {
         assertThat(arrivals.findHistory("44251", "190", null, null, PageRequest.of(0, 50)).getContent()).isEmpty();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM ingestion.traffic_incident_observation "
                 + "WHERE demo_run_id=? AND classification='SIMULATION'", Integer.class, started.id())).isEqualTo(2);
+        var trafficPolls = trafficIncidentPollFeed.page(null, null, 250).polls().stream()
+                .filter(poll -> started.id().equals(poll.demoRunId())).toList();
+        assertThat(trafficPolls).hasSize(DemoReplayScenario.STEP_COUNT).allMatch(poll -> poll.complete()
+                && "SIMULATION".equals(poll.classification()));
+        assertThat(trafficPolls.stream().flatMap(poll -> poll.incidents().stream())).hasSize(2);
 
         DemoRunDetails closed = demoRuns.close(started.id());
 
@@ -179,5 +259,44 @@ class IngestionStartupIT {
         assertThat(demoRuns.active()).isEmpty();
         org.mockito.Mockito.verify(bunching).selectDemo(started.id());
         org.mockito.Mockito.verify(bunching).selectLive();
+        jdbc.update("update ingestion.demo_run set closed_at = now() - interval '2 days' where id = ?", started.id());
+        when(bunching.protectedDemoRuns()).thenReturn(List.of(started.id()));
+        retention.purgeExpiredObservations();
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.raw_observation where demo_run_id = ?", Integer.class, started.id())).isGreaterThan(0);
+        when(bunching.protectedDemoRuns()).thenReturn(List.of());
+        assertThat(retention.purgeExpiredObservations()).isGreaterThan(0);
+        retention.purgeExpiredObservations();
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.demo_run where id = ?", Integer.class, started.id())).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.traffic_incident_observation where demo_run_id = ?", Integer.class, started.id())).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.demo_vehicle_assignment where demo_run_id = ?", Integer.class, started.id())).isZero();
+    }
+
+    @Test void topologyPruningPreservesOldActiveAndBoundaryRetiredVersions() {
+        var fixed = java.time.Clock.fixed(Instant.parse("2026-10-13T12:00:00Z"), java.time.ZoneOffset.UTC);
+        var cutoff = fixed.instant().minus(java.time.Duration.ofHours(12));
+        UUID expired = UUID.randomUUID();
+        UUID boundary = UUID.randomUUID();
+        for (UUID id : List.of(expired, boundary)) {
+            jdbc.update("insert into ingestion.reference_dataset_version (id,dataset,version_key,checksum,status,imported_at,retired_at) values (?, 'RETENTION_TEST', ?, ?, 'SUPERSEDED', '2020-01-01', ?)",
+                    id, id.toString(), "f".repeat(64), java.sql.Timestamp.from(id.equals(expired) ? cutoff.minusNanos(1000) : cutoff));
+        }
+        when(bunching.protectedDemoRuns()).thenReturn(List.of());
+        var pruning = new com.csd.occ.ingestion.domain.RetentionService(arrivals, observations, runs,
+                context.getBean(com.csd.occ.ingestion.domain.ReferenceDatasetVersionRepository.class),
+                context.getBean(com.csd.occ.ingestion.domain.BusRouteStopRepository.class),
+                context.getBean(com.csd.occ.ingestion.domain.BusServiceRepository.class),
+                context.getBean(com.csd.occ.ingestion.domain.BusStopRepository.class),
+                new com.csd.occ.ingestion.infrastructure.config.IngestionProperties(List.of("190"), 180, java.time.Duration.ofHours(12)), fixed,
+                context.getBean(com.csd.occ.ingestion.domain.DemoRunRepository.class),
+                context.getBean(com.csd.occ.ingestion.domain.TrafficIncidentObservationRepository.class),
+                context.getBean(com.csd.occ.ingestion.domain.DemoVehicleAssignmentRepository.class), bunching,
+                context.getBean(com.csd.occ.ingestion.domain.PollTargetRepository.class));
+        var transaction = new org.springframework.transaction.support.TransactionTemplate(context.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        Long firstPurgeCount = transaction.execute(status -> pruning.purgeExpiredObservations());
+        assertThat(firstPurgeCount).isGreaterThan(0);
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.reference_dataset_version where id = ?", Integer.class, expired)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.reference_dataset_version where id = ?", Integer.class, boundary)).isEqualTo(1);
+        Long secondPurgeCount = transaction.execute(status -> pruning.purgeExpiredObservations());
+        assertThat(secondPurgeCount).isZero();
     }
 }

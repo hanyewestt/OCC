@@ -1,0 +1,30 @@
+spring:
+  config:
+    import: "optional:file:../../.env[.properties]"
+  cloud:
+    gateway:
+      server:
+        webmvc:
+          routes:
+            - id: ingestion-demo-page
+              uri: ${OCC_INGESTION_PUBLIC_URL}
+              predicates:
+                - Path=/demo.html
+            - id: ingestion-api
+              uri: ${OCC_INGESTION_PUBLIC_URL}
+              predicates:
+                - Path=/api/v1/ingestion/**
+              filters:
+                - RewritePath=/api/v1/ingestion/(?<remaining>.*), /api/v1/$\{remaining}
+            - id: disruption-api
+              uri: ${OCC_DISRUPTION_PUBLIC_URL}
+              predicates:
+                - Path=/api/v1/disruption/**
+            - id: planning-api
+              uri: ${OCC_PLANNING_PUBLIC_URL}
+              predicates:
+                - Path=/api/v1/planning/**
+            - id: ingestion-root-api
+              uri: ${OCC_INGESTION_PUBLIC_URL}
+              predicates:
+                - Path=/api/v1/**

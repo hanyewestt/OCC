@@ -1,0 +1,27 @@
+# Adds deterministic provider-backed services to the disposable integration stack.
+# Requires an isolated test JWKS/provider host named jwks-test on the egress network.
+services:
+  ingestion:
+    environment:
+      OCC_INGESTION_IMPORT_REFERENCE_ON_STARTUP: "true"
+      OCC_DATAMALL_BASE_URL: http://jwks-test:8080/ltaodataservice
+      DATAMALL_API_KEY: synthetic-workflow-test-key
+      OCC_INGESTION_TRAFFIC_INCIDENT_ENABLED: "true"
+      OCC_INGESTION_TRAFFIC_INCIDENT_POLL_INTERVAL: 1h
+      OCC_INGESTION_TRAFFIC_INCIDENT_INITIAL_DELAY: 1s
+      OCC_INGESTION_DEMO_STEP_INTERVAL: 1s
+
+  disruption:
+    environment:
+      OCC_DISRUPTION_CONSUMER_ENABLED: "true"
+      OCC_DISRUPTION_TRAFFIC_POLL_ENABLED: "true"
+      OCC_DISRUPTION_PLANNING_WORKER_ENABLED: ${OCC_DISRUPTION_PLANNING_WORKER_ENABLED:-true}
+      OCC_DISRUPTION_PLANNING_DELIVERY_INTERVAL: 1s
+
+  planning:
+    environment:
+      OCC_PLANNING_GEMINI_API_KEY: synthetic-workflow-test-key
+      OCC_PLANNING_GEMINI_BASE_URL: http://jwks-test:8080
+      OCC_PLANNING_DIAGNOSIS_WORKER_ENABLED: "true"
+      OCC_PLANNING_DIAGNOSIS_WORKER_INTERVAL: 1s
+      OCC_PLANNING_DIAGNOSIS_MAX_ATTEMPTS: "1"

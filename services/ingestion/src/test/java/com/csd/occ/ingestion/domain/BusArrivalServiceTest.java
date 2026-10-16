@@ -70,6 +70,20 @@ class BusArrivalServiceTest {
     }
 
     @Test
+    void duplicateMinuteBucketSkipsProviderAndPersistence() {
+        when(targets.findAll()).thenReturn(List.of(target(true)));
+        when(topology.activeVersion()).thenReturn(java.util.Optional.of(
+                new ReferenceTopologyPort.ReferenceTopologyVersion(UUID.randomUUID(), "checksum")));
+        when(runs.findByIdempotencyKey("DATAMALL-stop:44009-" + now.getEpochSecond() / 60))
+                .thenReturn(java.util.Optional.of(new PollRun()));
+
+        service.poll();
+
+        verify(runs, never()).save(any());
+        verifyNoInteractions(arrivals, observations, normalized, feedStatuses);
+    }
+
+    @Test
     void missingTopologySkipsAllProviderAndPersistenceWork() {
         when(targets.findAll()).thenReturn(List.of(target(true)));
         when(topology.activeVersion()).thenReturn(java.util.Optional.empty());
@@ -90,6 +104,65 @@ class BusArrivalServiceTest {
         verify(runs, times(2)).save(captured.capture());
         assertThat(captured.getValue().getOutcome()).isEqualTo("FAILED");
         assertThat(captured.getValue().getCompletedAt()).isEqualTo(now);
+    }
+
+    @Test
+    void unsuccessfulHttpResponseCompletesFailedRunAndUpdatesFeedStatus() {
+        when(targets.findAll()).thenReturn(List.of(target(true)));
+        when(topology.activeVersion()).thenReturn(java.util.Optional.of(
+                new ReferenceTopologyPort.ReferenceTopologyVersion(UUID.randomUUID(), "checksum")));
+        when(arrivals.arrivalsAt("44009", "190"))
+                .thenReturn(new BusArrivalSnapshot(503, "{}", List.of(), List.of()));
+        when(configuration.staleAfterSeconds()).thenReturn(180);
+
+        service.poll();
+
+        ArgumentCaptor<PollRun> captured = ArgumentCaptor.forClass(PollRun.class);
+        verify(runs, times(2)).save(captured.capture());
+        assertThat(captured.getValue().getOutcome()).isEqualTo("FAILED");
+        assertThat(captured.getValue().getErrorCode()).isEqualTo("503");
+        ArgumentCaptor<FeedStatus> status = ArgumentCaptor.forClass(FeedStatus.class);
+        verify(feedStatuses).save(status.capture());
+        assertThat(status.getValue().getStatus()).isEqualTo("DEGRADED");
+    }
+
+    @Test
+    void successfulHttpResponseWithoutPayloadIsFailed() {
+        when(targets.findAll()).thenReturn(List.of(target(true)));
+        when(topology.activeVersion()).thenReturn(java.util.Optional.of(
+                new ReferenceTopologyPort.ReferenceTopologyVersion(UUID.randomUUID(), "checksum")));
+        when(arrivals.arrivalsAt("44009", "190"))
+                .thenReturn(new BusArrivalSnapshot(200, null, List.of(), List.of()));
+        when(configuration.staleAfterSeconds()).thenReturn(180);
+
+        service.poll();
+
+        ArgumentCaptor<PollRun> captured = ArgumentCaptor.forClass(PollRun.class);
+        verify(runs, times(2)).save(captured.capture());
+        assertThat(captured.getValue().getOutcome()).isEqualTo("FAILED");
+        verifyNoInteractions(observations, normalized);
+    }
+
+    @Test
+    void parseErrorsProducePartialOutcomeAndBoundedFeedMessage() {
+        when(targets.findAll()).thenReturn(List.of(target(true)));
+        when(topology.activeVersion()).thenReturn(java.util.Optional.of(
+                new ReferenceTopologyPort.ReferenceTopologyVersion(UUID.randomUUID(), "checksum")));
+        when(arrivals.arrivalsAt("44009", "190"))
+                .thenReturn(new BusArrivalSnapshot(200, "{}", List.of(), List.of("unparseable record")));
+        when(configuration.monitoredServices()).thenReturn(List.of("190"));
+        when(configuration.staleAfterSeconds()).thenReturn(180);
+
+        service.poll();
+
+        ArgumentCaptor<PollRun> run = ArgumentCaptor.forClass(PollRun.class);
+        verify(runs, times(2)).save(run.capture());
+        assertThat(run.getValue().getOutcome()).isEqualTo("PARTIAL");
+        assertThat(run.getValue().getErrorMessage()).isEqualTo("unparseable record");
+        ArgumentCaptor<FeedStatus> status = ArgumentCaptor.forClass(FeedStatus.class);
+        verify(feedStatuses).save(status.capture());
+        assertThat(status.getValue().getStatus()).isEqualTo("HEALTHY");
+        assertThat(status.getValue().getMessage()).isEqualTo("Some records could not be parsed");
     }
 
     @Test
@@ -137,12 +210,51 @@ class BusArrivalServiceTest {
         }));
     }
 
+    @Test
+    void ambiguousRouteDirectionUsesMatchingTerminalsAndHandlesMissingOperator() {
+        UUID referenceVersionId = UUID.randomUUID();
+        when(targets.findAll()).thenReturn(List.of(target(true)));
+        when(topology.activeVersion()).thenReturn(java.util.Optional.of(
+                new ReferenceTopologyPort.ReferenceTopologyVersion(referenceVersionId, "checksum")));
+        when(configuration.monitoredServices()).thenReturn(List.of("190"));
+        when(configuration.staleAfterSeconds()).thenReturn(180);
+        when(routeStops.findByIdReferenceVersionIdAndIdServiceIdAndIdOperatorOrderByIdDirectionIdAscIdStopSequenceAsc(
+                referenceVersionId, "190", "SBST")).thenReturn(List.of(
+                routeStop(referenceVersionId, 1, 1, "100"), routeStop(referenceVersionId, 1, 2, "44009"),
+                routeStop(referenceVersionId, 1, 3, "200"), routeStop(referenceVersionId, 2, 1, "300"),
+                routeStop(referenceVersionId, 2, 2, "44009"), routeStop(referenceVersionId, 2, 3, "400")));
+        when(arrivals.arrivalsAt("44009", "190")).thenReturn(new BusArrivalSnapshot(200, "{}", List.of(
+                directionless("SBST", "100", "200"), directionless("SBST", null, "200"),
+                directionless("SBST", "100", null), directionless("SBST", "missing", "200"),
+                directionless("SBST", "100", "missing"), directionless(null, null, null),
+                directionless("   ", null, null)), List.of()));
+
+        service.poll();
+
+        verify(routeStops, times(1)).findByIdReferenceVersionIdAndIdServiceIdAndIdOperatorOrderByIdDirectionIdAscIdStopSequenceAsc(
+                referenceVersionId, "190", "SBST");
+        verify(normalized).saveAll(argThat(values -> {
+            List<BusArrivalObservation> saved = java.util.stream.StreamSupport
+                    .stream(values.spliterator(), false).toList();
+            assertThat(values).extracting(BusArrivalObservation::getDirectionId)
+                    .containsExactly(1, null, null, null, null, null, null);
+            assertThat(saved.get(5).getOperator()).isNull();
+            assertThat(saved.get(6).getOperator()).isNull();
+            return true;
+        }));
+    }
+
     private BusArrivalSnapshot snapshot() {
         return new BusArrivalSnapshot(200, "{}", List.of(), List.of());
     }
 
     private BusArrivalPrediction prediction(String serviceId) {
         return new BusArrivalPrediction(serviceId, "SBST", 1, 1, "44009", "45009", now, true,
+                BigDecimal.valueOf(1.3), BigDecimal.valueOf(103.8), 1, "SEA", "WAB", "DD");
+    }
+
+    private BusArrivalPrediction directionless(String operator, String origin, String destination) {
+        return new BusArrivalPrediction("190", operator, null, 1, origin, destination, now, true,
                 BigDecimal.valueOf(1.3), BigDecimal.valueOf(103.8), 1, "SEA", "WAB", "DD");
     }
 
@@ -158,6 +270,6 @@ class BusArrivalServiceTest {
 
     private BusRouteStop routeStop(UUID referenceVersionId, int directionId, int sequence, String stopCode) {
         return new BusRouteStop(new BusRouteStopId(referenceVersionId, "190", "SBST", (short) directionId, sequence),
-                stopCode, BigDecimal.ZERO, now);
+                stopCode, BigDecimal.ZERO);
     }
 }

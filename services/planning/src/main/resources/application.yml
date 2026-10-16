@@ -1,0 +1,123 @@
+spring:
+  application:
+    name: planning
+  datasource:
+    url: ${OCC_PLANNING_DB_INTERNAL_URL}
+    username: ${OCC_PLANNING_DB_USERNAME}
+    password: ${OCC_PLANNING_DB_PASSWORD}
+    hikari:
+      transaction-isolation: TRANSACTION_READ_COMMITTED
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate.jdbc.time_zone: UTC
+  flyway:
+    enabled: false
+    default-schema: planning
+    create-schemas: false
+    locations: classpath:db/migration
+  ai:
+    chat:
+      client:
+        tool-calling:
+          enabled: false
+        observations:
+          log-prompt: false
+          log-completion: false
+      observations:
+        log-prompt: false
+        log-completion: false
+        include-error-logging: false
+server:
+  port: ${OCC_PLANNING_INTERNAL_PORT:8003}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
+
+occ:
+  planning:
+    gemini:
+      base-url: ${OCC_PLANNING_GEMINI_BASE_URL:}
+  security:
+    supabase:
+      project-url: ${SUPABASE_PROJECT_URL}
+      jwks-url: ${SUPABASE_JWKS_URL}
+      audience: ${SUPABASE_JWT_AUDIENCE:authenticated}
+      clock-skew: ${SUPABASE_JWT_CLOCK_SKEW:30s}
+      allowed-algorithms: ${SUPABASE_JWT_ALLOWED_ALGORITHMS:ES256}
+    peer:
+      disruption-to-planning-token: ${OCC_DISRUPTION_TO_PLANNING_PEER_TOKEN}
+      ingestion-to-planning-token: ${OCC_INGESTION_TO_PLANNING_PEER_TOKEN}
+    peer-clients:
+      ingestion-token: ${OCC_PLANNING_TO_INGESTION_PEER_TOKEN}
+      disruption-token: ${OCC_PLANNING_TO_DISRUPTION_PEER_TOKEN}
+  recommendation:
+    audit:
+      max-response-characters: ${OCC_PLANNING_RECOMMENDATION_AUDIT_MAX_RESPONSE_CHARACTERS:65536}
+    input:
+      max-prompt-input-bytes: ${OCC_PLANNING_RECOMMENDATION_MAX_PROMPT_INPUT_BYTES:65536}
+    ai:
+      enabled: ${OCC_PLANNING_RECOMMENDATION_AI_ENABLED:false}
+      gemini:
+        api-key: ${OCC_PLANNING_GEMINI_API_KEY:}
+        model: ${OCC_PLANNING_GEMINI_MODEL:gemini-3.1-flash-lite}
+        temperature: ${OCC_PLANNING_GEMINI_TEMPERATURE:1.0}
+        max-output-tokens: ${OCC_PLANNING_RECOMMENDATION_GEMINI_MAX_OUTPUT_TOKENS:512}
+        thinking-level: ${OCC_PLANNING_GEMINI_THINKING_LEVEL:MINIMAL}
+        request-timeout: ${OCC_PLANNING_GEMINI_REQUEST_TIMEOUT:30s}
+        retry-attempts: ${OCC_PLANNING_GEMINI_RETRY_ATTEMPTS:2}
+    fixture:
+      location: ${OCC_PLANNING_RECOMMENDATION_FIXTURE_LOCATION:classpath:fixtures/bunching-mitigation-context.json}
+  diagnosis:
+    retention:
+      duration: ${OCC_INGESTION_RETENTION:12h}
+      interval: ${OCC_PLANNING_DIAGNOSIS_RETENTION_INTERVAL:1h}
+      initial-delay: ${OCC_PLANNING_DIAGNOSIS_RETENTION_INITIAL_DELAY:5m}
+    audit:
+      max-response-characters: ${OCC_PLANNING_DIAGNOSIS_AUDIT_MAX_RESPONSE_CHARACTERS:65536}
+    disruption-internal-url: ${OCC_DISRUPTION_INTERNAL_URL}
+    ingestion-internal-url: ${OCC_INGESTION_INTERNAL_URL}
+    worker-enabled: ${OCC_PLANNING_DIAGNOSIS_WORKER_ENABLED:true}
+    worker-interval: ${OCC_PLANNING_DIAGNOSIS_WORKER_INTERVAL:2s}
+    worker-batch-size: ${OCC_PLANNING_DIAGNOSIS_WORKER_BATCH_SIZE:10}
+    lease-duration: ${OCC_PLANNING_DIAGNOSIS_LEASE_DURATION:5m}
+    max-attempts: ${OCC_PLANNING_DIAGNOSIS_MAX_ATTEMPTS:3}
+    delivery-max-attempts: ${OCC_PLANNING_DIAGNOSIS_DELIVERY_MAX_ATTEMPTS:0}
+    retry-initial-delay: ${OCC_PLANNING_DIAGNOSIS_RETRY_INITIAL_DELAY:2s}
+    retry-max-delay: ${OCC_PLANNING_DIAGNOSIS_RETRY_MAX_DELAY:1m}
+    schema-repair-attempts: 1
+    evidence-lookback: ${OCC_PLANNING_DIAGNOSIS_EVIDENCE_LOOKBACK:15m}
+    evidence-radius-km: ${OCC_PLANNING_DIAGNOSIS_EVIDENCE_RADIUS_KM:2.0}
+    confidence-threshold: ${OCC_PLANNING_DIAGNOSIS_CONFIDENCE_THRESHOLD:0.70}
+    request-timeout: ${OCC_PLANNING_DIAGNOSIS_REQUEST_TIMEOUT:10s}
+    peer-response-max-bytes: ${OCC_PLANNING_DIAGNOSIS_PEER_RESPONSE_MAX_BYTES:131072}
+    max-prompt-input-bytes: ${OCC_PLANNING_DIAGNOSIS_MAX_PROMPT_INPUT_BYTES:65536}
+    gemini:
+      api-key: ${OCC_PLANNING_GEMINI_API_KEY:}
+      model: ${OCC_PLANNING_GEMINI_MODEL:gemini-3.1-flash-lite}
+      temperature: ${OCC_PLANNING_GEMINI_TEMPERATURE:1.0}
+      thinking-level: ${OCC_PLANNING_GEMINI_THINKING_LEVEL:MINIMAL}
+      max-output-tokens: ${OCC_PLANNING_DIAGNOSIS_GEMINI_MAX_OUTPUT_TOKENS:1024}
+      request-timeout: ${OCC_PLANNING_GEMINI_REQUEST_TIMEOUT:30s}
+      retry-attempts: ${OCC_PLANNING_GEMINI_RETRY_ATTEMPTS:2}
+
+springdoc:
+  api-docs:
+    version: OPENAPI_3_1
+  swagger-ui:
+    persist-authorization: false
+    enabled: ${OCC_PLANNING_SWAGGER_ENABLED:true}

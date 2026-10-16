@@ -33,9 +33,18 @@ public class TrafficIncidentObservation {
         longitude = new BigDecimal("103.7550750"); message = "DEMO: Vehicle breakdown on Teck Whye Ave.";
         observedAt = now; fetchedAt = now; ingestedAt = now; classification = "SIMULATION";
     }
+
+    public TrafficIncidentObservation(UUID rawId, UUID pollId, String key, String type, BigDecimal latitude,
+            BigDecimal longitude, String message, Instant observedAt, Instant fetchedAt, Instant ingestedAt) {
+        id = UUID.randomUUID(); rawObservationId = rawId; pollRunId = pollId; sourceIncidentKey = key;
+        incidentType = type; this.latitude = latitude; this.longitude = longitude; this.message = message;
+        this.observedAt = observedAt; this.fetchedAt = fetchedAt; this.ingestedAt = ingestedAt;
+        classification = "OBSERVATION_ONLY";
+    }
     public UUID id() { return id; }
     public UUID rawObservationId() { return rawObservationId; }
     public UUID pollRunId() { return pollRunId; }
+    public String sourceIncidentKey() { return sourceIncidentKey; }
     public String incidentType() { return incidentType; }
     public BigDecimal latitude() { return latitude; }
     public BigDecimal longitude() { return longitude; }
