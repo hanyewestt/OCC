@@ -2,18 +2,108 @@
 
 An agentic dispatch and incident mitigation system for Singapore public bus operations (SMRT / SBS Transit / LTA Bus 4.0) that correlates live transit telemetry, road incidents, weather hazards, and rail disruptions to facilitate orchestration of real-time fleet adjustments. Each Spring Boot service owns its code, database schema and migrations.
 
-## Local quick start
-Create the ignored root `.env` from `.env.example` if needed, then fill in the
-database passwords, peer tokens, Supabase URLs and public publishable key,
-DataMall key and Planning settings. Never overwrite an existing `.env`.
+## Local development: setup, build and start
 
-From the repository root, build and start the local stack with its automatically
-loaded development override:
+Run all commands from the repository root in PowerShell. Install Docker Desktop
+with its Linux container engine running and Docker Compose 2.24.4 or newer.
+Docker builds include Java and Maven; a host Java installation is needed only
+for running Maven directly. For host builds/tests, use JDK 25 and the root
+Maven Wrapper. Node.js 20.6 or newer is needed for the optional browser-auth
+and live Supabase test scripts.
+
+### First-time configuration
+
+Create the ignored root `.env` only if it does not already exist:
 
 ```powershell
-docker compose --env-file .env config -q
-docker compose --env-file .env up -d --build
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
+
+Fill in the settings described in `.env.example`:
+
+- Database administrator, service runtime and migration passwords; use unique
+  migrator passwords and separate service credentials.
+- Six directed service peer tokens.
+- `SUPABASE_PROJECT_URL`, `SUPABASE_JWKS_URL`, signing algorithm and the public
+  `SUPABASE_SB_PUBLISHABLE` key. Use the same project that contains your test
+  accounts and `occ_role` hook.
+- `DATAMALL_API_KEY`, `OCC_PLANNING_GEMINI_API_KEY` and the intended Planning
+  worker/model settings.
+
+Keep one entry per environment-variable name. Duplicate example values later
+in `.env` can override real settings. Keep `.env` out of Git. The example file
+contains placeholders, so copying it alone does not configure live providers.
+
+### Build and start
+
+Check Docker and existing Compose projects first. Reuse the project already
+running this checkout; if it was created with `-p <name>`, keep that same option
+in subsequent commands. The default project name is `local`.
+
+```powershell
+docker info
+docker compose ls
+docker compose --env-file .env config -q
+docker compose --env-file .env up -d --build --wait
+docker compose --env-file .env ps -a
+```
+
+The automatically loaded `compose.override.yaml` builds the four applications
+and three migration images, publishes local development ports, and starts
+Nginx. PostgreSQL starts first, bootstrap configures database roles, and Flyway
+applies migrations before the application services start. Expect PostgreSQL,
+Ingestion, Disruption, Planning, Gateway and Nginx to be healthy. Bootstrap and
+migration containers should show `Exited (0)`; they are one-shot jobs.
+
+### Daily development
+
+Start existing images without rebuilding:
+
+```powershell
+docker compose --env-file .env up -d --wait
+```
+
+After Java, dependency, Dockerfile or migration changes, rebuild and start:
+
+```powershell
+docker compose --env-file .env up -d --build --wait
+```
+
+To rebuild just one changed application, for example Gateway:
+
+```powershell
+docker compose --env-file .env up -d --build gateway
+```
+
+Frontend files under `frontend/static/` are mounted read-only into Nginx.
+After editing HTML or JavaScript, reload the browser; no Java rebuild is needed.
+After changing an Nginx configuration template, restart Nginx to regenerate its
+configuration. After changing Compose environment settings, use `up -d` so
+Compose can recreate affected containers.
+
+```powershell
+docker compose --env-file .env restart nginx
+docker compose --env-file .env logs --tail 100 nginx gateway ingestion disruption planning
+```
+
+If startup fails, inspect `ps -a` and the failed service's logs. For a migration
+failure, inspect its one-shot container, for example:
+
+```powershell
+docker compose --env-file .env logs ingestion-migrate
+```
+
+Stop the stack while retaining database data:
+
+```powershell
+docker compose --env-file .env down --remove-orphans
+```
+
+Do not add `-v` unless you intentionally want to erase the local database.
+Run disposable system-test stacks separately from the normal app on a
+memory-constrained Docker engine, and remove their containers afterward.
+
+### Open the app
 
 Nginx starts automatically and serves [the demo](http://localhost/demo.html)
 and [the temporary authentication test](http://localhost/auth-test/). Set
