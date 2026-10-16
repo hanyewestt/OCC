@@ -41,6 +41,11 @@ infra/local/.env
 __pycache__/
 *.py[cod]
 
-docs/
+# Track shared documentation; keep local refactor plans/evidence ignored.
+docs/*
 !docs/CONVENTIONS.md
 !docs/commit-convention.md
+!docs/AUTHENTICATION.md
+!docs/TESTING.md
+!docs/DEPLOYMENT.md
+!docs/MONITORING.md

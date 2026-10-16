@@ -119,55 +119,16 @@ memory-constrained Docker engine, and remove their containers afterward.
 
 ### Open the app
 
-Nginx starts automatically and serves [the demo](http://localhost/demo.html)
-and [the temporary authentication test](http://localhost/auth-test/). Set
-`OCC_NGINX_PORT` to change the local loopback HTTP port (default `80`);
-`OCC_NGINX_HTTP_INTERNAL_PORT` and `OCC_NGINX_HTTPS_INTERNAL_PORT` configure
-the container listeners (defaults `8080` and `8443`). Sign in
-on either page with a Supabase test account; ADMIN and CONTROLLER can use the
-demo. Tokens stay in that page's memory, so reloads or switching pages require
-another sign-in. The demo sends bearer tokens with all protected API calls.
-`SUPABASE_SB_PUBLISHABLE` must be an `sb_publishable_...` public key; service-role
-and secret keys are rejected. Gateway exposes only the project URL and this
-publishable key at `/frontend-config`.
+Open [the demo](http://localhost/demo.html) and sign in with a configured
+Supabase ADMIN or CONTROLLER account. The current development login keeps its
+token in page memory, so reloading or switching pages requires signing in again.
+The temporary [auth-test page](http://localhost/auth-test/) is available locally.
+Set `OCC_NGINX_PORT` if local HTTP port `80` is unavailable.
 
-The pages and shared authentication JavaScript live in `frontend/static/` and
-are served directly by Nginx. Java services host APIs only. Nginx forwards
-`/api/v1/**` to Gateway while preserving bearer authentication, and blocks
-internal and management routes. Direct service development ports remain on
-loopback (`6767`–`6770`). Docker Compose 2.24.4 or newer is required for the
-profile reset used by the edge overrides. Explicit backend test stacks leave
-Nginx in the optional `edge` profile, while local and production overrides
-activate it automatically.
+## Run tests
 
-The production edge, immutable image inputs, and TLS file mapping are prepared
-in [`infra/compose.production.yaml`](infra/compose.production.yaml); set real
-registry digests and operator-managed certificates before deploying.
-Production uses `docker compose --env-file .env -f compose.yaml -f
-infra/compose.production.yaml up -d`. Set `OCC_NGINX_SERVER_NAME`, TLS certificate
-and private-key file paths, `OCC_NGINX_PUBLIC_PORT` (default `443`), and immutable
-application/migration image digests first. The HTTPS configuration serves the
-demo and `/auth.js`, and always blocks `/auth-test` and its descendants. Local
-HTTP and production TLS listeners reuse `infra/nginx/routes.inc.template`.
-Set DNS cache validity (`OCC_NGINX_DNS_VALIDITY`, default `30s`), request limits
-and proxy timeouts through the settings documented in `.env.example`.
-AWS deployment remains deferred.
-
-For browser authentication checks, run:
-
-```shell
-node --test tests/system/frontend_auth.test.mjs
-```
-
-CI also compares Nginx responses byte-for-byte with the static files, checks
-role restrictions and hidden routes through the TLS edge, and verifies static
-pages remain available with Gateway stopped. Contract migration fixtures live
-in `tests/contracts/`; CI does not depend on the ignored `docs/` folder.
-
-## Build and verify the Phase 1 service reactor
-
-The repository-root Maven Wrapper pins Apache Maven 3.9.16. From the repository root,
-build and run the unit and integration test lifecycle for the four target services:
+With Docker running, execute the four-service unit and database integration tests
+from the repository root. Host-native Maven tests require JDK 25.
 
 PowerShell:
 
@@ -181,60 +142,10 @@ Bash:
 ./mvnw verify
 ```
 
-The reactor includes Ingestion, Disruption, Planning, and Gateway. Disruption,
-Planning, and Gateway listen on internal ports `8002`, `8003`, and `8004`;
-configure them through `OCC_DISRUPTION_INTERNAL_PORT`,
-`OCC_PLANNING_INTERNAL_PORT`, and `OCC_GATEWAY_INTERNAL_PORT` in the ignored
-repository-root `.env` for local runs. Planning owns both diagnosis and
-recommendation generation; its setup and protected API details are in
-[`services/planning/README.md`](services/planning/README.md). Environment names
-and safe example values are listed in `.env.example`.
+## Documentation
 
-The local Compose override builds the service and migration images. Migration
-images retain the PostgreSQL JDBC driver and omit unused Databricks, Couchbase,
-and SQL Server drivers because this stack migrates PostgreSQL only.
-
-## Operational metrics
-
-The services expose Prometheus-format metrics at `/actuator/prometheus` for
-authenticated `ADMIN` callers. Use a direct loopback service URL from the local
-Compose override (Ingestion `6767`, Disruption `6768`, Planning `6769`, Gateway
-`6770`) and an existing ADMIN access token. The Nginx edge denies management
-paths, and the Gateway does not forward them to backend services; the
-production Compose package does not publish the backend ports. Do not paste
-bearer tokens into source files, command history, or test evidence.
-
-Custom low-cardinality metrics report feed freshness/degradation and arrival
-sequence in Ingestion; consumed sequence, deferred work, pending Planning
-outbox age, retained attempts, and expired leases in Disruption; and pending
-request/job age plus retained model fallback/provider-failure counts in
-Planning. Each service also exposes a process-lifetime counter for rows removed
-by its scheduled retention cleanup. Standard Spring Boot and Micrometer metrics
-include JVM, HTTP server, and database-pool measurements where the service uses
-those components. Database gauges query each service's own schema when scraped;
-they do not expose event IDs, user IDs, provider prompts, or payloads.
-
-## Phase 1 authorized-query smoke
-
-CI runs [`tests/system/authorized_poll_smoke.js`](tests/system/authorized_poll_smoke.js)
-with the pinned Grafana k6 `2.3.0` image and a short synthetic ADMIN-token profile.
-The test repeatedly reads `/api/v1/demo-mode` through the TLS edge and checks
-response status, shape, p95 latency, and request errors. Its safe profile settings
-are listed at the bottom of `.env.example`; never put a real Supabase token there.
-This smoke catches regressions in the authenticated read path. It is not a
-capacity or retention-soak result; those still require a representative staging host.
-
-The repository secret/misconfiguration job sets the CI-tool-only
-`TRIVY_OFFLINE_SCAN=true` to prevent unrelated remote Maven dependency lookups.
-It still scans source files and enforces HIGH/CRITICAL findings through the
-sanitizer. Separate image vulnerability jobs use current vulnerability databases
-and retain their HIGH/CRITICAL failure gates and SBOM output.
-The image matrix covers all four applications and all three schema-migration
-images; the pinned Nginx image has its own scan and SBOM job.
-
-The isolated CI workflow also routes Disruption-to-Planning submissions through
-[`infra/compose.dispatch-test.yaml`](infra/compose.dispatch-test.yaml). Its
-test-only proxy drops the first response after Planning returns HTTP 202, then
-the smoke restarts both services and verifies the same idempotency key and one
-durable Planning request survive. The control port is loopback-only and the
-profile must use its own Compose project and database volume.
+- [Authentication](docs/AUTHENTICATION.md): development login, roles and session limitations.
+- [Testing](docs/TESTING.md): browser checks, system tests, load tests and CI.
+- [Deployment](docs/DEPLOYMENT.md): container topology, production images and HTTPS setup.
+- [Monitoring](docs/MONITORING.md): protected Prometheus endpoints and available metrics.
+- [Service conventions](docs/CONVENTIONS.md): code structure and configuration rules.
