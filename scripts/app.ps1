@@ -13,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 if ($Help) {
     Write-Output 'Usage: ./scripts/app.ps1 <start|stop|reset|start-pgadmin|stop-pgadmin> [-ProjectName name] [-Yes]'
     Write-Output 'Reset deletes the selected project database and pgAdmin volumes, then rebuilds without layer cache.'
-    Write-Output '-Yes skips the reset confirmation. Stop preserves data; stop-pgadmin stops only pgAdmin.'
+    Write-Output '-Yes skips the reset confirmation. Stop preserves containers, networks and data; stop-pgadmin stops only pgAdmin.'
     exit 0
 }
 
@@ -56,7 +56,7 @@ try {
 
     switch ($Action) {
         'start' { Invoke-AppCompose -Arguments @('up', '-d', '--build', '--wait') }
-        'stop' { Invoke-AppCompose -Arguments @('--profile', 'tools', 'down', '--remove-orphans') }
+        'stop' { Invoke-AppCompose -Arguments @('--profile', 'tools', 'stop') }
         'reset' {
             if (-not $Yes) {
                 $answer = Read-Host "Delete containers, networks, database and pgAdmin data for '$resolvedProject'? Type RESET"

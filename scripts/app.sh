@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
     printf '%s\n' 'Usage: bash scripts/app.sh <start|stop|reset|start-pgadmin|stop-pgadmin> [--project name] [--yes]'
     printf '%s\n' 'Reset deletes the selected project database and pgAdmin volumes, then rebuilds without layer cache.'
-    printf '%s\n' '--yes skips the reset confirmation. Stop preserves data; stop-pgadmin stops only pgAdmin.'
+    printf '%s\n' '--yes skips the reset confirmation. Stop preserves containers, networks and data; stop-pgadmin stops only pgAdmin.'
 }
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 
@@ -46,7 +46,7 @@ printf 'OCC local project: %s; action: %s\n' "$resolved_project" "$action"
 
 case "$action" in
     start) "${compose[@]}" up -d --build --wait ;;
-    stop) "${compose[@]}" --profile tools down --remove-orphans ;;
+    stop) "${compose[@]}" --profile tools stop ;;
     reset)
         if [[ "$yes" == false ]]; then
             printf "Delete containers, networks, database and pgAdmin data for '%s'? Type RESET: " "$resolved_project"

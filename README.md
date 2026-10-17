@@ -59,7 +59,7 @@ containers and database.
 | Action | PowerShell | Bash | Behavior |
 | --- | --- | --- | --- |
 | Start app | `.\scripts\app.ps1 start` | `bash scripts/app.sh start` | Build application/migration images as needed, start the app and wait for health checks |
-| Stop app | `.\scripts\app.ps1 stop` | `bash scripts/app.sh stop` | Remove project containers/networks, including pgAdmin; preserve data volumes |
+| Stop app | `.\scripts\app.ps1 stop` | `bash scripts/app.sh stop` | Stop project containers, including pgAdmin; preserve containers, networks and data volumes |
 | Reset app | `.\scripts\app.ps1 reset` | `bash scripts/app.sh reset` | Delete project containers/networks and database/pgAdmin volumes, rebuild images without layer cache, then start the app |
 | Start pgAdmin | `.\scripts\app.ps1 start-pgadmin` | `bash scripts/app.sh start-pgadmin` | Start pgAdmin and its PostgreSQL dependency; leave the app otherwise unchanged |
 | Stop pgAdmin | `.\scripts\app.ps1 stop-pgadmin` | `bash scripts/app.sh stop-pgadmin` | Stop only pgAdmin; preserve PostgreSQL, the app and pgAdmin data |
