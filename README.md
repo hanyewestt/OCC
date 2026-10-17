@@ -48,42 +48,56 @@ Keep one entry per environment-variable name. Duplicate example values later
 in `.env` can override real settings. Keep `.env` out of Git. The example file
 contains placeholders, so copying it alone does not configure live providers.
 
-### Build and start
+### App commands
 
-Check Docker and existing Compose projects first. Reuse the project already
-running this checkout; if it was created with `-p <name>`, keep that same option
-in subsequent commands. The default project name is `local`.
+Use the launchers under `scripts/`. They find the repository root automatically,
+load its `.env` through Compose, and select the local Compose files explicitly.
+The default Compose project is `local`; existing `COMPOSE_PROJECT_NAME` settings
+are honored. Use the same project for every action so you manage the intended
+containers and database.
 
-```shell
-docker info
-docker compose ls
-docker compose --env-file .env config -q
-docker compose --env-file .env up -d --build --wait
-docker compose --env-file .env ps -a
+| Action | PowerShell | Bash | Behavior |
+| --- | --- | --- | --- |
+| Start app | `.\scripts\app.ps1 start` | `bash scripts/app.sh start` | Build application/migration images as needed, start the app and wait for health checks |
+| Stop app | `.\scripts\app.ps1 stop` | `bash scripts/app.sh stop` | Remove project containers/networks, including pgAdmin; preserve data volumes |
+| Reset app | `.\scripts\app.ps1 reset` | `bash scripts/app.sh reset` | Delete project containers/networks and database/pgAdmin volumes, rebuild images without layer cache, then start the app |
+| Start pgAdmin | `.\scripts\app.ps1 start-pgadmin` | `bash scripts/app.sh start-pgadmin` | Start pgAdmin and its PostgreSQL dependency; leave the app otherwise unchanged |
+| Stop pgAdmin | `.\scripts\app.ps1 stop-pgadmin` | `bash scripts/app.sh stop-pgadmin` | Stop only pgAdmin; preserve PostgreSQL, the app and pgAdmin data |
+
+**Reset permanently deletes the selected project's database and pgAdmin data.**
+It requires typing `RESET` before deletion. For deliberate non-interactive resets,
+use `-Yes` in PowerShell or `--yes` in Bash. Reset rebuilds the project's images;
+it does not perform a global Docker prune. pgAdmin is optional and is not started
+after reset unless separately requested or enabled by your Compose profiles.
+
+To select a different local project:
+
+PowerShell:
+
+```powershell
+.\scripts\app.ps1 start -ProjectName occ-dev
 ```
 
-The automatically loaded `compose.override.yaml` builds the four applications
-and three migration images, publishes local development ports, and starts
-Nginx. PostgreSQL starts first, bootstrap configures database roles, and Flyway
-applies migrations before the application services start. Expect PostgreSQL,
-Ingestion, Disruption, Planning, Gateway and Nginx to be healthy. Bootstrap and
-migration containers should show `Exited (0)`; they are one-shot jobs.
+Bash:
 
-### Daily development
-
-Start existing images without rebuilding:
-
-```shell
-docker compose --env-file .env up -d --wait
+```bash
+bash scripts/app.sh start --project occ-dev
 ```
 
-After Java, dependency, Dockerfile or migration changes, rebuild and start:
+Repeat that project option for stop, reset and pgAdmin actions. Use `-Help` /
+`--help` to see launcher usage. The launchers require Docker on PATH and a running
+Linux container engine. PowerShell launchers support Windows PowerShell 5.1+ and
+PowerShell 7; Bash launchers support Linux, macOS, WSL and Git Bash.
 
-```shell
-docker compose --env-file .env up -d --build --wait
-```
+PostgreSQL starts first, bootstrap configures database roles, and Flyway applies
+migrations before the services start. Expect PostgreSQL, Ingestion, Disruption,
+Planning, Gateway and Nginx to be healthy. Bootstrap and migration containers
+should show `Exited (0)`; they are one-shot jobs.
 
-To rebuild just one changed application, for example Gateway:
+### Development and troubleshooting
+
+After Java, dependency, Dockerfile or migration changes, run the start action
+again to rebuild changed images. To rebuild only Gateway, use Compose directly:
 
 ```shell
 docker compose --env-file .env up -d --build gateway
@@ -92,11 +106,12 @@ docker compose --env-file .env up -d --build gateway
 Frontend files under `frontend/static/` are mounted read-only into Nginx.
 After editing HTML or JavaScript, reload the browser; no Java rebuild is needed.
 After changing an Nginx configuration template, restart Nginx to regenerate its
-configuration. After changing Compose environment settings, use `up -d` so
-Compose can recreate affected containers.
+configuration. After changing Compose environment settings, run the start action
+to recreate affected containers.
 
 ```shell
 docker compose --env-file .env restart nginx
+docker compose --env-file .env ps -a
 docker compose --env-file .env logs --tail 100 nginx gateway ingestion disruption planning
 ```
 
@@ -107,15 +122,9 @@ failure, inspect its one-shot container, for example:
 docker compose --env-file .env logs ingestion-migrate
 ```
 
-Stop the stack while retaining database data:
-
-```shell
-docker compose --env-file .env down --remove-orphans
-```
-
-Do not add `-v` unless you intentionally want to erase the local database.
-Run disposable system-test stacks separately from the normal app on a
-memory-constrained Docker engine, and remove their containers afterward.
+Add `--project-name <name>` to direct Compose commands when managing a custom
+project. On memory-constrained engines, run disposable system-test stacks
+separately from the normal app and remove their containers afterward.
 
 ### Open the app
 
@@ -164,11 +173,8 @@ direct service port, whereas Prometheus requires ADMIN. Protected operational
 APIs return `401` for missing/invalid tokens and `403` for insufficient roles.
 For metrics endpoints, see [Monitoring](docs/MONITORING.md).
 
-To start optional pgAdmin (PowerShell or Bash):
-
-```shell
-docker compose --env-file .env --profile tools up -d pgadmin
-```
+Start optional pgAdmin with `.\scripts\app.ps1 start-pgadmin` (PowerShell)
+or `bash scripts/app.sh start-pgadmin` (Bash).
 
 ## Run tests
 
