@@ -61,14 +61,22 @@ containers and database.
 | Start app | `.\scripts\app.ps1 start` | `bash scripts/app.sh start` | Build application/migration images as needed, start the app and wait for health checks |
 | Stop app | `.\scripts\app.ps1 stop` | `bash scripts/app.sh stop` | Stop project containers, including pgAdmin; preserve containers, networks and data volumes |
 | Reset app | `.\scripts\app.ps1 reset` | `bash scripts/app.sh reset` | Delete project containers/networks and database/pgAdmin volumes, rebuild images without layer cache, then start the app |
+| Clear app | `.\scripts\app.ps1 clear` | `bash scripts/app.sh clear` | Remove project containers/networks, all project volumes and referenced service images; leave the app stopped |
 | Start pgAdmin | `.\scripts\app.ps1 start-pgadmin` | `bash scripts/app.sh start-pgadmin` | Start pgAdmin and its PostgreSQL dependency; leave the app otherwise unchanged |
 | Stop pgAdmin | `.\scripts\app.ps1 stop-pgadmin` | `bash scripts/app.sh stop-pgadmin` | Stop only pgAdmin; preserve PostgreSQL, the app and pgAdmin data |
 
-**Reset permanently deletes the selected project's database and pgAdmin data.**
-It requires typing `RESET` before deletion. For deliberate non-interactive resets,
-use `-Yes` in PowerShell or `--yes` in Bash. Reset rebuilds the project's images;
-it does not perform a global Docker prune. pgAdmin is optional and is not started
-after reset unless separately requested or enabled by your Compose profiles.
+**Reset and clear permanently delete the selected project's database and pgAdmin data.**
+Reset requires typing `RESET`, then rebuilds and starts the app. Clear requires
+`CLEAR` and leaves it removed, without rebuilding or restarting. For deliberate
+non-interactive use, add `-Yes` in PowerShell or `--yes` in Bash.
+
+Clear uses Compose `down --volumes --remove-orphans --rmi all`, including the
+optional pgAdmin service. It requests removal of the images referenced by this
+project, including supporting images; Docker may refuse an image removal if
+another container still uses it. It does not force removal of shared images.
+Source files, `.env`, remote Supabase accounts and global Docker build cache
+remain intact. Neither action performs a global Docker prune. pgAdmin is not
+started after reset unless requested separately or enabled by Compose profiles.
 
 To select a different local project:
 
@@ -84,7 +92,7 @@ Bash:
 bash scripts/app.sh start --project occ-dev
 ```
 
-Repeat that project option for stop, reset and pgAdmin actions. Use `-Help` /
+Repeat that project option for stop, reset, clear and pgAdmin actions. Use `-Help` /
 `--help` to see launcher usage. The launchers require Docker on PATH and a running
 Linux container engine. PowerShell launchers support Windows PowerShell 5.1+ and
 PowerShell 7; Bash launchers support Linux, macOS, WSL and Git Bash.

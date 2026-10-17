@@ -2,9 +2,10 @@
 set -euo pipefail
 
 usage() {
-    printf '%s\n' 'Usage: bash scripts/app.sh <start|stop|reset|start-pgadmin|stop-pgadmin> [--project name] [--yes]'
+    printf '%s\n' 'Usage: bash scripts/app.sh <start|stop|reset|clear|start-pgadmin|stop-pgadmin> [--project name] [--yes]'
     printf '%s\n' 'Reset deletes the selected project database and pgAdmin volumes, then rebuilds without layer cache.'
-    printf '%s\n' '--yes skips the reset confirmation. Stop preserves containers, networks and data; stop-pgadmin stops only pgAdmin.'
+    printf '%s\n' 'Clear removes the selected project containers, networks, volumes and referenced images; it does not restart.'
+    printf '%s\n' '--yes skips the reset/clear confirmation. Stop preserves containers, networks and data; stop-pgadmin stops only pgAdmin.'
 }
 fail() { printf '%s\n' "$*" >&2; exit 1; }
 
@@ -14,7 +15,7 @@ yes=false
 action_seen=false
 while (($#)); do
     case "$1" in
-        start|stop|reset|start-pgadmin|stop-pgadmin)
+        start|stop|reset|clear|start-pgadmin|stop-pgadmin)
             [[ "$action_seen" == false ]] || fail 'Specify only one action.'
             action=$1; action_seen=true; shift ;;
         --project)
@@ -25,7 +26,7 @@ while (($#)); do
         *) usage >&2; fail "Unknown argument: $1" ;;
     esac
 done
-[[ "$yes" == false || "$action" == reset ]] || fail '--yes is only valid with reset.'
+[[ "$yes" == false || "$action" == reset || "$action" == clear ]] || fail '--yes is only valid with reset or clear.'
 [[ -z "$project_name" || "$project_name" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || fail 'Invalid Compose project name.'
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -63,6 +64,19 @@ case "$action" in
         "${compose[@]}" --profile tools down --volumes --remove-orphans
         "${compose[@]}" --profile tools build --pull --no-cache
         "${compose[@]}" up -d --force-recreate --wait ;;
+    clear)
+        if [[ "$yes" == false ]]; then
+            printf "Delete all containers, networks, volumes and referenced images for '%s'? Type CLEAR: " "$resolved_project"
+            answer=''
+            if ! IFS= read -r answer; then
+                printf '%s\n' 'Clear cancelled.'; exit 0
+            fi
+            answer=${answer%$'\r'}
+            if [[ "$answer" != CLEAR ]]; then
+                printf '%s\n' 'Clear cancelled.'; exit 0
+            fi
+        fi
+        "${compose[@]}" --profile tools down --volumes --remove-orphans --rmi all ;;
     start-pgadmin) "${compose[@]}" --profile tools up -d --wait pgadmin ;;
     stop-pgadmin) "${compose[@]}" --profile tools stop pgadmin ;;
 esac

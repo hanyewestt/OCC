@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('start', 'stop', 'reset', 'start-pgadmin', 'stop-pgadmin')]
+    [ValidateSet('start', 'stop', 'reset', 'clear', 'start-pgadmin', 'stop-pgadmin')]
     [string]$Action = 'start',
     [string]$ProjectName,
     [switch]$Yes,
@@ -11,14 +11,15 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ($Help) {
-    Write-Output 'Usage: ./scripts/app.ps1 <start|stop|reset|start-pgadmin|stop-pgadmin> [-ProjectName name] [-Yes]'
+    Write-Output 'Usage: ./scripts/app.ps1 <start|stop|reset|clear|start-pgadmin|stop-pgadmin> [-ProjectName name] [-Yes]'
     Write-Output 'Reset deletes the selected project database and pgAdmin volumes, then rebuilds without layer cache.'
-    Write-Output '-Yes skips the reset confirmation. Stop preserves containers, networks and data; stop-pgadmin stops only pgAdmin.'
+    Write-Output 'Clear removes the selected project containers, networks, volumes and referenced images; it does not restart.'
+    Write-Output '-Yes skips the reset/clear confirmation. Stop preserves containers, networks and data; stop-pgadmin stops only pgAdmin.'
     exit 0
 }
 
 try {
-    if ($Yes -and $Action -ne 'reset') { throw '-Yes is only valid with reset.' }
+    if ($Yes -and $Action -notin @('reset', 'clear')) { throw '-Yes is only valid with reset or clear.' }
     if ($ProjectName -and $ProjectName -cnotmatch '^[a-z0-9][a-z0-9_-]*$') {
         throw 'ProjectName must contain lowercase letters, digits, underscores or hyphens.'
     }
@@ -65,6 +66,13 @@ try {
             Invoke-AppCompose -Arguments @('--profile', 'tools', 'down', '--volumes', '--remove-orphans')
             Invoke-AppCompose -Arguments @('--profile', 'tools', 'build', '--pull', '--no-cache')
             Invoke-AppCompose -Arguments @('up', '-d', '--force-recreate', '--wait')
+        }
+        'clear' {
+            if (-not $Yes) {
+                $answer = Read-Host "Delete all containers, networks, volumes and referenced images for '$resolvedProject'? Type CLEAR"
+                if ($answer -cne 'CLEAR') { Write-Host 'Clear cancelled.'; exit 0 }
+            }
+            Invoke-AppCompose -Arguments @('--profile', 'tools', 'down', '--volumes', '--remove-orphans', '--rmi', 'all')
         }
         'start-pgadmin' { Invoke-AppCompose -Arguments @('--profile', 'tools', 'up', '-d', '--wait', 'pgadmin') }
         'stop-pgadmin' { Invoke-AppCompose -Arguments @('--profile', 'tools', 'stop', 'pgadmin') }
