@@ -23,7 +23,7 @@ import org.springframework.test.context.TestConstructor;
         "SUPABASE_JWT_AUDIENCE=authenticated",
         "SUPABASE_JWT_CLOCK_SKEW=30s",
         "SUPABASE_JWT_ALLOWED_ALGORITHMS=ES256",
-        "OCC_GATEWAY_AUTH_TEST_ENABLED=true"
+        "SUPABASE_SB_PUBLISHABLE=sb_publishable_synthetic-test"
 })
 @AutoConfigureMockMvc
 @TestConstructor(autowireMode = TestConstructor.AutowireMode.ALL)
@@ -79,11 +79,19 @@ class GatewayAuthorizationTest {
     }
 
     @Test
-    void exposesTheTemporarySupabaseTestPageWithoutAuthentication() throws Exception {
-        mvc.perform(get("/auth-test/index.html"))
+    void exposesOnlyPublicFrontendConfigurationWithoutAuthentication() throws Exception {
+        mvc.perform(get("/frontend-config"))
                 .andExpect(status().isOk())
-                .andExpect(result -> assertThat(result.getResponse().getContentType()).startsWith("text/html"))
-                .andExpect(result -> assertThat(result.getResponse().getContentAsString())
-                        .contains("Temporary local test page"));
+                .andExpect(content().json("""
+                        {"projectUrl":"https://example.supabase.co",
+                         "publishableKey":"sb_publishable_synthetic-test"}
+                        """));
+    }
+
+    @Test
+    void backendDoesNotHostAuthTestPage() throws Exception {
+        mvc.perform(get("/auth-test/index.html").with(jwt()
+                        .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isNotFound());
     }
 }

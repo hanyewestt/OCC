@@ -1,7 +1,6 @@
 package com.csd.occ.gateway.infrastructure.security;
 
 import com.csd.occ.gateway.infrastructure.config.SupabaseJwtProperties;
-import com.csd.occ.gateway.infrastructure.config.GatewayProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -23,8 +22,7 @@ import org.springframework.security.web.SecurityFilterChain;
 public class GatewaySecurityConfig {
     @Bean
     SecurityFilterChain gatewaySecurityFilterChain(HttpSecurity http, JwtDecoder jwtDecoder,
-                                                   SupabaseRoleConverter roleConverter,
-                                                   GatewayProperties gatewayProperties) throws Exception {
+                                                   SupabaseRoleConverter roleConverter) throws Exception {
         JwtAuthenticationConverter authenticationConverter = new JwtAuthenticationConverter();
         authenticationConverter.setJwtGrantedAuthoritiesConverter(roleConverter);
 
@@ -35,12 +33,7 @@ public class GatewaySecurityConfig {
                     authorize.requestMatchers("/actuator/health", "/actuator/health/**").permitAll();
                     authorize.requestMatchers(HttpMethod.GET, "/actuator/prometheus").hasRole("ADMIN");
                     authorize.requestMatchers("/actuator/**").denyAll();
-                    authorize.requestMatchers("/demo.html").permitAll();
-                    if (gatewayProperties.authTestEnabled()) {
-                        authorize.requestMatchers("/auth-test", "/auth-test/**").permitAll();
-                    } else {
-                        authorize.requestMatchers("/auth-test", "/auth-test/**").denyAll();
-                    }
+                    authorize.requestMatchers(HttpMethod.GET, "/frontend-config").permitAll();
                     authorize.requestMatchers("/internal/v1/**").denyAll();
                     authorize.requestMatchers("/api/v1/**").hasAnyRole("ADMIN", "CONTROLLER");
                     authorize.requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")

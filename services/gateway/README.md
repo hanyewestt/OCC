@@ -17,8 +17,7 @@ In Compose, route destinations use `OCC_INGESTION_INTERNAL_URL`,
 profile imports the root `.env` and uses each service's host-facing `*_PUBLIC_URL`
 for a host-native run. The Gateway retains a catch-all Ingestion API route after
 the named Disruption, Planning, and Ingestion namespaces so the existing demo
-page can continue calling `/api/v1/...` paths. The static `/demo.html` page is
-served through Gateway without making its API calls public.
+page can continue calling `/api/v1/...` paths. Nginx serves `/demo.html` directly; Gateway has no HTML routes or static resources.
 
 The local Compose override publishes application ports on loopback for testing.
 The production Compose profile publishes only Nginx; Nginx and Gateway share the
@@ -32,11 +31,18 @@ and `UNASSIGNED` receive `403`; missing or invalid tokens receive `401`. Health
 probes remain available at `/actuator/health`. Peer `/internal/v1/**` calls are
 not routed through the public Gateway.
 
-The local password-grant test page is served at
-`http://localhost:6770/auth-test/index.html` when
-`OCC_GATEWAY_AUTH_TEST_ENABLED=true`. It is disabled by default in the application
-configuration and should stay disabled in deployed environments. The page keeps
-the access token in memory and sends protected API requests through this Gateway.
+Nginx serves the temporary password-grant page at `http://localhost/auth-test/`
+and the demo at `http://localhost/demo.html`. Both use the public
+`GET /frontend-config` endpoint, which returns only `SUPABASE_PROJECT_URL` and
+`SUPABASE_SB_PUBLISHABLE`. The key must be an `sb_publishable_...` public key;
+blank keys leave browser login unavailable, and private/legacy keys fail startup.
+The settings bind through `FrontendProperties`. API authentication still uses
+the separately configured issuer, JWKS, audience and allowed algorithms.
+The former Java page-hosting setting `OCC_GATEWAY_AUTH_TEST_ENABLED` is removed;
+Nginx's separate local/TLS configurations control auth-test availability.
+Production always blocks the temporary page. Access tokens are held in page
+memory only; reloads and page changes require sign-in again. Expiry or an API
+401 clears the local session. A local clear does not revoke the Supabase session.
 
 For an opt-in live check, set the optional test values listed in the root
 `.env.example` in the ignored `.env`, then run from the repository root:

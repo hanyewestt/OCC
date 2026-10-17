@@ -109,7 +109,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Validate the safe example Compose configuration
-        run: docker compose --env-file .env.example config -q
+        run: |
+          docker compose --env-file .env.example config -q
+          docker compose --env-file .env.example -f compose.yaml -f infra/compose.production.yaml config -q
+      - name: Verify browser authentication boundaries
+        run: node --test tests/system/frontend_auth.test.mjs
       - name: Validate generated contracts and source-to-target migration map
         shell: bash
         env:
@@ -170,6 +174,9 @@ jobs:
                       raise SystemExit("Retired internal self-HTTP operation unexpectedly has a target route.")
                   continue
               if row["targetService"] == "edge":
+                  asset = pathlib.Path(row["targetAsset"])
+                  if not asset.is_file() or asset != pathlib.Path("frontend/static/demo.html"):
+                      raise SystemExit("Preserved static demo asset is missing.")
                   continue
               current = target_spec(row["targetContract"])
               matches = [candidate for path_item in current.get("paths", {}).values()
@@ -201,7 +208,44 @@ jobs:
               exit 1
             fi
             baseline="$RUNNER_TEMP/openapi-baseline.json"
-            git show "$(python3 -c 'import json; print(json.load(open("tests/contracts/contracts-manifest.json"))["targetBaselineRevision"])'):${spec}" > "$baseline"
+            python3 - "$spec" "$baseline" <<'PY'
+          import json
+          import pathlib
+          import subprocess
+          import sys
+
+          spec_path, output = sys.argv[1:]
+          manifest = json.loads(pathlib.Path("tests/contracts/contracts-manifest.json").read_text())
+          result = subprocess.run(["git", "show", f"{manifest['targetBaselineRevision']}:{spec_path}"],
+                                  capture_output=True, text=True)
+          if result.returncode:
+              if spec_path not in manifest.get("introducedContracts", []):
+                  raise SystemExit(f"Missing contract baseline: {spec_path}")
+              # Preserve the first committed version as this newly introduced API's baseline.
+              # Future removals remain breaking even though the older refactor baseline lacks it.
+              additions = subprocess.run(["git", "log", "--reverse", "--diff-filter=A", "--format=%H",
+                                          "HEAD", "--", spec_path], check=True,
+                                         capture_output=True, text=True).stdout.splitlines()
+              if not additions:
+                  raise SystemExit(f"New contract has no committed baseline: {spec_path}")
+              initial = subprocess.run(["git", "show", f"{additions[0]}:{spec_path}"], check=True,
+                                       capture_output=True, text=True).stdout
+              baseline = json.loads(initial)
+          else:
+              baseline = json.loads(result.stdout)
+              for row in manifest["operations"]:
+                  if (row["targetService"] == "edge" and row["classification"] == "static-route-preserved"
+                          and spec_path == f"services/{row['sourceService']}/openapi/{row['sourceService']}.json"):
+                      path, method = row["sourcePath"], row["sourceMethod"].lower()
+                      current = json.loads(pathlib.Path(spec_path).read_text())
+                      if method not in current.get("paths", {}).get(path, {}):
+                          if not pathlib.Path(row["targetAsset"]).is_file():
+                              raise SystemExit("Static route move has no frontend asset")
+                          baseline.get("paths", {}).get(path, {}).pop(method, None)
+                          if not baseline.get("paths", {}).get(path, {}):
+                              baseline.get("paths", {}).pop(path, None)
+          pathlib.Path(output).write_text(json.dumps(baseline))
+          PY
             docker run --rm -v "$PWD:/workspace:ro" -v "$RUNNER_TEMP:/baseline:ro" \
               "$OASDIFF_IMAGE" breaking --fail-on ERR "/baseline/openapi-baseline.json" "/workspace/${spec}"
           done < "$RUNNER_TEMP/openapi-changes.zlist"
@@ -286,8 +330,10 @@ jobs:
             --tmpfs /etc/nginx/conf.d:uid=101,gid=101,mode=1777 \
             --tmpfs /tmp:uid=101,gid=101,mode=1777 \
             --network occ-edge-ci_edge --publish 127.0.0.1:18443:8443 \
-            --env 'NGINX_ENVSUBST_FILTER=^(OCC_GATEWAY_INTERNAL_URL|OCC_NGINX_SERVER_NAME|OCC_NGINX_CLIENT_MAX_BODY_SIZE|OCC_NGINX_RATE_LIMIT_PER_SECOND|OCC_NGINX_RATE_LIMIT_BURST|OCC_NGINX_RATE_LIMIT_ZONE_SIZE|OCC_NGINX_PROXY_CONNECT_TIMEOUT|OCC_NGINX_PROXY_READ_TIMEOUT|OCC_NGINX_PROXY_SEND_TIMEOUT)$' \
+            --env 'NGINX_ENVSUBST_FILTER=^(OCC_GATEWAY_INTERNAL_URL|OCC_NGINX_DNS_VALIDITY|OCC_NGINX_HTTP_INTERNAL_PORT|OCC_NGINX_HTTPS_INTERNAL_PORT|OCC_NGINX_SERVER_NAME|OCC_NGINX_CLIENT_MAX_BODY_SIZE|OCC_NGINX_RATE_LIMIT_PER_SECOND|OCC_NGINX_RATE_LIMIT_BURST|OCC_NGINX_RATE_LIMIT_ZONE_SIZE|OCC_NGINX_PROXY_CONNECT_TIMEOUT|OCC_NGINX_PROXY_READ_TIMEOUT|OCC_NGINX_PROXY_SEND_TIMEOUT)$' \
             --env OCC_GATEWAY_INTERNAL_URL=http://gateway:8004 \
+            --env OCC_NGINX_DNS_VALIDITY=30s \
+            --env OCC_NGINX_HTTPS_INTERNAL_PORT=8443 \
             --env OCC_NGINX_SERVER_NAME=localhost \
             --env OCC_NGINX_CLIENT_MAX_BODY_SIZE=1m \
             --env OCC_NGINX_RATE_LIMIT_PER_SECOND=20r/s \
@@ -296,6 +342,8 @@ jobs:
             --env OCC_NGINX_PROXY_CONNECT_TIMEOUT=5s \
             --env OCC_NGINX_PROXY_READ_TIMEOUT=30s \
             --env OCC_NGINX_PROXY_SEND_TIMEOUT=30s \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/routes.inc.template,target=/etc/nginx/templates/routes.inc.template,readonly" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/frontend/static,target=/usr/share/nginx/html,readonly" \
             --mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/default.conf.template,target=/etc/nginx/templates/default.conf.template,readonly" \
             --mount "type=bind,source=$RUNNER_TEMP/occ-edge-nginx.conf,target=/etc/nginx/nginx.conf,readonly" \
             --mount "type=bind,source=$RUNNER_TEMP/occ-edge-test.crt,target=/run/secrets/occ_tls_certificate,readonly" \
@@ -310,6 +358,21 @@ jobs:
             sleep 2
           done
           docker logs occ-edge-ci-nginx
+          exit 1
+      - name: Start local HTTP edge using the normal Compose configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose -p occ-edge-ci --env-file .env.example -f compose.yaml \
+            -f compose.override.yaml -f infra/compose.test.yaml \
+            run --detach --no-deps --name occ-edge-ci-http --publish 127.0.0.1:18480:8080 nginx
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18480/_occ_edge_health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs occ-edge-ci-http
           exit 1
       - name: Verify OpenAPI comparison gate detects deleted operations
         run: python3 tests/system/openapi_runtime_contract_smoke.py --self-test
@@ -350,10 +413,24 @@ jobs:
         run: >-
           python3 tests/system/nginx_edge_smoke.py --base-url https://127.0.0.1:18443
           --token-dir "$RUNNER_TEMP/occ-edge-jwks"
+      - name: Verify local HTTP frontend and authentication boundaries
+        run: >-
+          python3 tests/system/nginx_edge_smoke.py --base-url http://127.0.0.1:18480
+          --local --token-dir "$RUNNER_TEMP/occ-edge-jwks"
+      - name: Verify static pages without backend hosting
+        shell: bash
+        run: |
+          set -euo pipefail
+          compose=(docker compose -p occ-edge-ci --env-file .env.example -f compose.yaml -f infra/compose.test.yaml)
+          trap '"${compose[@]}" start gateway' EXIT
+          "${compose[@]}" stop gateway
+          python3 tests/system/nginx_edge_smoke.py --base-url https://127.0.0.1:18443 --static-only
+          python3 tests/system/nginx_edge_smoke.py --base-url http://127.0.0.1:18480 --local --static-only
       - name: Remove disposable containers and networks
         if: always()
         run: |
           docker rm --force occ-edge-ci-nginx 2>/dev/null || true
+          docker rm --force occ-edge-ci-http 2>/dev/null || true
           docker rm --force occ-edge-ci-jwks 2>/dev/null || true
           docker compose -p occ-edge-ci --env-file .env.example \
             -f compose.yaml -f infra/compose.test.yaml -f infra/compose.workflow-test.yaml \

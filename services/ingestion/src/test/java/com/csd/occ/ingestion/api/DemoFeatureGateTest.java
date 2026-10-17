@@ -17,7 +17,6 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(controllers = {
-        DemoPageController.class,
         DemoRunController.class,
         DemoModeController.class,
         DemoSnapshotController.class,
@@ -31,11 +30,10 @@ class DemoFeatureGateTest {
     @MockitoBean BunchingControlPort bunching;
 
     @Test
-    void demoPageAndApisRemainAvailableWhenThePersistedRuntimeModeIsDisabled() throws Exception {
+    void demoApisRemainAvailableWhenThePersistedRuntimeModeIsDisabled() throws Exception {
         when(mode.enabled()).thenReturn(false);
         when(runs.active()).thenReturn(Optional.empty());
 
-        mvc.perform(get("/demo.html")).andExpect(status().isOk());
         mvc.perform(get("/api/v1/demo-mode")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.enabled").value(false));
         mvc.perform(get("/api/v1/demo-runs/active")).andExpect(status().isNoContent());

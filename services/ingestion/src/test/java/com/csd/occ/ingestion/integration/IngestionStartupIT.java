@@ -176,10 +176,10 @@ class IngestionStartupIT {
     }
 
     @Test
-    void demoPageIsPublicButDemoApiRequiresAnAuthorizedUser() throws Exception {
-        mvc.perform(get("/demo.html"))
-                .andExpect(status().isOk())
-                .andExpect(content().contentTypeCompatibleWith("text/html"));
+    void backendDoesNotHostDemoPageAndDemoApiRequiresAnAuthorizedUser() throws Exception {
+        mvc.perform(get("/demo.html").with(jwt().authorities(
+                        new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/demo-mode"))
                 .andExpect(status().isUnauthorized());
     }

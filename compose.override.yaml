@@ -71,3 +71,10 @@ services:
   pgadmin:
     ports:
       - "127.0.0.1:${PGADMIN_PORT:-6700}:80"
+
+  nginx:
+    profiles: !reset []
+    ports:
+      - "127.0.0.1:${OCC_NGINX_PORT:-80}:${OCC_NGINX_HTTP_INTERNAL_PORT:-8080}"
+    volumes:
+      - ./infra/nginx/local.conf.template:/etc/nginx/templates/default.conf.template:ro

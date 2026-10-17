@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 
 SERVICES = {
+    "gateway": Path("services/gateway/openapi/gateway.json"),
     "ingestion": Path("services/ingestion/openapi/ingestion.json"),
     "disruption": Path("services/disruption/openapi/disruption.json"),
     "planning": Path("services/planning/openapi/planning.json"),
