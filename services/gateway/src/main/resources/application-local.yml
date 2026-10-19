@@ -6,10 +6,6 @@ spring:
       server:
         webmvc:
           routes:
-            - id: ingestion-demo-page
-              uri: ${OCC_INGESTION_PUBLIC_URL}
-              predicates:
-                - Path=/demo.html
             - id: ingestion-api
               uri: ${OCC_INGESTION_PUBLIC_URL}
               predicates:

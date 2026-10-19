@@ -69,5 +69,3 @@ services:
       args:
         OCC_SERVICE: gateway
         OCC_SERVICE_INTERNAL_PORT: ${OCC_GATEWAY_INTERNAL_PORT:-8004}
-    environment:
-      OCC_GATEWAY_AUTH_TEST_ENABLED: "false"

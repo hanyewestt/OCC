@@ -4,6 +4,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
   <title>OCC Bunching Demo</title>
   <style>
     body {
@@ -153,6 +154,7 @@
 </head>
 
 <body>
+  <div id="authentication"></div>
   <h1>Bus bunching demo</h1>
   <button id="show" type="button">Show demo</button>
   <button id="close" type="button" hidden>Return to live</button>
@@ -250,7 +252,10 @@
     </tbody>
   </table>
 
+  <script src="/auth.js"></script>
   <script>
+    let liveArrivalTimer = null;
+    let liveAlertTimer = null;
     let runId = null;
     let demoTimer = null;
     let recommendationTimer = null;
@@ -266,7 +271,7 @@
 
     if (location.protocol === 'file:') {
       show.disabled = true;
-      status.innerHTML = 'Open <a href="http://localhost:6767/demo.html">http://localhost:6767/demo.html</a>. The demo page must be served by ingestion.';
+      status.textContent = 'Open this page through the local Nginx HTTP address.';
     }
 
     function escapeHtml(value) {
@@ -340,7 +345,7 @@
     async function stopFor(stopCode) {
       if (!stopCode) return { description: null, roadName: null };
       if (!stops.has(stopCode)) {
-        stops.set(stopCode, fetch(`/api/v1/bus-stops/${encodeURIComponent(stopCode)}`)
+        stops.set(stopCode, occAuth.fetch(`/api/v1/bus-stops/${encodeURIComponent(stopCode)}`)
           .then(responseJson)
           .catch(() => ({ description: null, roadName: null })));
       }
@@ -381,10 +386,10 @@
       return `<strong>${escapeHtml(time(arrival.estimatedArrivalAt))}</strong><br><span class="muted">Bus ${escapeHtml(arrival.visitOrder ?? '—')}</span>`;
     }
     async function allLiveArrivals() {
-      const firstPage = await responseJson(await fetch('/api/v1/arrivals?size=200'));
+      const firstPage = await responseJson(await occAuth.fetch('/api/v1/arrivals?size=200'));
       const remainingPages = await Promise.all(Array.from(
         { length: Math.max((firstPage.totalPages || 1) - 1, 0) },
-        (_, index) => fetch(`/api/v1/arrivals?page=${index + 1}&size=200`).then(responseJson)
+        (_, index) => occAuth.fetch(`/api/v1/arrivals?page=${index + 1}&size=200`).then(responseJson)
       ));
       return [firstPage, ...remainingPages].flatMap(page => page.items || []);
     }
@@ -439,9 +444,10 @@
       if (runId) recommendationTimer = setTimeout(refreshRecommendation, 1000);
     }
     async function refreshRecommendation() {
+      if (!occAuth.authenticated) return;
       if (!runId) return;
       try {
-        const recommendation = await responseJson(await fetch(`/api/v1/demo-runs/${encodeURIComponent(runId)}/recommendation`));
+        const recommendation = await responseJson(await occAuth.fetch(`/api/v1/demo-runs/${encodeURIComponent(runId)}/recommendation`));
         if (recommendation) {
           renderRecommendation(recommendation);
           stopRecommendationPolling();
@@ -479,9 +485,10 @@
       }
     }
     async function refreshRun() {
+      if (!occAuth.authenticated) return;
       if (!runId) return;
       try {
-        acceptRun(await responseJson(await fetch(`/api/v1/demo-runs/${encodeURIComponent(runId)}`)));
+        acceptRun(await responseJson(await occAuth.fetch(`/api/v1/demo-runs/${encodeURIComponent(runId)}`)));
       } catch (error) {
         status.classList.add('error'); status.textContent = `Status check failed: ${error.message}`; scheduleDemoPoll();
       }
@@ -491,34 +498,38 @@
       if (runId) demoTimer = setTimeout(refreshRun, 1000);
     }
     async function refreshLiveArrivals() {
+      clearTimeout(liveArrivalTimer);
+      if (!occAuth.authenticated) return;
       try {
         await renderLive(await allLiveArrivals());
       } catch (error) {
         liveBody.innerHTML = `<tr><td colspan="9" class="error">Unable to load live arrivals: ${escapeHtml(error.message)}</td></tr>`;
       } finally {
-        setTimeout(refreshLiveArrivals, 5000);
+        if (occAuth.authenticated) liveArrivalTimer = setTimeout(refreshLiveArrivals, 5000);
       }
     }
     async function refreshLiveAlerts() {
+      clearTimeout(liveAlertTimer);
+      if (!occAuth.authenticated) return;
       if (runId) {
         hideLiveAlertsDuringDemo();
       } else {
         try {
-          const firstPage = await responseJson(await fetch('/api/v1/live-bunching-alerts?size=200'));
+          const firstPage = await responseJson(await occAuth.fetch('/api/v1/live-bunching-alerts?size=200'));
           const remainingPages = await Promise.all(Array.from(
             { length: Math.max((firstPage.totalPages || 1) - 1, 0) },
-            (_, index) => fetch(`/api/v1/live-bunching-alerts?page=${index + 1}&size=200`).then(responseJson)
+            (_, index) => occAuth.fetch(`/api/v1/live-bunching-alerts?page=${index + 1}&size=200`).then(responseJson)
           ));
           await renderLiveAlerts([firstPage, ...remainingPages].flatMap(page => page.items || []));
         } catch (error) {
           liveAlertBody.innerHTML = `<tr><td colspan="10" class="error">Unable to load live detections: ${escapeHtml(error.message)}</td></tr>`;
         }
       }
-      setTimeout(refreshLiveAlerts, 5000);
+      if (occAuth.authenticated) liveAlertTimer = setTimeout(refreshLiveAlerts, 5000);
     }
     async function restoreActiveRun() {
       try {
-        const run = await responseJson(await fetch('/api/v1/demo-runs/active'));
+        const run = await responseJson(await occAuth.fetch('/api/v1/demo-runs/active'));
         if (run) acceptRun(run);
         else { status.classList.remove('error'); status.textContent = 'Idle'; show.disabled = false; }
       } catch (error) {
@@ -528,7 +539,7 @@
     show.addEventListener('click', async () => {
       show.disabled = true; close.hidden = true; status.classList.remove('error'); status.textContent = 'Starting demo…';
       try {
-        acceptRun(await responseJson(await fetch('/api/v1/demo-runs', { method: 'POST' })));
+        acceptRun(await responseJson(await occAuth.fetch('/api/v1/demo-runs', { method: 'POST' })));
       } catch (error) {
         status.classList.add('error'); status.textContent = `Start failed: ${error.message}`; show.disabled = false;
         if (error.message.includes('active')) await restoreActiveRun();
@@ -538,7 +549,7 @@
       if (!runId) return;
       close.disabled = true; status.classList.remove('error'); status.textContent = 'Returning bunching to live…';
       try {
-        const closed = await responseJson(await fetch(`/api/v1/demo-runs/${encodeURIComponent(runId)}/close`, { method: 'POST' }));
+        const closed = await responseJson(await occAuth.fetch(`/api/v1/demo-runs/${encodeURIComponent(runId)}/close`, { method: 'POST' }));
         stopDemoPolling(); stopRecommendationPolling(); runId = null; close.hidden = true; show.disabled = false;
         clearSimulationResults();
         status.textContent = `${closed.status}: live bunching resumed`; refreshLiveAlerts();
@@ -546,9 +557,25 @@
         status.classList.add('error'); status.textContent = `Return to live failed: ${error.message}`;
       } finally { close.disabled = false; }
     });
-    restoreActiveRun();
-    refreshLiveArrivals();
-    refreshLiveAlerts();
+    show.disabled = true;
+    status.textContent = 'Sign in to view arrivals or run a simulation.';
+    window.addEventListener('occ-auth-change', event => {
+      stopDemoPolling(); stopRecommendationPolling();
+      clearTimeout(liveArrivalTimer); clearTimeout(liveAlertTimer);
+      runId = null;
+      stops.clear();
+      clearSimulationResults();
+      show.disabled = true; close.hidden = true;
+      liveBody.replaceChildren(); liveAlertBody.replaceChildren();
+      if (event.detail.authenticated && ['ADMIN', 'CONTROLLER'].includes(event.detail.role)) {
+        restoreActiveRun(); refreshLiveArrivals(); refreshLiveAlerts();
+      } else {
+        status.textContent = event.detail.authenticated
+          ? 'This account cannot access the Phase 1 demo. ADMIN or CONTROLLER is required.'
+          : 'Sign in to view arrivals or run a simulation.';
+      }
+    });
+    occAuth.mount(document.querySelector('#authentication'));
   </script>
 </body>
 

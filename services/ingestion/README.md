@@ -4,7 +4,7 @@ Polls DataMall bus arrivals and traffic incidents and records observations for a
 
 ## Demo replay
 
-Demo support is always available at `/demo.html`. Its persisted runtime state starts disabled, so the replay scheduler does no work and bunching remains live until **Show demo** starts a run. **Return to live** switches bunching back to the live feed and closes the run. The mode can also be toggled while ingestion is running; no restart is needed:
+Nginx serves the demo at `http://localhost/demo.html`; Ingestion no longer hosts HTML. Sign in with an ADMIN or CONTROLLER Supabase account before using its protected APIs. Its persisted runtime state starts disabled, so the replay scheduler does no work and bunching remains live until **Show demo** starts a run. **Return to live** switches bunching back to the live feed and closes the run. The mode can also be toggled while ingestion is running; no restart is needed:
 
 ```http
 GET /api/v1/demo-mode

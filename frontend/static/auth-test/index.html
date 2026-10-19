@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>OCC local authentication test</title>
+  <style>
+    :root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; }
+    body { max-width: 52rem; margin: 2rem auto; padding: 0 1rem; }
+    fieldset { display: grid; gap: .65rem; margin: 1rem 0; border: 1px solid #8888; border-radius: .5rem; }
+    label { display: grid; gap: .25rem; }
+    input { box-sizing: border-box; width: 100%; padding: .55rem; }
+    button { margin: .35rem .35rem .35rem 0; padding: .5rem .8rem; }
+    pre { overflow: auto; max-height: 24rem; padding: .8rem; background: #8882; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .note { padding: .8rem; border-left: 4px solid #c90; background: #8882; }
+  </style>
+</head>
+<body>
+  <h1>OCC local authentication test</h1>
+  <p class="note">Temporary local test page. It sends the password directly to Supabase Auth,
+    keeps the returned access token in page memory only, and clears it when this tab reloads.
+    Use only the project's temporary test accounts. The role shown below is decoded for
+    inspection; Gateway and service APIs still verify the JWT signature and role.</p>
+
+  <div id="authentication"></div>
+  <p><a href="/demo.html">Open the demo</a> (sign in again on that page).</p>
+  <fieldset>
+    <legend>Call a protected Gateway endpoint</legend>
+    <label>Local API path <input id="api-path" type="text"
+      value="/api/v1/disruption/bunching-alerts?page=0&amp;size=5" autocomplete="off"></label>
+    <button id="call-api" type="button" disabled>Send GET request</button>
+    <pre id="result" aria-live="polite">No request sent.</pre>
+  </fieldset>
+
+  <script src="/auth.js"></script>
+  <script>
+    const result = document.getElementById('result');
+    const call = document.getElementById('call-api');
+    window.addEventListener('occ-auth-change', event => {
+      call.disabled = !event.detail.authenticated;
+      result.textContent = 'No request sent.';
+    });
+    call.addEventListener('click', async () => {
+      try {
+        const response = await occAuth.fetch(document.getElementById('api-path').value.trim());
+        const body = await response.text();
+        result.textContent = `HTTP ${response.status}\n${body.slice(0, 12000)}`;
+      } catch (error) { result.textContent = error.message; }
+    });
+    occAuth.mount(document.getElementById('authentication'));
+  </script>
+</body>
+</html>
