@@ -56,13 +56,23 @@ fixtures and must not rely on paid provider calls.
 
 ## Load, security and recovery checks
 
-CI runs [`authorized_poll_smoke.js`](../tests/system/authorized_poll_smoke.js)
+CI runs [`important_api_performance.js`](../tests/system/important_api_performance.js)
 with the pinned Grafana k6 `2.3.0` image and a short synthetic ADMIN-token profile.
-The test repeatedly reads `/api/v1/demo-mode` through the TLS edge and checks
-response status, shape, p95 latency, and request errors. Its safe profile settings
-are listed at the bottom of `.env.example`; never put a real Supabase token there.
-This smoke catches regressions in the authenticated read path. It is not a
-capacity or retention-soak result. Extended capacity qualification on a representative deployment host remains deferred for the MVP.
+It measures the authenticated demo-mode, arrivals, live alerts, active-run and
+run-status, route, stop, demo recommendation, direct Disruption alert, and
+direct Planning recommendation lookup endpoints through the TLS edge. CI also
+reports the response time for starting and closing a demo run, and how long the
+simulation and asynchronous recommendation take to become ready. For the k6 GET
+endpoints, p95 must stay below 2 seconds; status, response shape, and request
+errors are checked too. Comparing the composite reads with their direct
+service endpoints gives a rough view of service-hop overhead, but does not
+replace tracing or database profiling. The workflow uses fast synthetic
+providers, so its readiness time is not a measurement of live Gemini or
+DataMall latency. Safe profile settings are listed at the bottom of
+`.env.example`; never put a real Supabase token there. This is a small
+regression smoke, not a capacity or retention-soak result. Extended capacity
+qualification on a representative deployment host remains deferred for the
+MVP.
 
 The repository secret/misconfiguration job sets the CI-tool-only
 `TRIVY_OFFLINE_SCAN=true` to prevent unrelated remote Maven dependency lookups.
