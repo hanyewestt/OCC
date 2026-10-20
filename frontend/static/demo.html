@@ -194,11 +194,12 @@
           <th>Root-cause diagnosis</th>
           <th>Rationale and trade-offs</th>
           <th>Expected simulation impact</th>
+          <th>Controller decision</th>
         </tr>
       </thead>
       <tbody id="recommendation">
         <tr>
-          <td colspan="6">Waiting for a simulation recommendation.</td>
+          <td colspan="7">Waiting for a simulation recommendation.</td>
         </tr>
       </tbody>
     </table>
@@ -257,6 +258,7 @@
     let liveArrivalTimer = null;
     let liveAlertTimer = null;
     let runId = null;
+    let currentRecommendation = null;
     let demoTimer = null;
     let recommendationTimer = null;
     const stops = new Map();
@@ -319,7 +321,7 @@
     }
     function renderRecommendation(recommendation, message = 'Waiting for the recommendation…') {
       if (!recommendation) {
-        recommendationBody.innerHTML = `<tr><td colspan="6" class="muted">${escapeHtml(message)}</td></tr>`;
+        recommendationBody.innerHTML = `<tr><td colspan="7" class="muted">${escapeHtml(message)}</td></tr>`;
         return;
       }
       const impact = recommendation.expectedImpact;
@@ -327,6 +329,12 @@
       const confidenceText = Number.isFinite(confidence) ? confidence.toFixed(3) : 'Unavailable';
       const tradeOffs = recommendation.tradeOffs?.length ? recommendation.tradeOffs.join(' ') : 'No trade-offs recorded.';
       const limitations = recommendation.limitations?.length ? `<br><span class="muted">Limitations: ${escapeHtml(recommendation.limitations.join(' '))}</span>` : '';
+      const decision = recommendation.decision;
+      const decisionCell = decision
+        ? `<strong>${escapeHtml(decision)}</strong><br><span class="muted">Saved ${escapeHtml(time(recommendation.decidedAt))}</span>`
+        : recommendation.classification === 'SIMULATION' && recommendation.status === 'RECOMMENDED'
+          ? `<button type="button" data-decision="APPROVED">Approve</button><button type="button" data-decision="REJECTED">Reject</button><br><span class="muted">Records your review; does not dispatch a bus instruction.</span>`
+          : '<span class="muted">Review only</span>';
       recommendationBody.innerHTML = `<tr class="recommendation">
         <td><strong>${escapeHtml(recommendation.status)}</strong><br><span class="muted">${escapeHtml(recommendation.classification)}</span></td>
         <td><strong>${escapeHtml(recommendation.mitigationType)}</strong><br><span class="muted">${escapeHtml(recommendation.adjustmentSeconds)} seconds</span></td>
@@ -334,12 +342,49 @@
         <td>${escapeHtml(recommendation.likelyCause)}<br><span class="muted">Diagnosis confidence ${escapeHtml(confidenceText)}</span></td>
         <td>${escapeHtml(recommendation.rationale)}<br><span class="muted">${escapeHtml(tradeOffs)}</span>${limitations}</td>
         <td><span class="headway">Headway ${escapeHtml(headway(impact.headwayBeforeSeconds))} → ${escapeHtml(headway(impact.headwayAfterSeconds))}</span><br><span class="muted">Queue ${escapeHtml(impact.queueBeforePassengers)} → ${escapeHtml(impact.queueAfterPassengers)} passengers<br>Passenger-minutes ${escapeHtml(impact.passengerMinutesBefore)} → ${escapeHtml(impact.passengerMinutesAfter)}</span></td>
+        <td>${decisionCell}</td>
       </tr>`;
+      recommendationBody.querySelectorAll('[data-decision]').forEach(button => {
+        button.addEventListener('click', () => decideRecommendation(button.dataset.decision));
+      });
+    }
+    async function decideRecommendation(action) {
+      if (!currentRecommendation?.recommendationId) return;
+      const buttons = recommendationBody.querySelectorAll('[data-decision]');
+      buttons.forEach(button => { button.disabled = true; });
+      try {
+        const decision = await responseJson(await occAuth.fetch(
+          `/api/v1/planning/recommendations/${encodeURIComponent(currentRecommendation.recommendationId)}/decision`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) }));
+        currentRecommendation = { ...currentRecommendation, decision: decision.action, decidedAt: decision.decidedAt };
+        renderRecommendation(currentRecommendation);
+      } catch (error) {
+        if (error.status === 409) {
+          try {
+            const saved = await responseJson(await occAuth.fetch(
+              `/api/v1/planning/recommendations/${encodeURIComponent(currentRecommendation.recommendationId)}/decision`));
+            if (saved) {
+              currentRecommendation = { ...currentRecommendation, decision: saved.action, decidedAt: saved.decidedAt };
+              renderRecommendation(currentRecommendation);
+              status.classList.remove('error');
+              status.textContent = `Another controller already recorded ${saved.action.toLowerCase()}.`;
+              return;
+            }
+          } catch (_) { /* Keep the original conflict message if the state refresh also fails. */ }
+        }
+        status.classList.add('error');
+        status.textContent = `Could not save controller decision: ${error.message}`;
+        buttons.forEach(button => { button.disabled = false; });
+      }
     }
     async function responseJson(response) {
       if (response.status === 204) return null;
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.detail || data.error || `Request failed (${response.status})`);
+      if (!response.ok) {
+        const error = new Error(data.detail || data.error || `Request failed (${response.status})`);
+        error.status = response.status;
+        throw error;
+      }
       return data;
     }
     async function stopFor(stopCode) {
@@ -449,7 +494,10 @@
       try {
         const recommendation = await responseJson(await occAuth.fetch(`/api/v1/demo-runs/${encodeURIComponent(runId)}/recommendation`));
         if (recommendation) {
-          renderRecommendation(recommendation);
+          const decisionState = await responseJson(await occAuth.fetch(
+            `/api/v1/planning/recommendations/${encodeURIComponent(recommendation.recommendationId)}/decision`));
+          currentRecommendation = { ...recommendation, decision: decisionState?.action, decidedAt: decisionState?.decidedAt };
+          renderRecommendation(currentRecommendation);
           stopRecommendationPolling();
         } else {
           renderRecommendation(null);
@@ -461,12 +509,14 @@
       }
     }
     function acceptRun(run) {
+      const isNewRun = runId !== run.id;
+      if (isNewRun) currentRecommendation = null;
       runId = run.id;
       showSimulationResults();
       hideLiveAlertsDuringDemo();
       show.disabled = true;
       renderAlerts(run.alerts || []);
-      renderRecommendation(null, (run.alerts || []).length
+      renderRecommendation(currentRecommendation, (run.alerts || []).length
         ? 'Confirmed bunching detected. Waiting for root-cause diagnosis and recommendation…'
         : 'Waiting for confirmed bunching…');
       status.classList.remove('error');
@@ -563,6 +613,7 @@
       stopDemoPolling(); stopRecommendationPolling();
       clearTimeout(liveArrivalTimer); clearTimeout(liveAlertTimer);
       runId = null;
+      currentRecommendation = null;
       stops.clear();
       clearSimulationResults();
       show.disabled = true; close.hidden = true;
