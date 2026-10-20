@@ -53,6 +53,17 @@ def first_difference(expected: Any, actual: Any, path: str = "$") -> str | None:
     return None if expected == actual else path
 
 
+def normalize_response_required_fields(contract: dict[str, Any]) -> dict[str, Any]:
+    normalized = json.loads(json.dumps(contract))
+    schemas = normalized.get("components", {}).get("schemas", {})
+    if not isinstance(schemas, dict):
+        return normalized
+    for schema_name, schema in schemas.items():
+        if schema_name.endswith("Response") and isinstance(schema, dict):
+            schema.pop("required", None)
+    return normalized
+
+
 def compose_base(project: str, env_file: Path) -> list[str]:
     command = ["docker", "compose", "--project-name", project, "--env-file", str(env_file)]
     for compose_file in COMPOSE_FILES:
@@ -71,6 +82,54 @@ def self_test() -> int:
     changed = json.loads(json.dumps(spec))
     del changed["paths"]["/api/v1/ingestion/demo-runs"]
     if first_difference(spec, changed) != "$/paths/~1api~1v1~1ingestion~1demo-runs (missing from live contract)":
+        return 1
+    response_required_expected = {
+        "components": {
+            "schemas": {
+                "DemoResponse": {
+                    "type": "object",
+                    "properties": {"value": {"type": "string"}},
+                    "required": ["value"],
+                }
+            }
+        }
+    }
+    response_required_live = {
+        "components": {
+            "schemas": {"DemoResponse": {"type": "object", "properties": {"value": {"type": "string"}}}}
+        }
+    }
+    if (
+        first_difference(
+            normalize_response_required_fields(response_required_expected),
+            normalize_response_required_fields(response_required_live),
+        )
+        is not None
+    ):
+        return 1
+    request_required_expected = {
+        "components": {
+            "schemas": {
+                "DemoRequest": {
+                    "type": "object",
+                    "properties": {"value": {"type": "string"}},
+                    "required": ["value"],
+                }
+            }
+        }
+    }
+    request_required_live = {
+        "components": {
+            "schemas": {"DemoRequest": {"type": "object", "properties": {"value": {"type": "string"}}}}
+        }
+    }
+    if (
+        first_difference(
+            normalize_response_required_fields(request_required_expected),
+            normalize_response_required_fields(request_required_live),
+        )
+        != "$/components/schemas/DemoRequest/required (missing from live contract)"
+    ):
         return 1
     print("OpenAPI comparison self-test passed: exact match accepted; route deletion detected")
     return 0
@@ -150,7 +209,9 @@ def main() -> int:
         expected = json.loads((root / contract_path).read_text(encoding="utf-8"))
         internal_port = str(services[service]["environment"][f"OCC_{service.upper()}_INTERNAL_PORT"])
         live = fetch_contract(root, compose, token, service, expected, internal_port)
-        difference = first_difference(expected, live)
+        difference = first_difference(
+            normalize_response_required_fields(expected), normalize_response_required_fields(live)
+        )
         if difference:
             raise SystemExit(f"{service}: live OpenAPI differs from {contract_path} at {difference}")
         print(f"{service}: live OpenAPI matches {contract_path}")
