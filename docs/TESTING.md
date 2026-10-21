@@ -22,20 +22,19 @@ Compose projects for disposable system tests and preserve normal development
 database volumes. On a memory-constrained engine, stop the development stack
 while running another complete application stack; restart it afterward.
 
-## Browser authentication helper
+## React authentication app
 
-This command works in PowerShell and Bash:
-
-```shell
-node --test tests/system/frontend_auth.test.mjs tests/system/frontend_demo.test.mjs
-```
-
-It checks token handling, session boundaries and demo pending/retry/failure states with controlled responses.
-It does not prove a live Supabase or Gemini connection.
+From `frontend/`, run `npm ci`, `npm run lint`, `npm run typecheck`,
+`npm run build`, `npx playwright install chromium`, then `npm test`.
+The browser journeys mock Supabase and Gateway; they prove frontend behavior
+and session lifecycle, not live provider or backend authorization. Gateway tests
+independently enforce the controller/captain role matrix. See
+[frontend README](../frontend/README.md) for Nginx-targeted browser runs and
+[authentication](AUTHENTICATION.md) for opt-in live checks.
 
 ## System verification
 
-CI compares Nginx responses byte-for-byte with the files under `frontend/static/`,
+CI compares Nginx responses byte-for-byte with the React build under `frontend/dist/`,
 checks role restrictions and hidden routes through HTTP/TLS, and proves static
 pages remain available with Gateway stopped. Public APIs route through Gateway;
 internal, management and API-documentation paths are blocked at Nginx.

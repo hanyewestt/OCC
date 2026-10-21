@@ -118,6 +118,21 @@ async function authPost(path, body, accessToken) {
   });
 }
 
+async function checkRolePages(accessToken, account) {
+  const headers = { authorization: `Bearer ${accessToken}` };
+  const response = await request(new URL('/api/v1/auth/session', gatewayUrl), { headers });
+  if (!response.ok) throw new Error('Gateway status mismatch.');
+  const identity = await response.json();
+  if (identity.role !== (account.role ?? 'UNASSIGNED')) throw new Error('Gateway status mismatch.');
+  for (const [page, permitted] of [['controller', 'CONTROLLER'], ['captain', 'DRIVER']]) {
+    const result = await request(new URL(`/api/v1/auth/access/${page}`, gatewayUrl), { headers });
+    await result.arrayBuffer();
+    if (result.status !== (account.role === permitted ? 200 : 403)) {
+      throw new Error('Gateway status mismatch.');
+    }
+  }
+}
+
 async function checkProtectedRead(accessToken, expectedStatus) {
   const response = await request(new URL(protectedPath, gatewayUrl), {
     headers: accessToken ? { authorization: `Bearer ${accessToken}` } : {},
@@ -169,6 +184,7 @@ for (const account of accountsToTest) {
     if (!supabaseOnly) {
       stage = 'Gateway authorization';
       await checkProtectedRead(accessToken, account.status);
+      await checkRolePages(accessToken, account);
     }
     console.log(supabaseOnly
       ? `PASS ${account.name} sign-in and Supabase token validation.`
@@ -190,6 +206,7 @@ for (const account of accountsToTest) {
     if (!supabaseOnly) {
       stage = 'refreshed Gateway authorization';
       await checkProtectedRead(accessToken, account.status);
+      await checkRolePages(accessToken, account);
     }
     console.log(supabaseOnly
       ? `PASS ${account.name} refreshed Supabase token validation.`

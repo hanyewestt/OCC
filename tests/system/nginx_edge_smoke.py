@@ -35,30 +35,46 @@ def main() -> int:
     parser.add_argument("--base-url", default="https://127.0.0.1:18443")
     parser.add_argument("--token-dir", type=Path)
     parser.add_argument("--static-only", action="store_true")
-    parser.add_argument("--local", action="store_true", help="Expect the local-only auth test page")
+    parser.add_argument("--local", action="store_true", help="Local HTTP target (same React routes as HTTPS)")
     args = parser.parse_args()
     base_url = args.base_url.rstrip("/")
 
     root = Path(__file__).resolve().parents[2]
-    for route, asset in (("/demo.html", "frontend/static/demo.html"), ("/auth.js", "frontend/static/auth.js")):
+    html = (root / "frontend/dist/index.html").read_bytes()
+    try:
+        urllib.request.urlopen(base_url + "/not-a-page", context=ssl._create_unverified_context(), timeout=10)
+        raise AssertionError("Unknown website route did not return 404")
+    except urllib.error.HTTPError as response:
+        if response.code != 404 or response.read() != (root / "frontend/dist/404.html").read_bytes():
+            raise AssertionError("Unknown website route does not serve the custom 404 artifact")
+    print("PASS custom website error page retains HTTP 404")
+    for route in ("/", "/login", "/controller", "/captain", "/401", "/403"):
         with urllib.request.urlopen(base_url + route, context=ssl._create_unverified_context(), timeout=10) as response:
-            if response.read() != (root / asset).read_bytes():
-                raise AssertionError(f"{route}: response differs from the Nginx static asset")
-        print(f"PASS direct Nginx asset {route}")
-    auth_status = 200 if args.local else 404
-    for route in ("/auth-test", "/auth-test/", "/auth-test/index.html", "/auth-test/callback"):
-        assert_status(base_url, "auth-test policy " + route, route, auth_status)
-    if args.local:
-        with urllib.request.urlopen(base_url + "/auth-test/", timeout=10) as response:
-            if response.read() != (root / "frontend/static/auth-test/index.html").read_bytes():
-                raise AssertionError("Local auth-test response differs from the Nginx asset")
+            if response.read() != html or "text/html" not in response.headers.get("Content-Type", ""):
+                raise AssertionError(f"{route}: response differs from the React entry HTML")
+            if response.headers.get("X-Content-Type-Options") != "nosniff":
+                raise AssertionError("Security headers missing")
+        print(f"PASS React entry route {route}")
+    for asset in (root / "frontend/dist/assets").iterdir():
+        if not asset.is_file():
+            continue
+        with urllib.request.urlopen(base_url + "/assets/" + asset.name, context=ssl._create_unverified_context(), timeout=10) as response:
+            if response.read() != asset.read_bytes():
+                raise AssertionError("Built asset mismatch")
+            mime = response.headers.get("Content-Type", "")
+            if asset.suffix == ".js" and "javascript" not in mime:
+                raise AssertionError("JavaScript MIME mismatch")
+            if asset.suffix == ".css" and "text/css" not in mime:
+                raise AssertionError("CSS MIME mismatch")
+    for route in ("/demo.html", "/auth.js", "/auth-test", "/auth-test/", "/auth-test/index.html", "/auth-test/callback", "/assets/missing.js", "/admin"):
+        assert_status(base_url, "retired or unknown path " + route, route, 404)
     if args.static_only:
         return 0
 
     cases = [
         ("edge health", "/_occ_edge_health", 204, None, "GET"),
         ("public frontend configuration", "/frontend-config", 200, None, "GET"),
-        ("existing demo page", "/demo.html", 200, None, "GET"),
+        ("React login page", "/login", 200, None, "GET"),
         ("protected API without token", "/api/v1/arrivals?page=0&size=1", 401, None, "GET"),
         ("forged peer token cannot authorize a public API", "/api/v1/arrivals", 401,
          {"X-OCC-Peer-Token": "forged"}, "GET"),
@@ -66,7 +82,7 @@ def main() -> int:
         ("management API hidden", "/actuator/health/readiness", 404, None, "GET"),
         ("OpenAPI hidden", "/v3/api-docs", 404, None, "GET"),
         ("Swagger UI hidden", "/swagger-ui/index.html", 404, None, "GET"),
-        ("temporary auth harness policy", "/auth-test/index.html", auth_status, None, "GET"),
+        ("temporary auth harness policy", "/auth-test/index.html", 404, None, "GET"),
         ("encoded traversal to internal API blocked", "/api/v1/%2e%2e/internal/v1/arrival-snapshots", 404, None, "GET"),
         ("double-slash internal path blocked", "/internal//v1/arrival-snapshots", 404, None, "GET"),
         ("internal API remains hidden for mutations", "/internal/v1/arrival-snapshots", 404, None, "POST"),
@@ -87,6 +103,13 @@ def main() -> int:
             assert_status(base_url, f"valid {role.upper()} JWT is forbidden from Ingestion API",
                           "/api/v1/arrivals?page=0&size=1", 403,
                           {"Authorization": f"Bearer {token}"})
+        for role in ("controller", "driver", "admin", "unassigned"):
+            token = (token_dir / f"{role}.jwt").read_text(encoding="utf-8").strip()
+            headers = {"Authorization": f"Bearer {token}"}
+            assert_status(base_url, f"{role} verified session", "/api/v1/auth/session", 200, headers)
+            for page, allowed in (("controller", "controller"), ("captain", "driver")):
+                assert_status(base_url, f"{role} page access {page}", f"/api/v1/auth/access/{page}",
+                              200 if role == allowed else 403, headers)
         invalid_token = (token_dir / "invalid-signature.jwt").read_text(encoding="utf-8").strip()
         assert_status(base_url, "tampered ES256 signature is rejected", "/api/v1/arrivals?page=0&size=1", 401,
                       {"Authorization": f"Bearer {invalid_token}"})

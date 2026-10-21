@@ -7,7 +7,7 @@ start PostgreSQL/PostGIS, one bootstrap job, three Flyway jobs, Ingestion,
 Disruption, Planning, Gateway and Nginx. The optional `tools` profile adds
 pgAdmin. See the root [README](../README.md) for build/start commands.
 
-Nginx serves `frontend/static/` and forwards `/api/v1/**` through Gateway while
+Nginx serves the prebuilt `frontend/dist/` and forwards `/api/v1/**` through Gateway while
 preserving bearer authentication. It blocks internal and management routes.
 Local application ports are loopback-only: Ingestion 6767, Disruption 6768,
 Planning 6769 and Gateway 6770. Corresponding container ports are 8001-8004;
@@ -45,8 +45,9 @@ supply its own protected environment/settings.
 
 Local HTTP uses `infra/nginx/local.conf.template`. Production HTTPS uses
 `infra/nginx/default.conf.template`. Both include the shared routes generated
-from `infra/nginx/routes.inc.template`. Production serves the demo and shared
-JavaScript, and blocks `/auth-test` and its descendants. See
+from `infra/nginx/routes.inc.template`. Build with `npm ci` and `npm run build`
+in `frontend/` before starting Compose; stage `dist/` alongside the deployment files. Production serves
+the React login/controller/captain routes and blocks retired demo/auth pages. See
 [authentication](AUTHENTICATION.md) for the unfinished production-login boundary.
 
 ## Configuration reference

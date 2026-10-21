@@ -111,8 +111,10 @@ again to rebuild changed images. To rebuild only Gateway, use Compose directly:
 docker compose --env-file .env up -d --build gateway
 ```
 
-Frontend files under `frontend/static/` are mounted read-only into Nginx.
-After editing HTML or JavaScript, reload the browser; no Java rebuild is needed.
+The React build under `frontend/dist/` is mounted read-only into Nginx.
+The start scripts run `npm ci` and `npm run build` in `frontend/` first. For
+direct Compose commands, build the frontend first; rebuild after source edits.
+See [frontend setup](frontend/README.md) for Vite development and browser tests.
 After changing an Nginx configuration template, restart Nginx to regenerate its
 configuration. After changing Compose environment settings, run the start action
 to recreate affected containers.
@@ -136,11 +138,11 @@ separately from the normal app and remove their containers afterward.
 
 ### Open the app
 
-Open [the demo](http://localhost/demo.html) and sign in with a configured
-Supabase ADMIN or CONTROLLER account. The current development login keeps its
-token in page memory, so reloading or switching pages requires signing in again.
-The temporary [auth-test page](http://localhost/auth-test/) is available locally.
-Set `OCC_NGINX_PORT` if local HTTP port `80` is unavailable.
+Open [the login page](http://localhost/login) using an existing Supabase account.
+CONTROLLER opens `/controller`; DRIVER opens `/captain`. Other roles receive
+an access message. Sessions persist across reloads using the Supabase SDK;
+Gateway verifies session and role before protected content appears. Set
+`OCC_NGINX_PORT` if port 80 is unavailable. Old demo/auth-test URLs return 404.
 
 #### Local URLs
 
@@ -148,8 +150,7 @@ These are the default local addresses; use the configured ports if changed in `.
 
 | Component | URL / endpoint | Purpose | Access |
 | --- | --- | --- | --- |
-| Demo | [http://localhost/demo.html](http://localhost/demo.html) | Run the simulation and inspect live observations and recommendations | Page is public; data and controls require ADMIN or CONTROLLER sign-in |
-| Authentication test | [http://localhost/auth-test/](http://localhost/auth-test/) | Test Supabase sign-in and protected API requests | Local development only; API permissions depend on the signed-in role |
+| React app | [http://localhost/login](http://localhost/login) | Sign-in and exclusive controller/captain pages | Verified CONTROLLER or DRIVER role for its corresponding page |
 | Nginx public API | `http://localhost/api/v1/...` | Main entry point for application API requests | ADMIN/CONTROLLER bearer token for existing operational APIs |
 | Ingestion | [http://localhost:6767](http://localhost:6767) | Direct arrival, reference-data and demo API access | Local loopback only; not published in production; operational APIs require ADMIN/CONTROLLER |
 | Disruption | [http://localhost:6768](http://localhost:6768) | Direct bunching and traffic-disruption API access | Local loopback only; not published in production; operational APIs require ADMIN/CONTROLLER |
@@ -172,7 +173,7 @@ ADMIN token:
 | `/actuator` and `/actuator/**` | `404` in local and production | Health, metrics and management access is separate from the public app |
 | `/v3/api-docs` and `/v3/api-docs/**` | `404` in local and production | OpenAPI documents are restricted to direct development service access |
 | `/swagger-ui.html` and `/swagger-ui/**` | `404` in local and production | Swagger is a developer interface, not a public app page |
-| `/auth-test` and `/auth-test/**` | `404` in production; available locally | Temporary authentication testing only |
+| `/auth-test` and `/auth-test/**` | `404` in local and production | Retired temporary authentication page |
 
 Direct backend, Gateway, PostgreSQL and pgAdmin ports are not published by the
 production configuration. Local development port access still follows each
