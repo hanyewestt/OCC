@@ -259,6 +259,7 @@
     let runId = null;
     let demoTimer = null;
     let recommendationTimer = null;
+    let planningEventId = null;
     const stops = new Map();
     const status = document.querySelector('#status');
     const show = document.querySelector('#show');
@@ -446,22 +447,53 @@
     async function refreshRecommendation() {
       if (!occAuth.authenticated) return;
       if (!runId) return;
+      const currentRunId = runId;
       try {
-        const recommendation = await responseJson(await occAuth.fetch(`/api/v1/demo-runs/${encodeURIComponent(runId)}/recommendation`));
+        const recommendation = await responseJson(await occAuth.fetch(`/api/v1/demo-runs/${encodeURIComponent(currentRunId)}/recommendation`));
+        if (runId !== currentRunId) return;
         if (recommendation) {
           renderRecommendation(recommendation);
           stopRecommendationPolling();
         } else {
-          renderRecommendation(null);
+          let message = 'Waiting for the recommendation…';
+          if (planningEventId) {
+            const response = await occAuth.fetch(`/api/v1/planning/requests/by-event/${encodeURIComponent(planningEventId)}`);
+            const request = response.status === 404 ? null : await responseJson(response);
+            if (runId !== currentRunId) return;
+            if (request?.status === 'FAILED_TERMINAL') {
+              renderRecommendation(null, 'Diagnosis failed: the AI provider or evidence processing could not complete this request. Close this simulation and start a new one to retry.');
+              status.classList.add('error');
+              status.textContent = 'Simulation diagnosis failed. No recommendation was generated.';
+              stopRecommendationPolling();
+              return;
+            }
+            if (request?.status === 'FAILED_RETRYABLE') {
+              message = 'Diagnosis temporarily failed. Retrying automatically…';
+            } else if (request?.status === 'COMPLETED' && request.diagnosisId) {
+              const diagnosis = await responseJson(await occAuth.fetch(`/api/v1/planning/diagnoses/${encodeURIComponent(request.diagnosisId)}`));
+              if (runId !== currentRunId) return;
+              if (diagnosis?.recommendationDeliveryStatus === 'FAILED_TERMINAL') {
+                renderRecommendation(null, 'The diagnosis completed, but recommendation generation failed. Close this simulation and start a new one to retry.');
+                status.classList.add('error');
+                status.textContent = 'Simulation recommendation failed.';
+                stopRecommendationPolling();
+                return;
+              }
+              message = 'Diagnosis complete. Waiting for the recommendation…';
+            }
+          }
+          renderRecommendation(null, message);
           scheduleRecommendationPoll();
         }
       } catch (error) {
+        if (runId !== currentRunId) return;
         renderRecommendation(null, `Unable to load recommendation: ${error.message}`);
         scheduleRecommendationPoll();
       }
     }
     function acceptRun(run) {
       runId = run.id;
+      planningEventId = (run.alerts || []).find(alert => alert.action === 'OPENED')?.eventId || null;
       showSimulationResults();
       hideLiveAlertsDuringDemo();
       show.disabled = true;

@@ -113,7 +113,7 @@ jobs:
           docker compose --env-file .env.example config -q
           docker compose --env-file .env.example -f compose.yaml -f infra/compose.production.yaml config -q
       - name: Verify browser authentication boundaries
-        run: node --test tests/system/frontend_auth.test.mjs
+        run: node --test tests/system/frontend_auth.test.mjs tests/system/frontend_demo.test.mjs
       - name: Validate generated contracts and source-to-target migration map
         shell: bash
         env:

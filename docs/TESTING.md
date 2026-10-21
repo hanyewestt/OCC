@@ -27,10 +27,10 @@ while running another complete application stack; restart it afterward.
 This command works in PowerShell and Bash:
 
 ```shell
-node --test tests/system/frontend_auth.test.mjs
+node --test tests/system/frontend_auth.test.mjs tests/system/frontend_demo.test.mjs
 ```
 
-It checks token handling and session boundaries with controlled responses.
+It checks token handling, session boundaries and demo pending/retry/failure states with controlled responses.
 It does not prove a live Supabase or Gemini connection.
 
 ## System verification
