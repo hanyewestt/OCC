@@ -40,7 +40,8 @@ def main() -> int:
     base_url = args.base_url.rstrip("/")
 
     root = Path(__file__).resolve().parents[2]
-    for route, asset in (("/demo.html", "frontend/static/demo.html"), ("/auth.js", "frontend/static/auth.js")):
+    for route, asset in (("/demo.html", "frontend/static/demo.html"), ("/auth.js", "frontend/static/auth.js"),
+                         ("/obu-pacing.html", "frontend/static/obu-pacing.html")):
         with urllib.request.urlopen(base_url + route, context=ssl._create_unverified_context(), timeout=10) as response:
             if response.read() != (root / asset).read_bytes():
                 raise AssertionError(f"{route}: response differs from the Nginx static asset")
@@ -59,6 +60,7 @@ def main() -> int:
         ("edge health", "/_occ_edge_health", 204, None, "GET"),
         ("public frontend configuration", "/frontend-config", 200, None, "GET"),
         ("existing demo page", "/demo.html", 200, None, "GET"),
+        ("OBU pacing page", "/obu-pacing.html", 200, None, "GET"),
         ("protected API without token", "/api/v1/arrivals?page=0&size=1", 401, None, "GET"),
         ("forged peer token cannot authorize a public API", "/api/v1/arrivals", 401,
          {"X-OCC-Peer-Token": "forged"}, "GET"),
