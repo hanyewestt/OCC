@@ -50,3 +50,10 @@ docs/*
 !docs/DEPLOYMENT.md
 !docs/MONITORING.md
 !docs/frontend-convention.md
+
+# React build and browser test artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+frontend/coverage/

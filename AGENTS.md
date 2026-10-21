@@ -6,6 +6,22 @@
 - Deliver final, durable fixes rather than temporary workarounds.
 - Follow [docs/CONVENTIONS.md](docs/CONVENTIONS.md) for all service work.
 
+## Frontend Standards
+
+- Follow [docs/frontend-convention.md](docs/frontend-convention.md) for all
+  frontend work. Keep detailed frontend rules in that document rather than
+  duplicating them here.
+- Use React, TypeScript, Vite, Tailwind CSS and shadcn/ui. Reuse existing
+  components and shadcn components before creating custom UI.
+- Keep the MVP simple: add folders, dependencies and abstractions only when
+  required by implemented behavior. Keep designs minimalist and accessible.
+- Build static assets with Vite and serve them through Nginx in production.
+  Verify routing and API proxy compatibility through Nginx.
+- Enforce permissions in backend APIs as well as frontend navigation. Never
+  expose secrets in browser code or build output.
+- Run lint, TypeScript checking, the production build and tests relevant to the
+  change before reporting frontend work complete.
+
 ## Configuration
 
 - Treat every value that can vary by deployment or may need to change without a

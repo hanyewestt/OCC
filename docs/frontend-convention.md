@@ -2,7 +2,7 @@
 
 Use React, TypeScript, Vite, Tailwind CSS and shadcn/ui. Start small; add folders
 and abstractions only when actual code needs them. These conventions describe
-the intended frontend; React hosting still needs implementation and verification.
+the frontend and its Nginx hosting.
 
 ## 1. Build and hosting
 
@@ -129,17 +129,16 @@ in the same change. Keep one environment inventory and expose only safe values.
 
 `VITE_*` values are public and baked in at build time; container environment
 changes do not update the bundle. Never bundle private keys or service secrets.
-Follow [AUTHENTICATION.md](AUTHENTICATION.md): retain memory-only access tokens
-until the session design is explicitly changed, and clear protected data on
-sign-out/session change. Replacing the temporary pages does not itself complete
-production login, refresh or logout.
+Follow [AUTHENTICATION.md](AUTHENTICATION.md): use Supabase SDK browser-session
+persistence and token refresh, with Gateway verification before protected pages
+render. Clear verified content on session changes and use local-scope sign-out.
+Do not add a second token store or silently switch to cookie sessions.
 [Vite environment behavior](https://vite.dev/guide/env-and-mode).
 
 ## 6. Nginx requirements
 
-The current setup serves temporary files from `frontend/static/` through an
-explicit allowlist. It does not yet serve React. Update Compose and
-`infra/nginx/routes.inc.template` together when implementing the app:
+Compose serves the React build from `frontend/dist/` through an explicit
+Nginx route allowlist. Keep Compose and `infra/nginx/routes.inc.template` aligned:
 
 1. Serve the complete `dist/` at `/usr/share/nginx/html` using a read-only mount
    or an image containing the build. Preserve the unprivileged/read-only setup.

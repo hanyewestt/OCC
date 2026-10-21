@@ -112,8 +112,21 @@ jobs:
         run: |
           docker compose --env-file .env.example config -q
           docker compose --env-file .env.example -f compose.yaml -f infra/compose.production.yaml config -q
-      - name: Verify browser authentication boundaries
-        run: node --test tests/system/frontend_auth.test.mjs tests/system/frontend_demo.test.mjs
+      - name: Set up Node 22
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Verify the React auth app
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run lint
+          npm run typecheck
+          npm run build
+          npx playwright install --with-deps chromium
+          npm test
       - name: Validate generated contracts and source-to-target migration map
         shell: bash
         env:
@@ -169,15 +182,12 @@ jobs:
               if previous is None or previous.get("operationId") != row["sourceOperationId"]:
                   raise SystemExit(f"Source operation does not match the baseline: {row['sourceOperationId']}")
               classification = row["classification"]
-              if classification == "retired-self-http":
+              if classification in ("retired-self-http", "retired-static-page"):
                   if row.get("targetMethod") is not None or row.get("targetPath") is not None:
                       raise SystemExit("Retired internal self-HTTP operation unexpectedly has a target route.")
                   continue
               if row["targetService"] == "edge":
-                  asset = pathlib.Path(row["targetAsset"])
-                  if not asset.is_file() or asset != pathlib.Path("frontend/static/demo.html"):
-                      raise SystemExit("Preserved static demo asset is missing.")
-                  continue
+                  raise SystemExit("Edge-only legacy pages must have an explicit retirement classification.")
               current = target_spec(row["targetContract"])
               matches = [candidate for path_item in current.get("paths", {}).values()
                          for method, candidate in path_item.items()
@@ -234,12 +244,12 @@ jobs:
           else:
               baseline = json.loads(result.stdout)
               for row in manifest["operations"]:
-                  if (row["targetService"] == "edge" and row["classification"] == "static-route-preserved"
+                  if (row["targetService"] == "edge" and row["classification"] in ("static-route-preserved", "retired-static-page")
                           and spec_path == f"services/{row['sourceService']}/openapi/{row['sourceService']}.json"):
                       path, method = row["sourcePath"], row["sourceMethod"].lower()
                       current = json.loads(pathlib.Path(spec_path).read_text())
                       if method not in current.get("paths", {}).get(path, {}):
-                          if not pathlib.Path(row["targetAsset"]).is_file():
+                          if row["classification"] != "retired-static-page" and not pathlib.Path(row["targetAsset"]).is_file():
                               raise SystemExit("Static route move has no frontend asset")
                           baseline.get("paths", {}).get(path, {}).pop(method, None)
                           if not baseline.get("paths", {}).get(path, {}):
@@ -259,6 +269,17 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Set up Node 22
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build React static assets
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
       - name: Start isolated application stack
         run: >-
           docker compose -p occ-edge-ci --env-file .env.example
@@ -343,7 +364,7 @@ jobs:
             --env OCC_NGINX_PROXY_READ_TIMEOUT=30s \
             --env OCC_NGINX_PROXY_SEND_TIMEOUT=30s \
             --mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/routes.inc.template,target=/etc/nginx/templates/routes.inc.template,readonly" \
-            --mount "type=bind,source=$GITHUB_WORKSPACE/frontend/static,target=/usr/share/nginx/html,readonly" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/frontend/dist,target=/usr/share/nginx/html,readonly" \
             --mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/default.conf.template,target=/etc/nginx/templates/default.conf.template,readonly" \
             --mount "type=bind,source=$RUNNER_TEMP/occ-edge-nginx.conf,target=/etc/nginx/nginx.conf,readonly" \
             --mount "type=bind,source=$RUNNER_TEMP/occ-edge-test.crt,target=/run/secrets/occ_tls_certificate,readonly" \
@@ -423,6 +444,13 @@ jobs:
         run: >-
           python3 tests/system/nginx_edge_smoke.py --base-url https://127.0.0.1:18443
           --token-dir "$RUNNER_TEMP/occ-edge-jwks"
+      - name: Verify React auth journeys through HTTPS Nginx
+        working-directory: frontend
+        env:
+          OCC_FRONTEND_TEST_PUBLIC_URL: https://127.0.0.1:18443
+        run: |
+          npx playwright install --with-deps chromium
+          npm test
       - name: Verify local HTTP frontend and authentication boundaries
         run: >-
           python3 tests/system/nginx_edge_smoke.py --base-url http://127.0.0.1:18480

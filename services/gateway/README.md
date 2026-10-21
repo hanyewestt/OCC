@@ -16,8 +16,8 @@ In Compose, route destinations use `OCC_INGESTION_INTERNAL_URL`,
 `OCC_DISRUPTION_INTERNAL_URL`, and `OCC_PLANNING_INTERNAL_URL`. The `local`
 profile imports the root `.env` and uses each service's host-facing `*_PUBLIC_URL`
 for a host-native run. The Gateway retains a catch-all Ingestion API route after
-the named Disruption, Planning, and Ingestion namespaces so the existing demo
-page can continue calling `/api/v1/...` paths. Nginx serves `/demo.html` directly; Gateway has no HTML routes or static resources.
+the named Disruption, Planning, and Ingestion namespaces for existing API consumers. Nginx serves the React build; Gateway has no HTML
+routes or static resources.
 
 The local Compose override publishes application ports on loopback for testing.
 The production Compose profile publishes only Nginx; Nginx and Gateway share the
@@ -26,23 +26,20 @@ uses a private network. Use the explicit production files in
 [`docs/LOCAL-DEVELOPMENT.md`](../../docs/LOCAL-DEVELOPMENT.md) so local ports are
 not merged into deployment.
 
-The first API authorization rule allows `ADMIN` and `CONTROLLER` roles. `DRIVER`
-and `UNASSIGNED` receive `403`; missing or invalid tokens receive `401`. Health
-probes remain available at `/actuator/health`. Peer `/internal/v1/**` calls are
-not routed through the public Gateway.
+`GET /api/v1/auth/session` accepts authenticated tokens and returns the verified
+subject and normalized OCC role. `GET /api/v1/auth/access/controller` requires
+CONTROLLER; `/api/v1/auth/access/captain` requires DRIVER. ADMIN has no page
+override. Unsupported page names return 404; role denial returns 403; invalid
+or missing tokens return 401. Gateway owns these endpoints; its Ingestion
+catch-all excludes the auth namespace. Other operational APIs remain limited
+to ADMIN/CONTROLLER. Health and internal-route rules are unchanged.
 
-Nginx serves the temporary password-grant page at `http://localhost/auth-test/`
-and the demo at `http://localhost/demo.html`. Both use the public
-`GET /frontend-config` endpoint, which returns only `SUPABASE_PROJECT_URL` and
-`SUPABASE_SB_PUBLISHABLE`. The key must be an `sb_publishable_...` public key;
-blank keys leave browser login unavailable, and private/legacy keys fail startup.
-The settings bind through `FrontendProperties`. API authentication still uses
-the separately configured issuer, JWKS, audience and allowed algorithms.
-The former Java page-hosting setting `OCC_GATEWAY_AUTH_TEST_ENABLED` is removed;
-Nginx's separate local/TLS configurations control auth-test availability.
-Production always blocks the temporary page. Access tokens are held in page
-memory only; reloads and page changes require sign-in again. Expiry or an API
-401 clears the local session. A local clear does not revoke the Supabase session.
+Nginx serves the React build. `GET /frontend-config` exposes only the public
+Supabase project URL and publishable key, bound through `FrontendProperties`.
+The SDK persists browser sessions and refreshes tokens; Gateway verifies them
+before the UI renders role content. Sign-out uses local scope and propagates
+across tabs. See [authentication](../../docs/AUTHENTICATION.md) and
+[frontend setup](../../frontend/README.md). Temporary demo/auth pages are retired.
 
 For an opt-in live check, set the optional test values listed in the root
 `.env.example` in the ignored `.env`, then run from the repository root:
@@ -70,3 +67,11 @@ the run:
 ```powershell
 node --env-file=.env tests/system/supabase_live_auth_smoke.mjs --supabase-only ADMIN
 ```
+
+To regenerate the Gateway OpenAPI snapshot from the running test application:
+
+```powershell
+.\mvnw.cmd -pl services/gateway -am test '-Docc.exportOpenapi=true'
+```
+
+This export uses synthetic test configuration and the real controller mappings.
