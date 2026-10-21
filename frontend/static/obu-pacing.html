@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en" data-theme="night">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>OCC Bus Captain Pacing</title>
+  <!--
+    WQAP-67: high-visibility On Board Unit (OBU) pacing display.
+
+    The page currently renders built-in SAMPLE DATA only and makes no network
+    requests. WQAP-68 is expected to supply one snapshot of this shape every
+    10 seconds, which can be passed straight to window.occPacing.renderPacing:
+
+      { "vehicleReference": "DEMO-190-B", "serviceId": "190", "directionId": 1,
+        "targetHeadwaySeconds": 480,
+        "ahead":  { "headwaySeconds": 95 },
+        "behind": { "headwaySeconds": 840 } }
+
+    "ahead" or "behind" may be null when there is no bus or no data on that side.
+    Gap states follow project-v2.md section 6: a gap at or below 50% of the
+    target headway is bunching (TOO CLOSE); at or above 150% is a service gap
+    (TOO FAR).
+  -->
+  <style>
+    :root {
+      --bg: #05080c;
+      --panel: #101720;
+      --line: #2b3746;
+      --text: #f5f8fc;
+      --muted: #a9b5c4;
+      --you: #4da3ff;
+      --close: #ff5d55;
+      --ok: #3ddc84;
+      --far: #ffb627;
+      --unknown: #8e9aaa;
+    }
+
+    :root[data-theme="day"] {
+      --bg: #ffffff;
+      --panel: #eef2f7;
+      --line: #aab5c3;
+      --text: #05080c;
+      --muted: #374252;
+      --you: #0a56c9;
+      --close: #b8140b;
+      --ok: #08703a;
+      --far: #8f5200;
+      --unknown: #4d5867;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+    }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      padding: 1rem 1.25rem;
+    }
+
+    header,
+    footer {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: .75rem 1.25rem;
+    }
+
+    .service {
+      margin: 0;
+      font-size: clamp(1.5rem, 3vw, 2.3rem);
+      font-weight: 800;
+    }
+
+    .vehicle,
+    .target {
+      color: var(--muted);
+      font-size: 1.15rem;
+      font-weight: 700;
+    }
+
+    .target strong {
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .badge {
+      border: 3px solid var(--far);
+      color: var(--far);
+      border-radius: .4rem;
+      padding: .15rem .6rem;
+      font-weight: 900;
+      letter-spacing: .08em;
+    }
+
+    .spacer {
+      flex: 1;
+    }
+
+    button {
+      min-height: 3rem;
+      padding: .5rem 1rem;
+      border: 2px solid var(--line);
+      border-radius: .6rem;
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+      font-size: 1.05rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:focus-visible {
+      outline: 4px solid var(--you);
+      outline-offset: 2px;
+    }
+
+    button[aria-pressed="true"] {
+      border-color: var(--you);
+      box-shadow: inset 0 0 0 2px var(--you);
+    }
+
+    [data-state="close"] {
+      --state: var(--close);
+    }
+
+    [data-state="ok"] {
+      --state: var(--ok);
+    }
+
+    [data-state="far"] {
+      --state: var(--far);
+    }
+
+    [data-state="unknown"] {
+      --state: var(--unknown);
+    }
+
+    .road {
+      background: var(--panel);
+      border: 2px solid var(--line);
+      border-radius: 1rem;
+      padding: 1rem 1.25rem;
+    }
+
+    .road-caption {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: .6rem;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .road-track {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+    }
+
+    .bus {
+      flex: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: .25rem;
+      font-weight: 800;
+    }
+
+    .bus-icon {
+      display: grid;
+      place-items: center;
+      width: 4.5rem;
+      height: 2.6rem;
+      border: 3px solid var(--muted);
+      border-radius: .5rem;
+      font-size: .95rem;
+    }
+
+    .bus[data-present="false"] {
+      opacity: .35;
+    }
+
+    .bus[data-present="false"] .bus-icon {
+      border-style: dashed;
+    }
+
+    .bus.you .bus-icon {
+      border-color: var(--you);
+      background: var(--you);
+      color: #fff;
+    }
+
+    .gap {
+      flex: var(--flex, 1) 1 0;
+      min-width: 2rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: .3rem;
+      color: var(--state);
+      transition: flex-grow .6s ease;
+    }
+
+    .gap-line {
+      width: 100%;
+      height: .7rem;
+      border-radius: .35rem;
+      background: currentColor;
+    }
+
+    .gap[data-state="far"] .gap-line {
+      background: repeating-linear-gradient(90deg, currentColor 0 1.2rem, transparent 1.2rem 1.9rem);
+    }
+
+    .gap[data-state="unknown"] .gap-line {
+      background: repeating-linear-gradient(90deg, currentColor 0 .4rem, transparent .4rem 1rem);
+    }
+
+    .gap-tag {
+      font-size: 1.15rem;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .tiles {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .tile {
+      display: flex;
+      flex-direction: column;
+      gap: .6rem;
+      padding: 1.25rem;
+      border: 5px solid var(--state);
+      border-radius: 1rem;
+      background: var(--panel);
+    }
+
+    .tile[data-state="far"],
+    .tile[data-state="unknown"] {
+      border-style: dashed;
+    }
+
+    .tile-label {
+      margin: 0;
+      color: var(--muted);
+      font-size: 1.4rem;
+      font-weight: 800;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+
+    .tile-value {
+      font-size: clamp(4rem, 11vw, 9.5rem);
+      font-weight: 900;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .tile-state {
+      align-self: flex-start;
+      padding: .25rem .9rem;
+      border: 4px solid var(--state);
+      border-radius: .6rem;
+      color: var(--state);
+      font-size: clamp(1.6rem, 3.5vw, 2.6rem);
+      font-weight: 900;
+    }
+
+    .tile-delta {
+      font-size: 1.35rem;
+      font-weight: 700;
+    }
+
+    footer {
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+
+    @media (max-width: 760px) {
+      body {
+        padding: 1rem;
+      }
+
+      .tiles {
+        grid-template-columns: 1fr;
+      }
+
+      #tile-ahead {
+        order: -1;
+      }
+
+      .gap-tag,
+      .road-caption .travel-words {
+        display: none;
+      }
+
+      .bus-icon {
+        width: 3.2rem;
+        height: 2.1rem;
+        font-size: .8rem;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .gap {
+        transition: none;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1 class="service" id="service">Service</h1>
+    <span class="vehicle" id="vehicle"></span>
+    <span class="badge">SAMPLE DATA</span>
+    <span class="spacer"></span>
+    <span class="target">Target gap <strong id="target">--:--</strong></span>
+    <button type="button" id="theme-toggle">Day mode</button>
+  </header>
+
+  <section class="road" aria-label="Position between buses">
+    <div class="road-caption" aria-hidden="true">
+      <span>Bus behind</span>
+      <span><span class="travel-words">Direction of travel </span>→</span>
+      <span>Bus ahead</span>
+    </div>
+    <div class="road-track">
+      <div class="bus" id="bus-behind"><span class="bus-icon">BUS</span></div>
+      <div class="gap" id="gap-behind"><span class="gap-tag" id="gap-behind-tag"></span><span class="gap-line"></span></div>
+      <div class="bus you"><span class="bus-icon">YOU</span></div>
+      <div class="gap" id="gap-ahead"><span class="gap-tag" id="gap-ahead-tag"></span><span class="gap-line"></span></div>
+      <div class="bus" id="bus-ahead"><span class="bus-icon">BUS</span></div>
+    </div>
+  </section>
+
+  <main class="tiles">
+    <section class="tile" id="tile-behind" aria-labelledby="behind-label">
+      <h2 class="tile-label" id="behind-label">Gap to bus behind</h2>
+      <div class="tile-value" id="behind-value">--:--</div>
+      <div class="tile-state" id="behind-state"></div>
+      <div class="tile-delta" id="behind-delta"></div>
+    </section>
+    <section class="tile" id="tile-ahead" aria-labelledby="ahead-label">
+      <h2 class="tile-label" id="ahead-label">Gap to bus ahead</h2>
+      <div class="tile-value" id="ahead-value">--:--</div>
+      <div class="tile-state" id="ahead-state"></div>
+      <div class="tile-delta" id="ahead-delta"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Sample scenario:</span>
+    <button type="button" data-scenario="on-target">On target</button>
+    <button type="button" data-scenario="bunched">Bunched behind bus ahead</button>
+    <button type="button" data-scenario="gap-ahead">Big gap ahead</button>
+    <button type="button" data-scenario="no-bus-behind">No bus behind</button>
+  </footer>
+
+  <div class="visually-hidden" id="announcer" aria-live="assertive"></div>
+
+  <script>
+    const TOO_CLOSE_RATIO = 0.5;
+    const TOO_FAR_RATIO = 1.5;
+    const ON_TARGET_TOLERANCE_SECONDS = 15;
+    const MIN_GAP_FLEX = 0.25;
+    const MAX_GAP_FLEX = 2;
+    const SAMPLE_REFRESH_MS = 10000;
+    const SAMPLE_DRIFT_SECONDS = [0, 6, -4, 9, -7, 3];
+    const SAMPLE_TARGET_HEADWAY_SECONDS = 480;
+    const THEME_STORAGE_KEY = 'occ-obu-theme';
+    const DEFAULT_SCENARIO = 'bunched';
+
+    const STATES = {
+      close: { icon: '▲', label: 'TOO CLOSE', spoken: 'too close' },
+      ok: { icon: '●', label: 'ON TARGET', spoken: 'on target' },
+      far: { icon: '▼', label: 'TOO FAR', spoken: 'too far' },
+      unknown: { icon: '?', label: 'NO DATA', spoken: 'no data' }
+    };
+
+    const SCENARIOS = {
+      'on-target': { ahead: 470, behind: 505 },
+      bunched: { ahead: 95, behind: 840 },
+      'gap-ahead': { ahead: 900, behind: 130 },
+      'no-bus-behind': { ahead: 455, behind: null }
+    };
+
+    const lastStates = {};
+    let scenario = DEFAULT_SCENARIO;
+    let tick = 0;
+
+    function isSeconds(value) {
+      return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+    }
+
+    function classify(headwaySeconds, targetSeconds) {
+      if (!isSeconds(headwaySeconds) || !isSeconds(targetSeconds) || targetSeconds === 0) return 'unknown';
+      if (headwaySeconds <= targetSeconds * TOO_CLOSE_RATIO) return 'close';
+      if (headwaySeconds >= targetSeconds * TOO_FAR_RATIO) return 'far';
+      return 'ok';
+    }
+
+    function clockText(seconds) {
+      if (!isSeconds(seconds)) return '--:--';
+      const whole = Math.round(seconds);
+      return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+    }
+
+    function deltaText(headwaySeconds, targetSeconds) {
+      if (!isSeconds(headwaySeconds) || !isSeconds(targetSeconds)) return 'No bus detected';
+      const difference = headwaySeconds - targetSeconds;
+      if (Math.abs(difference) <= ON_TARGET_TOLERANCE_SECONDS) return 'About on target';
+      return `${clockText(Math.abs(difference))} ${difference < 0 ? 'shorter' : 'longer'} than target`;
+    }
+
+    function gapFlex(headwaySeconds, targetSeconds) {
+      if (!isSeconds(headwaySeconds) || !isSeconds(targetSeconds) || targetSeconds === 0) return 1;
+      return Math.min(MAX_GAP_FLEX, Math.max(MIN_GAP_FLEX, headwaySeconds / targetSeconds));
+    }
+
+    function renderSide(side, gap, targetSeconds) {
+      const seconds = gap ? gap.headwaySeconds : null;
+      const state = classify(seconds, targetSeconds);
+      const info = STATES[state];
+      document.querySelector(`#tile-${side}`).dataset.state = state;
+      document.querySelector(`#${side}-value`).textContent = clockText(seconds);
+      document.querySelector(`#${side}-state`).textContent = `${info.icon} ${info.label}`;
+      document.querySelector(`#${side}-delta`).textContent = deltaText(seconds, targetSeconds);
+      const road = document.querySelector(`#gap-${side}`);
+      road.dataset.state = state;
+      road.style.setProperty('--flex', String(gapFlex(seconds, targetSeconds)));
+      document.querySelector(`#gap-${side}-tag`).textContent = clockText(seconds);
+      document.querySelector(`#bus-${side}`).dataset.present = String(isSeconds(seconds));
+      const changed = lastStates[side] !== undefined && lastStates[side] !== state;
+      lastStates[side] = state;
+      return changed ? `Bus ${side}: now ${info.spoken}.` : '';
+    }
+
+    function renderPacing(snapshot) {
+      const target = snapshot.targetHeadwaySeconds;
+      document.querySelector('#service').textContent =
+        `Service ${snapshot.serviceId} · Direction ${snapshot.directionId}`;
+      document.querySelector('#vehicle').textContent = snapshot.vehicleReference;
+      document.querySelector('#target').textContent = clockText(target);
+      const announcements = [
+        renderSide('ahead', snapshot.ahead, target),
+        renderSide('behind', snapshot.behind, target)
+      ].filter(Boolean);
+      if (announcements.length) document.querySelector('#announcer').textContent = announcements.join(' ');
+    }
+
+    function sampleSnapshot(name, step) {
+      const values = SCENARIOS[name];
+      const drift = SAMPLE_DRIFT_SECONDS[step % SAMPLE_DRIFT_SECONDS.length];
+      const gap = seconds => seconds === null ? null : { headwaySeconds: Math.max(0, seconds) };
+      return {
+        vehicleReference: 'DEMO-190-B', serviceId: '190', directionId: 1,
+        targetHeadwaySeconds: SAMPLE_TARGET_HEADWAY_SECONDS,
+        ahead: gap(values.ahead === null ? null : values.ahead + drift),
+        behind: gap(values.behind === null ? null : values.behind - drift)
+      };
+    }
+
+    function selectScenario(name) {
+      scenario = Object.hasOwn(SCENARIOS, name ?? '') ? name : DEFAULT_SCENARIO;
+      tick = 0;
+      for (const button of document.querySelectorAll('[data-scenario]')) {
+        button.setAttribute('aria-pressed', String(button.dataset.scenario === scenario));
+      }
+      renderPacing(sampleSnapshot(scenario, tick));
+    }
+
+    function storedTheme() {
+      try {
+        return localStorage.getItem(THEME_STORAGE_KEY) === 'day' ? 'day' : 'night';
+      } catch {
+        return 'night';
+      }
+    }
+
+    function applyTheme(theme) {
+      document.documentElement.dataset.theme = theme;
+      document.querySelector('#theme-toggle').textContent = theme === 'day' ? 'Night mode' : 'Day mode';
+    }
+
+    applyTheme(storedTheme());
+    document.querySelector('#theme-toggle').addEventListener('click', () => {
+      const next = document.documentElement.dataset.theme === 'day' ? 'night' : 'day';
+      applyTheme(next);
+      try {
+        localStorage.setItem(THEME_STORAGE_KEY, next);
+      } catch {
+        // The theme still applies for this visit when storage is unavailable.
+      }
+    });
+    for (const button of document.querySelectorAll('[data-scenario]')) {
+      button.addEventListener('click', () => selectScenario(button.dataset.scenario));
+    }
+    selectScenario(new URLSearchParams(location.search).get('scenario'));
+    setInterval(() => {
+      tick += 1;
+      renderPacing(sampleSnapshot(scenario, tick));
+    }, SAMPLE_REFRESH_MS);
+
+    window.occPacing = { classify, clockText, deltaText, renderPacing };
+  </script>
+</body>
+
+</html>

@@ -66,6 +66,10 @@
         try_files $uri =404;
     }
 
+    location = /obu-pacing.html {
+        try_files $uri =404;
+    }
+
     location = /frontend-config {
         proxy_pass $occ_gateway_upstream;
     }

@@ -149,6 +149,7 @@ These are the default local addresses; use the configured ports if changed in `.
 | Component | URL / endpoint | Purpose | Access |
 | --- | --- | --- | --- |
 | Demo | [http://localhost/demo.html](http://localhost/demo.html) | Run the simulation and inspect live observations and recommendations | Page is public; data and controls require ADMIN or CONTROLLER sign-in |
+| OBU pacing | [http://localhost/obu-pacing.html](http://localhost/obu-pacing.html) | High-visibility bus captain display of the gap to the bus ahead and behind | Public; shows built-in sample data only (add `?scenario=on-target`, `bunched`, `gap-ahead` or `no-bus-behind`) |
 | Authentication test | [http://localhost/auth-test/](http://localhost/auth-test/) | Test Supabase sign-in and protected API requests | Local development only; API permissions depend on the signed-in role |
 | Nginx public API | `http://localhost/api/v1/...` | Main entry point for application API requests | ADMIN/CONTROLLER bearer token for existing operational APIs |
 | Ingestion | [http://localhost:6767](http://localhost:6767) | Direct arrival, reference-data and demo API access | Local loopback only; not published in production; operational APIs require ADMIN/CONTROLLER |
