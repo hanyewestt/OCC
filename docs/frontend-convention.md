@@ -11,7 +11,7 @@ the frontend and its Nginx hosting.
 - Nginx serves `dist/` in production and proxies API requests to Gateway.
   Production does not need Vite or a Node.js application server.
 - Commit `package-lock.json` and use `npm ci` for reproducible installs. Document
-  the supported Node version and commands in `frontend/README.md`.
+  the supported Node version and commands in `docs/DEVELOPMENT.md`.
 - Keep TypeScript strict mode, React Strict Mode and React Hooks lint rules.
   Use the scaffold's tooling rather than adding extra build infrastructure.
 
@@ -22,7 +22,7 @@ the frontend and its Nginx hosting.
 
 ```text
 frontend/
-  README.md                 # installation, commands and configuration
+  README.md                 # frontend overview and link to the development guide
   package.json
   package-lock.json
   index.html                # loads main.tsx; Vite builds this HTML for Nginx
@@ -164,7 +164,7 @@ prove production compatibility.
 ## 7. Minimum verification
 
 - Run lint, TypeScript checking and the production build. Vite's build alone
-  does not type-check TypeScript. Document the actual commands in the README.
+  does not type-check TypeScript. Document the actual commands in `docs/DEVELOPMENT.md`.
 - Test important custom logic and risky behavior; do not test every shadcn
   primitive or add snapshots just to increase coverage.
 - Keep a few browser tests in `test/e2e/`: open a screen, filter results and

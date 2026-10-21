@@ -5,7 +5,7 @@
 The default `compose.yaml` and automatically loaded `compose.override.yaml`
 start PostgreSQL/PostGIS, one bootstrap job, three Flyway jobs, Ingestion,
 Disruption, Planning, Gateway and Nginx. The optional `tools` profile adds
-pgAdmin. See the root [README](../README.md) for build/start commands.
+pgAdmin. See the [development guide](DEVELOPMENT.md) for build/start commands.
 
 Nginx serves the prebuilt `frontend/dist/` and forwards `/api/v1/**` through Gateway while
 preserving bearer authentication. It blocks internal and management routes.

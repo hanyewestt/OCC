@@ -23,7 +23,7 @@ The local Compose override publishes application ports on loopback for testing.
 The production Compose profile publishes only Nginx; Nginx and Gateway share the
 edge network, Gateway and backends share the app network, and database access
 uses a private network. Use the explicit production files in
-[`docs/LOCAL-DEVELOPMENT.md`](../../docs/LOCAL-DEVELOPMENT.md) so local ports are
+[`docs/DEVELOPMENT.md`](../../docs/DEVELOPMENT.md) so local ports are
 not merged into deployment.
 
 `GET /api/v1/auth/session` accepts authenticated tokens and returns the verified
@@ -39,7 +39,7 @@ Supabase project URL and publishable key, bound through `FrontendProperties`.
 The SDK persists browser sessions and refreshes tokens; Gateway verifies them
 before the UI renders role content. Sign-out uses local scope and propagates
 across tabs. See [authentication](../../docs/AUTHENTICATION.md) and
-[frontend setup](../../frontend/README.md). Temporary demo/auth pages are retired.
+[development guide](../../docs/DEVELOPMENT.md). Temporary demo/auth pages are retired.
 
 For an opt-in live check, set the optional test values listed in the root
 `.env.example` in the ignored `.env`, then run from the repository root:

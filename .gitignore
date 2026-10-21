@@ -48,6 +48,7 @@ docs/*
 !docs/AUTHENTICATION.md
 !docs/TESTING.md
 !docs/DEPLOYMENT.md
+!docs/DEVELOPMENT.md
 !docs/MONITORING.md
 !docs/frontend-convention.md
 
