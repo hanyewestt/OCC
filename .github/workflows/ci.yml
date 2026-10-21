@@ -392,23 +392,33 @@ jobs:
         run: >-
           python3 tests/system/dispatch_recovery_smoke.py --base-url https://127.0.0.1:18443
           --token-dir "$RUNNER_TEMP/occ-edge-jwks" --compose-project occ-edge-ci
-      # Run the authenticated workflow first so the Gateway has loaded the synthetic JWKS before measuring steady-state polling.
-      - name: Run authenticated query k6 smoke
+      - name: Produce a deterministic recommendation and measure async readiness
+        run: >-
+          python3 tests/system/demo_workflow_smoke.py
+          --base-url https://127.0.0.1:18443
+          --token-dir "$RUNNER_TEMP/occ-edge-jwks"
+          --result-file "$RUNNER_TEMP/occ-api-performance-context.json"
+      # The workflow above warms the synthetic JWKS and provides valid recommendation IDs.
+      - name: Measure important authenticated API endpoints with k6
         shell: bash
         run: |
           set -euo pipefail
           admin_token="$(cat "$RUNNER_TEMP/occ-edge-jwks/admin.jwt")"
+          demo_run_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["demoRunId"])' "$RUNNER_TEMP/occ-api-performance-context.json")"
+          bunching_event_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["bunchingEventId"])' "$RUNNER_TEMP/occ-api-performance-context.json")"
           docker run --rm --network occ-edge-ci_edge \
-            --mount "type=bind,source=$GITHUB_WORKSPACE/tests/system/authorized_poll_smoke.js,target=/work/authorized_poll_smoke.js,readonly" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/tests/system/important_api_performance.js,target=/work/important_api_performance.js,readonly" \
             grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34 \
             run \
             -e OCC_PHASE1_K6_BASE_URL=https://occ-edge-ci-nginx:8443 \
             -e "OCC_PHASE1_K6_ADMIN_TOKEN=$admin_token" \
+            -e "OCC_PHASE1_K6_DEMO_RUN_ID=$demo_run_id" \
+            -e "OCC_PHASE1_K6_BUNCHING_EVENT_ID=$bunching_event_id" \
             -e OCC_PHASE1_K6_VIRTUAL_USERS=4 \
             -e OCC_PHASE1_K6_DURATION=15s \
-            -e OCC_PHASE1_K6_P95_TARGET_MS=1000 \
+            -e OCC_PHASE1_K6_P95_TARGET_MS=2000 \
             -e OCC_PHASE1_K6_ERROR_RATE_LIMIT=0.01 \
-            /work/authorized_poll_smoke.js
+            /work/important_api_performance.js
       - name: Verify TLS edge routing, access boundaries and rate limiting
         run: >-
           python3 tests/system/nginx_edge_smoke.py --base-url https://127.0.0.1:18443
