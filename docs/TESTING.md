@@ -27,10 +27,10 @@ while running another complete application stack; restart it afterward.
 This command works in PowerShell and Bash:
 
 ```shell
-node --test tests/system/frontend_auth.test.mjs
+node --test tests/system/frontend_auth.test.mjs tests/system/frontend_demo.test.mjs
 ```
 
-It checks token handling and session boundaries with controlled responses.
+It checks token handling, session boundaries and demo pending/retry/failure states with controlled responses.
 It does not prove a live Supabase or Gemini connection.
 
 ## System verification
@@ -81,6 +81,13 @@ sanitizer. Separate image vulnerability jobs use current vulnerability databases
 and retain their HIGH/CRITICAL failure gates and SBOM output.
 The image matrix covers all four applications and all three schema-migration
 images; the pinned Nginx image has its own scan and SBOM job.
+
+The edge and CI fixtures use the same digest-pinned official Nginx Alpine slim
+image. OCC does not use the optional modules bundled in the full Alpine image;
+the slim variant excludes their vulnerable `libexpat` and `libx11` dependencies.
+When refreshing the image, update every Nginx reference in `compose.yaml` and
+`.github/workflows/ci.yml` together, then run the HIGH/CRITICAL image scan and
+HTTP/TLS edge checks. Keep the severity gate and SBOM generation enabled.
 
 The isolated CI workflow also routes Disruption-to-Planning submissions through
 [`compose.dispatch-test.yaml`](../infra/compose.dispatch-test.yaml). Its

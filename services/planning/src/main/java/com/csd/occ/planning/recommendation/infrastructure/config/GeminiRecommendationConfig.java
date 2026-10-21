@@ -10,6 +10,7 @@ import java.time.Clock;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.google.genai.GoogleGenAiChatModel;
 import org.springframework.ai.google.genai.GoogleGenAiChatOptions;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -37,7 +38,7 @@ public class GeminiRecommendationConfig {
 
     @Bean
     GoogleGenAiChatModel recommendationGeminiChatModel(
-            Client recommendationGeminiClient,
+            @Qualifier("recommendationGeminiClient") Client recommendationGeminiClient,
             RecommendationGeminiProperties properties) {
         GoogleGenAiChatOptions options = GoogleGenAiChatOptions.builder()
                 .model(properties.model())
@@ -54,13 +55,14 @@ public class GeminiRecommendationConfig {
     }
 
     @Bean
-    ChatClient recommendationGeminiChatClient(GoogleGenAiChatModel recommendationGeminiChatModel) {
+    ChatClient recommendationGeminiChatClient(
+            @Qualifier("recommendationGeminiChatModel") GoogleGenAiChatModel recommendationGeminiChatModel) {
         return ChatClient.create(recommendationGeminiChatModel);
     }
 
     @Bean
     GeminiMitigationCandidateAdapter geminiMitigationCandidateAdapter(
-            ChatClient recommendationGeminiChatClient,
+            @Qualifier("recommendationGeminiChatClient") ChatClient recommendationGeminiChatClient,
             JsonMapper json,
             Clock clock,
             RecommendationGeminiProperties properties,

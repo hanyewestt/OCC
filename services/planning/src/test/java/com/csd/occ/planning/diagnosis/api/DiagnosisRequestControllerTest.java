@@ -6,6 +6,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -46,6 +48,43 @@ class DiagnosisRequestControllerTest {
     @Autowired MockMvc mvc;
     @MockitoBean DiagnosisRequestService requests;
     @MockitoBean DiagnosisQueryService query;
+
+    @Test
+    void exposesTerminalFailureByEventBeforeADiagnosisExists() throws Exception {
+        UUID eventId = UUID.randomUUID();
+        UUID requestId = UUID.randomUUID();
+        when(query.findRequestByEvent(eventId, EventType.BUS_BUNCHING)).thenReturn(
+                new DiagnosisRequestView(requestId, null, DiagnosisRequestStatus.FAILED_TERMINAL,
+                        "MODEL_PROVIDER_FAILURE", Instant.parse("2026-10-21T08:09:26Z"), null));
+
+        mvc.perform(get("/api/v1/planning/requests/by-event/{id}", eventId)
+                        .with(jwt().authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_CONTROLLER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.requestId").value(requestId.toString()))
+                .andExpect(jsonPath("$.status").value("FAILED_TERMINAL"))
+                .andExpect(jsonPath("$.failureCode").value("MODEL_PROVIDER_FAILURE"))
+                .andExpect(jsonPath("$.diagnosisId").isEmpty());
+    }
+
+    @Test
+    void eventLookupRequiresAnOperationalRole() throws Exception {
+        String path = "/api/v1/planning/requests/by-event/" + UUID.randomUUID();
+        mvc.perform(get(path)).andExpect(status().isUnauthorized());
+        mvc.perform(get(path).with(jwt().authorities(
+                        new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_DRIVER"))))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(query);
+    }
+
+    @Test
+    void eventNotYetAcceptedReturnsNotFound() throws Exception {
+        UUID eventId = UUID.randomUUID();
+        when(query.findRequestByEvent(eventId, EventType.BUS_BUNCHING))
+                .thenThrow(new DiagnosisQueryService.DiagnosisNotFoundException());
+        mvc.perform(get("/api/v1/planning/requests/by-event/{id}", eventId)
+                        .with(jwt().authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isNotFound());
+    }
 
     @Test
     void rejectsInternalCallWithoutThePeerToken() throws Exception {
