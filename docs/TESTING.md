@@ -72,6 +72,13 @@ and retain their HIGH/CRITICAL failure gates and SBOM output.
 The image matrix covers all four applications and all three schema-migration
 images; the pinned Nginx image has its own scan and SBOM job.
 
+The edge and CI fixtures use the same digest-pinned official Nginx Alpine slim
+image. OCC does not use the optional modules bundled in the full Alpine image;
+the slim variant excludes their vulnerable `libexpat` and `libx11` dependencies.
+When refreshing the image, update every Nginx reference in `compose.yaml` and
+`.github/workflows/ci.yml` together, then run the HIGH/CRITICAL image scan and
+HTTP/TLS edge checks. Keep the severity gate and SBOM generation enabled.
+
 The isolated CI workflow also routes Disruption-to-Planning submissions through
 [`compose.dispatch-test.yaml`](../infra/compose.dispatch-test.yaml). Its
 test-only proxy drops the first response after Planning returns HTTP 202, then
