@@ -49,3 +49,4 @@ docs/*
 !docs/TESTING.md
 !docs/DEPLOYMENT.md
 !docs/MONITORING.md
+!docs/frontend-convention.md
