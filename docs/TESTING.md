@@ -29,7 +29,7 @@ From `frontend/`, run `npm ci`, `npm run lint`, `npm run typecheck`,
 The browser journeys mock Supabase and Gateway; they prove frontend behavior
 and session lifecycle, not live provider or backend authorization. Gateway tests
 independently enforce the controller/captain role matrix. See
-[frontend README](../frontend/README.md) for Nginx-targeted browser runs and
+[development guide](DEVELOPMENT.md) for Nginx-targeted browser runs and
 [authentication](AUTHENTICATION.md) for opt-in live checks.
 
 ## System verification

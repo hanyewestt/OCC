@@ -47,7 +47,7 @@ Use root `.env.example` as the single inventory. Gateway publishes only
 `GET /frontend-config`. Private/service-role keys must never reach the browser.
 JWT validation uses the separate JWKS URL, allowed algorithms and audience.
 
-See [frontend setup](../frontend/README.md) for builds, Vite proxy settings and
+See [development guide](DEVELOPMENT.md) for builds, Vite proxy settings and
 browser tests. Nginx serves the built artifact and returns 404 for the retired
 `/demo.html`, `/auth.js` and `/auth-test` routes in local and production setups.
 
