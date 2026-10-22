@@ -23,4 +23,4 @@ spring:
             - id: ingestion-root-api
               uri: ${OCC_INGESTION_PUBLIC_URL}
               predicates:
-                - Path=/api/v1/**
+                - Path=/api/v1/{resource:(?!auth$).+}/**

@@ -1,47 +1,71 @@
 # Authentication
 
-The current demo and auth-test pages are temporary development tools. Nginx
-serves their files from `frontend/static/`; Java services host APIs only.
+The React app is served by Nginx; Gateway and Java services host APIs only.
+Open `/login` using the configured Nginx host/port. Sign in with an existing
+Supabase email/password account. Registration and password reset are outside
+this starter app.
 
-## Local sign-in
+## Role pages
 
-Open `http://localhost/demo.html` or `http://localhost/auth-test/`, adjusting the
-port if `OCC_NGINX_PORT` differs from `80`. Sign in with a Supabase test account.
-ADMIN and CONTROLLER can use the existing operational APIs. DRIVER and users
-without an authorized OCC role receive HTTP 403 for those APIs. Missing or
-invalid access tokens receive HTTP 401.
+- `CONTROLLER` can open `/controller` only.
+- `CAPTAIN` is displayed as Captain and can open `/captain` only.
+- `ADMIN`, `UNASSIGNED` and unsupported claims receive an access message and
+  sign-out; ADMIN does not override these page permissions.
 
-Both pages use `frontend/static/auth.js`. They send the entered credentials
-directly to Supabase Auth over HTTPS, clear the password field, and retain only
-the access token in page memory. They do not persist sessions or retain refresh
-tokens. Reloading, changing pages or token expiry requires another sign-in.
-Clear session removes the page's token; it does not revoke the Supabase session.
+React waits for Gateway verification before rendering role content. Static
+HTML/JavaScript are public assets; route guards are not backend access control.
+Gateway independently verifies token signature, issuer, audience, expiry and
+subject and normalizes the trusted top-level `occ_role` claim.
 
-The helper attaches `Authorization: Bearer <access-token>` to same-origin
-`/api/v1/**` requests. Typing an API URL directly into the address bar does not
-attach that header. Use the auth-test page or an HTTP client for authenticated
-API requests. Gateway and backend services enforce authorization independently
-of the displayed role or frontend controls.
+`GET /api/v1/auth/session` returns `{subject, role}` for an authenticated token;
+missing/unrecognized roles normalize to `UNASSIGNED`. The controller/captain
+page check `GET /api/v1/auth/access/{page}` returns the same identity only for
+the matching role. Wrong roles receive 403, unsupported page names 404, and
+missing/invalid/expired tokens 401. These Gateway-owned routes are excluded
+from its Ingestion catch-all proxy. Existing business APIs still permit only
+ADMIN/CONTROLLER; CAPTAIN receives no new business API permissions.
 
-## Public configuration
+## Persistent browser sessions
 
-Set `SUPABASE_PROJECT_URL`, `SUPABASE_JWKS_URL`, the permitted JWT algorithm,
-and `SUPABASE_SB_PUBLISHABLE` in the ignored root `.env`, using the root
-`.env.example` as the inventory. Gateway exposes only the project URL and public
-publishable key at `/frontend-config`. The key must start with `sb_publishable_`;
-service-role, secret and legacy keys are rejected for browser configuration.
-A blank publishable key leaves browser sign-in unavailable.
+The Supabase SDK handles email/password sign-in, browser-storage persistence
+and token refresh. Reloading/restoring the app requires Gateway verification
+before role content appears. A failed verification grants no access and offers
+retry/sign-out. Session changes clear prior verified content and pending results.
 
-Gateway validates token signature, issuer, audience, expiry and the trusted
-`occ_role` claim. See the [Gateway guide](../services/gateway/README.md) for its
-settings and the opt-in live Supabase verification command.
+Sign-out uses Supabase's `local` scope, clears app state and updates other open
+tabs. Other devices remain signed in. If provider sign-out fails, the app hides
+protected content and offers retry rather than claiming logout succeeded.
+Browser storage contains session credentials and must never be committed or
+logged. Sessions use browser storage rather than HttpOnly cookies or server-side
+session storage. No OAuth redirects,
+MFA, registration, password recovery or administrator dashboard are added.
 
-## Production boundary
+## Configuration
 
-Production Nginx blocks `/auth-test` and its descendants. It still serves the
-demo and its temporary sign-in form. This is not a completed production login
-or persistent multi-page session design. The separate authentication story
-must settle the provider redirect flow, server-side token/session handling,
-cookie and CSRF protection, refresh, logout and bookmark behavior before those
-capabilities are claimed. Do not treat hiding the auth-test page as completing
-that work.
+Use root `.env.example` as the single inventory. Gateway publishes only
+`SUPABASE_PROJECT_URL` and the public `SUPABASE_SB_PUBLISHABLE` key through
+`GET /frontend-config`. Private/service-role keys must never reach the browser.
+JWT validation uses the separate JWKS URL, allowed algorithms and audience.
+
+See [development guide](DEVELOPMENT.md) for builds, Vite proxy settings and
+browser tests. Nginx serves the built artifact and returns 404 for the retired
+`/demo.html`, `/auth.js` and `/auth-test` routes in local and production setups.
+
+## Verification
+
+Gateway tests cover the role matrix and JWT rejection. Browser tests mock
+Supabase/Gateway responses and cover UI navigation and session lifecycle.
+For an opt-in live check using configured test accounts:
+
+```shell
+node --env-file=.env tests/system/supabase_live_auth_smoke.mjs
+```
+
+This contacts real Supabase, validates JWTs, checks Gateway permissions,
+refreshes and signs out the test accounts locally. It does not run by default
+and does not print tokens/passwords. See the [Gateway README](../services/gateway/README.md)
+for its environment settings. Never use production operator accounts for automated tests.
+
+Live checks use only `OCC_SUPABASE_TEST_CAPTAIN_EMAIL` and
+`OCC_SUPABASE_TEST_CAPTAIN_PASSWORD`. Use the `CAPTAIN` account label when
+invoking the smoke script.

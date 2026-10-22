@@ -1,0 +1,74 @@
+import { useEffect, useState } from 'react'
+import { Navigate, useLocation, Link } from 'react-router-dom'
+import { ApiError, homeFor, identityRequest } from '@/lib/api'
+import { retryAuth, signOut, useAuth } from '@/lib/auth'
+import { Button } from '@/components/ui/button'
+import { LoginPage } from '@/pages/LoginPage'
+import { ControllerPage } from '@/pages/ControllerPage'
+import { CaptainPage } from '@/pages/CaptainPage'
+import { NotFoundPage } from '@/pages/NotFoundPage'
+import { ErrorPage } from '@/components/ErrorPage'
+
+export function App() {
+  const auth = useAuth()
+  const { pathname } = useLocation()
+  const [retry, setRetry] = useState(0)
+  const [access, setAccess] = useState({ key: '', status: '' })
+  const token = auth.session?.access_token
+  const key = `${token}:${pathname}:${retry}`
+  const home = auth.identity ? homeFor(auth.identity.role) : null
+
+  useEffect(() => {
+    if (auth.status !== 'ready' || !token || pathname !== home) return
+    const controller = new AbortController()
+    void identityRequest(`/api/v1/auth/access/${pathname.slice(1)}`, token, controller.signal)
+      .then(identity => {
+        if (controller.signal.aborted) return
+        setAccess({ key, status: identity.subject === auth.identity?.subject && identity.role === auth.identity?.role ? 'allowed' : 'error' })
+      }).catch(error => {
+        if (controller.signal.aborted) return
+        if (error instanceof ApiError && error.status === 401) void signOut(error.message)
+        else setAccess({ key, status: error instanceof ApiError && error.status === 403 ? 'denied' : 'error' })
+      })
+    return () => controller.abort()
+  }, [auth.status, auth.identity, token, pathname, home, key])
+
+  let content
+  if (!['/', '/login', '/controller', '/captain', '/401', '/403'].includes(pathname)) {
+    content = <NotFoundPage />
+  } else if (pathname === '/401') {
+    content = <ErrorPage code={401} title="Sign-in required" description="Your session is missing or has expired. Sign in to continue.">
+      <Button variant="outline" asChild><Link to="/login">Sign in</Link></Button>
+    </ErrorPage>
+  } else if (auth.status === 'loading') {
+    content = <p role="status" className="text-sm text-muted-foreground">Checking session…</p>
+  } else if (auth.status === 'error') {
+    content = <div className="max-w-sm space-y-4"><p role="alert">{auth.message}</p>
+      <div className="flex gap-2"><Button onClick={retryAuth}>Try again</Button><Button variant="outline" onClick={() => void signOut()}>Sign out</Button></div></div>
+  } else if (auth.status === 'unauthorized' && pathname !== '/login') {
+    content = <Navigate to="/401" replace />
+  } else if (pathname === '/403' || (auth.status === 'ready' && (
+    !home || (pathname !== '/' && pathname !== '/login' && pathname !== home) ||
+    (access.key === key && access.status === 'denied')
+  ))) {
+    content = <ErrorPage code={403} title="Access denied" description="This page isn’t available for your account.">
+      {home && <Button variant="outline" asChild><Link to={home}>Return to my page</Link></Button>}
+      {auth.session ? <Button variant="outline" onClick={() => void signOut()}>Sign out</Button> :
+        <Button variant="outline" asChild><Link to="/login">Sign in</Link></Button>}
+    </ErrorPage>
+  } else if (auth.status === 'signedOut' || auth.status === 'unauthorized') {
+    content = pathname === '/login' ? <LoginPage message={auth.message} /> : <Navigate to="/login" replace />
+  } else if (pathname === '/' || pathname === '/login') {
+    content = <Navigate to={home!} replace />
+  } else if (access.key !== key) {
+    content = <p role="status" className="text-sm text-muted-foreground">Verifying access…</p>
+  } else if (access.status === 'error') {
+    content = <div className="space-y-4"><p role="alert">Unable to verify access.</p>
+      <Button onClick={() => setRetry(value => value + 1)}>Try again</Button>
+      <Button className="ml-2" variant="outline" onClick={() => void signOut()}>Sign out</Button></div>
+  } else {
+    const email = auth.session?.user.email ?? auth.identity?.subject ?? ''
+    content = pathname === '/controller' ? <ControllerPage email={email} /> : <CaptainPage email={email} />
+  }
+  return <main className="flex min-h-svh items-center justify-center px-5 py-12">{content}</main>
+}

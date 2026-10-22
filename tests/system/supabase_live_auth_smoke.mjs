@@ -3,7 +3,7 @@ import { createPublicKey, verify } from 'node:crypto';
 const accountSettings = {
   ADMIN: ['OCC_SUPABASE_TEST_ADMIN_EMAIL', 'OCC_SUPABASE_TEST_ADMIN_PASSWORD'],
   CONTROLLER: ['OCC_SUPABASE_TEST_CONTROLLER_EMAIL', 'OCC_SUPABASE_TEST_CONTROLLER_PASSWORD'],
-  DRIVER: ['OCC_SUPABASE_TEST_DRIVER_EMAIL', 'OCC_SUPABASE_TEST_DRIVER_PASSWORD'],
+  CAPTAIN: ['OCC_SUPABASE_TEST_CAPTAIN_EMAIL', 'OCC_SUPABASE_TEST_CAPTAIN_PASSWORD'],
   UNASSIGNED: ['OCC_SUPABASE_TEST_UNASSIGNED_EMAIL', 'OCC_SUPABASE_TEST_UNASSIGNED_PASSWORD'],
 };
 const args = process.argv.slice(2);
@@ -54,7 +54,7 @@ const protectedPath = '/api/v1/disruption/bunching-alerts?page=0&size=5';
 const accounts = [
   { name: 'ADMIN', email: process.env.OCC_SUPABASE_TEST_ADMIN_EMAIL, password: process.env.OCC_SUPABASE_TEST_ADMIN_PASSWORD, role: 'ADMIN', status: 200 },
   { name: 'CONTROLLER', email: process.env.OCC_SUPABASE_TEST_CONTROLLER_EMAIL, password: process.env.OCC_SUPABASE_TEST_CONTROLLER_PASSWORD, role: 'CONTROLLER', status: 200 },
-  { name: 'DRIVER', email: process.env.OCC_SUPABASE_TEST_DRIVER_EMAIL, password: process.env.OCC_SUPABASE_TEST_DRIVER_PASSWORD, role: 'DRIVER', status: 403 },
+  { name: 'CAPTAIN', email: process.env.OCC_SUPABASE_TEST_CAPTAIN_EMAIL, password: process.env.OCC_SUPABASE_TEST_CAPTAIN_PASSWORD, role: 'CAPTAIN', status: 403 },
   { name: 'UNASSIGNED', email: process.env.OCC_SUPABASE_TEST_UNASSIGNED_EMAIL, password: process.env.OCC_SUPABASE_TEST_UNASSIGNED_PASSWORD, role: null, status: 403 },
 ];
 const accountsToTest = requestedAccounts.length
@@ -118,6 +118,21 @@ async function authPost(path, body, accessToken) {
   });
 }
 
+async function checkRolePages(accessToken, account) {
+  const headers = { authorization: `Bearer ${accessToken}` };
+  const response = await request(new URL('/api/v1/auth/session', gatewayUrl), { headers });
+  if (!response.ok) throw new Error('Gateway status mismatch.');
+  const identity = await response.json();
+  if (identity.role !== (account.role ?? 'UNASSIGNED')) throw new Error('Gateway status mismatch.');
+  for (const [page, permitted] of [['controller', 'CONTROLLER'], ['captain', 'CAPTAIN']]) {
+    const result = await request(new URL(`/api/v1/auth/access/${page}`, gatewayUrl), { headers });
+    await result.arrayBuffer();
+    if (result.status !== (account.role === permitted ? 200 : 403)) {
+      throw new Error('Gateway status mismatch.');
+    }
+  }
+}
+
 async function checkProtectedRead(accessToken, expectedStatus) {
   const response = await request(new URL(protectedPath, gatewayUrl), {
     headers: accessToken ? { authorization: `Bearer ${accessToken}` } : {},
@@ -169,6 +184,7 @@ for (const account of accountsToTest) {
     if (!supabaseOnly) {
       stage = 'Gateway authorization';
       await checkProtectedRead(accessToken, account.status);
+      await checkRolePages(accessToken, account);
     }
     console.log(supabaseOnly
       ? `PASS ${account.name} sign-in and Supabase token validation.`
@@ -190,6 +206,7 @@ for (const account of accountsToTest) {
     if (!supabaseOnly) {
       stage = 'refreshed Gateway authorization';
       await checkProtectedRead(accessToken, account.status);
+      await checkRolePages(accessToken, account);
     }
     console.log(supabaseOnly
       ? `PASS ${account.name} refreshed Supabase token validation.`
