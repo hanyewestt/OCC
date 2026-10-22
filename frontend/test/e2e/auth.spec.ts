@@ -1,5 +1,6 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test'
 import { classify, clockText, deltaText, initialScenario } from '../../src/lib/obu-pacing'
+import { bunchingArrivals } from '../../src/lib/bunching'
 
 // Synthetic Supabase and Gateway responses. These tests do not prove provider
 // behavior or backend authorization; Gateway tests and the opt-in live smoke do.
@@ -17,6 +18,10 @@ function session(role: string, lifetime = 3600) {
 }
 type Options = { invalidPassword?: boolean; sessionFailure?: boolean; accessFailure?: boolean; refreshFailure?: boolean }
 async function mockAuth(context: BrowserContext, role: string, options: Options = {}) {
+  await context.route('**/api/v1/bus-stops/*', route => route.fulfill({ json: { description: 'Teck Whye Secondary School', roadName: 'Teck Whye Ave' } }))
+  await context.route('**/api/v1/arrivals?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
+  await context.route('**/api/v1/live-bunching-alerts?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
+  await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ status: 204 }))
   await context.route('**/frontend-config', route => route.fulfill({ json: {
     projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
   } }))
@@ -50,8 +55,213 @@ async function login(page: Page) {
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 }
 
+// Dashboard journeys use synthetic API fixtures and never write real decisions.
+async function mockDashboard(context: BrowserContext, options: { arrivalFailure?: boolean; conflict?: boolean } = {}) {
+  await mockAuth(context, 'CONTROLLER')
+  const alert = { eventId: 'event-1', action: 'OPENED', classification: 'SIMULATION', serviceId: '190', stopCode: 'B01', stopName: 'Teck Whye Secondary School', directionId: 1, detectedAt: '2026-10-22T01:00:00Z', evidence: arrivalEvidence('SIMULATION', 1) }
+  let decision: { recommendationId: string; action: string; decidedAt: string } | null = null
+  await context.route('**/api/v1/arrivals?*', route => options.arrivalFailure ? route.fulfill({ status: 503 }) : route.fulfill({ json: {
+    items: [{ observationId: 'arrival-1', serviceId: '190', stopCode: 'B01', estimatedArrivalAt: '2026-10-22T01:05:00Z', fetchedAt: '2026-10-22T01:00:00Z', loadCategory: 'SEA' }], page: 0, totalItems: 1, totalPages: 1,
+  } }))
+  await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ json: { id: 'run-1', status: 'REPLAY_COMPLETE', alerts: [alert] } }))
+  await context.route('**/api/v1/demo-runs/run-1/recommendation', route => route.fulfill({ json: {
+    recommendationId: 'recommendation-1', classification: 'SIMULATION', status: 'RECOMMENDED', mitigationType: 'HOLD', targetBusReference: 'SAMPLE-BUS', controlStopCode: 'B01', adjustmentSeconds: 120,
+    rationale: 'Restore spacing between the buses.', likelyCause: 'Sample congestion', tradeOffs: ['Adds waiting time at the stop.'], limitations: ['Simulation only.'],
+  } }))
+  await context.route('**/api/v1/planning/recommendations/recommendation-1/decision', route => {
+    expect(route.request().headers().authorization).toMatch(/^Bearer /)
+    if (route.request().method() === 'POST') {
+      decision = { recommendationId: 'recommendation-1', action: options.conflict ? 'REJECTED' : route.request().postDataJSON().action, decidedAt: '2026-10-22T01:10:00Z' }
+      if (options.conflict) return route.fulfill({ status: 409 })
+    }
+    return decision ? route.fulfill({ json: decision }) : route.fulfill({ status: 204 })
+  })
+}
+
+function arrivalEvidence(classification: string, directionId: number) {
+  return JSON.stringify({ snapshot: { classification, arrivals: [3, 1, 2].map(visitOrder => ({
+    serviceId: '190', stopCode: 'B01', directionId, visitOrder, estimatedArrivalAt: `2026-10-22T01:0${visitOrder}:00Z`,
+  })) } })
+}
+
+test('bunching predictions preserve slots and reject unrelated or malformed evidence', () => {
+  const alert = { eventId: 'event-1', action: 'OPENED', classification: 'SIMULATION', serviceId: '190', stopCode: 'B01', directionId: 1, detectedAt: '2026-10-22T01:00:00Z', evidence: arrivalEvidence('SIMULATION', 1) }
+  expect(bunchingArrivals(alert)).toEqual(['2026-10-22T01:01:00Z', '2026-10-22T01:02:00Z', '2026-10-22T01:03:00Z'])
+  expect(bunchingArrivals({ ...alert, evidence: '{invalid' })).toEqual(['Unavailable', 'Unavailable', 'Unavailable'])
+  expect(bunchingArrivals({ ...alert, evidence: arrivalEvidence('OBSERVATION_ONLY', 1) })).toEqual(['Unavailable', 'Unavailable', 'Unavailable'])
+  expect(bunchingArrivals({ ...alert, evidence: arrivalEvidence('SIMULATION', 2) })).toEqual(['No prediction', 'No prediction', 'No prediction'])
+  const evidence = JSON.parse(alert.evidence)
+  evidence.snapshot.arrivals = [evidence.snapshot.arrivals[1], { ...evidence.snapshot.arrivals[2], serviceId: '999' }]
+  expect(bunchingArrivals({ ...alert, evidence: JSON.stringify(evidence) })).toEqual(['2026-10-22T01:01:00Z', 'No prediction', 'No prediction'])
+})
+
+for (const simulation of [true, false]) {
+  test(`bunching ${simulation ? 'simulation' : 'live'} table shows stop name, direction and three saved arrival times`, async ({ page, context }) => {
+    await mockDashboard(context)
+    if (!simulation) {
+      await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ status: 204 }))
+      await context.route('**/api/v1/live-bunching-alerts?*', route => route.fulfill({ json: {
+        items: [{ eventId: 'event-1', action: 'OPENED', classification: 'OBSERVATION_ONLY', serviceId: '190', stopCode: 'B01', directionId: 2, detectedAt: '2026-10-22T01:00:00Z', evidence: arrivalEvidence('OBSERVATION_ONLY', 2) }], page: 0, totalItems: 1, totalPages: 1,
+      } }))
+    }
+    await login(page)
+    await page.getByRole('link', { name: 'Disruptions', exact: true }).click()
+    await expect(page.getByText('Teck Whye Secondary School', { exact: true })).toBeVisible()
+    await expect(page.getByRole('cell', { name: `Direction ${simulation ? 1 : 2}`, exact: true })).toBeVisible()
+    for (const slot of [1, 2, 3]) {
+      await expect(page.getByRole('columnheader', { name: `Bus ${slot} arrival`, exact: true })).toBeVisible()
+      const formatted = await page.evaluate(value => new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }), `2026-10-22T01:0${slot}:00Z`)
+      await expect(page.getByRole('cell', { name: formatted, exact: true })).toBeVisible()
+    }
+    await page.screenshot({ path: `node_modules/.cache/bunching-${simulation ? 'simulation' : 'live'}.png`, fullPage: true })
+  })
+}
+
+test('controller switches the shared backend mode from the dashboard without leaving the page', async ({ page, context }) => {
+  await mockDashboard(context)
+  const simulation = { id: 'run-1', status: 'REPLAY_COMPLETE', alerts: [{ eventId: 'event-1', action: 'OPENED', classification: 'SIMULATION', serviceId: '190', stopCode: 'B01', detectedAt: '2026-10-22T01:00:00Z' }] }
+  let active = false
+  let starts = 0
+  let closes = 0
+  await context.route('**/api/v1/demo-runs/active', route => active ? route.fulfill({ json: simulation }) : route.fulfill({ status: 204 }))
+  await context.route('**/api/v1/demo-runs', route => {
+    expect(route.request().method()).toBe('POST')
+    expect(route.request().headers().authorization).toMatch(/^Bearer /)
+    active = true; starts++
+    return route.fulfill({ status: 201, json: simulation })
+  })
+  await context.route('**/api/v1/demo-runs/run-1/close', route => {
+    expect(route.request().method()).toBe('POST')
+    expect(route.request().headers().authorization).toMatch(/^Bearer /)
+    active = false; closes++
+    return route.fulfill({ json: { ...simulation, status: 'CLOSED' } })
+  })
+  await login(page)
+  await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Return to live', exact: true })).toBeEnabled()
+  await expect(page.getByRole('status').filter({ hasText: /^Simulation$/ })).toBeVisible()
+  await expect(page.getByRole('link', { name: /Simulation detections/ })).toContainText('1')
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Return to live', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Start simulation', exact: true })).toBeEnabled()
+  await expect(page.getByRole('status').filter({ hasText: /^Live$/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0)
+  await expect(page).toHaveURL(/\/controller\/planning$/)
+  expect(starts).toBe(1); expect(closes).toBe(1)
+})
+
+test('failed mode changes keep the verified mode and show a useful error', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  await context.route('**/api/v1/demo-runs', route => route.fulfill({ status: 503 }))
+  await login(page)
+  await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Unable to switch modes')
+  await expect(page.getByRole('status').filter({ hasText: /^Live$/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Start simulation', exact: true })).toBeEnabled()
+  await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ status: 503 }))
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: /^Mode unavailable$/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Start simulation', exact: true })).toBeDisabled()
+})
+
+test('controller sidebar, summary links and deep links work through all four screens', async ({ page, context }) => {
+  await mockDashboard(context)
+  await login(page)
+  await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible()
+  await expect(page.getByRole('status', { name: '' }).filter({ hasText: /^Simulation$/ })).toBeVisible()
+  await expect(page.getByRole('cell', { name: '190', exact: true })).toBeVisible()
+  await page.screenshot({ path: 'node_modules/.cache/controller-overview.png', fullPage: true })
+  await page.getByRole('button', { name: 'Collapse sidebar' }).click()
+  await expect(page.getByRole('button', { name: 'Expand sidebar' })).toHaveAttribute('aria-expanded', 'false')
+  await page.getByRole('link', { name: /Simulation detections/ }).click()
+  await expect(page).toHaveURL(/\/controller\/disruptions$/)
+  await expect(page.getByRole('heading', { name: 'Traffic disruptions' })).toBeVisible()
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Disruptions', exact: true })).toBeVisible()
+  await page.getByRole('navigation', { name: 'Controller navigation' }).getByRole('link', { name: 'Planning & mitigation' }).click()
+  await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible()
+  await page.getByRole('link', { name: 'Audit log', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'AI audit logs' })).toBeVisible()
+  await expect(page.getByText('No saved decision for the current simulation.')).toBeVisible()
+  await page.goto('/controller/unknown')
+  await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible()
+})
+
+for (const [action, button] of [['APPROVED', 'Approve'], ['REJECTED', 'Reject']] as const) {
+  test(`controller saves ${action.toLowerCase()} and shows it in the audit log after reload`, async ({ page, context }) => {
+    await mockDashboard(context)
+    await login(page)
+    await page.getByRole('link', { name: /Awaiting decision/ }).click()
+    const posted = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/decision'))
+    await page.getByRole('button', { name: button, exact: true }).click()
+    expect((await posted).postDataJSON()).toEqual({ action })
+    await expect(page.getByText(new RegExp(`^${action} ·`))).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0)
+    await page.getByRole('link', { name: 'Audit log', exact: true }).click()
+    await expect(page.getByRole('cell', { name: action, exact: true })).toBeVisible()
+    await page.reload()
+    await expect(page.getByRole('cell', { name: action, exact: true })).toBeVisible()
+  })
+}
+
+test('controller handles conflicting decisions by retrieving the saved result', async ({ page, context }) => {
+  await mockDashboard(context, { conflict: true })
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await page.getByRole('button', { name: 'Approve', exact: true }).click()
+  await expect(page.getByText(/^REJECTED ·/)).toBeVisible()
+  await expect(page.getByText(/already has a decision/)).toBeVisible()
+})
+
+test('controller distinguishes failed arrivals from empty arrivals and can retry', async ({ page, context }) => {
+  const options = { arrivalFailure: true }
+  await mockDashboard(context, options)
+  await login(page)
+  await expect(page.getByRole('alert')).toContainText('Unable to load this data')
+  await expect(page.getByText('No current arrivals.')).toHaveCount(0)
+  options.arrivalFailure = false
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByRole('cell', { name: '190', exact: true })).toBeVisible()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+})
+
+test('controller narrow layout keeps navigation and tables within the viewport', async ({ page, context }) => {
+  await mockDashboard(context)
+  await page.setViewportSize({ width: 375, height: 812 })
+  await login(page)
+  await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Expand sidebar' }).click()
+  await expect(page.getByRole('button', { name: 'Collapse sidebar' })).toHaveAttribute('aria-expanded', 'true')
+  await page.getByRole('link', { name: 'Disruptions', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Expand sidebar' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Disruptions', exact: true })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: 'node_modules/.cache/controller-mobile.png', fullPage: true })
+})
+
+test('captain cannot open any controller dashboard route', async ({ page, context }) => {
+  await mockAuth(context, 'CAPTAIN')
+  await login(page)
+  for (const route of ['/controller', '/controller/disruptions', '/controller/planning', '/controller/audit']) {
+    await page.goto(route)
+    await expect(page.getByRole('heading', { name: 'Access denied' })).toBeVisible()
+    await expect(page.getByRole('navigation', { name: 'Controller navigation' })).toHaveCount(0)
+  }
+})
+
+test('operational API 401 clears dashboard content and the session', async ({ page, context }) => {
+  await mockDashboard(context)
+  await login(page)
+  await expect(page.getByRole('cell', { name: '190', exact: true })).toBeVisible()
+  await context.route('**/api/v1/arrivals?*', route => route.fulfill({ status: 401 }))
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Sign-in required' })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Controller navigation' })).toHaveCount(0)
+})
+
 for (const [role, destination, title, other] of [
-  ['CONTROLLER', '/controller', 'Controller', '/captain'],
+  ['CONTROLLER', '/controller', 'Overview', '/captain'],
   ['CAPTAIN', '/captain', 'Captain', '/controller'],
 ]) {
   test(`${role} can access only its own page and survives reload`, async ({ page, context }) => {
@@ -169,7 +379,7 @@ test('saved browser session works in a new browser context after verification', 
     await mockAuth(restored, 'CONTROLLER')
     const tab = await restored.newPage()
     await tab.goto('/')
-    await expect(tab.getByRole('heading', { name: 'Controller', exact: true })).toBeVisible()
+    await expect(tab.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible()
   } finally {
     await restored.close()
   }

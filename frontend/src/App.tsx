@@ -5,6 +5,7 @@ import { retryAuth, signOut, useAuth } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 import { LoginPage } from '@/pages/LoginPage'
 import { ControllerPage } from '@/pages/ControllerPage'
+import { controllerPages } from '@/components/ControllerSidebar'
 import { CaptainPage } from '@/pages/CaptainPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { ErrorPage } from '@/components/ErrorPage'
@@ -15,13 +16,14 @@ export function App() {
   const [retry, setRetry] = useState(0)
   const [access, setAccess] = useState({ key: '', status: '' })
   const token = auth.session?.access_token
-  const key = `${token}:${pathname}:${retry}`
+  const pageHome = controllerPages.some(page => page.path === pathname) ? '/controller' : pathname
+  const key = `${token}:${pageHome}:${retry}`
   const home = auth.identity ? homeFor(auth.identity.role) : null
 
   useEffect(() => {
-    if (auth.status !== 'ready' || !token || pathname !== home) return
+    if (auth.status !== 'ready' || !token || pageHome !== home) return
     const controller = new AbortController()
-    void identityRequest(`/api/v1/auth/access/${pathname.slice(1)}`, token, controller.signal)
+    void identityRequest(`/api/v1/auth/access/${pageHome.slice(1)}`, token, controller.signal)
       .then(identity => {
         if (controller.signal.aborted) return
         setAccess({ key, status: identity.subject === auth.identity?.subject && identity.role === auth.identity?.role ? 'allowed' : 'error' })
@@ -31,10 +33,10 @@ export function App() {
         else setAccess({ key, status: error instanceof ApiError && error.status === 403 ? 'denied' : 'error' })
       })
     return () => controller.abort()
-  }, [auth.status, auth.identity, token, pathname, home, key])
+  }, [auth.status, auth.identity, token, pageHome, home, key])
 
   let content
-  if (!['/', '/login', '/controller', '/captain', '/401', '/403'].includes(pathname)) {
+  if (!['/', '/login', ...controllerPages.map(page => page.path), '/captain', '/401', '/403'].includes(pathname)) {
     content = <NotFoundPage />
   } else if (pathname === '/401') {
     content = <ErrorPage code={401} title="Sign-in required" description="Your session is missing or has expired. Sign in to continue.">
@@ -48,7 +50,7 @@ export function App() {
   } else if (auth.status === 'unauthorized' && pathname !== '/login') {
     content = <Navigate to="/401" replace />
   } else if (pathname === '/403' || (auth.status === 'ready' && (
-    !home || (pathname !== '/' && pathname !== '/login' && pathname !== home) ||
+    !home || (pathname !== '/' && pathname !== '/login' && pageHome !== home) ||
     (access.key === key && access.status === 'denied')
   ))) {
     content = <ErrorPage code={403} title="Access denied" description="This page isn’t available for your account.">
@@ -68,7 +70,8 @@ export function App() {
       <Button className="ml-2" variant="outline" onClick={() => void signOut()}>Sign out</Button></div>
   } else {
     const email = auth.session?.user.email ?? auth.identity?.subject ?? ''
-    content = pathname === '/controller' ? <ControllerPage email={email} /> : <CaptainPage email={email} />
+    if (home === '/controller') return <main><ControllerPage key={token} email={email} token={token!} /></main>
+    content = <CaptainPage email={email} />
   }
   return <main className="flex min-h-svh items-center justify-center px-5 py-12">{content}</main>
 }

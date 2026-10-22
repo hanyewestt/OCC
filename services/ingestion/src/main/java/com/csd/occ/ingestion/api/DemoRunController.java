@@ -82,7 +82,7 @@ public class DemoRunController {
         return new DemoBunchingAlertResponse(alert.eventId(), alert.bunchingEventId(), alert.action(), alert.classification(), alert.serviceId(),
                 alert.stopCode(), alert.stopName(), alert.stopRoadName(), alert.directionId(), alert.detectedAt(),
                 alert.headwaySeconds(), vehicle(alert.leadingVehicle()),
-                vehicle(alert.followingVehicle()));
+                vehicle(alert.followingVehicle()), alert.evidence());
     }
 
     private static DemoVehicleResponse vehicle(com.csd.occ.ingestion.domain.DemoVehicleDetails value) {

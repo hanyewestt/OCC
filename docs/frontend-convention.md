@@ -30,7 +30,6 @@ frontend/
   tsconfig*.json
   eslint.config.js
   components.json           # shadcn setup and aliases
-  public/                   # only stable-name public files, e.g. favicon
   src/
     main.tsx                # starts React and imports index.css
     App.tsx                 # shared page layout and routes
@@ -60,8 +59,9 @@ generated clients, provider layers or a global store. Extract a custom hook
 only when it removes real duplication or clarifies behavior.
 
 Keep all frontend tests under `frontend/test/`. There is no second `src/test/`
-directory or requirement for one test file per component. The React app replaces
-the temporary static demo/auth pages; do not carry those into the new structure.
+directory or requirement for one test file per component. React owns the app's
+simulation and recommendation-review workflows. Do not restore the retired
+standalone demo or auth-test harness.
 
 Commit source, configuration and the lockfile. Ignore `node_modules/`, `dist/`,
 coverage, test reports and saved sessions. Never put secrets in `public/`.
@@ -142,7 +142,6 @@ Nginx route allowlist. Keep Compose and `infra/nginx/routes.inc.template` aligne
 
 1. Serve the complete `dist/` at `/usr/share/nginx/html` using a read-only mount
    or an image containing the build. Preserve the unprivileged/read-only setup.
-   Replace the temporary pages and their serving exceptions.
 2. Use Vite `base: '/'`. Serve `/`, `index.html`, `/assets/` and needed public
    files. Import source assets so Vite produces their built URLs.
 3. Fall back to `index.html` for actual UI routes so direct links and refresh
@@ -150,7 +149,8 @@ Nginx route allowlist. Keep Compose and `infra/nginx/routes.inc.template` aligne
    a React not-found screen for unmatched client routes.
 4. Preserve `/api/v1/**` and `/frontend-config` proxying, request paths and auth
    headers. Keep internal, management and API documentation routes blocked,
-   plus the production `/auth-test` block. Retired demo URLs return 404.
+   plus the `/auth-test` block. Retired `/demo.html`, `/auth.js` and other
+   unrecognized URLs return 404.
    Do not use a global 404-to-index rewrite.
 5. Preserve TLS, rate limits and security headers. Keep the existing `no-store`
    policy for the MVP. Publish HTML and assets together as one artifact.

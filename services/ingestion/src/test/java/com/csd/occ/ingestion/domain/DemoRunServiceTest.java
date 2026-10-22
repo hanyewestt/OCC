@@ -124,7 +124,7 @@ class DemoRunServiceTest {
         DemoRun run = new DemoRun(runId, detectedAt, "route190-bunching-v1", 190);
         when(runs.findById(runId)).thenReturn(Optional.of(run));
         when(bunching.alerts(runId)).thenReturn(List.of(new DemoBunchingAlert(UUID.randomUUID(), UUID.randomUUID(), "OPENED", "190", "44251", 1,
-                detectedAt, "SIMULATION", leadingId, followingId)));
+                detectedAt, "SIMULATION", leadingId, followingId, "saved-simulation-evidence")));
         when(arrivals.findSimulationArrivalDetails(runId, leadingId)).thenReturn(Optional.of(
                 new DemoSimulationArrivalDetails("DEMO-BUS-190-01", "DEMO-OPERATOR", "DD", "DEMO-CAPTAIN-190-01",
                         detectedAt.plusSeconds(120))));
@@ -143,5 +143,6 @@ class DemoRunServiceTest {
         assertEquals("DEMO-CAPTAIN-190-02", alert.followingVehicle().captainCode());
         assertEquals("Teck Whye Secondary School", alert.stopName());
         assertEquals(45L, alert.headwaySeconds());
+        assertEquals("saved-simulation-evidence", alert.evidence());
     }
 }
