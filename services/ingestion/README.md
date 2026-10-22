@@ -161,6 +161,33 @@ With the service running in Compose, browse the interactive API at `http://local
 
 The machine-readable OpenAPI document is at `/v3/api-docs`.
 
+### Bus captain pacing (WQAP-68)
+
+Ingestion recalculates each bus's gap to the bus ahead and behind every
+`OCC_INGESTION_PACING_INTERVAL` (default `10s`) on a dedicated thread, so slow
+DataMall polls cannot delay it, and pushes the snapshot to every subscriber.
+Unlike the other APIs, these two are readable by ADMIN, CONTROLLER and CAPTAIN:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/v1/pacing-snapshots/stream?serviceId=&vehicleReference=` | Server-Sent Events: the current snapshot immediately, then one `pacing` event per cycle |
+| `GET /api/v1/pacing-snapshots/latest?serviceId=&vehicleReference=` | The latest snapshot once; `503` before the first cycle |
+
+Each item gives `ahead` and `behind` (`null` when that neighbour is not in the
+same prediction set) with `headwaySeconds` and a `TOO_CLOSE`, `ON_TARGET` or
+`TOO_FAR` state against `OCC_INGESTION_PACING_TARGET_HEADWAY` (default `180s`,
+twice the 90s bunching threshold). A gap at or below the target times
+`OCC_INGESTION_PACING_TOO_CLOSE_RATIO` (`0.5`) is too close; at or above
+`OCC_INGESTION_PACING_TOO_FAR_RATIO` (`1.5`) is too far. Prediction sets fetched
+`OCC_INGESTION_PACING_STALE_AFTER` (`180s`) or longer ago are not paced.
+
+Simulation buses keep their fictional registration as `vehicleReference`. Bus
+Arrival does not identify vehicles, so a live bus is named by queue position
+(`LIVE-<service>-D<direction>-<stop>-<position>`), stable only within one
+snapshot. Streams close after `OCC_INGESTION_PACING_STREAM_TIMEOUT` (`30m`) and
+clients reconnect; at most `OCC_INGESTION_PACING_MAX_SUBSCRIBERS` (`200`) are
+connected at once. If `calculatedAt` stops advancing, treat the data as stale.
+
 ### Root-cause evidence contract
 
 WQAP-3 retrieves simulation context through
@@ -193,6 +220,14 @@ unset OCC_OPENAPI_EXPORT_TOKEN
 This writes `services/ingestion/openapi/ingestion.json`. The export uses the same
 running application endpoint as Swagger UI, so it includes the actual controllers,
 DTOs, annotations and active Spring configuration.
+
+Alternatively, without a live token, run the opt-in export test, which starts the
+application against a disposable PostgreSQL container (Docker required) and writes
+the same file using a synthetic ADMIN test token:
+
+```shell
+./mvnw -pl services/ingestion verify "-Docc.exportOpenapi=true"
+```
 
 A missing or invalid DataMall key can produce request errors even if the application starts. Stop the app with Ctrl+C.
 
