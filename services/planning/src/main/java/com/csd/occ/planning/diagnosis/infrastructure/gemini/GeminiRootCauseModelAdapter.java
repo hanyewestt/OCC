@@ -18,6 +18,7 @@ import org.springframework.ai.chat.client.ResponseEntity;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -44,7 +45,7 @@ public class GeminiRootCauseModelAdapter implements RootCauseModelPort {
     private final DiagnosisProperties diagnosisProperties;
     private final com.csd.occ.planning.diagnosis.infrastructure.config.AiAuditProperties audit;
 
-    public GeminiRootCauseModelAdapter(ChatClient chatClient, JsonMapper json, Clock clock,
+    public GeminiRootCauseModelAdapter(@Qualifier("diagnosisChatClient") ChatClient chatClient, JsonMapper json, Clock clock,
             DiagnosisGeminiProperties properties, DiagnosisProperties diagnosisProperties,
             com.csd.occ.planning.diagnosis.infrastructure.config.AiAuditProperties audit) {
         this.chatClient = chatClient; this.json = json; this.clock = clock; this.properties = properties;

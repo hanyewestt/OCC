@@ -7,6 +7,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -41,10 +46,10 @@ class GatewayAuthorizationTest {
     }
 
     @Test
-    void deniesDriverRoleAtThePhaseOneApiBoundary() throws Exception {
+    void deniesCaptainRoleAtThePhaseOneApiBoundary() throws Exception {
         mvc.perform(get("/api/v1/disruption/not-configured")
-                        .with(jwt().jwt(token -> token.claim("occ_role", "DRIVER"))
-                                .authorities(new SimpleGrantedAuthority("ROLE_DRIVER"))))
+                        .with(jwt().jwt(token -> token.claim("occ_role", "CAPTAIN"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_CAPTAIN"))))
                 .andExpect(status().isForbidden());
     }
 
@@ -93,5 +98,55 @@ class GatewayAuthorizationTest {
         mvc.perform(get("/auth-test/index.html").with(jwt()
                         .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
                 .andExpect(status().isNotFound());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"CONTROLLER,controller,200", "CONTROLLER,captain,403",
+            "CAPTAIN,captain,200", "CAPTAIN,controller,403", "ADMIN,controller,403",
+            "ADMIN,captain,403", "UNASSIGNED,controller,403", "UNASSIGNED,captain,403",
+            "CAPTAIN,unknown,404", "DRIVER,captain,403", "DRIVER,controller,403"})
+    void enforcesExclusivePageAccess(String role, String page, int expected) throws Exception {
+        mvc.perform(get("/api/v1/auth/access/" + page)
+                        .with(jwt().jwt(token -> token.subject("synthetic-user").claim("occ_role", role))
+                                .authorities(new SimpleGrantedAuthority("ROLE_" + role))))
+                .andExpect(status().is(expected));
+    }
+
+    @ParameterizedTest
+    @CsvSource({"CONTROLLER", "CAPTAIN", "ADMIN", "UNASSIGNED"})
+    void readsVerifiedIdentityLocallyWithoutCallingIngestion(String role) throws Exception {
+        mvc.perform(get("/api/v1/auth/session")
+                        .with(jwt().jwt(token -> token.subject("synthetic-user"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_" + role))))
+                .andExpect(status().isOk())
+                .andExpect(content().json("{\"subject\":\"synthetic-user\",\"role\":\"" + role + "\"}"));
+    }
+
+    @Test
+    void normalizesMissingAuthoritiesToUnassigned() throws Exception {
+        mvc.perform(get("/api/v1/auth/session")
+                        .with(jwt().jwt(token -> token.subject("synthetic-user")).authorities(java.util.List.of())))
+                .andExpect(status().isOk())
+                .andExpect(content().json("{\"subject\":\"synthetic-user\",\"role\":\"UNASSIGNED\"}"));
+    }
+
+    @Test
+    void authEndpointsRequireBearerTokens() throws Exception {
+        for (String path : java.util.List.of("/api/v1/auth/session", "/api/v1/auth/access/controller", "/api/v1/auth/access/captain")) {
+            mvc.perform(get(path)).andExpect(status().isUnauthorized());
+            mvc.perform(get(path).header("Authorization", "Bearer invalid"))
+                    .andExpect(status().isUnauthorized());
+        }
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "occ.exportOpenapi", matches = "true")
+    void exportsGeneratedGatewayContract() throws Exception {
+        String contract = mvc.perform(get("/v3/api-docs").with(jwt()
+                        .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        Path output = Path.of("openapi", "gateway.json");
+        Files.createDirectories(output.getParent());
+        Files.writeString(output, contract + System.lineSeparator());
     }
 }

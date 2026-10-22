@@ -35,6 +35,8 @@ public class GatewaySecurityConfig {
                     authorize.requestMatchers("/actuator/**").denyAll();
                     authorize.requestMatchers(HttpMethod.GET, "/frontend-config").permitAll();
                     authorize.requestMatchers("/internal/v1/**").denyAll();
+                    authorize.requestMatchers(HttpMethod.GET, "/api/v1/auth/session", "/api/v1/auth/access/*")
+                            .authenticated();
                     authorize.requestMatchers("/api/v1/**").hasAnyRole("ADMIN", "CONTROLLER");
                     authorize.requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")
                             .hasAnyRole("ADMIN", "CONTROLLER");

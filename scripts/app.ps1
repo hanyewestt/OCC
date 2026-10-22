@@ -55,14 +55,29 @@ try {
     if (-not $ProjectName) { $composeArgs += @('--project-name', $resolvedProject) }
     Write-Host "OCC local project: $resolvedProject; action: $Action"
 
+    function Build-Frontend {
+        if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+            throw 'Node.js 22.12+ and npm are required to build the frontend.'
+        }
+        Push-Location (Join-Path $repoRoot 'frontend')
+        try {
+            & npm ci
+            if ($LASTEXITCODE -ne 0) { throw 'Frontend dependency installation failed.' }
+            & npm run build
+            if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
+        }
+        finally { Pop-Location }
+    }
+
     switch ($Action) {
-        'start' { Invoke-AppCompose -Arguments @('up', '-d', '--build', '--wait') }
+        'start' { Build-Frontend; Invoke-AppCompose -Arguments @('up', '-d', '--build', '--wait') }
         'stop' { Invoke-AppCompose -Arguments @('--profile', 'tools', 'stop') }
         'reset' {
             if (-not $Yes) {
                 $answer = Read-Host "Delete containers, networks, database and pgAdmin data for '$resolvedProject'? Type RESET"
                 if ($answer -cne 'RESET') { Write-Host 'Reset cancelled.'; exit 0 }
             }
+            Build-Frontend
             Invoke-AppCompose -Arguments @('--profile', 'tools', 'down', '--volumes', '--remove-orphans')
             Invoke-AppCompose -Arguments @('--profile', 'tools', 'build', '--pull', '--no-cache')
             Invoke-AppCompose -Arguments @('up', '-d', '--force-recreate', '--wait')

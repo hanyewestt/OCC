@@ -320,7 +320,7 @@ services:
 
   nginx:
     profiles: [edge]
-    image: nginx:1.30.6-alpine@sha256:750f6c5456af731b47295d124fbed55664eeb1daab4f6bac0b092b7406235091
+    image: nginx:1.30.6-alpine-slim@sha256:3028fc1419f99b95c1c69f844bbaf49dc1b881750c51b497fc721ac4f02a14e6
     user: "101:101"
     restart: unless-stopped
     read_only: true
@@ -348,7 +348,7 @@ services:
       OCC_NGINX_PROXY_SEND_TIMEOUT: ${OCC_NGINX_PROXY_SEND_TIMEOUT:-30s}
     volumes:
       - ./infra/nginx/routes.inc.template:/etc/nginx/templates/routes.inc.template:ro
-      - ./frontend/static:/usr/share/nginx/html:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
     networks: [edge]
     depends_on:
       gateway:

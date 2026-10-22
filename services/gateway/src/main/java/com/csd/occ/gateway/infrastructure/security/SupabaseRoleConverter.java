@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class SupabaseRoleConverter implements Converter<Jwt, Collection<GrantedAuthority>> {
-    private static final Set<String> OCC_ROLES = Set.of("ADMIN", "CONTROLLER", "DRIVER", "UNASSIGNED");
+    private static final Set<String> OCC_ROLES = Set.of("ADMIN", "CONTROLLER", "CAPTAIN", "UNASSIGNED");
 
     @Override
     public Collection<GrantedAuthority> convert(Jwt jwt) {
