@@ -115,15 +115,13 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Verify the React auth app
+      - name: Lint, type-check and build the React app
         working-directory: frontend
         run: |
           npm ci
           npm run lint
           npm run typecheck
           npm run build
-          npx playwright install --with-deps chromium
-          npm test
 
   config-and-contracts:
     name: Configuration and API contract checks

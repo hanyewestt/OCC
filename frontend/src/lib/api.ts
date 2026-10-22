@@ -25,3 +25,56 @@ export async function identityRequest(path: string, token: string, signal: Abort
 export function homeFor(role: Identity['role']): string | null {
   return role === 'CONTROLLER' ? '/controller' : role === 'CAPTAIN' ? '/captain' : null
 }
+
+export type PageResult<T> = { items: T[]; page: number; totalItems: number; totalPages: number }
+export type Arrival = {
+  observationId: string; serviceId: string; stopCode: string; operator: string
+  estimatedArrivalAt: string | null; fetchedAt: string; loadCategory: string | null
+}
+export type BunchingAlert = {
+  eventId: string; action: string; classification: string; serviceId: string
+  stopCode: string; detectedAt: string; directionId?: number | null
+  stopName?: string | null; stopRoadName?: string | null; evidence?: string | null
+}
+export type DemoRun = { id: string; status: string; alerts: BunchingAlert[] }
+export type Recommendation = {
+  recommendationId: string; classification: string; status: string; mitigationType: string
+  targetBusReference: string; controlStopCode: string; adjustmentSeconds: number
+  rationale: string; likelyCause: string; tradeOffs: string[]; limitations: string[]
+}
+export type Decision = {
+  recommendationId: string; action: 'APPROVED' | 'REJECTED'; decidedAt: string
+}
+
+// All dashboard requests stay on the same origin. Null represents a documented
+// empty response, never a failed request or an assumed count of zero.
+export async function apiRequest<T>(path: string, token: string, signal: AbortSignal,
+  options?: { method: 'POST'; body?: { action: Decision['action'] } }): Promise<T | null> {
+  if (!path.startsWith('/api/v1/')) throw new Error('Invalid API request.')
+  const response = await fetch(path, {
+    method: options?.method ?? 'GET',
+    headers: { Authorization: `Bearer ${token}`, ...(options?.body ? { 'Content-Type': 'application/json' } : {}) },
+    body: options?.body ? JSON.stringify(options.body) : undefined,
+    cache: 'no-store', redirect: 'error', signal,
+  })
+  if (!response.ok) throw new ApiError(response.status)
+  return response.status === 204 ? null : await response.json() as T
+}
+
+export async function enrichBunchingStops(alerts: BunchingAlert[], token: string, signal: AbortSignal): Promise<BunchingAlert[]> {
+  const stops = new Map<string, Promise<{ description: string | null; roadName: string | null } | null>>()
+  return Promise.all(alerts.map(async alert => {
+    if (alert.stopName) return alert
+    if (!stops.has(alert.stopCode)) {
+      stops.set(alert.stopCode, apiRequest<{ description: string | null; roadName: string | null }>(
+        `/api/v1/bus-stops/${encodeURIComponent(alert.stopCode)}`, token, signal,
+      ).catch(error => {
+        if (signal.aborted || (error instanceof ApiError && error.status === 401)) throw error
+        // Reference enrichment must not suppress an otherwise valid detection.
+        return null
+      }))
+    }
+    const stop = await stops.get(alert.stopCode)
+    return { ...alert, stopName: stop?.description, stopRoadName: stop?.roadName }
+  }))
+}
