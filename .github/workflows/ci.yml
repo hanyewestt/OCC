@@ -35,7 +35,8 @@ jobs:
       - name: Require the container runtime for database integration tests
         run: docker info
       - name: Run the required four-service reactor
-        run: ./mvnw --batch-mode --no-transfer-progress clean verify
+        # Include the opt-in contract export test so the zero-skips gate passes.
+        run: ./mvnw --batch-mode --no-transfer-progress clean verify -Docc.exportOpenapi=true
         env:
           DATAMALL_API_KEY: synthetic-ci-key
           OCC_PLANNING_GEMINI_API_KEY: synthetic-ci-key
