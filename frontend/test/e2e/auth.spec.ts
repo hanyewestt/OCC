@@ -1,6 +1,7 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test'
 import { classify, clockText, deltaText, initialScenario } from '../../src/lib/obu-pacing'
 import { bunchingArrivals } from '../../src/lib/bunching'
+import { groupStops, skipLabel, type UpcomingStop } from '../../src/lib/skip-stops'
 
 // Synthetic Supabase and Gateway responses. These tests do not prove provider
 // behavior or backend authorization; Gateway tests and the opt-in live smoke do.
@@ -453,6 +454,33 @@ test('captain pacing updates samples and switches scenarios without operational 
   await expect(behind.getByText('--:--', { exact: true })).toBeVisible()
   await expect(behind).toHaveAttribute('data-state', 'unknown')
   expect(operationalRequests).toEqual([])
+})
+
+test('consecutive skipped stops form one group in route order', () => {
+  const stop = (stopCode: string, skipped: boolean): UpcomingStop => ({ stopCode, name: `Stop ${stopCode}`, skipped })
+  const segments = groupStops([stop('1', true), stop('2', true), stop('3', false), stop('4', true), stop('5', false)])
+  expect(segments.map(segment => segment.kind === 'stop' ? segment.stop.stopCode
+    : segment.stops.map(skipped => skipped.stopCode).join('+'))).toEqual(['1+2', '3', '4', '5'])
+  expect(groupStops([stop('1', false), stop('2', false)]).every(segment => segment.kind === 'stop')).toBe(true)
+  expect(groupStops([])).toEqual([])
+  expect(skipLabel(1)).toBe('Skip 1 stop')
+  expect(skipLabel(3)).toBe('Skip 3 stops')
+})
+
+test('captain sees skipped stops grouped among upcoming stops', async ({ page, context }) => {
+  await mockAuth(context, 'CAPTAIN')
+  await login(page)
+  const stops = page.getByRole('list', { name: 'Upcoming stops in route order', exact: true })
+  await expect(page.getByRole('heading', { name: 'Upcoming stops', exact: true })).toBeVisible()
+  await expect(page.getByText('Skip 4 stops on this trip', { exact: true })).toBeVisible()
+  await expect(stops.locator(':scope > li')).toHaveText([
+    /Opp Blk 123.*STOP/, /Skip 3 stops.*Blk 45.*Bt Batok Stn.*Opp Bt Batok Stn/,
+    /Bt Batok West Ave 6.*STOP/, /Skip 1 stop.*Blk 211/, /Choa Chu Kang Int.*STOP/,
+  ])
+  const longRun = page.getByRole('list', { name: 'Skip 3 stops', exact: true })
+  await expect(longRun.getByRole('listitem')).toHaveCount(3)
+  await expect(longRun.getByRole('listitem').first()).toContainText('(skipped)')
+  await expect(page.getByRole('list', { name: 'Skip 1 stop', exact: true }).getByRole('listitem')).toHaveCount(1)
 })
 
 test('captain pacing supports narrow screens, scenario links and persistent day mode', async ({ page, context }) => {
