@@ -117,6 +117,13 @@ The OBU pacing display is the CAPTAIN-only `/captain` screen. It uses built-in
 sample gaps; no operational API or live-data polling was added. Day/night mode
 is saved in the `occ-obu-theme` browser preference.
 
+The standalone backend-workflow demo is at `/demo.html`. Its source and
+sign-in helper live in `frontend/static/`; Vite copies them into `dist/` for
+Nginx. Sign in on the demo itself with an ADMIN or CONTROLLER account. This
+demo keeps its token in memory and clears it on reload, independently of the
+React app's persistent Supabase session. The local auth-test harness remains
+retired. The restored demo includes this branch's recommendation review controls.
+
 ### Edit with automatic updates
 
 Keep the app containers running for Gateway, authentication configuration and
@@ -213,7 +220,38 @@ Open [the login page](http://localhost/login) using an existing Supabase account
 CONTROLLER opens `/controller`; CAPTAIN opens `/captain`. Other roles receive
 an access message. Sessions persist across reloads using the Supabase SDK;
 Gateway verifies session and role before protected content appears. Set
-`OCC_NGINX_PORT` if port 80 is unavailable. Old demo/auth-test URLs return 404.
+`OCC_NGINX_PORT` if port 80 is unavailable. The standalone `/demo.html` remains
+available for backend workflows; `/auth-test` and `/obu-pacing.html` return 404.
+
+The controller dashboard has four routes: `/controller` (overview),
+`/controller/disruptions`, `/controller/planning`, and `/controller/audit`.
+Nginx explicitly allows each route; unknown controller paths still return 404.
+All four share Gateway's controller access verification. API permissions remain
+enforced by the backend.
+
+Dashboard data loads on entry and manual Refresh. Arrivals are paginated live
+records (50 per page); live bunching displays up to 200 open detections and
+reports truncation. An active demo switches the detection view to simulation
+events, while arrivals stay explicitly live. Detection rows show the reference
+stop name (with code retained), direction and Bus 1/2/3 prediction slots from
+the saved detection evidence. They never substitute current arrivals for missing
+historical predictions. Missing slots show No prediction; invalid evidence shows
+Unavailable, and failed stop enrichment does not hide detections.
+The Planning page retrieves the
+current demo's recommendation and reads/writes its existing decision endpoint.
+The audit page retrieves that same saved decision, including after reload.
+There is no full mitigation queue or historical audit listing endpoint yet;
+these views explicitly cover only the current simulation. Traffic disruptions
+and AI audit logs are labelled placeholders. Use Start simulation / Return to
+live in the dashboard header to call the existing demo-run start/close APIs.
+The dashboard refreshes after a mode change. These controls switch the shared
+backend detection mode, not just the current browser's view; arrivals remain live.
+No new runtime settings, services or migrations are
+needed for this dashboard.
+
+The controller browser tests use synthetic Supabase and operational API
+responses, including decisions, conflicts, API errors, mobile navigation and
+cross-role deep links. They do not create real approval records.
 
 ### Local URLs
 

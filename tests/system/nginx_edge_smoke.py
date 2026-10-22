@@ -47,7 +47,8 @@ def main() -> int:
         if response.code != 404 or response.read() != (root / "frontend/dist/404.html").read_bytes():
             raise AssertionError("Unknown website route does not serve the custom 404 artifact")
     print("PASS custom website error page retains HTTP 404")
-    for route in ("/", "/login", "/controller", "/captain", "/401", "/403"):
+    for route in ("/", "/login", "/controller", "/controller/disruptions",
+                  "/controller/planning", "/controller/audit", "/captain", "/401", "/403"):
         with urllib.request.urlopen(base_url + route, context=ssl._create_unverified_context(), timeout=10) as response:
             if response.read() != html or "text/html" not in response.headers.get("Content-Type", ""):
                 raise AssertionError(f"{route}: response differs from the React entry HTML")
@@ -65,7 +66,15 @@ def main() -> int:
                 raise AssertionError("JavaScript MIME mismatch")
             if asset.suffix == ".css" and "text/css" not in mime:
                 raise AssertionError("CSS MIME mismatch")
-    for route in ("/demo.html", "/obu-pacing.html", "/auth.js", "/auth-test", "/auth-test/", "/auth-test/index.html", "/auth-test/callback", "/assets/missing.js", "/admin"):
+    for route in ("/demo.html", "/auth.js"):
+        with urllib.request.urlopen(base_url + route, context=ssl._create_unverified_context(), timeout=10) as response:
+            if response.read() != (root / "frontend/dist" / route.lstrip("/")).read_bytes():
+                raise AssertionError(f"{route}: response differs from the built demo asset")
+            mime = response.headers.get("Content-Type", "")
+            if (route.endswith(".html") and "text/html" not in mime) or (route.endswith(".js") and "javascript" not in mime):
+                raise AssertionError("Demo asset MIME mismatch")
+        print(f"PASS standalone demo asset {route}")
+    for route in ("/obu-pacing.html", "/auth-test", "/auth-test/", "/auth-test/index.html", "/auth-test/callback", "/assets/missing.js", "/admin", "/controller/unknown"):
         assert_status(base_url, "retired or unknown path " + route, route, 404)
     if args.static_only:
         return 0

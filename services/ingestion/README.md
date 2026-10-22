@@ -200,6 +200,13 @@ Tests use fake DataMall responses and synthetic configuration, never the root `.
 
 ## Database reduction and retention
 
+Demo-run alert responses include `evidence`, the saved simulation detection
+evidence JSON received from Disruption. The controller UI uses its snapshot to
+display Bus 1/2/3 arrival slots at detection time, alongside the existing stop
+name and direction. Live alerts already expose the same evidence format. Missing
+prediction slots remain unavailable; no live records are mixed into simulation
+evidence. This additive response field requires no database migration.
+
 Operational history uses `OCC_INGESTION_RETENTION` (default 12h), with existing
 retention interval and initial-delay environment bindings. Reads enforce the
 cutoff before cleanup sweeps; arrival history is measured by fetch time, never ETA.

@@ -48,8 +48,11 @@ Use root `.env.example` as the single inventory. Gateway publishes only
 JWT validation uses the separate JWKS URL, allowed algorithms and audience.
 
 See [development guide](DEVELOPMENT.md) for builds, Vite proxy settings and
-browser tests. Nginx serves the built artifact and returns 404 for the retired
-`/demo.html`, `/auth.js` and `/auth-test` routes in local and production setups.
+browser tests. Nginx serves the built artifact, including the standalone
+`/demo.html` and its `/auth.js` helper. The demo uses a separate in-memory token
+that clears on reload; it does not restore or refresh the React app's session.
+Backend APIs still enforce ADMIN/CONTROLLER access for demo operations and
+recommendation decisions. The retired `/auth-test` routes return 404.
 
 ## Verification
 

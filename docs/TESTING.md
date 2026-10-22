@@ -83,6 +83,11 @@ scenario switching, narrow-screen layout and persistent day/night mode. They
 verify that pacing makes no operational API requests. The React pacing tests
 are included in the frontend browser suite.
 
+The standalone demo's sign-in helper is tested with
+`node --test frontend/test/demo-auth.test.mjs` from the repository root.
+Mocked browser tests also cover the restored controller approve/reject controls;
+they do not record decisions in a real database.
+
 ## System verification
 
 CI compares Nginx responses byte-for-byte with the React build under `frontend/dist/`,

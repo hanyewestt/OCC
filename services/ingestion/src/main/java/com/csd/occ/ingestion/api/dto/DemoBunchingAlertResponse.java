@@ -8,4 +8,6 @@ public record DemoBunchingAlertResponse(UUID eventId, UUID bunchingEventId, Stri
                                         String stopName, String stopRoadName, int directionId, Instant detectedAt,
                                         @Schema(description = "Absolute predicted-arrival gap between the bunched buses, in seconds", nullable = true)
                                         Long headwaySeconds, DemoVehicleResponse leadingVehicle,
-                                        DemoVehicleResponse followingVehicle) {}
+                                        DemoVehicleResponse followingVehicle,
+                                        @Schema(description = "Saved detection evidence JSON, including the simulation snapshot's arrival slots")
+                                        String evidence) {}
