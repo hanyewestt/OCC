@@ -113,6 +113,10 @@ resulting `frontend/dist/` read-only. There is no separate React/Vite container.
 Open [the app](http://localhost/login), adjusting the port to `OCC_NGINX_PORT`.
 The [root README](../README.md#pages-and-access) lists the frontend routes.
 
+The OBU pacing display is the CAPTAIN-only `/captain` screen. It uses built-in
+sample gaps; no operational API or live-data polling was added. Day/night mode
+is saved in the `occ-obu-theme` browser preference.
+
 ### Edit with automatic updates
 
 Keep the app containers running for Gateway, authentication configuration and
