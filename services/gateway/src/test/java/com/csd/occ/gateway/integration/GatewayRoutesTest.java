@@ -87,6 +87,20 @@ class GatewayRoutesTest {
     }
 
     @Test
+    void captainsReachPacingOnIngestionButNoOtherOperationalApi() {
+        ResponseEntity<String> stream = get("/api/v1/pacing-snapshots/stream", "CAPTAIN");
+        assertThat(stream.getStatusCode().value()).isEqualTo(200);
+        assertThat(lastBackendPath.get()).isEqualTo("/api/v1/pacing-snapshots/stream");
+        assertThat(get("/api/v1/pacing-snapshots/latest", "CAPTAIN").getStatusCode().value()).isEqualTo(200);
+
+        lastBackendPath.set(null);
+        assertThat(get("/api/v1/arrivals", "CAPTAIN").getStatusCode().value()).isEqualTo(403);
+        assertThat(get("/api/v1/pacing-snapshots/latest", "UNASSIGNED").getStatusCode().value()).isEqualTo(403);
+        assertThat(get("/api/v1/pacing-snapshots/latest", "DRIVER").getStatusCode().value()).isEqualTo(403);
+        assertThat(lastBackendPath.get()).isNull();
+    }
+
+    @Test
     void backendDoesNotRouteDemoPages() {
         lastBackendPath.set(null);
         ResponseEntity<String> response = get("/demo.html", "ADMIN");
