@@ -134,7 +134,7 @@ public class DemoRunService {
             StopDisplay stop = stop(alert.stopCode());
             result.add(new DemoAlertDetails(alert.eventId(), alert.bunchingEventId(), alert.action(), alert.classification(), alert.serviceId(), alert.stopCode(),
                     stop.name(), stop.roadName(), alert.directionId(), alert.detectedAt(), headwaySeconds(leading, following),
-                    leading == null ? null : leading.vehicle(), following == null ? null : following.vehicle()));
+                    leading == null ? null : leading.vehicle(), following == null ? null : following.vehicle(), alert.evidence()));
         }
         return new DemoRunDetails(run.id(), run.status(), run.currentStep(), result);
     }

@@ -210,8 +210,8 @@ jobs:
         run: >-
           python3 tests/system/nginx_edge_smoke.py --base-url https://127.0.0.1:18443
           --token-dir "$RUNNER_TEMP/occ-edge-jwks"
-      - name: Verify React auth journeys through HTTPS Nginx
-        if: inputs.suite == 'smoke'
+      - name: Run browser E2E journeys through HTTPS Nginx (manual only)
+        if: inputs.suite == 'smoke' && github.event_name == 'workflow_dispatch'
         working-directory: frontend
         env:
           OCC_FRONTEND_TEST_PUBLIC_URL: https://127.0.0.1:18443

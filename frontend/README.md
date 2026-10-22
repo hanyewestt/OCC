@@ -8,6 +8,9 @@ session and role access before protected content appears.
 The Captain page includes the OBU sample pacing display, scenario controls and
 day/night mode. It uses no live bus data.
 
+The Controller dashboard includes simulation controls, bunching detections,
+recommendation review and the current simulation's saved decision.
+
 See the [app overview and route table](../README.md#pages-and-access) for page
 behavior and permissions. Setup, Vite development, builds, environment settings
 and test commands are in [the development guide](../docs/DEVELOPMENT.md).

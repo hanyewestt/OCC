@@ -4,6 +4,7 @@ import com.csd.occ.planning.diagnosis.domain.DiagnosisQueryService;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisFailureException;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestService;
 import com.csd.occ.planning.recommendation.domain.IdempotencyConflictException;
+import com.csd.occ.planning.recommendation.domain.RecommendationDecisionService;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.util.List;
@@ -22,6 +23,26 @@ public class GlobalExceptionHandler {
     ProblemDetail handleNotFound(HttpServletRequest request) {
         return problem(HttpStatus.NOT_FOUND, "Resource not found", "The requested planning resource does not exist.",
                 "urn:occ:problem:not-found", request);
+    }
+
+    @ExceptionHandler(RecommendationDecisionService.RecommendationNotFoundException.class)
+    ProblemDetail handleRecommendationNotFound(HttpServletRequest request) {
+        return problem(HttpStatus.NOT_FOUND, "Recommendation not found",
+                "The requested recommendation does not exist.", "urn:occ:problem:recommendation-not-found", request);
+    }
+
+    @ExceptionHandler(RecommendationDecisionService.RecommendationDecisionConflictException.class)
+    ProblemDetail handleRecommendationDecisionConflict(HttpServletRequest request) {
+        return problem(HttpStatus.CONFLICT, "Recommendation already decided",
+                "This recommendation already has a different controller decision.",
+                "urn:occ:problem:recommendation-decision-conflict", request);
+    }
+
+    @ExceptionHandler(RecommendationDecisionService.RecommendationNotActionableException.class)
+    ProblemDetail handleRecommendationNotActionable(HttpServletRequest request) {
+        return problem(HttpStatus.CONFLICT, "Recommendation is review only",
+                "Only actionable simulation recommendations can receive a controller decision.",
+                "urn:occ:problem:recommendation-not-actionable", request);
     }
 
     @ExceptionHandler(DiagnosisRequestService.UnsupportedEventTypeException.class)

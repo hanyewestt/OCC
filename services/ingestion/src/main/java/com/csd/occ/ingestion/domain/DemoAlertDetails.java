@@ -7,4 +7,4 @@ import java.util.UUID;
 public record DemoAlertDetails(UUID eventId, UUID bunchingEventId, String action, String classification, String serviceId, String stopCode,
                                String stopName, String stopRoadName, int directionId, Instant detectedAt,
                                Long headwaySeconds, DemoVehicleDetails leadingVehicle,
-                               DemoVehicleDetails followingVehicle) {}
+                               DemoVehicleDetails followingVehicle, String evidence) {}
