@@ -46,10 +46,10 @@ class GatewayAuthorizationTest {
     }
 
     @Test
-    void deniesDriverRoleAtThePhaseOneApiBoundary() throws Exception {
+    void deniesCaptainRoleAtThePhaseOneApiBoundary() throws Exception {
         mvc.perform(get("/api/v1/disruption/not-configured")
-                        .with(jwt().jwt(token -> token.claim("occ_role", "DRIVER"))
-                                .authorities(new SimpleGrantedAuthority("ROLE_DRIVER"))))
+                        .with(jwt().jwt(token -> token.claim("occ_role", "CAPTAIN"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_CAPTAIN"))))
                 .andExpect(status().isForbidden());
     }
 
@@ -102,9 +102,9 @@ class GatewayAuthorizationTest {
 
     @ParameterizedTest
     @CsvSource({"CONTROLLER,controller,200", "CONTROLLER,captain,403",
-            "DRIVER,captain,200", "DRIVER,controller,403", "ADMIN,controller,403",
+            "CAPTAIN,captain,200", "CAPTAIN,controller,403", "ADMIN,controller,403",
             "ADMIN,captain,403", "UNASSIGNED,controller,403", "UNASSIGNED,captain,403",
-            "DRIVER,unknown,404"})
+            "CAPTAIN,unknown,404", "DRIVER,captain,403", "DRIVER,controller,403"})
     void enforcesExclusivePageAccess(String role, String page, int expected) throws Exception {
         mvc.perform(get("/api/v1/auth/access/" + page)
                         .with(jwt().jwt(token -> token.subject("synthetic-user").claim("occ_role", role))
@@ -113,7 +113,7 @@ class GatewayAuthorizationTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"CONTROLLER", "DRIVER", "ADMIN", "UNASSIGNED"})
+    @CsvSource({"CONTROLLER", "CAPTAIN", "ADMIN", "UNASSIGNED"})
     void readsVerifiedIdentityLocallyWithoutCallingIngestion(String role) throws Exception {
         mvc.perform(get("/api/v1/auth/session")
                         .with(jwt().jwt(token -> token.subject("synthetic-user"))

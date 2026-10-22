@@ -1,4 +1,4 @@
-export type Identity = { subject: string; role: 'CONTROLLER' | 'DRIVER' | 'ADMIN' | 'UNASSIGNED' }
+export type Identity = { subject: string; role: 'CONTROLLER' | 'CAPTAIN' | 'ADMIN' | 'UNASSIGNED' }
 
 export class ApiError extends Error {
   constructor(public status: number) {
@@ -16,12 +16,12 @@ export async function identityRequest(path: string, token: string, signal: Abort
   if (!response.ok) throw new ApiError(response.status)
   const body = await response.json() as Partial<Identity>
   if (typeof body.subject !== 'string' || !body.subject ||
-    !['CONTROLLER', 'DRIVER', 'ADMIN', 'UNASSIGNED'].includes(body.role ?? '')) {
+    !['CONTROLLER', 'CAPTAIN', 'ADMIN', 'UNASSIGNED'].includes(body.role ?? '')) {
     throw new Error('Invalid session response. Try again.')
   }
   return body as Identity
 }
 
 export function homeFor(role: Identity['role']): string | null {
-  return role === 'CONTROLLER' ? '/controller' : role === 'DRIVER' ? '/captain' : null
+  return role === 'CONTROLLER' ? '/controller' : role === 'CAPTAIN' ? '/captain' : null
 }

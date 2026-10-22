@@ -28,7 +28,7 @@ not merged into deployment.
 
 `GET /api/v1/auth/session` accepts authenticated tokens and returns the verified
 subject and normalized OCC role. `GET /api/v1/auth/access/controller` requires
-CONTROLLER; `/api/v1/auth/access/captain` requires DRIVER. ADMIN has no page
+CONTROLLER; `/api/v1/auth/access/captain` requires CAPTAIN. ADMIN has no page
 override. Unsupported page names return 404; role denial returns 403; invalid
 or missing tokens return 401. Gateway owns these endpoints; its Ingestion
 catch-all excludes the auth namespace. Other operational APIs remain limited

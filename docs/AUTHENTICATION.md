@@ -8,7 +8,7 @@ this starter app.
 ## Role pages
 
 - `CONTROLLER` can open `/controller` only.
-- `DRIVER` is displayed as Captain and can open `/captain` only.
+- `CAPTAIN` is displayed as Captain and can open `/captain` only.
 - `ADMIN`, `UNASSIGNED` and unsupported claims receive an access message and
   sign-out; ADMIN does not override these page permissions.
 
@@ -23,7 +23,7 @@ page check `GET /api/v1/auth/access/{page}` returns the same identity only for
 the matching role. Wrong roles receive 403, unsupported page names 404, and
 missing/invalid/expired tokens 401. These Gateway-owned routes are excluded
 from its Ingestion catch-all proxy. Existing business APIs still permit only
-ADMIN/CONTROLLER; DRIVER receives no new business API permissions.
+ADMIN/CONTROLLER; CAPTAIN receives no new business API permissions.
 
 ## Persistent browser sessions
 
@@ -36,8 +36,8 @@ Sign-out uses Supabase's `local` scope, clears app state and updates other open
 tabs. Other devices remain signed in. If provider sign-out fails, the app hides
 protected content and offers retry rather than claiming logout succeeded.
 Browser storage contains session credentials and must never be committed or
-logged. This is an explicit change from the retired memory-only demo; it is
-not an HttpOnly-cookie or server-side session architecture. No OAuth redirects,
+logged. Sessions use browser storage rather than HttpOnly cookies or server-side
+session storage. No OAuth redirects,
 MFA, registration, password recovery or administrator dashboard are added.
 
 ## Configuration
@@ -65,3 +65,7 @@ This contacts real Supabase, validates JWTs, checks Gateway permissions,
 refreshes and signs out the test accounts locally. It does not run by default
 and does not print tokens/passwords. See the [Gateway README](../services/gateway/README.md)
 for its environment settings. Never use production operator accounts for automated tests.
+
+Live checks use only `OCC_SUPABASE_TEST_CAPTAIN_EMAIL` and
+`OCC_SUPABASE_TEST_CAPTAIN_PASSWORD`. Use the `CAPTAIN` account label when
+invoking the smoke script.

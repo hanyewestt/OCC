@@ -35,7 +35,6 @@ def main() -> int:
     parser.add_argument("--base-url", default="https://127.0.0.1:18443")
     parser.add_argument("--token-dir", type=Path)
     parser.add_argument("--static-only", action="store_true")
-    parser.add_argument("--local", action="store_true", help="Local HTTP target (same React routes as HTTPS)")
     args = parser.parse_args()
     base_url = args.base_url.rstrip("/")
 
@@ -98,16 +97,16 @@ def main() -> int:
             assert_status(base_url, f"valid {role.upper()} JWT passes gateway and Ingestion",
                           "/api/v1/arrivals?page=0&size=1", 200,
                           {"Authorization": f"Bearer {token}"})
-        for role in ("driver", "unassigned"):
+        for role in ("captain", "unassigned"):
             token = (token_dir / f"{role}.jwt").read_text(encoding="utf-8").strip()
             assert_status(base_url, f"valid {role.upper()} JWT is forbidden from Ingestion API",
                           "/api/v1/arrivals?page=0&size=1", 403,
                           {"Authorization": f"Bearer {token}"})
-        for role in ("controller", "driver", "admin", "unassigned"):
+        for role in ("controller", "captain", "admin", "unassigned"):
             token = (token_dir / f"{role}.jwt").read_text(encoding="utf-8").strip()
             headers = {"Authorization": f"Bearer {token}"}
             assert_status(base_url, f"{role} verified session", "/api/v1/auth/session", 200, headers)
-            for page, allowed in (("controller", "controller"), ("captain", "driver")):
+            for page, allowed in (("controller", "controller"), ("captain", "captain")):
                 assert_status(base_url, f"{role} page access {page}", f"/api/v1/auth/access/{page}",
                               200 if role == allowed else 403, headers)
         invalid_token = (token_dir / "invalid-signature.jwt").read_text(encoding="utf-8").strip()

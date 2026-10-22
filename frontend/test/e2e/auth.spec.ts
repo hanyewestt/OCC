@@ -35,10 +35,11 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
       return route.fulfill({ status: 503 })
     }
     const page = url.pathname.split('/').pop()
-    if (page !== 'session' && !((page === 'controller' && role === 'CONTROLLER') || (page === 'captain' && role === 'DRIVER'))) {
+    if (page !== 'session' && !((page === 'controller' && role === 'CONTROLLER') || (page === 'captain' && role === 'CAPTAIN'))) {
       return route.fulfill({ status: 403 })
     }
-    return route.fulfill({ json: { subject: userId, role } })
+    return route.fulfill({ json: { subject: userId,
+      role: ['CONTROLLER', 'CAPTAIN', 'ADMIN', 'UNASSIGNED'].includes(role) ? role : 'UNASSIGNED' } })
   })
 }
 async function login(page: Page) {
@@ -50,7 +51,7 @@ async function login(page: Page) {
 
 for (const [role, destination, title, other] of [
   ['CONTROLLER', '/controller', 'Controller', '/captain'],
-  ['DRIVER', '/captain', 'Captain', '/controller'],
+  ['CAPTAIN', '/captain', 'Captain', '/controller'],
 ]) {
   test(`${role} can access only its own page and survives reload`, async ({ page, context }) => {
     await mockAuth(context, role)
@@ -73,7 +74,7 @@ for (const [role, destination, title, other] of [
   })
 }
 
-for (const role of ['ADMIN', 'UNASSIGNED']) {
+for (const role of ['ADMIN', 'UNASSIGNED', 'DRIVER']) {
   test(`${role} receives no role page`, async ({ page, context }) => {
     await mockAuth(context, role)
     await login(page)
@@ -146,7 +147,7 @@ test('configuration failure offers retry without a sign-in form', async ({ page,
 })
 
 test('restored expired session refreshes and verifies the new role', async ({ page, context }) => {
-  await mockAuth(context, 'DRIVER')
+  await mockAuth(context, 'CAPTAIN')
   await page.addInitScript(saved => {
     localStorage.setItem('sb-example-auth-token', JSON.stringify(saved))
   }, session('CONTROLLER', -60))
