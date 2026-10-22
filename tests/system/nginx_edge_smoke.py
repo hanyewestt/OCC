@@ -65,14 +65,8 @@ def main() -> int:
                 raise AssertionError("JavaScript MIME mismatch")
             if asset.suffix == ".css" and "text/css" not in mime:
                 raise AssertionError("CSS MIME mismatch")
-    for route in ("/demo.html", "/auth.js", "/auth-test", "/auth-test/", "/auth-test/index.html", "/auth-test/callback", "/assets/missing.js", "/admin"):
+    for route in ("/demo.html", "/obu-pacing.html", "/auth.js", "/auth-test", "/auth-test/", "/auth-test/index.html", "/auth-test/callback", "/assets/missing.js", "/admin"):
         assert_status(base_url, "retired or unknown path " + route, route, 404)
-    with urllib.request.urlopen(base_url + "/obu-pacing.html", context=ssl._create_unverified_context(), timeout=10) as response:
-        if response.read() != (root / "frontend/dist/obu-pacing.html").read_bytes():
-            raise AssertionError("OBU response differs from the built sample page")
-        if "text/html" not in response.headers.get("Content-Type", ""):
-            raise AssertionError("OBU HTML MIME mismatch")
-    print("PASS OBU pacing sample page")
     if args.static_only:
         return 0
 
