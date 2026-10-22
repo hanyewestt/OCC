@@ -32,6 +32,18 @@ public class DiagnosisQueryService {
     @Transactional(readOnly = true)
     public DiagnosisRequestView findRequest(UUID id) {
         DiagnosisRequest request = requests.findById(id).orElseThrow(DiagnosisNotFoundException::new);
+        return requestView(request);
+    }
+
+    @Transactional(readOnly = true)
+    public DiagnosisRequestView findRequestByEvent(UUID eventId, EventType eventType) {
+        DiagnosisRequest request = requests.findByEventTypeAndProducerAndEventIdAndSchemaVersion(
+                eventType.name(), "disruption", eventId, DiagnosisRequestService.SCHEMA_VERSION)
+                .orElseThrow(DiagnosisNotFoundException::new);
+        return requestView(request);
+    }
+
+    private DiagnosisRequestView requestView(DiagnosisRequest request) {
         UUID diagnosisId = diagnoses.findByRequestId(request.id()).map(RootCauseDiagnosisEntity::id)
                 .orElse(null);
         return new DiagnosisRequestView(request.id(), diagnosisId, request.status(),

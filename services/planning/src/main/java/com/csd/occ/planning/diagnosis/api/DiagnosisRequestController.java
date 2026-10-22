@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -67,6 +68,18 @@ public class DiagnosisRequestController {
     @ApiResponse(responseCode = "404", description = "Diagnosis request not found")
     public DiagnosisRequestResponse get(@PathVariable UUID requestId) {
         var request = query.findRequest(requestId);
+        return new DiagnosisRequestResponse(request.requestId(), request.diagnosisId(), request.status(),
+                request.failureCode(), request.createdAt(), request.policyOutcome());
+    }
+
+    @GetMapping("/api/v1/planning/requests/by-event/{eventId}")
+    @Operation(operationId = "getDiagnosisRequestByEvent", summary = "Get Planning status for a Disruption event",
+            description = "Returns the current-version request, including terminal failures before a diagnosis exists. Defaults to a bus-bunching event.")
+    @ApiResponse(responseCode = "200", description = "Diagnosis request status")
+    @ApiResponse(responseCode = "404", description = "No request has been accepted for this event")
+    public DiagnosisRequestResponse getByEvent(@PathVariable UUID eventId,
+            @RequestParam(defaultValue = "BUS_BUNCHING") com.csd.occ.planning.diagnosis.domain.EventType eventType) {
+        var request = query.findRequestByEvent(eventId, eventType);
         return new DiagnosisRequestResponse(request.requestId(), request.diagnosisId(), request.status(),
                 request.failureCode(), request.createdAt(), request.policyOutcome());
     }

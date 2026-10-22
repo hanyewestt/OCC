@@ -4,7 +4,7 @@ Polls DataMall bus arrivals and traffic incidents and records observations for a
 
 ## Demo replay
 
-Nginx serves the demo at `http://localhost/demo.html`; Ingestion no longer hosts HTML. Sign in with an ADMIN or CONTROLLER Supabase account before using its protected APIs. Its persisted runtime state starts disabled, so the replay scheduler does no work and bunching remains live until **Show demo** starts a run. **Return to live** switches bunching back to the live feed and closes the run. The mode can also be toggled while ingestion is running; no restart is needed:
+The React frontend currently provides login and role-access checks only. Replay remains available through the protected APIs below for ADMIN and CONTROLLER accounts. Its persisted runtime state starts disabled, so the replay scheduler does no work and bunching remains live until a run starts. The mode can be toggled while ingestion is running; no restart is needed:
 
 ```http
 GET /api/v1/demo-mode
@@ -14,17 +14,14 @@ Content-Type: application/json
 {"enabled":true}
 ```
 
-Setting `enabled` to `true` starts a replay if none is active, or resumes the currently active run. Setting it to `false` first switches bunching to the live feed, then closes the active run. The persisted setting is initialized to `false` by Flyway and survives an ingestion restart. The page uses the equivalent start/close run endpoints so it can display the run ID and alert list.
+Setting `enabled` to `true` starts a replay if none is active, or resumes the currently active run. Setting it to `false` first switches bunching to the live feed, then closes the active run. The persisted setting is initialized to `false` by Flyway and survives an ingestion restart. The start/close run endpoints provide equivalent control with explicit run IDs.
 
-The page starts a fictional, deterministic route-190 replay and lists simulation-only
-bunching alerts. Since the bunching consumer runs independently, after the replay ends
-the page keeps checking until the alert arrives and then shows the persisted, simulation-only
-recommendation when it is ready; **Return to live** remains available while it waits. Enabling demo
-support requires `OCC_DISRUPTION_INTERNAL_URL` and `OCC_PLANNING_INTERNAL_URL`; live DataMall polling remains enabled.
-When no demo run is active, the same page also shows the currently open live bunching
-detections through ingestion's same-origin `GET /api/v1/live-bunching-alerts` proxy.
-The browser does not call bunching directly; the proxy obtains the immutable opening
-`alert_event` for each active live episode from bunching.
+Replay uses a fictional, deterministic route-190 scenario and produces simulation-only
+bunching alerts and recommendations. The bunching consumer runs independently, so
+results can arrive after replay completes. Replay support requires
+`OCC_DISRUPTION_INTERNAL_URL` and `OCC_PLANNING_INTERNAL_URL`; live DataMall polling remains enabled.
+`GET /api/v1/live-bunching-alerts` retrieves the immutable opening `alert_event`
+for each active live episode through ingestion's proxy to disruption.
 
 ## Run only ingestion
 

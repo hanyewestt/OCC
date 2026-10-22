@@ -26,7 +26,7 @@ spring:
             - id: ingestion-root-api
               uri: ${OCC_INGESTION_INTERNAL_URL}
               predicates:
-                - Path=/api/v1/**
+                - Path=/api/v1/{resource:(?!auth$).+}/**
 server:
   port: ${OCC_GATEWAY_INTERNAL_PORT}
 occ:

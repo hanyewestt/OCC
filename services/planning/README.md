@@ -13,10 +13,22 @@ phase 1 deliberately defines no traffic intervention policy.
 
 The public API uses `/api/v1/planning/...` and accepts Supabase JWTs with an
 `occ_role` claim of `ADMIN` or `CONTROLLER`. The internal request endpoint only
-accepts the configured `X-OCC-Peer-Token` from Disruption. Driver and unassigned
+accepts the configured `X-OCC-Peer-Token` from Disruption. Captain and unassigned
 users cannot use public Planning routes. The token is a per-peer capability,
 not a Supabase user token; keep its value in the ignored root `.env` or a
 deployment secret store.
+
+The demo checks `/api/v1/planning/requests/by-event/{eventId}` when a recommendation
+is not yet available. This authenticated lookup reports pending, retryable and
+terminal diagnosis states even if no diagnosis result was created. It defaults
+to `BUS_BUNCHING`; `eventType=TRAFFIC_INCIDENT` selects a traffic event. A 404 means
+the event has not been accepted by Planning. A terminal failure remains recorded;
+close the simulation and start a new one to retry with fresh evidence.
+The default Gemini request deadline is 30 seconds. For a slow live provider, set
+`OCC_PLANNING_GEMINI_REQUEST_TIMEOUT=60s` in `.env` and recreate Planning to apply
+it; no application rebuild is needed. The same deadline applies to diagnosis
+and recommendation requests. An exhausted diagnosis retry budget is reported
+as a terminal failure in the demo instead of remaining pending indefinitely.
 
 ## Local setup and verification
 

@@ -6,8 +6,6 @@ server {
     server_tokens off;
     include /etc/nginx/conf.d/routes.inc;
 
-    location = /auth-test { return 302 /auth-test/; }
-    location = /auth-test/ { try_files /auth-test/index.html =404; }
-    location = /auth-test/index.html { try_files $uri =404; }
-    location = /auth-test/callback { try_files /auth-test/index.html =404; }
+    location = /auth-test { return 404; }
+    location ^~ /auth-test/ { return 404; }
 }

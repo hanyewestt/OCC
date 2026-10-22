@@ -7,6 +7,7 @@ import com.google.genai.types.HttpRetryOptions;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.google.genai.GoogleGenAiChatModel;
 import org.springframework.ai.google.genai.GoogleGenAiChatOptions;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -24,7 +25,8 @@ public class GeminiDiagnosisConfig {
     }
 
     @Bean
-    GoogleGenAiChatModel diagnosisGeminiChatModel(Client diagnosisGeminiClient, DiagnosisGeminiProperties properties) {
+    GoogleGenAiChatModel diagnosisGeminiChatModel(@Qualifier("diagnosisGeminiClient") Client diagnosisGeminiClient,
+            DiagnosisGeminiProperties properties) {
         GoogleGenAiChatOptions options = GoogleGenAiChatOptions.builder().model(properties.model())
                 .temperature(properties.temperature()).thinkingLevel(properties.thinkingLevel())
                 .maxOutputTokens(properties.maxOutputTokens()).includeThoughts(false).candidateCount(1).build();
@@ -32,7 +34,7 @@ public class GeminiDiagnosisConfig {
     }
 
     @Bean
-    ChatClient diagnosisChatClient(GoogleGenAiChatModel diagnosisGeminiChatModel) {
+    ChatClient diagnosisChatClient(@Qualifier("diagnosisGeminiChatModel") GoogleGenAiChatModel diagnosisGeminiChatModel) {
         return ChatClient.create(diagnosisGeminiChatModel);
     }
 }
