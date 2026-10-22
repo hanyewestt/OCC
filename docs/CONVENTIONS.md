@@ -176,7 +176,7 @@ public record ReservationProperties(Duration expiry) {}
 
 Bind config to these, never `@Value` on a field.
 
-**Security config** as a `SecurityFilterChain` bean using the lambda DSL, in `infrastructure/security/`. Protected APIs validate tokens from the configured identity provider and enforce the required `ADMIN`, `CONTROLLER` or `DRIVER` role server-side.
+**Security config** as a `SecurityFilterChain` bean using the lambda DSL, in `infrastructure/security/`. Protected APIs validate tokens from the configured identity provider and enforce the required `ADMIN`, `CONTROLLER` or `CAPTAIN` role server-side.
 
 **Configuration keys** are kebab-case under an `occ.` prefix: `occ.reservation.expiry`. Important Spring Boot runtime and operational values must not be hard-coded directly in `application.yml` or `application-local.yml`. Bind them through environment-variable placeholders (for example, `${OCC_INGESTION_POLL_INTERVAL}`) and define the values in the centralized environment configuration documented by `.env.example` and the deployment secret/config store. This includes connection URLs, credentials, ports, timeouts, polling intervals, thresholds, feature flags and other values that vary by environment. YAML may retain stable application structure and safe defaults only where an omitted environment value is intentionally supported and documented.
 

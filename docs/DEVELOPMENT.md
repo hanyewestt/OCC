@@ -159,7 +159,7 @@ artifact; see [deployment](DEPLOYMENT.md) for the production Compose setup.
 
 React renders the login, controller and captain screens. Gateway verifies the
 session and page permission before role content appears. Captain uses the
-existing `DRIVER` claim. Persistent sessions and local-scope sign-out are
+`CAPTAIN` claim. Persistent sessions and local-scope sign-out are
 described in [authentication](AUTHENTICATION.md).
 
 `/401` and `/403` are SPA error screens served as HTML with HTTP 200; they do
@@ -206,7 +206,7 @@ separately from the normal app and remove their containers afterward.
 ## Open the app
 
 Open [the login page](http://localhost/login) using an existing Supabase account.
-CONTROLLER opens `/controller`; DRIVER opens `/captain`. Other roles receive
+CONTROLLER opens `/controller`; CAPTAIN opens `/captain`. Other roles receive
 an access message. Sessions persist across reloads using the Supabase SDK;
 Gateway verifies session and role before protected content appears. Set
 `OCC_NGINX_PORT` if port 80 is unavailable. Old demo/auth-test URLs return 404.
@@ -217,7 +217,7 @@ These are the default local addresses; use the configured ports if changed in `.
 
 | Component | URL / endpoint | Purpose | Access |
 | --- | --- | --- | --- |
-| React app | [http://localhost/login](http://localhost/login) | Sign-in and exclusive controller/captain pages | Verified CONTROLLER or DRIVER role for its corresponding page |
+| React app | [http://localhost/login](http://localhost/login) | Sign-in and exclusive controller/captain pages | Verified CONTROLLER or CAPTAIN role for its corresponding page |
 | Nginx public API | `http://localhost/api/v1/...` | Main entry point for application API requests | ADMIN/CONTROLLER bearer token for existing operational APIs |
 | Ingestion | [http://localhost:6767](http://localhost:6767) | Direct arrival, reference-data and demo API access | Local loopback only; not published in production; operational APIs require ADMIN/CONTROLLER |
 | Disruption | [http://localhost:6768](http://localhost:6768) | Direct bunching and traffic-disruption API access | Local loopback only; not published in production; operational APIs require ADMIN/CONTROLLER |
@@ -307,7 +307,7 @@ the root `.env.example`. Keep test credentials and saved browser sessions out of
 From the repository root, verify real Nginx routing and API boundaries with:
 
 ```shell
-python tests/system/nginx_edge_smoke.py --base-url http://127.0.0.1 --local
+python tests/system/nginx_edge_smoke.py --base-url http://127.0.0.1
 ```
 
 For opt-in live Supabase sign-in, refresh, role checks and local sign-out, use
@@ -322,3 +322,10 @@ See [testing](TESTING.md) for system tests and CI.
 - [Deployment](DEPLOYMENT.md): container topology and production HTTPS.
 - [Monitoring](MONITORING.md): metrics and diagnostic access.
 - [Frontend conventions](frontend-convention.md) and [service conventions](CONVENTIONS.md).
+
+### Captain live-auth test configuration
+
+Use `OCC_SUPABASE_TEST_CAPTAIN_EMAIL` and `OCC_SUPABASE_TEST_CAPTAIN_PASSWORD`
+from root `.env.example` for the CAPTAIN account. The smoke runner expects the
+actual JWT role to be CAPTAIN; invoke it with the `CAPTAIN` account label.
+See [authentication](AUTHENTICATION.md) for session refresh behavior.

@@ -49,7 +49,7 @@ class BunchingRecommendationControllerTest {
     void rejectsRolesThatCannotUseThePlanningApi() {
         assertThat(mvc.get()
                 .uri("/api/v1/planning/recommendations/by-disruption-event/{id}", EVENT_ID)
-                .with(user("driver").roles("DRIVER"))
+                .with(user("captain").roles("CAPTAIN"))
                 .exchange()).hasStatus(403);
     }
 

@@ -454,7 +454,7 @@ jobs:
       - name: Verify local HTTP frontend and authentication boundaries
         run: >-
           python3 tests/system/nginx_edge_smoke.py --base-url http://127.0.0.1:18480
-          --local --token-dir "$RUNNER_TEMP/occ-edge-jwks"
+          --token-dir "$RUNNER_TEMP/occ-edge-jwks"
       - name: Verify static pages without backend hosting
         shell: bash
         run: |
@@ -463,7 +463,7 @@ jobs:
           trap '"${compose[@]}" start gateway' EXIT
           "${compose[@]}" stop gateway
           python3 tests/system/nginx_edge_smoke.py --base-url https://127.0.0.1:18443 --static-only
-          python3 tests/system/nginx_edge_smoke.py --base-url http://127.0.0.1:18480 --local --static-only
+          python3 tests/system/nginx_edge_smoke.py --base-url http://127.0.0.1:18480 --static-only
       - name: Remove disposable containers and networks
         if: always()
         run: |

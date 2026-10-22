@@ -17,7 +17,7 @@ controls, incident views and dispatch workflows are not yet part of the frontend
 | `/` | Opens sign-in or the account's own page | Depends on session and role |
 | `/login` | Email/password sign-in | Public |
 | `/controller` | Controller page | `CONTROLLER` only |
-| `/captain` | Captain page | `DRIVER` only; displayed as Captain |
+| `/captain` | Captain page | `CAPTAIN` only; displayed as Captain |
 | `/401` | Sign-in required screen with a sign-in action | Public error screen |
 | `/403` | Access denied screen with available recovery actions | Public error screen |
 | Unknown website URL | Page not found with a return-home action | HTTP 404 |
