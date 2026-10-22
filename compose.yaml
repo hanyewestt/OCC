@@ -348,7 +348,7 @@ services:
       OCC_NGINX_PROXY_SEND_TIMEOUT: ${OCC_NGINX_PROXY_SEND_TIMEOUT:-30s}
     volumes:
       - ./infra/nginx/routes.inc.template:/etc/nginx/templates/routes.inc.template:ro
-      - ./frontend/static:/usr/share/nginx/html:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
     networks: [edge]
     depends_on:
       gateway:

@@ -169,14 +169,13 @@
       "sourcePath": "/demo.html",
       "sourceOperationId": "page_1",
       "targetService": "edge",
-      "targetContract": "frontend/static/demo.html",
-      "targetMethod": "GET",
-      "targetPath": "/demo.html",
-      "targetOperationId": "page_1",
-      "classification": "static-route-preserved",
-      "targetAuthorization": "static-content",
-      "retirementRule": "Nginx serves the static asset directly; browser API calls carry a Supabase bearer token through Gateway.",
-      "targetAsset": "frontend/static/demo.html"
+      "targetContract": null,
+      "targetMethod": null,
+      "targetPath": null,
+      "targetOperationId": null,
+      "classification": "retired-static-page",
+      "targetAuthorization": "none",
+      "retirementRule": "Replaced by the React login and exclusive controller/captain auth-test pages. The demo URL returns 404."
     },
     {
       "sourceService": "ingestion",
@@ -527,8 +526,7 @@
   "phase2Only": [
     "approval/rejection",
     "captain identity binding",
-    "assigned instructions",
-    "controller/captain React routes"
+    "assigned instructions"
   ],
   "contractRules": [
     "Keep operation IDs where the target operation is the same behavior; document reviewed rename when semantics change.",
