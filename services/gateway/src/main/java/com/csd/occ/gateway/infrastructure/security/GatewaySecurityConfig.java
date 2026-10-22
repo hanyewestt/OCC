@@ -37,6 +37,9 @@ public class GatewaySecurityConfig {
                     authorize.requestMatchers("/internal/v1/**").denyAll();
                     authorize.requestMatchers(HttpMethod.GET, "/api/v1/auth/session", "/api/v1/auth/access/*")
                             .authenticated();
+                    // Bus captains read pacing on their On Board Unit; every other API stays controller-only.
+                    authorize.requestMatchers(HttpMethod.GET, "/api/v1/pacing-snapshots/latest",
+                            "/api/v1/pacing-snapshots/stream").hasAnyRole("ADMIN", "CONTROLLER", "CAPTAIN");
                     authorize.requestMatchers("/api/v1/**").hasAnyRole("ADMIN", "CONTROLLER");
                     authorize.requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")
                             .hasAnyRole("ADMIN", "CONTROLLER");

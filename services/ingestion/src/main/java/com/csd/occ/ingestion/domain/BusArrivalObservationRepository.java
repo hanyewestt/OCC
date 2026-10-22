@@ -53,6 +53,34 @@ public interface BusArrivalObservationRepository extends JpaRepository<BusArriva
     Page<CurrentBusArrivalView> findCurrent(@Param("stopCode") String stopCode,
             @Param("serviceId") String serviceId, Pageable pageable);
 
+    /**
+     * Latest live prediction set per polled stop plus the latest replay step of the active demo run.
+     * Rows without a direction or arrival estimate are insufficient evidence and are not paced.
+     */
+    @Query(value = """
+            select live.classification as classification, live.stop_code as stopCode,
+                   live.service_id as serviceId, live.direction_id as directionId,
+                   live.estimated_arrival_at as estimatedArrivalAt, live.fetched_at as fetchedAt,
+                   cast(null as varchar) as vehicleReference
+            from ingestion.current_bus_arrival live
+            where live.direction_id is not null and live.estimated_arrival_at is not null
+            union all
+            select simulation.classification, simulation.stop_code, simulation.service_id, simulation.direction_id,
+                   simulation.estimated_arrival_at, simulation.fetched_at, assignment.vehicle_registration_number
+            from ingestion.bus_arrival_observation simulation
+            join ingestion.demo_vehicle_assignment assignment
+              on assignment.demo_run_id = simulation.demo_run_id and assignment.trip_id = simulation.trip_id
+            where simulation.classification = 'SIMULATION'
+              and simulation.direction_id is not null and simulation.estimated_arrival_at is not null
+              and simulation.poll_run_id = (
+                  select poll.id from ingestion.poll_run poll
+                  join ingestion.demo_run run on run.id = poll.demo_run_id
+                  where run.status in ('PREPARING', 'RUNNING', 'REPLAY_COMPLETE') and poll.outcome = 'SUCCESS'
+                  order by poll.started_at desc
+                  limit 1)
+            """, nativeQuery = true)
+    List<PacingArrivalView> findPacingArrivals();
+
     @Query(value = """
             select observation.* from ingestion.bus_arrival_observation observation
             where observation.classification = 'OBSERVATION_ONLY'
