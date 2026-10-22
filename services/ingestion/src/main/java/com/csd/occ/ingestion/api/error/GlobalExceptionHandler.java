@@ -5,6 +5,8 @@ import com.csd.occ.ingestion.domain.DemoBunchingUnavailableException;
 import com.csd.occ.ingestion.domain.DemoRecommendationUnavailableException;
 import com.csd.occ.ingestion.domain.DemoRunAlreadyActiveException;
 import com.csd.occ.ingestion.domain.DemoRunNotFoundException;
+import com.csd.occ.ingestion.domain.PacingSubscriberLimitException;
+import com.csd.occ.ingestion.domain.PacingUnavailableException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -53,6 +55,20 @@ public class GlobalExceptionHandler {
     ProblemDetail demoBunchingUnavailable(DemoBunchingUnavailableException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage());
         problem.setTitle("Bunching control unavailable");
+        return problem;
+    }
+
+    @ExceptionHandler(PacingUnavailableException.class)
+    ProblemDetail pacingUnavailable(PacingUnavailableException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage());
+        problem.setTitle("Pacing metrics unavailable");
+        return problem;
+    }
+
+    @ExceptionHandler(PacingSubscriberLimitException.class)
+    ProblemDetail pacingSubscriberLimit(PacingSubscriberLimitException exception) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage());
+        problem.setTitle("Pacing stream at capacity");
         return problem;
     }
 

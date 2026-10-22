@@ -22,11 +22,15 @@ import com.csd.occ.ingestion.domain.TrafficIncidentPollFeedService;
 import com.csd.occ.ingestion.domain.TrafficIncidentFeedPort;
 import com.csd.occ.ingestion.domain.TrafficIncidentPollingService;
 import com.csd.occ.ingestion.domain.DemoRunService;
+import com.csd.occ.ingestion.domain.PacingMetric;
+import com.csd.occ.ingestion.domain.PacingService;
+import com.csd.occ.ingestion.domain.PacingState;
 import com.csd.occ.ingestion.domain.PollRunRepository;
 import com.csd.occ.ingestion.domain.ReferenceTopologyPort;
 import com.csd.occ.ingestion.domain.RawObservationRepository;
 import com.csd.occ.ingestion.infrastructure.config.BusArrivalSchedule;
 import com.csd.occ.ingestion.infrastructure.config.DemoReplaySchedule;
+import com.csd.occ.ingestion.infrastructure.config.PacingSchedule;
 import com.csd.occ.ingestion.infrastructure.config.TrafficIncidentSchedule;
 import com.csd.occ.ingestion.infrastructure.datamall.DataMallAdapter;
 import java.time.Instant;
@@ -74,6 +78,7 @@ class IngestionStartupIT {
     @MockitoBean BusArrivalSchedule schedule;
     @MockitoBean TrafficIncidentSchedule trafficIncidentSchedule;
     @MockitoBean DemoReplaySchedule demoReplaySchedule;
+    @MockitoBean PacingSchedule pacingSchedule;
     @MockitoBean BunchingControlPort bunching;
     @Autowired JdbcTemplate jdbc;
     @Autowired MockMvc mvc;
@@ -269,6 +274,51 @@ class IngestionStartupIT {
         assertThat(jdbc.queryForObject("select count(*) from ingestion.demo_run where id = ?", Integer.class, started.id())).isZero();
         assertThat(jdbc.queryForObject("select count(*) from ingestion.traffic_incident_observation where demo_run_id = ?", Integer.class, started.id())).isZero();
         assertThat(jdbc.queryForObject("select count(*) from ingestion.demo_vehicle_assignment where demo_run_id = ?", Integer.class, started.id())).isZero();
+    }
+
+    @Autowired PacingService pacing;
+
+    @Test
+    void pacingUsesSimulationRegistrationsFromTheLatestReplayStepOnlyWhileTheRunIsActive() {
+        topology.replaceIfChanged(new BusReferencePort.BusReferenceData(
+                List.of(new BusReferencePort.BusStopRecord("44251", "Demo Road", "Demo Stop",
+                        new java.math.BigDecimal("1.377"), new java.math.BigDecimal("103.771"))),
+                List.of(new BusReferencePort.BusServiceRecord("190", "SBST", "TRUNK")),
+                List.of(new BusReferencePort.BusRouteStopRecord("190", "SBST", 1, 1, "44251",
+                        java.math.BigDecimal.ZERO))), "e".repeat(64));
+        when(bunching.alerts(any(UUID.class))).thenReturn(List.of());
+        DemoRunDetails started = demoRuns.start();
+        for (int step = 0; step < DemoReplayScenario.STEP_COUNT; step++) replay.replayNext();
+
+        List<PacingMetric> simulation = pacing.refresh().metrics().stream()
+                .filter(metric -> "SIMULATION".equals(metric.classification())).toList();
+
+        // The final replay step places bus B half the 90s detector threshold behind bus A.
+        assertThat(simulation).hasSize(2);
+        assertThat(simulation.get(0).vehicleReference()).startsWith("DEMO-BUS-").endsWith("-01");
+        assertThat(simulation.get(0).ahead()).isEmpty();
+        assertThat(simulation.get(0).behind()).hasValueSatisfying(gap -> {
+            assertThat(gap.headway()).isEqualTo(java.time.Duration.ofSeconds(45));
+            assertThat(gap.state()).isEqualTo(PacingState.TOO_CLOSE);
+        });
+        assertThat(simulation.get(1).vehicleReference()).startsWith("DEMO-BUS-").endsWith("-02");
+        assertThat(simulation.get(1).behind()).isEmpty();
+
+        demoRuns.close(started.id());
+
+        assertThat(pacing.refresh().metrics()).noneMatch(metric -> "SIMULATION".equals(metric.classification()));
+    }
+
+    @Test
+    @org.junit.jupiter.api.condition.EnabledIfSystemProperty(named = "occ.exportOpenapi", matches = "true")
+    void exportsGeneratedIngestionContract() throws Exception {
+        // The absolute URL reproduces the committed server URL that the runtime contract check expects.
+        String contract = mvc.perform(get("http://localhost:6767/v3/api-docs").with(jwt()
+                        .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        java.nio.file.Path output = java.nio.file.Path.of("openapi", "ingestion.json");
+        java.nio.file.Files.createDirectories(output.getParent());
+        java.nio.file.Files.writeString(output, contract);
     }
 
     @Test void topologyPruningPreservesOldActiveAndBoundaryRetiredVersions() {

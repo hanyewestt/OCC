@@ -82,3 +82,11 @@ occ:
       disruption-control-timeout: ${OCC_INGESTION_DISRUPTION_TIMEOUT:5s}
       planning-internal-url: ${OCC_PLANNING_INTERNAL_URL}
       planning-timeout: ${OCC_INGESTION_PLANNING_TIMEOUT:5s}
+    pacing:
+      interval: ${OCC_INGESTION_PACING_INTERVAL:10s}
+      target-headway: ${OCC_INGESTION_PACING_TARGET_HEADWAY:180s}
+      too-close-ratio: ${OCC_INGESTION_PACING_TOO_CLOSE_RATIO:0.5}
+      too-far-ratio: ${OCC_INGESTION_PACING_TOO_FAR_RATIO:1.5}
+      stale-after: ${OCC_INGESTION_PACING_STALE_AFTER:180s}
+      stream-timeout: ${OCC_INGESTION_PACING_STREAM_TIMEOUT:30m}
+      max-subscribers: ${OCC_INGESTION_PACING_MAX_SUBSCRIBERS:200}
