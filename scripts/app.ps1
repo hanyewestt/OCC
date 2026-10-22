@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('start', 'stop', 'reset', 'clear', 'start-pgadmin', 'stop-pgadmin')]
+    [ValidateSet('up', 'start', 'stop', 'reset', 'clear', 'start-pgadmin', 'stop-pgadmin')]
     [string]$Action = 'start',
     [string]$ProjectName,
     [switch]$Yes,
@@ -11,7 +11,8 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ($Help) {
-    Write-Output 'Usage: ./scripts/app.ps1 <start|stop|reset|clear|start-pgadmin|stop-pgadmin> [-ProjectName name] [-Yes]'
+    Write-Output 'Usage: ./scripts/app.ps1 <up|start|stop|reset|clear|start-pgadmin|stop-pgadmin> [-ProjectName name] [-Yes]'
+    Write-Output 'Up starts existing images and frontend assets without building. Start builds before starting.'
     Write-Output 'Reset deletes the selected project database and pgAdmin volumes, then rebuilds without layer cache.'
     Write-Output 'Clear removes the selected project containers, networks, volumes and referenced images; it does not restart.'
     Write-Output '-Yes skips the reset/clear confirmation. Stop preserves containers, networks and data; stop-pgadmin stops only pgAdmin.'
@@ -70,6 +71,7 @@ try {
     }
 
     switch ($Action) {
+        'up' { Invoke-AppCompose -Arguments @('up', '-d', '--no-build', '--wait') }
         'start' { Build-Frontend; Invoke-AppCompose -Arguments @('up', '-d', '--build', '--wait') }
         'stop' { Invoke-AppCompose -Arguments @('--profile', 'tools', 'stop') }
         'reset' {
