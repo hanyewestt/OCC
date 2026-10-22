@@ -83,10 +83,10 @@ scenario switching, narrow-screen layout and persistent day/night mode. They
 verify that pacing makes no operational API requests. The React pacing tests
 are included in the frontend browser suite.
 
-The standalone demo's sign-in helper is tested with
-`node --test frontend/test/demo-auth.test.mjs` from the repository root.
-Mocked browser tests also cover the restored controller approve/reject controls;
-they do not record decisions in a real database.
+Controller browser tests cover dashboard navigation, simulation controls,
+bunching arrival evidence and approve/reject controls. These use mocked APIs
+and do not record decisions in a real database. Edge checks verify that retired
+`/demo.html` and `/auth.js` URLs return 404 and are absent from the build.
 
 ## System verification
 

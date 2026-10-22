@@ -124,8 +124,6 @@ jobs:
           npm run build
           npx playwright install --with-deps chromium
           npm test
-      - name: Verify standalone demo authentication
-        run: node --test frontend/test/demo-auth.test.mjs
 
   config-and-contracts:
     name: Configuration and API contract checks

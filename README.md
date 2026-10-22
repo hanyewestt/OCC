@@ -23,7 +23,6 @@ scenario controls and day/night mode. It does not use live backend data.
 | `/controller/planning` | Current simulation recommendation and approval/rejection | `CONTROLLER` only |
 | `/controller/audit` | Current simulation decision and AI audit placeholder | `CONTROLLER` only |
 | `/captain` | Captain OBU pacing display with built-in sample data | `CAPTAIN` only |
-| `/demo.html` | Standalone bunching demo and recommendation review | Public shell; APIs require `ADMIN` or `CONTROLLER` sign-in |
 | `/401` | Sign-in required screen with a sign-in action | Public error screen |
 | `/403` | Access denied screen with available recovery actions | Public error screen |
 | Unknown website URL | Page not found with a return-home action | HTTP 404 |

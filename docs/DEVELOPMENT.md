@@ -117,12 +117,9 @@ The OBU pacing display is the CAPTAIN-only `/captain` screen. It uses built-in
 sample gaps; no operational API or live-data polling was added. Day/night mode
 is saved in the `occ-obu-theme` browser preference.
 
-The standalone backend-workflow demo is at `/demo.html`. Its source and
-sign-in helper live in `frontend/static/`; Vite copies them into `dist/` for
-Nginx. Sign in on the demo itself with an ADMIN or CONTROLLER account. This
-demo keeps its token in memory and clears it on reload, independently of the
-React app's persistent Supabase session. The local auth-test harness remains
-retired. The restored demo includes this branch's recommendation review controls.
+Use the controller dashboard for simulation controls, bunching detections and
+recommendation review. These workflows use the React app's verified Supabase
+session. The standalone demo and its separate sign-in helper have been removed.
 
 ### Edit with automatic updates
 
@@ -220,8 +217,8 @@ Open [the login page](http://localhost/login) using an existing Supabase account
 CONTROLLER opens `/controller`; CAPTAIN opens `/captain`. Other roles receive
 an access message. Sessions persist across reloads using the Supabase SDK;
 Gateway verifies session and role before protected content appears. Set
-`OCC_NGINX_PORT` if port 80 is unavailable. The standalone `/demo.html` remains
-available for backend workflows; `/auth-test` and `/obu-pacing.html` return 404.
+`OCC_NGINX_PORT` if port 80 is unavailable. Retired `/demo.html`, `/auth.js`,
+`/auth-test` and `/obu-pacing.html` routes return 404.
 
 The controller dashboard has four routes: `/controller` (overview),
 `/controller/disruptions`, `/controller/planning`, and `/controller/audit`.
