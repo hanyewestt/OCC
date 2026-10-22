@@ -13,7 +13,7 @@ phase 1 deliberately defines no traffic intervention policy.
 
 The public API uses `/api/v1/planning/...` and accepts Supabase JWTs with an
 `occ_role` claim of `ADMIN` or `CONTROLLER`. The internal request endpoint only
-accepts the configured `X-OCC-Peer-Token` from Disruption. Driver and unassigned
+accepts the configured `X-OCC-Peer-Token` from Disruption. Captain and unassigned
 users cannot use public Planning routes. The token is a per-peer capability,
 not a Supabase user token; keep its value in the ignored root `.env` or a
 deployment secret store.

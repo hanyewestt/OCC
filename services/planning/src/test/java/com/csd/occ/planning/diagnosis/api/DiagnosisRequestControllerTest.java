@@ -71,7 +71,7 @@ class DiagnosisRequestControllerTest {
         String path = "/api/v1/planning/requests/by-event/" + UUID.randomUUID();
         mvc.perform(get(path)).andExpect(status().isUnauthorized());
         mvc.perform(get(path).with(jwt().authorities(
-                        new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_DRIVER"))))
+                        new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_CAPTAIN"))))
                 .andExpect(status().isForbidden());
         verifyNoInteractions(query);
     }

@@ -45,8 +45,13 @@ resolved_project=$("${compose[@]}" config --format yaml | sed -n 's/^name: \([a-
 if [[ -z "$project_name" ]]; then compose+=(--project-name "$resolved_project"); fi
 printf 'OCC local project: %s; action: %s\n' "$resolved_project" "$action"
 
+build_frontend() {
+    command -v npm >/dev/null 2>&1 || fail 'Node.js 22.12+ and npm are required to build the frontend.'
+    (cd "$repo_root/frontend" && npm ci && npm run build)
+}
+
 case "$action" in
-    start) "${compose[@]}" up -d --build --wait ;;
+    start) build_frontend; "${compose[@]}" up -d --build --wait ;;
     stop) "${compose[@]}" --profile tools stop ;;
     reset)
         if [[ "$yes" == false ]]; then
@@ -61,6 +66,7 @@ case "$action" in
                 printf '%s\n' 'Reset cancelled.'; exit 0
             fi
         fi
+        build_frontend
         "${compose[@]}" --profile tools down --volumes --remove-orphans
         "${compose[@]}" --profile tools build --pull --no-cache
         "${compose[@]}" up -d --force-recreate --wait ;;

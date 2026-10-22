@@ -28,4 +28,15 @@ class SupabaseRoleConverterTest {
         assertThat(converter.convert(unknown)).isEmpty();
         assertThat(converter.convert(malformed)).isEmpty();
     }
+
+    @Test
+    void acceptsCaptainAndRejectsRetiredDriverClaims() {
+        Jwt captain = Jwt.withTokenValue("synthetic").header("alg", "ES256")
+                .claim("occ_role", "CAPTAIN").build();
+        Jwt retired = Jwt.withTokenValue("synthetic").header("alg", "ES256")
+                .claim("occ_role", "DRIVER").build();
+
+        assertThat(converter.convert(captain)).containsExactly(new SimpleGrantedAuthority("ROLE_CAPTAIN"));
+        assertThat(converter.convert(retired)).isEmpty();
+    }
 }
