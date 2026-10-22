@@ -10,6 +10,7 @@ import subprocess
 import time
 from typing import Any
 from urllib.parse import urlsplit
+from unittest.mock import patch
 
 
 SERVICES = {
@@ -131,7 +132,28 @@ def self_test() -> int:
         != "$/components/schemas/DemoRequest/required (missing from live contract)"
     ):
         return 1
-    print("OpenAPI comparison self-test passed: exact match accepted; route deletion detected")
+    for server_url, expected_host in (
+        ("/", None),
+        ("/occ", None),
+        ("http://localhost:6767", "localhost:6767"),
+        ("https://occ.example.com", "occ.example.com"),
+    ):
+        contract = {**spec, "servers": [{"url": server_url}]}
+        response = subprocess.CompletedProcess([], 0, stdout=json.dumps(contract))
+        with patch("subprocess.run", return_value=response) as request:
+            live = fetch_contract(
+                Path.cwd(), ["docker", "compose"], "synthetic", "gateway", contract, "8004"
+            )
+        if first_difference(contract, live) is not None or request.call_count != 1:
+            return 1
+        command = request.call_args.args[0]
+        hosts = [argument for argument in command if argument.startswith("Host: ")]
+        if hosts != ([] if expected_host is None else [f"Host: {expected_host}"]):
+            return 1
+        if command[-1] != "http://127.0.0.1:8004/v3/api-docs":
+            return 1
+    print("OpenAPI comparison self-test passed: contract differences detected; "
+          "relative and absolute server URLs supported")
     return 0
 
 
@@ -147,7 +169,7 @@ def fetch_contract(
     if len(servers) != 1 or not isinstance(servers[0].get("url"), str):
         raise SystemExit(f"{service}: committed contract must have exactly one server URL")
     server = urlsplit(servers[0]["url"])
-    if not server.netloc:
+    if server.scheme and not server.netloc:
         raise SystemExit(f"{service}: committed server URL has no host")
     url = f"http://127.0.0.1:{internal_port}/v3/api-docs"
     command = compose + [
@@ -162,10 +184,12 @@ def fetch_contract(
         "--show-error",
         "--header",
         f"Authorization: Bearer {token}",
-        "--header",
-        f"Host: {server.netloc}",
-        url,
     ]
+    # Absolute generated server URLs depend on Host; relative URLs use curl's
+    # normal request host and remain valid behind any deployment's Nginx edge.
+    if server.netloc:
+        command.extend(("--header", f"Host: {server.netloc}"))
+    command.append(url)
     last_status = "no response"
     for _ in range(30):
         response = subprocess.run(command, cwd=root, capture_output=True, text=True, check=False)
