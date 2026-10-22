@@ -6,6 +6,7 @@ import { signOut } from '@/lib/auth'
 import { cn } from '@/lib/utils'
 import { classify, clockText, deltaText, gapFlex, initialScenario, sampleGaps,
   scenarios, SAMPLE_REFRESH_MS, SAMPLE_TARGET_SECONDS, type GapState, type Scenario } from '@/lib/obu-pacing'
+import { groupStops, sampleUpcomingStops, skipLabel } from '@/lib/skip-stops'
 
 const states: Record<GapState, { symbol: string; label: string; color: string }> = {
   close: { symbol: '▲', label: 'TOO CLOSE', color: 'text-red-700 dark:text-red-400' },
@@ -39,6 +40,38 @@ function RoadGap({ seconds }: { seconds: number | null }) {
     <span className="hidden text-sm font-bold tabular-nums sm:block">{clockText(seconds)}</span>
     <div className={cn('mt-1 border-t-8 border-current', (state === 'far' || state === 'unknown') && 'border-dashed')} />
   </div>
+}
+
+function UpcomingStops() {
+  const segments = groupStops(sampleUpcomingStops)
+  const skipped = sampleUpcomingStops.filter(stop => stop.skipped).length
+  return <section aria-labelledby="upcoming-stops-heading" className="space-y-4 rounded-xl border bg-card p-4 sm:p-6">
+    <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+      <h2 id="upcoming-stops-heading" className="text-xl font-bold">Upcoming stops</h2>
+      <p className="text-sm text-muted-foreground">Sample skip-stop instructions. No live instructions.</p>
+      <p className="text-lg font-semibold sm:ml-auto">{skipped === 0 ? 'No stops to skip' : `${skipLabel(skipped)} on this trip`}</p>
+    </div>
+    <ol aria-label="Upcoming stops in route order" className="space-y-2">
+      {segments.map(segment => segment.kind === 'stop'
+        ? <li key={segment.stop.stopCode} className="flex items-center gap-3 px-4 py-2 text-lg">
+          <span aria-hidden="true" className="size-3 shrink-0 rounded-full bg-foreground" />
+          <span className="w-14 shrink-0 text-sm text-muted-foreground tabular-nums">{segment.stop.stopCode}</span>
+          <span className="min-w-0 flex-1 font-semibold">{segment.stop.name}</span>
+          <span className="text-sm font-bold">STOP</span>
+        </li>
+        : <li key={segment.stops[0].stopCode}
+          className="rounded-lg border-4 border-amber-700 px-4 py-3 text-amber-800 dark:border-amber-400 dark:text-amber-400">
+          <p className="text-xl font-black uppercase sm:text-2xl"><span aria-hidden="true">✕ </span>{skipLabel(segment.stops.length)}</p>
+          <ol aria-label={skipLabel(segment.stops.length)} className="mt-2 space-y-1">
+            {segment.stops.map(stop => <li key={stop.stopCode} className="flex items-center gap-3 text-lg text-foreground">
+              <span className="w-14 shrink-0 text-sm text-muted-foreground tabular-nums">{stop.stopCode}</span>
+              <s className="min-w-0 flex-1 decoration-2">{stop.name}</s>
+              <span className="sr-only">(skipped)</span>
+            </li>)}
+          </ol>
+        </li>)}
+    </ol>
+  </section>
 }
 
 export function CaptainPage({ email }: { email: string }) {
@@ -104,6 +137,7 @@ export function CaptainPage({ email }: { email: string }) {
         variant={sample.scenario === name ? 'default' : 'outline'} aria-pressed={sample.scenario === name}
         onClick={() => setSample({ scenario: name, tick: 0 })}>{scenarios[name].label}</Button>)}
     </div>
+    <UpcomingStops />
     <footer className="space-y-1 border-t pt-4 text-sm text-muted-foreground">
       <p>Built-in samples update every 10 seconds. No live bus data.</p>
       <p className="break-all">Signed in as {email} · Role: Captain</p>
