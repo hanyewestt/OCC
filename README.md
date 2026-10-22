@@ -10,7 +10,9 @@ The web app currently provides sign-in and a minimal page for each supported
 operating role. These pages verify authentication and role access; operational
 controls, incident views and dispatch workflows are not yet part of the React frontend.
 The Captain page includes an OBU pacing display with built-in sample headways,
-scenario controls and day/night mode. It does not use live backend data.
+scenario controls and day/night mode, and an upcoming-stops list that groups
+each run of consecutive skipped stops into one instruction. It does not use
+live backend data.
 
 ## Pages and access
 
@@ -22,7 +24,7 @@ scenario controls and day/night mode. It does not use live backend data.
 | `/controller/disruptions` | Bunching detections and traffic placeholder | `CONTROLLER` only |
 | `/controller/planning` | Current simulation recommendation and approval/rejection | `CONTROLLER` only |
 | `/controller/audit` | Current simulation decision and AI audit placeholder | `CONTROLLER` only |
-| `/captain` | Captain OBU pacing display with built-in sample data | `CAPTAIN` only |
+| `/captain` | Captain OBU pacing display and grouped skipped stops with built-in sample data | `CAPTAIN` only |
 | `/401` | Sign-in required screen with a sign-in action | Public error screen |
 | `/403` | Access denied screen with available recovery actions | Public error screen |
 | Unknown website URL | Page not found with a return-home action | HTTP 404 |
