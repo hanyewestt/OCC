@@ -38,7 +38,7 @@ await writeFile(`${outputDirectory}/auth/v1/.well-known/jwks.json`, JSON.stringi
 const roleSubjects = {
   ADMIN: '10000000-0000-4000-8000-000000000001',
   CONTROLLER: '10000000-0000-4000-8000-000000000002',
-  DRIVER: '10000000-0000-4000-8000-000000000003',
+  CAPTAIN: '10000000-0000-4000-8000-000000000003',
   UNASSIGNED: '10000000-0000-4000-8000-000000000004',
 };
 for (const [role, subject] of Object.entries(roleSubjects)) {

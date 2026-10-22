@@ -7,3 +7,8 @@
 **/node_modules
 **/.idea
 **/.vscode
+
+frontend/dist
+frontend/test-results
+frontend/playwright-report
+frontend/coverage
