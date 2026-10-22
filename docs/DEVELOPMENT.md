@@ -61,12 +61,17 @@ containers and database.
 
 | Action | PowerShell | Bash | Behavior |
 | --- | --- | --- | --- |
+| Up app (no build) | `.\scripts\app.ps1 up` | `bash scripts/app.sh up` | Start using existing images and React assets without building; wait for health checks |
 | Start app | `.\scripts\app.ps1 start` | `bash scripts/app.sh start` | Install/build React assets, build application/migration images, start the app and wait for health checks |
 | Stop app | `.\scripts\app.ps1 stop` | `bash scripts/app.sh stop` | Stop project containers, including pgAdmin; preserve containers, networks and data volumes |
 | Reset app | `.\scripts\app.ps1 reset` | `bash scripts/app.sh reset` | Delete project containers/networks and database/pgAdmin volumes, rebuild images without layer cache, then start the app |
 | Clear app | `.\scripts\app.ps1 clear` | `bash scripts/app.sh clear` | Remove project containers/networks, all project volumes and referenced service images; leave the app stopped |
 | Start pgAdmin | `.\scripts\app.ps1 start-pgadmin` | `bash scripts/app.sh start-pgadmin` | Start pgAdmin and its PostgreSQL dependency; leave the app otherwise unchanged |
 | Stop pgAdmin | `.\scripts\app.ps1 stop-pgadmin` | `bash scripts/app.sh stop-pgadmin` | Stop only pgAdmin; preserve PostgreSQL, the app and pgAdmin data |
+
+Use `start` for the first run and after source changes. Use `up` to bring the app
+back up with existing images and `frontend/dist/`; it skips npm and Docker builds
+and preserves database data. Node is not required for `up`.
 
 **Reset and clear permanently delete the selected project's database and pgAdmin data.**
 Reset requires typing `RESET`, then rebuilds and starts the app. Clear requires
@@ -95,7 +100,7 @@ Bash:
 bash scripts/app.sh start --project occ-dev
 ```
 
-Repeat that project option for stop, reset, clear and pgAdmin actions. Use `-Help` /
+Repeat that project option for up, stop, reset, clear and pgAdmin actions. Use `-Help` /
 `--help` to see launcher usage. The launchers require Docker on PATH and a running
 Linux container engine. PowerShell launchers support Windows PowerShell 5.1+ and
 PowerShell 7; Bash launchers support Linux, macOS, WSL and Git Bash.
