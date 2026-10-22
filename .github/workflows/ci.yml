@@ -124,8 +124,6 @@ jobs:
           npm run build
           npx playwright install --with-deps chromium
           npm test
-      - name: Verify OBU sample display
-        run: node --test tests/system/frontend_obu_pacing.test.mjs
 
   config-and-contracts:
     name: Configuration and API contract checks

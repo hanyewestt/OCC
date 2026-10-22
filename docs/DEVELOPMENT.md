@@ -113,9 +113,9 @@ resulting `frontend/dist/` read-only. There is no separate React/Vite container.
 Open [the app](http://localhost/login), adjusting the port to `OCC_NGINX_PORT`.
 The [root README](../README.md#pages-and-access) lists the frontend routes.
 
-The OBU reference page remains at `frontend/static/obu-pacing.html`. Vite uses
-`static/` as its public-assets directory and copies the page unchanged into
-`dist/`, where Nginx serves it at `/obu-pacing.html`.
+The OBU pacing display is the CAPTAIN-only `/captain` screen. It uses built-in
+sample gaps; no operational API or live-data polling was added. Day/night mode
+is saved in the `occ-obu-theme` browser preference.
 
 ### Edit with automatic updates
 

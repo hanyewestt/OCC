@@ -1,4 +1,5 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test'
+import { classify, clockText, deltaText, initialScenario } from '../../src/lib/obu-pacing'
 
 // Synthetic Supabase and Gateway responses. These tests do not prove provider
 // behavior or backend authorization; Gateway tests and the opt-in live smoke do.
@@ -65,6 +66,7 @@ for (const [role, destination, title, other] of [
     await expect(page.getByRole('heading', { name: 'Access denied' })).toBeVisible()
     await expect(page.getByText('403', { exact: true })).toBeVisible()
     await expect(page.getByText('Access verified')).toHaveCount(0)
+    await expect(page.getByRole('region', { name: 'Captain pacing display' })).toHaveCount(0)
     await page.getByRole('link', { name: 'Return to my page' }).click()
     await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Sign out' }).click()
@@ -199,3 +201,61 @@ for (const [status, heading] of [[401, 'Sign-in required'], [403, 'Access denied
     await expect(page.getByText('Access verified')).toHaveCount(0)
   })
 }
+
+test('pacing treats threshold boundaries and missing measurements consistently', () => {
+  expect(classify(240, 480)).toBe('close')
+  expect(classify(241, 480)).toBe('ok')
+  expect(classify(719, 480)).toBe('ok')
+  expect(classify(720, 480)).toBe('far')
+  for (const missing of [null, Number.NaN, -1]) {
+    expect(classify(missing, 480)).toBe('unknown')
+    expect(clockText(missing)).toBe('--:--')
+  }
+  expect(classify(300, 0)).toBe('unknown')
+  expect(deltaText(490, 480)).toBe('About on target')
+  expect(initialScenario('?scenario=invalid')).toBe('bunched')
+})
+
+test('captain pacing updates samples and switches scenarios without operational API calls', async ({ page, context }) => {
+  await mockAuth(context, 'CAPTAIN')
+  await page.clock.install()
+  const operationalRequests: string[] = []
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname
+    if (path.startsWith('/api/v1/') && !path.startsWith('/api/v1/auth/')) operationalRequests.push(path)
+  })
+  await login(page)
+  const ahead = page.getByRole('region', { name: 'Gap to bus ahead', exact: true })
+  const behind = page.getByRole('region', { name: 'Gap to bus behind', exact: true })
+  await expect(page.getByText('SAMPLE DATA', { exact: true })).toBeVisible()
+  await expect(ahead.getByText('1:35', { exact: true })).toBeVisible()
+  await expect(ahead).toHaveAttribute('data-state', 'close')
+  await expect(behind).toHaveAttribute('data-state', 'far')
+  await page.clock.fastForward(10_000)
+  await expect(ahead.getByText('1:41', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'On target', exact: true }).click()
+  await expect(ahead).toHaveAttribute('data-state', 'ok')
+  await expect(behind).toHaveAttribute('data-state', 'ok')
+  await page.getByRole('button', { name: 'Big gap ahead', exact: true }).click()
+  await expect(ahead).toHaveAttribute('data-state', 'far')
+  await expect(behind).toHaveAttribute('data-state', 'close')
+  await page.getByRole('button', { name: 'No bus behind', exact: true }).click()
+  await expect(behind.getByText('--:--', { exact: true })).toBeVisible()
+  await expect(behind).toHaveAttribute('data-state', 'unknown')
+  expect(operationalRequests).toEqual([])
+})
+
+test('captain pacing supports narrow screens, scenario links and persistent day mode', async ({ page, context }) => {
+  await mockAuth(context, 'CAPTAIN')
+  await page.setViewportSize({ width: 375, height: 812 })
+  await login(page)
+  await page.goto('/captain?scenario=no-bus-behind')
+  const display = page.getByRole('region', { name: 'Captain pacing display', exact: true })
+  await expect(page.getByRole('region', { name: 'Gap to bus behind', exact: true })).toHaveAttribute('data-state', 'unknown')
+  await page.getByRole('button', { name: 'Day mode', exact: true }).click()
+  await expect(display).toHaveAttribute('data-theme', 'day')
+  await page.reload()
+  await expect(display).toHaveAttribute('data-theme', 'day')
+  await expect(page.getByRole('button', { name: 'Night mode', exact: true })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})

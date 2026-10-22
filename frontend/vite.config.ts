@@ -10,8 +10,6 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), tailwindcss()],
     base: '/',
-    // Keep the OBU reference source in place and copy it into the Nginx artifact.
-    publicDir: 'static',
     build: {
       rolldownOptions: { input: {
         app: fileURLToPath(new URL('./index.html', import.meta.url)),
