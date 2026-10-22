@@ -65,7 +65,7 @@ def main() -> int:
                 raise AssertionError("JavaScript MIME mismatch")
             if asset.suffix == ".css" and "text/css" not in mime:
                 raise AssertionError("CSS MIME mismatch")
-    for route in ("/demo.html", "/auth.js", "/auth-test", "/auth-test/", "/auth-test/index.html", "/auth-test/callback", "/assets/missing.js", "/admin"):
+    for route in ("/demo.html", "/obu-pacing.html", "/auth.js", "/auth-test", "/auth-test/", "/auth-test/index.html", "/auth-test/callback", "/assets/missing.js", "/admin"):
         assert_status(base_url, "retired or unknown path " + route, route, 404)
     if args.static_only:
         return 0

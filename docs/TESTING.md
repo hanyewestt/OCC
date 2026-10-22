@@ -78,6 +78,11 @@ independently enforce the controller/captain role matrix. See
 [development guide](DEVELOPMENT.md) for Nginx-targeted browser runs and
 [authentication](AUTHENTICATION.md) for opt-in live checks.
 
+Captain browser tests also cover pacing thresholds, timed sample updates,
+scenario switching, narrow-screen layout and persistent day/night mode. They
+verify that pacing makes no operational API requests. The React pacing tests
+are included in the frontend browser suite.
+
 ## System verification
 
 CI compares Nginx responses byte-for-byte with the React build under `frontend/dist/`,
