@@ -1,0 +1,29 @@
+name: Extended verification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'services/**'
+      - 'infra/**'
+      - 'compose*.yaml'
+      - 'pom.xml'
+      - '.mvn/**'
+      - 'mvnw*'
+      - 'tests/system/**'
+      - 'tests/contracts/**'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extended-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  workflows-and-recovery:
+    name: Workflows, recovery and performance
+    uses: ./.github/workflows/system-verification.yml
+    with:
+      suite: extended
