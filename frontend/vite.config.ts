@@ -10,6 +10,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), tailwindcss()],
     base: '/',
+    publicDir: 'static',
     build: {
       rolldownOptions: { input: {
         app: fileURLToPath(new URL('./index.html', import.meta.url)),

@@ -57,7 +57,7 @@ public class HttpBunchingControlAdapter implements BunchingControlPort {
         return page == null ? List.of() : page.alerts().stream()
                 .map(alert -> new DemoBunchingAlert(alert.eventId(), alert.bunchingEventId(), alert.action(), alert.serviceId(), alert.stopCode(),
                         alert.directionId(), alert.detectedAt(), alert.classification(),
-                        alert.leadingObservationId(), alert.followingObservationId())).toList();
+                        alert.leadingObservationId(), alert.followingObservationId(), alert.evidence())).toList();
     }
 
     @Override
