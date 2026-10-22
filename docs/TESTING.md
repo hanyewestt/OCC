@@ -12,10 +12,10 @@ second copy of the PR checks. Its independent jobs cover:
 | Job | Coverage |
 | --- | --- |
 | Reactor tests and migration checks | All four Java services, unit/slice tests, database integration tests and contract export; no skipped tests allowed. |
-| Frontend checks | Reproducible install, lint, TypeScript, build and mocked browser authentication tests. |
+| Frontend checks | Reproducible install, lint, TypeScript and production build. |
 | Configuration and API contract checks | Example Compose configurations, OpenAPI validation and API compatibility baselines. |
 | Live API contract comparison | Running service definitions match the committed OpenAPI files. |
-| Nginx and authentication smoke | HTTP/HTTPS routes, assets, 401/403 role rules, hidden endpoints, rate limits, browser journeys and static hosting with Gateway stopped. |
+| Nginx and authentication smoke | HTTP/HTTPS routes, assets, 401/403 role rules, hidden endpoints, rate limits and static hosting with Gateway stopped. |
 | Security scans | Repository secrets/configuration and all application, migration and Nginx images. |
 
 These jobs do not depend on one another. A contract failure does not prevent
@@ -69,6 +69,12 @@ For the same zero-skips run as Core CI, add `-Docc.exportOpenapi=true` to
 include the opt-in Gateway contract export test (quote the flag in PowerShell).
 
 ## React authentication app
+
+Browser E2E tests do not run automatically on PRs or pushes to main. Run them
+locally with `npm test`, or use **Actions → Core CI → Run workflow** to run the
+HTTPS browser journeys manually. The Nginx/auth smoke job still checks HTTP/TLS
+routing, static assets and backend authorization on every automatic Core CI run.
+The manual-run control is available once the workflow exists on the default branch.
 
 From `frontend/`, run `npm ci`, `npm run lint`, `npm run typecheck`,
 `npm run build`, `npx playwright install chromium`, then `npm test`.
