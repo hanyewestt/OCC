@@ -16,7 +16,8 @@ newer. On Windows/macOS, start Docker Desktop; on Linux, Docker Engine with the
 Compose plugin is sufficient.
 Docker builds include Java and Maven; a host Java installation is needed only
 for running Maven directly. For host builds/tests, use JDK 25 and the root
-Maven Wrapper. Use Node.js 22.12+ and npm for the React build, Vite development
+Maven Wrapper. Use the Node.js version pinned in the repository-root `.nvmrc`
+(Node.js 22.12) and npm for the React build, Vite development
 server and browser tests. The app start scripts build the frontend on the host, so Node
 is required even when Java services are built entirely in Docker.
 

@@ -6,6 +6,7 @@
       "monitoredStopCode": "44251",
       "context": {
         "followingBusReference": "SBS5898U",
+        "affectedBusReferences": ["SBS8027Y", "SBS5898U"],
         "approvedControlStopCode": "44241",
         "followingBusState": "READY_TO_DEPART",
         "maximumHoldSeconds": 120,
@@ -24,6 +25,33 @@
         "queueAfterPassengers": 24,
         "passengerMinutesBefore": 190,
         "passengerMinutesAfter": 128
+      }
+    },
+    {
+      "serviceId": "972",
+      "directionId": 1,
+      "monitoredStopCode": "44251",
+      "context": {
+        "followingBusReference": "SMB5890C",
+        "affectedBusReferences": ["SMB3123A", "SMB4567B", "SMB5890C"],
+        "approvedControlStopCode": "44241",
+        "followingBusState": "READY_TO_DEPART",
+        "maximumHoldSeconds": 120,
+        "maximumDwellAdjustmentSeconds": 75,
+        "crowdSafetyStatus": "PASSED",
+        "validationStatus": "VALIDATED",
+        "evidenceIds": [
+          "route972-reference-directive-three-bus-hold",
+          "synthetic-impact-estimate-route972-three-bus-v1"
+        ]
+      },
+      "impact": {
+        "headwayBeforeSeconds": 45,
+        "headwayAfterSeconds": 165,
+        "queueBeforePassengers": 52,
+        "queueAfterPassengers": 31,
+        "passengerMinutesBefore": 248,
+        "passengerMinutesAfter": 164
       }
     }
   ]

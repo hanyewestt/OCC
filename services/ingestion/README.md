@@ -16,8 +16,10 @@ Content-Type: application/json
 
 Setting `enabled` to `true` starts a replay if none is active, or resumes the currently active run. Setting it to `false` first switches bunching to the live feed, then closes the active run. The persisted setting is initialized to `false` by Flyway and survives an ingestion restart. The start/close run endpoints provide equivalent control with explicit run IDs.
 
-Replay uses a fictional, deterministic route-190 scenario and produces simulation-only
-bunching alerts and recommendations. The bunching consumer runs independently, so
+Replay uses a fictional, deterministic multi-route scenario. Each run produces one
+two-bus bunching event for service 190 and one three-bus bunching event for service
+972, with stable vehicle registrations shared by the Planning fixtures. The replay
+produces simulation-only bunching alerts and recommendations. The bunching consumer runs independently, so
 results can arrive after replay completes. Replay support requires
 `OCC_DISRUPTION_INTERNAL_URL` and `OCC_PLANNING_INTERNAL_URL`; live DataMall polling remains enabled.
 `GET /api/v1/live-bunching-alerts` retrieves the immutable opening `alert_event`
