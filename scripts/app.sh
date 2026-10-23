@@ -3,7 +3,8 @@ set -euo pipefail
 
 usage() {
     printf '%s\n' 'Usage: bash scripts/app.sh <up|start|stop|reset|clear|start-pgadmin|stop-pgadmin> [--project name] [--yes]'
-    printf '%s\n' 'Up starts existing images and frontend assets without building. Start builds before starting.'
+    printf '%s\n' 'Up builds frontend assets and application images, then creates or updates containers. Start only resumes existing containers.'
+    printf '%s\n' 'Start does not apply configuration changes; use up after changing .env.'
     printf '%s\n' 'Reset deletes the selected project database and pgAdmin volumes, then rebuilds without layer cache.'
     printf '%s\n' 'Clear removes the selected project containers, networks, volumes and referenced images; it does not restart.'
     printf '%s\n' '--yes skips the reset/clear confirmation. Stop preserves containers, networks and data; stop-pgadmin stops only pgAdmin.'
@@ -52,8 +53,8 @@ build_frontend() {
 }
 
 case "$action" in
-    up) "${compose[@]}" up -d --no-build --wait ;;
-    start) build_frontend; "${compose[@]}" up -d --build --wait ;;
+    up) build_frontend; "${compose[@]}" up -d --build --wait ;;
+    start) "${compose[@]}" start --wait ;;
     stop) "${compose[@]}" --profile tools stop ;;
     reset)
         if [[ "$yes" == false ]]; then
