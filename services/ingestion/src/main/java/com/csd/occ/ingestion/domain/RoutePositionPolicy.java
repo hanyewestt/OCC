@@ -13,8 +13,6 @@ public final class RoutePositionPolicy {
     private static final double MIN_UNCERTAINTY_METERS = 50;
     private static final double ETA_COST_SCALE_SECONDS = 120;
     private static final double MAX_ETA_COST = 8;
-    private static final long FETCH_BATCH_WINDOW_SECONDS = 10;
-
     private RoutePositionPolicy() {
     }
 
@@ -25,7 +23,7 @@ public final class RoutePositionPolicy {
         Instant oldestAllowed = now.minus(pollInterval.multipliedBy(maxPollAgeCycles));
         Map<SnapshotKey, List<RoutePositionReading>> grouped = new LinkedHashMap<>();
         readings.stream()
-                .filter(reading -> reading.snapshotId() != null && reading.observationId() != null
+                .filter(reading -> reading.snapshotId() != null && reading.pollCycleId() != null && reading.observationId() != null
                         && reading.stopCode() != null && reading.fetchedAt() != null
                         && !reading.fetchedAt().isBefore(oldestAllowed) && !reading.fetchedAt().isAfter(now)
                         && Double.isFinite(reading.distanceAlongRouteM()))
@@ -41,17 +39,18 @@ public final class RoutePositionPolicy {
                             .thenComparing(RoutePositionReading::estimatedArrivalAt,
                                     Comparator.nullsLast(Comparator.naturalOrder())))
                     .limit(3).toList();
-            return new Snapshot(entry.getKey(), ordered.getFirst().fetchedAt(), null, ordered);
+            return new Snapshot(entry.getKey(), ordered.getFirst().pollCycleId(), ordered.getFirst().fetchedAt(), null, ordered);
         }).sorted(Comparator.comparing(Snapshot::fetchedAt))
                 .toList();
+        Map<UUID, Instant> cycleStarts = new LinkedHashMap<>();
+        chronological.forEach(snapshot -> cycleStarts.merge(snapshot.pollCycleId(), snapshot.fetchedAt(),
+                (first, next) -> first.isBefore(next) ? first : next));
         List<Snapshot> snapshots = new ArrayList<>(chronological.size());
-        Instant batchStart = null;
         for (Snapshot snapshot : chronological) {
-            if (batchStart == null || Duration.between(batchStart, snapshot.fetchedAt()).compareTo(
-                    Duration.ofSeconds(FETCH_BATCH_WINDOW_SECONDS)) > 0) batchStart = snapshot.fetchedAt();
-            snapshots.add(new Snapshot(snapshot.key(), snapshot.fetchedAt(), batchStart, snapshot.readings()));
+            snapshots.add(new Snapshot(snapshot.key(), snapshot.pollCycleId(), snapshot.fetchedAt(),
+                    cycleStarts.get(snapshot.pollCycleId()), snapshot.readings()));
         }
-        snapshots.sort(Comparator.comparing(Snapshot::fetchBucket)
+        snapshots.sort(Comparator.comparing(Snapshot::pollCycleStartedAt)
                 .thenComparingInt(snapshot -> snapshot.readings().getFirst().stopSequence())
                 .thenComparing(snapshot -> snapshot.key().stopCode()));
         if (snapshots.isEmpty()) return List.of();
@@ -62,7 +61,7 @@ public final class RoutePositionPolicy {
                     pollInterval.multipliedBy(maxPollAgeCycles)) > 0);
             List<Track> eligible = tracks.stream()
                     .filter(track -> !track.last().fetchedAt().isAfter(snapshot.fetchedAt())
-                            || track.lastFetchBatch().equals(snapshot.fetchBucket())
+                            || track.lastPollCycleId().equals(snapshot.pollCycleId())
                                     && !track.last().stopCode().equals(snapshot.key().stopCode()))
                     .sorted(Comparator.comparingDouble((Track track) -> track.projectedDistance(snapshot.fetchedAt())).reversed()
                             .thenComparingInt(track -> track.last().visitOrder()))
@@ -73,9 +72,9 @@ public final class RoutePositionPolicy {
                 RoutePositionReading candidate = snapshot.readings().get(candidateIndex);
                 if (trackIndex >= 0) {
                     Track track = eligible.get(trackIndex);
-                    track.add(candidate, snapshot.fetchBucket(), speedCapMetersPerSecond);
+                    track.add(candidate, snapshot.pollCycleId(), speedCapMetersPerSecond);
                 } else {
-                    tracks.add(new Track(candidate, snapshot.fetchBucket()));
+                    tracks.add(new Track(candidate, snapshot.pollCycleId()));
                 }
             }
         }
@@ -112,7 +111,7 @@ public final class RoutePositionPolicy {
         double alignedPrevious = previous.distanceAlongRouteM() + speed * seconds;
         double positionError = Math.abs(current.distanceAlongRouteM() - alignedPrevious);
         double maximumMovement = speedCapMetersPerSecond * seconds + positionToleranceMeters * 2;
-        if (positionError > maximumMovement) return Double.POSITIVE_INFINITY;
+        if (!sameFetchBatch && positionError > maximumMovement) return Double.POSITIVE_INFINITY;
 
         long routeDelta = (long) current.stopSequence() - previous.stopSequence();
         double stopDistanceDelta = current.stopDistanceAlongRouteM() - previous.stopDistanceAlongRouteM();
@@ -125,7 +124,10 @@ public final class RoutePositionPolicy {
                 expectedEtaDelta : Duration.between(previous.estimatedArrivalAt(), current.estimatedArrivalAt()).toMillis() / 1000.0;
         double etaError = Math.abs(actualEtaDelta - expectedEtaDelta);
         double etaCost = Math.min(MAX_ETA_COST, etaError / ETA_COST_SCALE_SECONDS);
-        return positionError / Math.max(positionToleranceMeters, 1) + etaCost;
+        double positionCost = sameFetchBatch
+                ? Math.min(positionError / Math.max(positionToleranceMeters, 1), MAX_ETA_COST)
+                : positionError / Math.max(positionToleranceMeters, 1);
+        return positionCost + etaCost;
     }
 
     private static double clamp(double distance, double routeLength) {
@@ -133,7 +135,8 @@ public final class RoutePositionPolicy {
     }
 
     private record SnapshotKey(UUID id, String stopCode, Instant fetchedAt) { }
-    private record Snapshot(SnapshotKey key, Instant fetchedAt, Instant fetchBucket, List<RoutePositionReading> readings) { }
+    private record Snapshot(SnapshotKey key, UUID pollCycleId, Instant fetchedAt, Instant pollCycleStartedAt,
+                            List<RoutePositionReading> readings) { }
     private record Assignment(List<Integer> trackByCandidate, int matches, double cost) { }
 
     private static final class Search {
@@ -167,7 +170,7 @@ public final class RoutePositionPolicy {
                 Track track = tracks.get(trackIndex);
                 double edgeCost = transitionCost(track.last(), candidate, positionToleranceMeters,
                         speedCapMetersPerSecond, track.speedMps(),
-                        track.lastFetchBatch().equals(snapshot.fetchBucket())
+                        track.lastPollCycleId().equals(snapshot.pollCycleId())
                                 && !track.last().stopCode().equals(candidate.stopCode()));
                 if (!Double.isFinite(edgeCost)) continue;
                 used[trackIndex] = true;
@@ -196,18 +199,18 @@ public final class RoutePositionPolicy {
     private static final class Track {
         private RoutePositionReading last;
         private RoutePositionReading previous;
-        private Instant lastFetchBatch;
+        private UUID lastPollCycleId;
         private Double speedMps;
         private double positionSpreadMeters;
         private final List<UUID> observationIds = new ArrayList<>();
 
-        private Track(RoutePositionReading first, Instant fetchBatch) {
+        private Track(RoutePositionReading first, UUID pollCycleId) {
             last = first;
-            lastFetchBatch = fetchBatch;
+            lastPollCycleId = pollCycleId;
             observationIds.add(first.observationId());
         }
 
-        private void add(RoutePositionReading reading, Instant fetchBatch, double speedCapMetersPerSecond) {
+        private void add(RoutePositionReading reading, UUID pollCycleId, double speedCapMetersPerSecond) {
             previous = last;
             double elapsed = Duration.between(previous.fetchedAt(), reading.fetchedAt()).toMillis() / 1000.0;
             double advance = reading.distanceAlongRouteM() - previous.distanceAlongRouteM();
@@ -215,14 +218,14 @@ public final class RoutePositionPolicy {
                 speedMps = advance / elapsed;
             positionSpreadMeters = Math.abs(reading.distanceAlongRouteM() - previous.distanceAlongRouteM()) / 2;
             last = reading;
-            lastFetchBatch = fetchBatch;
+            lastPollCycleId = pollCycleId;
             observationIds.add(reading.observationId());
             if (observationIds.size() > 12) observationIds.removeFirst();
         }
 
         private RoutePositionReading last() { return last; }
         private Double speedMps() { return speedMps; }
-        private Instant lastFetchBatch() { return lastFetchBatch; }
+        private UUID lastPollCycleId() { return lastPollCycleId; }
         private List<UUID> observationIds() { return List.copyOf(observationIds); }
         private double projectedDistance(Instant now) {
             double seconds = Math.max(0, Duration.between(last.fetchedAt(), now).toMillis() / 1000.0);

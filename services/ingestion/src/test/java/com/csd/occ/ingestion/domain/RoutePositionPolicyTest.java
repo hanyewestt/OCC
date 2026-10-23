@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 class RoutePositionPolicyTest {
     private static final Instant NOW = Instant.parse("2026-10-23T04:00:00Z");
     private static final Duration POLL = Duration.ofSeconds(60);
+    private static final UUID POLL_CYCLE = UUID.fromString("00000000-0000-0000-0000-000000000001");
 
     @Test
     void replayKeepsThreeBusesFromOneStopSnapshotEvenWhenTheirCoordinatesAreIdentical() {
@@ -96,6 +97,21 @@ class RoutePositionPolicyTest {
     }
 
     @Test
+    void sameCycleMatchingDoesNotCreateTracksWhenFeedCoordinatesJumpBetweenStops() {
+        UUID batchId = UUID.randomUUID();
+        List<RoutePositionBus> buses = estimate(List.of(
+                reading(batchId, "45009", 1, 1, 1_147, 0, 700, 5),
+                reading(batchId, "45009", 1, 2, 1_147, 0, 1_500, 5),
+                reading(batchId, "45009", 1, 3, 1_147, 0, 2_300, 5),
+                reading(batchId, "44641", 2, 1, 37, 1_000, 50, 4),
+                reading(batchId, "44641", 2, 2, 1_147, 1_000, 780, 4),
+                reading(batchId, "44641", 2, 3, 1_147, 1_000, 1_600, 4)));
+
+        assertThat(buses).hasSize(3);
+        assertThat(buses).allSatisfy(bus -> assertThat(bus.evidenceObservationIds()).hasSize(2));
+    }
+
+    @Test
     void dropsStaleReadingsAndClampsProjectedPositionsAtTheEndOfTheRoute() {
         UUID stale = UUID.randomUUID();
         UUID fresh = UUID.randomUUID();
@@ -104,6 +120,29 @@ class RoutePositionPolicyTest {
                 reading(fresh, "05039", 7, 1, 12_000, 1_000, 10)));
 
         assertThat(buses).singleElement().extracting(RoutePositionBus::distanceAlongRouteM).isEqualTo(10_000.0);
+    }
+
+    @Test
+    void keepsOnePollingPassTogetherEvenWhenStopRequestsTakeLongerThanTenSeconds() {
+        UUID firstStopSnapshot = UUID.randomUUID();
+        UUID secondStopSnapshot = UUID.randomUUID();
+        List<RoutePositionBus> buses = estimate(List.of(
+                reading(firstStopSnapshot, "05039", 7, 1, 1_000, 1_000, 300, 55),
+                reading(firstStopSnapshot, "05039", 7, 2, 700, 1_000, 420, 55),
+                reading(secondStopSnapshot, "05019", 8, 1, 1_000, 1_500, 360, 5),
+                reading(secondStopSnapshot, "05019", 8, 2, 700, 1_500, 480, 5)));
+
+        assertThat(buses).hasSize(2);
+        assertThat(buses).allSatisfy(bus -> assertThat(bus.evidenceObservationIds()).hasSize(2));
+    }
+
+    @Test
+    void excludesPreCycleReadingsInsteadOfGuessingTheirPollingPass() {
+        UUID snapshot = UUID.randomUUID();
+        RoutePositionReading legacyReading = new RoutePositionReading(observation(snapshot, "05039", 1), snapshot,
+                null, "05039", 7, 1, 1_000, 1_000, NOW.plusSeconds(300), NOW.minusSeconds(5));
+
+        assertThat(estimate(List.of(legacyReading))).isEmpty();
     }
 
     private List<RoutePositionBus> estimate(List<RoutePositionReading> readings) {
@@ -117,7 +156,7 @@ class RoutePositionPolicyTest {
 
     private RoutePositionReading reading(UUID snapshot, String stop, int sequence, int order, double position,
             double stopPosition, long etaSeconds, long fetchedSecondsAgo) {
-        return new RoutePositionReading(observation(snapshot, stop, order), snapshot, stop, sequence, order, position,
+        return new RoutePositionReading(observation(snapshot, stop, order), snapshot, POLL_CYCLE, stop, sequence, order, position,
                 stopPosition, NOW.plusSeconds(etaSeconds), NOW.minusSeconds(fetchedSecondsAgo));
     }
 
