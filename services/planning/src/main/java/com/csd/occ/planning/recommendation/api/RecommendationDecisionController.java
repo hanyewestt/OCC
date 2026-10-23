@@ -2,13 +2,17 @@ package com.csd.occ.planning.recommendation.api;
 
 import com.csd.occ.planning.recommendation.api.dto.RecommendationDecisionRequest;
 import com.csd.occ.planning.recommendation.api.dto.RecommendationDecisionResponse;
+import com.csd.occ.planning.recommendation.api.dto.RecommendationDecisionPageResponse;
 import com.csd.occ.planning.recommendation.domain.RecommendationDecisionService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import java.util.UUID;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -19,6 +23,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.http.ResponseEntity;
 
 @RestController
@@ -36,8 +41,8 @@ public class RecommendationDecisionController {
 
     @PostMapping("/{recommendationId}/decision")
     @Operation(operationId = "decideBunchingRecommendation",
-            summary = "Approve or reject a recommendation with one click",
-            description = "The first decision is stored with the authenticated controller subject. Repeating the same decision is safe; attempting the opposite decision returns 409. Approval records controller intent only and does not dispatch a bus instruction.")
+            summary = "Approve or replace a recommendation",
+            description = "The first decision is stored with the authenticated controller subject. A rejection requires one to three replacement bus instructions and a rationale. Repeating the same complete decision is safe; changing it returns 409. A decision records controller intent only and does not dispatch a bus instruction.")
     @ApiResponse(responseCode = "200", description = "Decision stored or the same decision replayed")
     @ApiResponse(responseCode = "400", description = "Decision request is invalid")
     @ApiResponse(responseCode = "404", description = "Recommendation not found")
@@ -47,7 +52,9 @@ public class RecommendationDecisionController {
             @Valid @RequestBody RecommendationDecisionRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         try {
-            var decision = decisions.decide(recommendationId, request.action(), jwt.getSubject());
+            var decision = decisions.decide(recommendationId, request.action(), jwt.getSubject(),
+                    request.overrideInstructions().stream().map(instruction -> instruction.toDomain()).toList(),
+                    request.controllerRationale());
             metrics.counter("occ.planning.recommendation.decision", "action", request.action().name(),
                     "result", "accepted_or_replayed").increment();
             log.info("Recommendation decision recorded: recommendationId={} action={}",
@@ -77,5 +84,20 @@ public class RecommendationDecisionController {
                 .map(RecommendationDecisionResponse::from)
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
+    @GetMapping("/decisions")
+    @Operation(operationId = "listBunchingRecommendationDecisions",
+            summary = "List persisted controller decisions for the audit screen")
+    @ApiResponse(responseCode = "200", description = "Decision page returned newest first")
+    public RecommendationDecisionPageResponse decisions(
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "50") @Min(1) @Max(100) int size) {
+        List<RecommendationDecisionResponse> items = decisions.findDecisions(page, size).stream()
+                .map(RecommendationDecisionResponse::from)
+                .toList();
+        long totalItems = decisions.countDecisions();
+        int totalPages = totalItems == 0 ? 0 : (int) ((totalItems + size - 1) / size);
+        return new RecommendationDecisionPageResponse(items, page, size, totalItems, totalPages);
     }
 }
