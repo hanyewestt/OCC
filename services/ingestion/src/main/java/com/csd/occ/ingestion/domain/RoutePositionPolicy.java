@@ -7,6 +7,8 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 public final class RoutePositionPolicy {
@@ -19,7 +21,15 @@ public final class RoutePositionPolicy {
     public static List<RoutePositionBus> estimate(List<RoutePositionReading> readings, double routeLengthMeters,
             Instant now, Duration pollInterval, int maxPollAgeCycles, double clusterToleranceMeters,
             double speedCapMetersPerSecond) {
-        if (routeLengthMeters <= 0 || !Double.isFinite(routeLengthMeters) || readings.isEmpty()) return List.of();
+        return estimateWithConfidence(readings, routeLengthMeters, now, pollInterval, maxPollAgeCycles,
+                clusterToleranceMeters, speedCapMetersPerSecond).buses();
+    }
+
+    public static RoutePositionEstimate estimateWithConfidence(List<RoutePositionReading> readings, double routeLengthMeters,
+            Instant now, Duration pollInterval, int maxPollAgeCycles, double clusterToleranceMeters,
+            double speedCapMetersPerSecond) {
+        if (routeLengthMeters <= 0 || !Double.isFinite(routeLengthMeters) || readings.isEmpty())
+            return new RoutePositionEstimate(List.of(), 0);
         Instant oldestAllowed = now.minus(pollInterval.multipliedBy(maxPollAgeCycles));
         Map<SnapshotKey, List<RoutePositionReading>> grouped = new LinkedHashMap<>();
         readings.stream()
@@ -53,7 +63,17 @@ public final class RoutePositionPolicy {
         snapshots.sort(Comparator.comparing(Snapshot::pollCycleStartedAt)
                 .thenComparingInt(snapshot -> snapshot.readings().getFirst().stopSequence())
                 .thenComparing(snapshot -> snapshot.key().stopCode()));
-        if (snapshots.isEmpty()) return List.of();
+        if (snapshots.isEmpty()) return new RoutePositionEstimate(List.of(), 0);
+        Snapshot latestSnapshot = snapshots.stream()
+                .max(Comparator.comparing(Snapshot::pollCycleStartedAt)
+                        .thenComparing(Snapshot::fetchedAt))
+                .orElseThrow();
+        UUID latestPollCycleId = latestSnapshot.pollCycleId();
+        int cycleCandidateCeiling = snapshots.stream()
+                .filter(snapshot -> snapshot.pollCycleId().equals(latestPollCycleId))
+                .mapToInt(snapshot -> snapshot.readings().size())
+                .max()
+                .orElse(0);
 
         List<Track> tracks = new ArrayList<>();
         for (Snapshot snapshot : snapshots) {
@@ -85,16 +105,35 @@ public final class RoutePositionPolicy {
         List<Track> active = tracks.stream()
                 .filter(track -> Duration.between(track.last().fetchedAt(), now)
                         .compareTo(pollInterval.multipliedBy(maxPollAgeCycles)) <= 0)
+                .toList();
+        List<Track> latestCycleTracks = active.stream()
+                .filter(track -> track.lastPollCycleId().equals(latestPollCycleId))
+                .toList();
+        int visibleTrackCount = cycleCandidateCeiling > 0
+                ? Math.min(cycleCandidateCeiling, latestCycleTracks.size()) : latestCycleTracks.size();
+        List<Track> selected = latestCycleTracks.stream()
+                .sorted(Comparator.comparingInt(Track::supportingStopCount).reversed()
+                        .thenComparing(Comparator.comparingInt(Track::observationCount).reversed())
+                        .thenComparingDouble((Track track) -> track.projectedDistance(now)).reversed()
+                        .thenComparing(track -> track.last().estimatedArrivalAt(), Comparator.nullsLast(Comparator.naturalOrder())))
+                .limit(visibleTrackCount)
                 .sorted(Comparator.comparingDouble((Track track) -> track.projectedDistance(now)).reversed()
                         .thenComparing(track -> track.last().estimatedArrivalAt(), Comparator.nullsLast(Comparator.naturalOrder())))
                 .toList();
-        List<RoutePositionBus> buses = new ArrayList<>(active.size());
-        for (int index = 0; index < active.size(); index++) {
-            Track track = active.get(index);
+        List<RoutePositionBus> buses = new ArrayList<>(selected.size());
+        for (int index = 0; index < selected.size(); index++) {
+            Track track = selected.get(index);
             buses.add(new RoutePositionBus(index + 1, clamp(track.projectedDistance(now), routeLengthMeters),
-                    Math.max(MIN_UNCERTAINTY_METERS, track.positionSpreadMeters()), track.speedMps(), track.observationIds()));
+                    Math.max(MIN_UNCERTAINTY_METERS, track.positionSpreadMeters()), track.speedMps(),
+                    track.observationIds(), track.supportingStopCount()));
         }
-        return List.copyOf(buses);
+        return new RoutePositionEstimate(List.copyOf(buses), active.size() - selected.size());
+    }
+
+    public record RoutePositionEstimate(List<RoutePositionBus> buses, int suppressedBusCount) {
+        public RoutePositionEstimate {
+            buses = List.copyOf(buses);
+        }
     }
 
     private static Assignment assign(Snapshot snapshot, List<Track> tracks, double positionToleranceMeters,
@@ -207,11 +246,13 @@ public final class RoutePositionPolicy {
         private Double speedMps;
         private double positionSpreadMeters;
         private final List<UUID> observationIds = new ArrayList<>();
+        private final Set<String> stopCodes = new HashSet<>();
 
         private Track(RoutePositionReading first, UUID pollCycleId) {
             last = first;
             lastPollCycleId = pollCycleId;
             observationIds.add(first.observationId());
+            stopCodes.add(first.stopCode());
         }
 
         private void add(RoutePositionReading reading, UUID pollCycleId, double speedCapMetersPerSecond,
@@ -236,6 +277,7 @@ public final class RoutePositionPolicy {
             last = effectiveReading;
             lastPollCycleId = pollCycleId;
             observationIds.add(reading.observationId());
+            stopCodes.add(reading.stopCode());
             if (observationIds.size() > 12) observationIds.removeFirst();
         }
 
@@ -243,6 +285,8 @@ public final class RoutePositionPolicy {
         private Double speedMps() { return speedMps; }
         private UUID lastPollCycleId() { return lastPollCycleId; }
         private List<UUID> observationIds() { return List.copyOf(observationIds); }
+        private int supportingStopCount() { return stopCodes.size(); }
+        private int observationCount() { return observationIds.size(); }
         private double projectedDistance(Instant now) {
             double seconds = Math.max(0, Duration.between(last.fetchedAt(), now).toMillis() / 1000.0);
             return last.distanceAlongRouteM() + (speedMps == null ? 0 : speedMps * seconds);

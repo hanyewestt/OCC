@@ -24,10 +24,13 @@ public class RoutePositionService {
         Instant from = now.minus(pollInterval.multipliedBy(settings.maxPollAgeCycles()));
         List<RoutePositionRoute> routeRows = routes.findRoutesWithObservations(serviceId, from, now);
         if (routeRows.isEmpty()) return Optional.empty();
-        List<RoutePositionDirection> directions = routeRows.stream().map(route -> new RoutePositionDirection(
-                route.operator(), route.directionId(), route.routeLengthM(), RoutePositionPolicy.estimate(
+        List<RoutePositionDirection> directions = routeRows.stream().map(route -> {
+            RoutePositionPolicy.RoutePositionEstimate estimate = RoutePositionPolicy.estimateWithConfidence(
                         route.readings(), route.routeLengthM(), now, pollInterval, settings.maxPollAgeCycles(),
-                        settings.clusterToleranceMeters(), settings.speedCapMetersPerSecond()))).toList();
+                        settings.clusterToleranceMeters(), settings.speedCapMetersPerSecond());
+            return new RoutePositionDirection(route.operator(), route.directionId(), route.routeLengthM(),
+                    estimate.buses(), estimate.suppressedBusCount());
+        }).toList();
         return Optional.of(new RoutePositionSnapshot(serviceId, now, Math.max(1, pollInterval.toSeconds()), directions));
     }
 }
