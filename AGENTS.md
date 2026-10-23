@@ -5,6 +5,10 @@
 
 - Deliver final, durable fixes rather than temporary workarounds.
 - Follow [docs/CONVENTIONS.md](docs/CONVENTIONS.md) for all service work.
+- Follow [docs/commit-convention.md](docs/commit-convention.md) for commits.
+  Append `[skip ci]` to the commit subject when no service or frontend code is
+  edited, including documentation-only and local development launcher changes.
+  Still run checks relevant to the changed files.
 
 ## Frontend Standards
 

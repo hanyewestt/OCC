@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type PageResult, type Recommendation, type RouteDirection, type RoutePositions } from '@/lib/api'
+import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type PageResult, type PendingRecommendation, type RouteDirection, type RoutePositions } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { ControllerSidebar, controllerPages } from '@/components/ControllerSidebar'
 import { ControllerOverview, ControllerDisruptions, ControllerAudit } from '@/pages/ControllerViews'
@@ -10,7 +10,7 @@ import { ControllerRouteStrip } from '@/pages/ControllerRouteStrip'
 import { ControllerPlanning } from '@/pages/ControllerPlanning'
 
 export type Resource<T> = { data: T | null; error: string }
-export type Planning = { recommendation: Recommendation | null; decision: Decision | null }
+export type Planning = { recommendations: PageResult<PendingRecommendation>; decisions: PageResult<Decision> }
 const empty = { data: null, error: '' }
 
 async function readResource<T>(operation: Promise<T | null>, signal: AbortSignal): Promise<Resource<T>> {
@@ -111,16 +111,16 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     const signal = controller.signal
     const runPromise = readResource(apiRequest<DemoRun>('/api/v1/demo-runs/active', token, signal).then(async value =>
       value ? { ...value, alerts: await enrichBunchingStops(value.alerts, token, signal) } : null), signal)
-    const planningPromise = runPromise.then(async result => {
-      if (result.error) return { data: null, error: 'Unable to check the current simulation.' }
-      if (!result.data || result.data.status === 'CLOSED') return { data: { recommendation: null, decision: null }, error: '' }
-      const runId = result.data.id
-      return readResource((async () => {
-        const recommendation = await apiRequest<Recommendation>(`/api/v1/demo-runs/${encodeURIComponent(runId)}/recommendation`, token, signal)
-        const decision = recommendation ? await apiRequest<Decision>(`/api/v1/planning/recommendations/${encodeURIComponent(recommendation.recommendationId)}/decision`, token, signal) : null
-        return { recommendation, decision }
-      })(), signal)
-    })
+    const planningPromise = readResource((async () => {
+      const [recommendations, decisions] = await Promise.all([
+        apiRequest<PageResult<PendingRecommendation>>('/api/v1/planning/recommendations/pending?size=100', token, signal),
+        apiRequest<PageResult<Decision>>('/api/v1/planning/recommendations/decisions?size=100', token, signal),
+      ])
+      return {
+        recommendations: recommendations ?? { items: [], page: 0, totalItems: 0, totalPages: 0 },
+        decisions: decisions ?? { items: [], page: 0, totalItems: 0, totalPages: 0 },
+      }
+    })(), signal)
     const routePromise = Promise.all(['190', '972'].map(serviceId =>
       readResource(apiRequest<BusRoute>(`/api/v1/bus-routes/${serviceId}`, token, signal), signal)))
       .then(results => ({
@@ -162,8 +162,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     return () => { window.clearInterval(timer); controller.abort() }
   }, [pathname, requestLiveData, controllerRefreshIntervalSeconds])
 
-  const pending = planning.data?.recommendation?.classification === 'SIMULATION' &&
-    planning.data.recommendation.status === 'RECOMMENDED' && !planning.data.decision ? 1 : 0
+  const pending = planning.data?.recommendations.totalItems
   const mode = loading ? 'Checking mode…' : run.error ? 'Mode unavailable' : simulation ? 'Simulation' : 'Live'
 
   async function switchMode() {
@@ -210,7 +209,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
             {[
               { title: 'Current arrivals', value: arrivals.data?.totalItems, error: arrivals.error, note: 'Live arrival records', to: '#arrivals' },
               { title: simulation ? 'Simulation detections' : 'Bunching detections', value: simulation ? simulation.alerts.length : alerts.data?.totalItems, error: run.error || (!simulation && alerts.error), note: 'View disruptions →', to: '/controller/disruptions' },
-              { title: 'Awaiting decision', value: planning.data ? pending : undefined, error: planning.error, note: 'Current simulation only →', to: '/controller/planning' },
+              { title: 'Awaiting decision', value: planning.data ? pending : undefined, error: planning.error, note: 'Open decision queue →', to: '/controller/planning' },
             ].map(item => <Link key={item.title} to={item.to} className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"><Card className="h-full hover:bg-muted/30"><CardContent className="space-y-3 p-1 px-5"><p className="text-sm text-muted-foreground">{item.title}</p><p className="text-3xl font-semibold tabular-nums">{loading || item.error ? '—' : item.value ?? '—'}</p><p className="text-xs text-muted-foreground">{item.error ? 'Unavailable · refresh to retry' : item.note}</p></CardContent></Card></Link>)}
           </div>
           <ControllerRouteStrip alerts={alerts} run={run} stops={routeStops} positions={routePositions}
