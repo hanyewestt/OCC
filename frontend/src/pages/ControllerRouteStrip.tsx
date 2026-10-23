@@ -232,7 +232,12 @@ function RouteRow({ route, snapshot, arrivals, routes, incidents, showPositions,
 
   return <div className="border-b last:border-b-0">
     <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-4 pt-4">
-      <h3 className="text-sm font-medium">Service {route.serviceId} · Direction {route.directionId}</h3>
+      <div>
+        <h3 className="text-sm font-medium">Service {route.serviceId} · Direction {route.directionId}</h3>
+        {position && position.suppressedBusCount ? <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+          {buses.length} feed-supported buses · {position.suppressedBusCount} extra estimate hidden
+        </p> : null}
+      </div>
       <div className="flex flex-col items-start text-xs text-muted-foreground sm:items-end">
         <span>{route.operator} · {route.stops.length} stops</span>
         <span>Positions updated {snapshot ? clockTime(snapshot.computedAt) : 'unavailable'}</span>

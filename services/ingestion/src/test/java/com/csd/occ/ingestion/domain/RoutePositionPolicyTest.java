@@ -128,6 +128,39 @@ class RoutePositionPolicyTest {
     }
 
     @Test
+    void suppressesSingleObservationStrayWhenThreeBusesHaveIndependentStopSupport() {
+        UUID firstStop = UUID.randomUUID();
+        UUID secondStop = UUID.randomUUID();
+        List<RoutePositionBus> buses = estimate(List.of(
+                reading(firstStop, "05039", 7, 1, 1_000, 1_000, 300, 55),
+                reading(firstStop, "05039", 7, 2, 900, 1_000, 420, 55),
+                reading(firstStop, "05039", 7, 3, 800, 1_000, 540, 55),
+                reading(secondStop, "05019", 8, 1, 1_400, 1_500, 360, 5),
+                reading(secondStop, "05019", 8, 2, 1_300, 1_500, 480, 5),
+                reading(secondStop, "05019", 8, 3, 1_200, 1_500, 600, 5),
+                reading(secondStop, "05019", 8, 4, 9_900, 1_500, 720, 5)));
+
+        assertThat(buses).hasSize(3);
+        assertThat(buses).allSatisfy(bus -> assertThat(bus.supportingStopCount()).isGreaterThanOrEqualTo(2));
+    }
+
+    @Test
+    void latestPollingPassCeilingSuppressesAnOlderUnmatchedTrack() {
+        UUID oldCycle = UUID.randomUUID();
+        UUID latestCycle = UUID.randomUUID();
+        List<RoutePositionReading> readings = List.of(
+                reading(oldCycle, "05039", 7, 1, 1_000, 1_000, 300, 65, oldCycle),
+                reading(UUID.randomUUID(), "05039", 7, 1, 3_000, 1_000, 420, 65, oldCycle),
+                reading(UUID.randomUUID(), "05039", 7, 1, 5_000, 1_000, 540, 65, oldCycle),
+                reading(UUID.randomUUID(), "05039", 7, 1, 7_000, 1_000, 660, 65, oldCycle),
+                reading(latestCycle, "05039", 7, 1, 1_100, 1_000, 300, 5),
+                reading(latestCycle, "05039", 7, 2, 3_100, 1_000, 420, 5),
+                reading(latestCycle, "05039", 7, 3, 5_100, 1_000, 540, 5));
+
+        assertThat(estimate(readings)).hasSize(3);
+    }
+
+    @Test
     void dropsStaleReadingsAndClampsProjectedPositionsAtTheEndOfTheRoute() {
         UUID stale = UUID.randomUUID();
         UUID fresh = UUID.randomUUID();
@@ -172,7 +205,12 @@ class RoutePositionPolicyTest {
 
     private RoutePositionReading reading(UUID snapshot, String stop, int sequence, int order, double position,
             double stopPosition, long etaSeconds, long fetchedSecondsAgo) {
-        return new RoutePositionReading(observation(snapshot, stop, order), snapshot, POLL_CYCLE, stop, sequence, order, position,
+        return reading(snapshot, stop, sequence, order, position, stopPosition, etaSeconds, fetchedSecondsAgo, POLL_CYCLE);
+    }
+
+    private RoutePositionReading reading(UUID snapshot, String stop, int sequence, int order, double position,
+            double stopPosition, long etaSeconds, long fetchedSecondsAgo, UUID pollCycle) {
+        return new RoutePositionReading(observation(snapshot, stop, order), snapshot, pollCycle, stop, sequence, order, position,
                 stopPosition, NOW.plusSeconds(etaSeconds), NOW.minusSeconds(fetchedSecondsAgo));
     }
 

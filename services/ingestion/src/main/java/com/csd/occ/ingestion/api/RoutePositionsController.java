@@ -54,6 +54,8 @@ public class RoutePositionsController {
                 snapshot.directions().stream().map(direction -> new RoutePositionDirectionResponse(
                         direction.operator(), direction.directionId(), direction.routeLengthM(), direction.buses().stream()
                         .map(bus -> new RoutePositionBusResponse(bus.order(), bus.distanceAlongRouteM(),
-                                bus.uncertaintyM(), bus.speedMps(), bus.evidenceObservationIds())).toList())).toList());
+                                bus.uncertaintyM(), bus.speedMps(), bus.evidenceObservationIds(),
+                                bus.supportingStopCount())).toList(),
+                        direction.suppressedBusCount())).toList());
     }
 }

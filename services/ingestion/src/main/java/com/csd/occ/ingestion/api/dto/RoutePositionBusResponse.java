@@ -12,5 +12,11 @@ public record RoutePositionBusResponse(int order,
                                       @Schema(nullable = true, description = "Estimated speed in meters per second; null until two polls can be matched")
                                       Double speedMps,
                                       @Schema(description = "Arrival observation IDs that contributed to this approximate position; these do not identify a physical vehicle")
-                                      List<UUID> evidenceObservationIds) {
+                                      List<UUID> evidenceObservationIds,
+                                      @Schema(description = "Number of distinct stops supporting this estimate")
+                                      int supportingStopCount) {
+    public RoutePositionBusResponse(int order, double distanceAlongRouteM, double uncertaintyM,
+            Double speedMps, List<UUID> evidenceObservationIds) {
+        this(order, distanceAlongRouteM, uncertaintyM, speedMps, evidenceObservationIds, 0);
+    }
 }
