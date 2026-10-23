@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.csd.occ.ingestion.infrastructure.persistence.PostgisRoutePositionRepository;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -35,7 +36,7 @@ class RoutePositionRepositoryIT {
         jdbc.execute("CREATE TABLE ingestion.reference_dataset_version (id uuid, dataset varchar(40), status varchar(20))");
         jdbc.execute("CREATE TABLE ingestion.bus_stop (reference_version_id uuid, stop_code varchar(12), location geometry(Point,4326))");
         jdbc.execute("CREATE TABLE ingestion.bus_route_stop (reference_version_id uuid, service_id varchar(20), operator varchar(40), direction_id smallint, stop_sequence integer, stop_code varchar(12))");
-        jdbc.execute("CREATE TABLE ingestion.bus_arrival_observation (id uuid, service_id varchar(20), stop_code varchar(12), direction_id smallint, classification varchar(30), latitude numeric(10,7), longitude numeric(10,7), fetched_at timestamptz)");
+        jdbc.execute("CREATE TABLE ingestion.bus_arrival_observation (id uuid, raw_observation_id uuid, service_id varchar(20), stop_code varchar(12), direction_id smallint, visit_order smallint, estimated_arrival_at timestamptz, classification varchar(30), latitude numeric(10,7), longitude numeric(10,7), fetched_at timestamptz)");
         repository = new PostgisRoutePositionRepository(jdbc);
     }
 
@@ -52,10 +53,10 @@ class RoutePositionRepositoryIT {
         insertRouteStop(2, 2, "A");
         Instant now = Instant.now();
         UUID observationId = UUID.randomUUID();
-        jdbc.update("INSERT INTO ingestion.bus_arrival_observation VALUES (?, '190', 'B', null, 'OBSERVATION_ONLY', 1.300, 103.810, ?)",
-                observationId, java.sql.Timestamp.from(now.minusSeconds(5)));
-        jdbc.update("INSERT INTO ingestion.bus_arrival_observation VALUES (?, '190', 'A', null, 'OBSERVATION_ONLY', 1.300, 103.800, ?)",
-                UUID.randomUUID(), java.sql.Timestamp.from(now.minusSeconds(4)));
+        jdbc.update("INSERT INTO ingestion.bus_arrival_observation VALUES (?, ?, '190', 'B', null, 1, ?, 'OBSERVATION_ONLY', 1.300, 103.810, ?)",
+                observationId, UUID.randomUUID(), java.sql.Timestamp.from(now.plusSeconds(120)), java.sql.Timestamp.from(now.minusSeconds(5)));
+        jdbc.update("INSERT INTO ingestion.bus_arrival_observation VALUES (?, ?, '190', 'A', null, 1, ?, 'OBSERVATION_ONLY', 1.300, 103.800, ?)",
+                UUID.randomUUID(), UUID.randomUUID(), java.sql.Timestamp.from(now.plusSeconds(180)), java.sql.Timestamp.from(now.minusSeconds(4)));
 
         var routes = repository.findRoutesWithObservations("190", now.minusSeconds(120), now);
 
@@ -65,6 +66,11 @@ class RoutePositionRepositoryIT {
         assertThat(direction1.routeLengthM()).isBetween(2_100.0, 2_300.0);
         assertThat(direction1.readings()).hasSize(1);
         assertThat(direction1.readings().getFirst().observationId()).isEqualTo(observationId);
+        assertThat(direction1.readings().getFirst().snapshotId()).isNotNull();
+        assertThat(direction1.readings().getFirst().stopCode()).isEqualTo("B");
+        assertThat(direction1.readings().getFirst().stopSequence()).isEqualTo(2);
+        assertThat(Math.abs(Duration.between(now.plusSeconds(120),
+                direction1.readings().getFirst().estimatedArrivalAt()).toNanos())).isLessThanOrEqualTo(1_000L);
         assertThat(direction1.readings().getFirst().distanceAlongRouteM())
                 .isCloseTo(direction1.routeLengthM() / 2, org.assertj.core.data.Offset.offset(2.0));
         assertThat(direction2.readings()).isEmpty();

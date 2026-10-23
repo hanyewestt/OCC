@@ -4,7 +4,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import type { Arrival, BunchingAlert, DemoRun, PageResult, RouteDirection, RoutePositionDirection, RoutePositions } from '@/lib/api'
 import {
   arrivalDirectionMatches, estimateRouteHeadways, etaFallbacksForRoute, formatGap, gapSeverity, groupRouteIncidents,
-  linkIncidentToPosition, projectCoordinateToRoute, routeKey, routeStopDistances, ROUTE_STRIP_GAP_SEVERITY,
+  linkIncidentToPosition, oldestStopDataAgeSeconds, projectCoordinateToRoute, routeKey, routeStopDistances, ROUTE_STRIP_GAP_SEVERITY,
   type IncidentStripLink, type RouteIncident,
 } from '@/lib/route-strip'
 import { DataMessage } from './ControllerViews'
@@ -29,7 +29,6 @@ type PositionedIncident = RouteIncident & { stripLink: IncidentStripLink | null 
 
 const stopSpacing = 140
 const leftPadding = 64
-const routeY = 108
 const noAlerts: BunchingAlert[] = []
 const noRoutes: RouteDirection[] = []
 const noPositionSnapshots: RoutePositions[] = []
@@ -125,11 +124,35 @@ function RouteRow({ route, snapshot, arrivals, routes, incidents, showPositions,
   const routeDistances = routeStopDistances(route, routeLengthM)
   const routeSpan = Math.max(0, route.stops.length - 1) * stopSpacing
   const width = Math.max(620, leftPadding * 2 + routeSpan)
-  const xForDistance = (distance: number) => leftPadding + (routeLengthM > 0
-    ? Math.max(0, Math.min(1, distance / routeLengthM)) * routeSpan : 0)
-  const xForStop = (index: number) => leftPadding + (routeLengthM > 0 && routeDistances.hasGeometry
-    ? routeDistances.distancesM[index] / routeLengthM * routeSpan
-    : index * stopSpacing)
+  const uncertaintyPxFor = (uncertaintyM: number) => routeLengthM > 0
+    ? Math.min(40, Math.max(3, uncertaintyM / routeLengthM * routeSpan)) : 3
+  const xForDistance = (distance: number) => {
+    const boundedDistance = Math.max(0, Math.min(routeLengthM, distance))
+    if (routeDistances.hasGeometry && route.stops.length > 1) {
+      let segment = 0
+      while (segment < route.stops.length - 2 && boundedDistance > routeDistances.distancesM[segment + 1]) segment++
+      const startDistance = routeDistances.distancesM[segment]
+      const endDistance = routeDistances.distancesM[segment + 1]
+      const fraction = endDistance > startDistance
+        ? Math.max(0, Math.min(1, (boundedDistance - startDistance) / (endDistance - startDistance))) : 0
+      return leftPadding + (segment + fraction) * stopSpacing
+    }
+    return leftPadding + (routeLengthM > 0 ? boundedDistance / routeLengthM * routeSpan : 0)
+  }
+  const xForStop = (index: number) => leftPadding + index * stopSpacing
+  const busLaneIntervals: Array<Array<{ start: number; end: number }>> = []
+  const busLanes = buses.map(bus => {
+    const x = xForDistance(bus.distanceAlongRouteM)
+    const halfWidth = Math.max(15, uncertaintyPxFor(bus.uncertaintyM))
+    const start = x - halfWidth - 4
+    const end = x + halfWidth + 4
+    let lane = busLaneIntervals.findIndex(intervals => intervals.every(interval => end < interval.start || start > interval.end))
+    if (lane < 0) lane = busLaneIntervals.length
+    busLaneIntervals[lane] ??= []
+    busLaneIntervals[lane].push({ start, end })
+    return lane
+  })
+  const routeY = buses.length ? 64 + Math.max(0, busLaneIntervals.length - 1) * 24 : 108
   const stopLabels = route.stops.map(stop => stopNameLines(stop.description))
   const selectedStop = route.stops.find(stop => stop.stopCode === selectedStopCode)
   const selectedPoints = selectedArrivals.map((arrival, index) => ({
@@ -224,11 +247,14 @@ function RouteRow({ route, snapshot, arrivals, routes, incidents, showPositions,
           const y = gapY(index)
           const severity = gapSeverity(headway.seconds)
           const style = severity ? ROUTE_STRIP_GAP_SEVERITY[severity] : null
-          const label = headway.source === 'eta' ? `ETA ${formatGap(headway.seconds)}` : formatDistance(headway.distanceMeters)
+          const label = headway.source === 'same-stop-eta' ? `Same-stop ETA ${formatGap(headway.seconds)}` :
+            headway.source === 'estimate' ? `~${formatGap(headway.seconds)} estimate` : formatDistance(headway.distanceMeters)
           const labelWidth = Math.max(54, label.length * 6 + 14)
           const linked = linksByPair.get(pairKey(headway.frontOrder, headway.followingOrder)) ?? []
           const sourceLabel = headway.source === 'distance' ? 'Approximate position separation; time headway unavailable.' :
-            headway.source === 'eta' ? `Arrival-time difference at the shared stop ${headway.etaStopCode}.` : 'Position separation unavailable.'
+            headway.source === 'estimate' ? 'Approximate time from position gap divided by estimated speed.' :
+              headway.source === 'same-stop-eta' ? `Arrival-time difference at stop ${headway.etaStopCode}; both readings came from the same poll snapshot.` :
+                'Position separation unavailable.'
           const description = `Estimated buses ${headway.frontOrder} and ${headway.followingOrder}: ${label}. ${sourceLabel}${linked.length ? ` Linked to ${linked.length} incident${linked.length === 1 ? '' : 's'}.` : ''}`
           return <g key={pairKey(headway.frontOrder, headway.followingOrder)} role="img" aria-label={description}>
             <title>{description}</title>
@@ -245,16 +271,15 @@ function RouteRow({ route, snapshot, arrivals, routes, incidents, showPositions,
         })}
         {buses.map((bus, index) => {
           const x = xForDistance(bus.distanceAlongRouteM)
-          const uncertaintyPx = routeLengthM > 0
-            ? Math.min(40, Math.max(3, bus.uncertaintyM / routeLengthM * routeSpan)) : 3
+          const uncertaintyPx = uncertaintyPxFor(bus.uncertaintyM)
           const description = `Estimated bus ${bus.order}, approximate position ${Math.round(bus.distanceAlongRouteM)} metres along the route, plus or minus ${Math.round(bus.uncertaintyM)} metres. This is an order estimate, not a verified vehicle identity.`
-          const markerY = routeY - (index % 2) * 3
+          const markerY = routeY - busLanes[index] * 24
+          const uncertaintyY = markerY + 6
           return <g key={bus.order} role="img" aria-label={description} className="text-sky-700 dark:text-sky-400">
             <title>{description}</title>
-            <line x1={x} y1={markerY - 24} x2={x} y2={routeY - 7} stroke="currentColor" strokeWidth="1.5" />
-            <rect x={x - uncertaintyPx} y={routeY + 9} width={uncertaintyPx * 2} height="5" rx="2.5" fill="currentColor" opacity=".55" />
-            <line x1={x - uncertaintyPx} y1={routeY + 7} x2={x - uncertaintyPx} y2={routeY + 16} stroke="currentColor" strokeWidth="1.25" />
-            <line x1={x + uncertaintyPx} y1={routeY + 7} x2={x + uncertaintyPx} y2={routeY + 16} stroke="currentColor" strokeWidth="1.25" />
+            <rect x={x - uncertaintyPx} y={uncertaintyY} width={uncertaintyPx * 2} height="5" rx="2.5" fill="currentColor" opacity=".55" />
+            <line x1={x - uncertaintyPx} y1={uncertaintyY - 2} x2={x - uncertaintyPx} y2={uncertaintyY + 7} stroke="currentColor" strokeWidth="1.25" />
+            <line x1={x + uncertaintyPx} y1={uncertaintyY - 2} x2={x + uncertaintyPx} y2={uncertaintyY + 7} stroke="currentColor" strokeWidth="1.25" />
             <rect x={x - 15} y={markerY - 28} width="30" height="22" rx="5" fill="var(--background)" stroke="currentColor" strokeWidth="2" />
             <text x={x} y={markerY - 13} textAnchor="middle" fontSize="10" fontWeight="600" fill="currentColor">#{bus.order}</text>
           </g>
@@ -298,12 +323,6 @@ function RouteRow({ route, snapshot, arrivals, routes, incidents, showPositions,
             })}
           </ol> : <p className="mt-2 text-sm text-muted-foreground">No upcoming arrival predictions are available for this stop and direction.</p>}
     </div>}
-    {headways.length > 0 && <p className="px-4 pb-3 text-xs text-muted-foreground">
-      Consecutive estimated buses: {headways.map((headway, index) => <span key={pairKey(headway.frontOrder, headway.followingOrder)}>
-        {index > 0 ? ' · ' : ''}#{headway.frontOrder}→#{headway.followingOrder} {headway.source === 'eta' ? `ETA ${formatGap(headway.seconds)}` : formatDistance(headway.distanceMeters)}
-        {headway.source === 'distance' ? ' (distance only)' : headway.source === 'eta' ? ` (shared ETA at stop ${headway.etaStopCode})` : ' (unavailable)'}
-      </span>)}
-    </p>}
     {showPositions && !position && <p role="status" className="px-4 pb-3 text-xs text-muted-foreground">No current position estimate for this direction.</p>}
     {position && !routeDistances.hasGeometry && <p className="px-4 pb-3 text-xs text-muted-foreground">Route stops use even spacing because stop coordinates are incomplete; bus positions remain approximate.</p>}
   </div>
@@ -381,19 +400,7 @@ export function ControllerRouteStrip({ alerts, run, stops, positions, arrivals, 
     }
   }), [incidents, routes, positionByRoute, pollSeconds, simulationRun])
 
-  const newestArrivalFetchByService = new Map<string, number>()
-  for (const arrival of arrivals.data ?? []) {
-    const fetchedAt = Date.parse(arrival.fetchedAt)
-    if (!Number.isFinite(fetchedAt)) continue
-    newestArrivalFetchByService.set(arrival.serviceId, Math.max(newestArrivalFetchByService.get(arrival.serviceId) ?? 0, fetchedAt))
-  }
-  const sourceTimes = [
-    ...currentPositions.map(snapshot => Date.parse(snapshot.computedAt)),
-    ...newestArrivalFetchByService.values(),
-    ...(alerts.data?.items ?? []).map(alert => Date.parse(alert.fetchedAt ?? alert.detectedAt)),
-  ].filter(Number.isFinite)
-  const oldestSourceAt = sourceTimes.length ? Math.min(...sourceTimes) : null
-  const sourceAgeSeconds = oldestSourceAt === null ? null : Math.max(0, (nowMs - oldestSourceAt) / 1000)
+  const sourceAgeSeconds = oldestStopDataAgeSeconds(arrivals.data ?? [], routes, nowMs)
   const stale = sourceAgeSeconds !== null && sourceAgeSeconds > pollSeconds * 2
   const incidentError = run.error || (simulationRun ? '' : alerts.error)
   const routeError = stops.error && routes.length ? 'Some route references could not be loaded; available routes are shown.' : stops.error
@@ -402,13 +409,13 @@ export function ControllerRouteStrip({ alerts, run, stops, positions, arrivals, 
   return <section aria-labelledby="route-strip-title" className="space-y-4">
     <div>
       <h2 id="route-strip-title" className="font-medium">Live route strip</h2>
-      <p className="mt-1 text-xs text-muted-foreground">Bus markers show approximate distance along straight lines between stops. Numbers are order estimates, not vehicle identities.</p>
+      <p className="mt-1 text-xs text-muted-foreground">Stops are evenly spaced for readability; bus positions are approximate along the ordered route. Numbers are order estimates, not vehicle identities.</p>
       {simulationRun && <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">Simulation incident data is shown separately; the strip keeps live position estimates.</p>}
-      <p className="mt-1 text-xs text-muted-foreground">Time gaps use matching arrival estimates at a shared stop. If they cannot be matched, the strip shows approximate distance only.</p>
+      <p className="mt-1 text-xs text-muted-foreground">Gaps use same-poll arrival times when available; otherwise time is estimated from position and speed, or shown as distance only.</p>
       <p className="mt-1 text-xs text-muted-foreground">Last updated {lastUpdated ? clockTime(lastUpdated) : 'not yet updated'} · Refreshes every {controllerRefreshIntervalSeconds} seconds.</p>
       {positions.error && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">{positions.error} Showing the last available estimates.</p>}
       {arrivals.error && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">Some current arrivals could not be loaded for ETA headway fallback.</p>}
-      {stale && <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">Source data is older than 2 poll cycles; treat positions and headways as stale.</p>}
+      {stale && <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">At least one stop’s latest arrival data is older than 2 poll cycles; treat affected positions and headways as stale.</p>}
       {dataError && !stale && sourceAgeSeconds === null && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">Current source data is unavailable; no fresh estimates can be confirmed.</p>}
       {routeError && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">{routeError}</p>}
     </div>

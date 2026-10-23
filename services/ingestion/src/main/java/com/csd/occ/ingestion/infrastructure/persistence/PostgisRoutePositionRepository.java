@@ -30,6 +30,8 @@ public class PostgisRoutePositionRepository implements RoutePositionRepository {
                 HAVING count(*) >= 2
             )
             SELECT route.operator, route.direction_id, observation.id AS observation_id,
+                   observation.raw_observation_id AS snapshot_id, observation.stop_code,
+                   route_stop.stop_sequence, observation.visit_order, observation.estimated_arrival_at,
                    ST_Length(route.route_line) AS route_length_m,
                    CASE WHEN observation.id IS NULL THEN NULL ELSE
                        ST_LineLocatePoint(route.route_line,
@@ -37,6 +39,10 @@ public class PostgisRoutePositionRepository implements RoutePositionRepository {
                                observation.latitude::double precision), 4326), 3414))
                        * ST_Length(route.route_line)
                    END AS distance_along_route_m,
+                   CASE WHEN observation.id IS NULL THEN NULL ELSE
+                       ST_LineLocatePoint(route.route_line, ST_Transform(observed_stop.location, 3414))
+                       * ST_Length(route.route_line)
+                   END AS stop_distance_along_route_m,
                    observation.fetched_at
             FROM route_lines route
             LEFT JOIN ingestion.bus_arrival_observation observation
@@ -65,6 +71,15 @@ public class PostgisRoutePositionRepository implements RoutePositionRepository {
                        AND match.stop_code = observation.stop_code
                  ))
              )
+            LEFT JOIN ingestion.bus_route_stop route_stop
+              ON route_stop.reference_version_id = route.reference_version_id
+             AND route_stop.service_id = route.service_id
+             AND route_stop.operator = route.operator
+             AND route_stop.direction_id = route.direction_id
+             AND route_stop.stop_code = observation.stop_code
+            LEFT JOIN ingestion.bus_stop observed_stop
+              ON observed_stop.reference_version_id = route_stop.reference_version_id
+             AND observed_stop.stop_code = route_stop.stop_code
             ORDER BY route.operator, route.direction_id, observation.fetched_at
             """;
 
@@ -81,8 +96,14 @@ public class PostgisRoutePositionRepository implements RoutePositionRepository {
             statement.setTimestamp(2, Timestamp.from(from));
             statement.setTimestamp(3, Timestamp.from(to));
         }, (result, rowNumber) -> new RoutePositionRow(result.getString("operator"),
-                result.getInt("direction_id"), result.getObject("observation_id", java.util.UUID.class), result.getDouble("route_length_m"),
+                result.getInt("direction_id"), result.getObject("observation_id", java.util.UUID.class),
+                result.getObject("snapshot_id", java.util.UUID.class), result.getString("stop_code"),
+                result.getObject("stop_sequence") == null ? 0 : result.getInt("stop_sequence"),
+                result.getObject("visit_order") == null ? 0 : result.getInt("visit_order"),
+                result.getTimestamp("estimated_arrival_at") == null ? null : result.getTimestamp("estimated_arrival_at").toInstant(),
+                result.getDouble("route_length_m"),
                 result.getObject("distance_along_route_m") == null ? null : result.getDouble("distance_along_route_m"),
+                result.getObject("stop_distance_along_route_m") == null ? null : result.getDouble("stop_distance_along_route_m"),
                 result.getTimestamp("fetched_at") == null ? null : result.getTimestamp("fetched_at").toInstant()));
 
         Map<RouteKey, RouteBuilder> routes = new LinkedHashMap<>();
@@ -90,7 +111,9 @@ public class PostgisRoutePositionRepository implements RoutePositionRepository {
             RouteKey key = new RouteKey(row.operator(), row.directionId());
             RouteBuilder route = routes.computeIfAbsent(key, ignored -> new RouteBuilder(row.routeLengthMeters()));
             if (row.distanceAlongRouteMeters() != null && row.fetchedAt() != null)
-                route.readings().add(new RoutePositionReading(row.observationId(), row.distanceAlongRouteMeters(), row.fetchedAt()));
+                route.readings().add(new RoutePositionReading(row.observationId(), row.snapshotId(), row.stopCode(),
+                        row.stopSequence(), row.visitOrder(), row.distanceAlongRouteMeters(), row.stopDistanceAlongRouteMeters(),
+                        row.estimatedArrivalAt(), row.fetchedAt()));
         }
         return routes.entrySet().stream().map(entry -> new RoutePositionRoute(entry.getKey().operator(),
                 entry.getKey().directionId(), entry.getValue().routeLengthMeters(),
@@ -100,8 +123,10 @@ public class PostgisRoutePositionRepository implements RoutePositionRepository {
     private record RouteKey(String operator, int directionId) {
     }
 
-    private record RoutePositionRow(String operator, int directionId, java.util.UUID observationId, double routeLengthMeters,
-                                    Double distanceAlongRouteMeters, Instant fetchedAt) {
+    private record RoutePositionRow(String operator, int directionId, java.util.UUID observationId,
+                                    java.util.UUID snapshotId, String stopCode, int stopSequence, int visitOrder,
+                                    Instant estimatedArrivalAt, double routeLengthMeters, Double distanceAlongRouteMeters,
+                                    Double stopDistanceAlongRouteMeters, Instant fetchedAt) {
     }
 
     private static final class RouteBuilder {
