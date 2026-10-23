@@ -68,8 +68,28 @@ export type Recommendation = {
   targetBusReference: string; controlStopCode: string; adjustmentSeconds: number
   rationale: string; likelyCause: string; tradeOffs: string[]; limitations: string[]
 }
+export type RecommendationExplanation = {
+  rationale: string; likelyCause: string; diagnosisConfidence: number
+  tradeOffs: string[]; limitations: string[]
+}
+export type RecommendationImpact = {
+  headwayBeforeSeconds: number; headwayAfterSeconds: number
+  queueBeforePassengers: number; queueAfterPassengers: number
+  passengerMinutesBefore: number; passengerMinutesAfter: number
+}
+export type PendingRecommendation = {
+  recommendationId: string; classification: string; status: string
+  serviceId: string; directionId: number; monitoredStopCode: string
+  detectedAt: string; createdAt: string
+  expectedHeadwaySeconds: number; observedHeadwaySeconds: number
+  mitigationType: string; targetBusReference: string; affectedBusReferences: string[]
+  controlStopCode: string; adjustmentSeconds: number
+  explanation: RecommendationExplanation; expectedImpact: RecommendationImpact
+}
+export type ControllerBusInstruction = { busReference: string; instruction: string }
 export type Decision = {
-  recommendationId: string; action: 'APPROVED' | 'REJECTED'; decidedAt: string
+  recommendationId: string; action: 'APPROVED' | 'REJECTED'; actorSubject: string
+  overrideInstructions: ControllerBusInstruction[]; controllerRationale: string | null; decidedAt: string
 }
 
 export function routeDirections(routes: BusRoute[]): RouteDirection[] {
@@ -82,7 +102,7 @@ export function routeDirections(routes: BusRoute[]): RouteDirection[] {
 // All dashboard requests stay on the same origin. Null represents a documented
 // empty response, never a failed request or an assumed count of zero.
 export async function apiRequest<T>(path: string, token: string, signal: AbortSignal,
-  options?: { method: 'POST'; body?: { action: Decision['action'] } }): Promise<T | null> {
+  options?: { method: 'POST'; body?: unknown }): Promise<T | null> {
   if (!path.startsWith('/api/v1/')) throw new Error('Invalid API request.')
   const response = await fetch(path, {
     method: options?.method ?? 'GET',

@@ -16,7 +16,8 @@ newer. On Windows/macOS, start Docker Desktop; on Linux, Docker Engine with the
 Compose plugin is sufficient.
 Docker builds include Java and Maven; a host Java installation is needed only
 for running Maven directly. For host builds/tests, use JDK 25 and the root
-Maven Wrapper. Use Node.js 22.12+ and npm for the React build, Vite development
+Maven Wrapper. Use the Node.js version pinned in the repository-root `.nvmrc`
+(Node.js 22.12) and npm for the React build, Vite development
 server and browser tests. The app start scripts build the frontend on the host, so Node
 is required even when Java services are built entirely in Docker.
 
@@ -61,12 +62,19 @@ containers and database.
 
 | Action | PowerShell | Bash | Behavior |
 | --- | --- | --- | --- |
-| Start app | `.\scripts\app.ps1 start` | `bash scripts/app.sh start` | Install/build React assets, build application/migration images, start the app and wait for health checks |
+| Up app (build) | `.\scripts\app.ps1 up` | `bash scripts/app.sh up` | Install/build React assets, build application/migration images, create or update containers and wait for health checks |
+| Start app | `.\scripts\app.ps1 start` | `bash scripts/app.sh start` | Resume existing containers and wait for health checks; do not build, create or recreate containers |
 | Stop app | `.\scripts\app.ps1 stop` | `bash scripts/app.sh stop` | Stop project containers, including pgAdmin; preserve containers, networks and data volumes |
 | Reset app | `.\scripts\app.ps1 reset` | `bash scripts/app.sh reset` | Delete project containers/networks and database/pgAdmin volumes, rebuild images without layer cache, then start the app |
 | Clear app | `.\scripts\app.ps1 clear` | `bash scripts/app.sh clear` | Remove project containers/networks, all project volumes and referenced service images; leave the app stopped |
 | Start pgAdmin | `.\scripts\app.ps1 start-pgadmin` | `bash scripts/app.sh start-pgadmin` | Start pgAdmin and its PostgreSQL dependency; leave the app otherwise unchanged |
 | Stop pgAdmin | `.\scripts\app.ps1 stop-pgadmin` | `bash scripts/app.sh stop-pgadmin` | Stop only pgAdmin; preserve PostgreSQL, the app and pgAdmin data |
+
+Use `up` for the first run and after source or `.env` changes. Use `start` to
+resume existing containers; it skips npm and Docker builds and preserves database
+data. Node is not required for `start`. Start retains the containers' existing
+configuration, so use `up` to apply the Gemini recommendation flag or other `.env`
+changes. Both commands preserve database data.
 
 **Reset and clear permanently delete the selected project's database and pgAdmin data.**
 Reset requires typing `RESET`, then rebuilds and starts the app. Clear requires
@@ -86,16 +94,16 @@ To select a different local project:
 PowerShell:
 
 ```powershell
-.\scripts\app.ps1 start -ProjectName occ-dev
+.\scripts\app.ps1 up -ProjectName occ-dev
 ```
 
 Bash:
 
 ```bash
-bash scripts/app.sh start --project occ-dev
+bash scripts/app.sh up --project occ-dev
 ```
 
-Repeat that project option for stop, reset, clear and pgAdmin actions. Use `-Help` /
+Repeat that project option for up, stop, reset, clear and pgAdmin actions. Use `-Help` /
 `--help` to see launcher usage. The launchers require Docker on PATH and a running
 Linux container engine. PowerShell launchers support Windows PowerShell 5.1+ and
 PowerShell 7; Bash launchers support Linux, macOS, WSL and Git Bash.

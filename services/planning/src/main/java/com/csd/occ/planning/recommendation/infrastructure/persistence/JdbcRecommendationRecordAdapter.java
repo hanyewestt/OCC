@@ -10,6 +10,7 @@ import com.csd.occ.planning.recommendation.domain.ValidatedMitigationRecommendat
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -33,6 +34,30 @@ public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort
              WHERE bunching_event_id = ?
              ORDER BY created_at DESC
              LIMIT 1
+            """;
+
+    private static final String FIND_PENDING = """
+            SELECT recommendation.recommendation_id, recommendation.request_hash,
+                   recommendation.request_payload, recommendation.mitigation_context,
+                   recommendation.response_payload, recommendation.created_at
+              FROM planning.recommendation recommendation
+              LEFT JOIN planning.recommendation_decision decision
+                ON decision.recommendation_id = recommendation.recommendation_id
+             WHERE decision.recommendation_id IS NULL
+               AND recommendation.request_payload ->> 'classification' = 'SIMULATION'
+               AND recommendation.response_payload ->> 'status' = 'RECOMMENDED'
+             ORDER BY recommendation.created_at, recommendation.recommendation_id
+             OFFSET ? LIMIT ?
+            """;
+
+    private static final String COUNT_PENDING = """
+            SELECT count(*)
+              FROM planning.recommendation recommendation
+              LEFT JOIN planning.recommendation_decision decision
+                ON decision.recommendation_id = recommendation.recommendation_id
+             WHERE decision.recommendation_id IS NULL
+               AND recommendation.request_payload ->> 'classification' = 'SIMULATION'
+               AND recommendation.response_payload ->> 'status' = 'RECOMMENDED'
             """;
 
     private static final String INSERT_IF_ABSENT = """
@@ -67,6 +92,17 @@ public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort
         return jdbc.query(FIND_BY_BUNCHING_EVENT_ID, this::mapRecord, bunchingEventId)
                 .stream()
                 .findFirst();
+    }
+
+    @Override
+    public List<RecommendationRecord> findPending(int offset, int limit) {
+        return jdbc.query(FIND_PENDING, this::mapRecord, offset, limit);
+    }
+
+    @Override
+    public long countPending() {
+        Long count = jdbc.queryForObject(COUNT_PENDING, Long.class);
+        return count == null ? 0 : count;
     }
 
     @Override

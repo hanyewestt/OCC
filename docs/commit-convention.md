@@ -18,6 +18,19 @@ git commit -m"<b><a href="#types">&lt;type&gt;</a></b></font>(<b><a href="#scope
 
 ## Commit Message Formats
 
+### CI Skip Convention
+
+Append `[skip ci]` to the commit subject when no service or frontend code is
+edited. This includes documentation, agent instructions and local development
+launcher changes. Review the complete staged diff before choosing the marker;
+do not use it for mixed commits that also change service or frontend code.
+Run checks relevant to the changed files even when CI is skipped.
+
+```text
+docs: clarify local setup [skip ci]
+ops: add no-build launcher action [skip ci]
+```
+
 ### General Commit
 
 <pre>

@@ -16,7 +16,11 @@ public class DemoVehicleAssignment {
     private String captainCode;
     public DemoVehicleAssignment(DemoVehicleAssignmentId id, String registration, String operator,
                                  String vehicleType, String captain) {
-        this.id = id; serviceId = "190"; directionId = 1; this.operator = operator;
+        this(id, "190", 1, registration, operator, vehicleType, captain);
+    }
+    public DemoVehicleAssignment(DemoVehicleAssignmentId id, String serviceId, int directionId,
+                                 String registration, String operator, String vehicleType, String captain) {
+        this.id = id; this.serviceId = serviceId; this.directionId = (short) directionId; this.operator = operator;
         vehicleRegistrationNumber = registration; this.vehicleType = vehicleType; captainCode = captain;
     }
     public String serviceId() { return serviceId; }
