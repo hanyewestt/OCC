@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { ApiError, apiRequest, enrichBunchingStops, type Arrival, type BunchingAlert, type Decision, type DemoRun, type PageResult, type Recommendation } from '@/lib/api'
+import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type PageResult, type Recommendation, type RouteDirection } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { ControllerSidebar, controllerPages } from '@/components/ControllerSidebar'
 import { ControllerOverview, ControllerDisruptions, ControllerAudit } from '@/pages/ControllerViews'
+import { ControllerRouteStrip } from '@/pages/ControllerRouteStrip'
 import { ControllerPlanning } from '@/pages/ControllerPlanning'
 
 export type Resource<T> = { data: T | null; error: string }
@@ -19,6 +20,7 @@ export function ControllerPage({ email, token }: { email: string; token: string 
   const [arrivalPage, setArrivalPage] = useState(0)
   const [arrivals, setArrivals] = useState<Resource<PageResult<Arrival>>>(empty)
   const [alerts, setAlerts] = useState<Resource<PageResult<BunchingAlert>>>(empty)
+  const [routeStops, setRouteStops] = useState<Resource<RouteDirection[]>>(empty)
   const [run, setRun] = useState<Resource<DemoRun>>(empty)
   const [planning, setPlanning] = useState<Resource<Planning>>(empty)
   const [loaded, setLoaded] = useState('')
@@ -51,14 +53,20 @@ export function ControllerPage({ email, token }: { email: string; token: string 
         return { recommendation, decision }
       })())
     })
+    const routePromise = Promise.all(['190', '972'].map(serviceId =>
+      read(apiRequest<BusRoute>(`/api/v1/bus-routes/${serviceId}`, token, signal))))
+      .then(results => ({
+        data: routeDirections(results.flatMap(result => result.data ? [result.data] : [])),
+        error: results.some(result => result.error) ? 'Unable to load all route references.' : '',
+      }))
     void Promise.all([
       read(apiRequest<PageResult<Arrival>>(`/api/v1/arrivals?page=${arrivalPage}&size=50`, token, signal)),
       read(apiRequest<PageResult<BunchingAlert>>('/api/v1/live-bunching-alerts?size=200', token, signal).then(async value =>
         value ? { ...value, items: await enrichBunchingStops(value.items, token, signal) } : null)),
-      runPromise, planningPromise,
-    ]).then(([nextArrivals, nextAlerts, nextRun, nextPlanning]) => {
+      runPromise, planningPromise, routePromise,
+    ]).then(([nextArrivals, nextAlerts, nextRun, nextPlanning, nextRouteStops]) => {
       if (signal.aborted) return
-      setArrivals(nextArrivals); setAlerts(nextAlerts); setRun(nextRun); setPlanning(nextPlanning)
+      setArrivals(nextArrivals); setAlerts(nextAlerts); setRun(nextRun); setPlanning(nextPlanning); setRouteStops(nextRouteStops)
       setLoaded(requestKey)
     })
     return () => controller.abort()
@@ -116,6 +124,7 @@ export function ControllerPage({ email, token }: { email: string; token: string 
               { title: 'Awaiting decision', value: planning.data ? pending : undefined, error: planning.error, note: 'Current simulation only →', to: '/controller/planning' },
             ].map(item => <Link key={item.title} to={item.to} className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"><Card className="h-full hover:bg-muted/30"><CardContent className="space-y-3 p-1 px-5"><p className="text-sm text-muted-foreground">{item.title}</p><p className="text-3xl font-semibold tabular-nums">{loading || item.error ? '—' : item.value ?? '—'}</p><p className="text-xs text-muted-foreground">{item.error ? 'Unavailable · refresh to retry' : item.note}</p></CardContent></Card></Link>)}
           </div>
+          <ControllerRouteStrip alerts={alerts} run={run} stops={routeStops} loading={loading} />
           <ControllerOverview arrivals={arrivals} loading={loading} page={arrivalPage} onPage={setArrivalPage} />
         </>}
         {pathname.endsWith('/disruptions') && <ControllerDisruptions alerts={alerts} run={run} loading={loading} />}

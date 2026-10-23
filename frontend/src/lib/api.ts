@@ -31,6 +31,18 @@ export type Arrival = {
   observationId: string; serviceId: string; stopCode: string; operator: string
   estimatedArrivalAt: string | null; fetchedAt: string; loadCategory: string | null
 }
+export type RouteStop = {
+  stopCode: string; roadName: string | null; description: string | null
+  latitude: number | null; longitude: number | null; stopSequence: number; distanceKm: number | null
+}
+export type BusRoute = {
+  serviceId: string
+  operators: Array<{
+    operator: string; category: string | null
+    directions: Array<{ directionId: number; stops: RouteStop[] }>
+  }>
+}
+export type RouteDirection = { serviceId: string; operator: string; directionId: number; stops: RouteStop[] }
 export type BunchingAlert = {
   eventId: string; action: string; classification: string; serviceId: string
   stopCode: string; detectedAt: string; directionId?: number | null
@@ -44,6 +56,13 @@ export type Recommendation = {
 }
 export type Decision = {
   recommendationId: string; action: 'APPROVED' | 'REJECTED'; decidedAt: string
+}
+
+export function routeDirections(routes: BusRoute[]): RouteDirection[] {
+  return routes.flatMap(route => route.operators.flatMap(operator => operator.directions.map(direction => ({
+    serviceId: route.serviceId, operator: operator.operator, directionId: direction.directionId,
+    stops: direction.stops,
+  }))))
 }
 
 // All dashboard requests stay on the same origin. Null represents a documented
