@@ -55,8 +55,15 @@ class DemoReplayServiceTest {
         assertEquals(List.of(Duration.ofSeconds(300), Duration.ofSeconds(45), Duration.ofSeconds(45)),
                 batches.stream().map(batch -> Duration.between(batch.get(0).getEstimatedArrivalAt(),
                         batch.get(1).getEstimatedArrivalAt())).toList());
-        assertEquals(6, batches.stream().flatMap(List::stream)
+        assertEquals(15, batches.stream().flatMap(List::stream)
                 .filter(row -> "SIMULATION".equals(row.getClassification()) && runId.equals(row.getDemoRunId())).count());
+        assertEquals(List.of("190", "190", "972", "972", "972"),
+                batches.getFirst().stream().map(BusArrivalObservation::getServiceId).toList());
+        assertEquals(List.of(Duration.ofSeconds(45), Duration.ofSeconds(45)),
+                List.of(Duration.between(batches.get(1).get(2).getEstimatedArrivalAt(),
+                                batches.get(1).get(3).getEstimatedArrivalAt()),
+                        Duration.between(batches.get(1).get(3).getEstimatedArrivalAt(),
+                                batches.get(1).get(4).getEstimatedArrivalAt())));
         assertEquals("REPLAY_COMPLETE", run.status());
         assertEquals(DemoReplayScenario.STEP_COUNT, run.currentStep());
         verify(pollRuns, times(3)).save(org.mockito.ArgumentMatchers.any(PollRun.class));
