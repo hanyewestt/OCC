@@ -152,7 +152,6 @@ function RouteRow({ route, snapshot, arrivals, routes, incidents, showPositions,
     busLaneIntervals[lane].push({ start, end })
     return lane
   })
-  const routeY = buses.length ? 64 + Math.max(0, busLaneIntervals.length - 1) * 24 : 108
   const stopLabels = route.stops.map(stop => stopNameLines(stop.description))
   const selectedStop = route.stops.find(stop => stop.stopCode === selectedStopCode)
   const selectedPoints = selectedArrivals.map((arrival, index) => ({
@@ -163,15 +162,26 @@ function RouteRow({ route, snapshot, arrivals, routes, incidents, showPositions,
   }))
   const selectedFeedFetchedAt = selectedArrivals.map(arrival => Date.parse(arrival.fetchedAt))
     .filter(Number.isFinite).sort((first, second) => second - first)[0]
-  const pointLaneEnds: number[] = []
-  const pointLanes = selectedPoints.map(point => {
+  const pointLabelWidths = selectedPoints.map(point => {
+    const etaSeconds = Math.max(0, Math.round((Date.parse(point.arrival.estimatedArrivalAt ?? '') - nowMs) / 1000))
+    return Math.max(52, `${point.label} · ${formatGap(etaSeconds)}`.length * 5.3 + 12)
+  })
+  const pointLaneIntervals: Array<Array<{ start: number; end: number }>> = []
+  const pointLanes = selectedPoints.map((point, pointIndex) => {
     if (!point.projection) return 0
     const x = xForDistance(point.projection.distanceAlongRouteM)
-    const lane = pointLaneEnds.findIndex(end => x - 30 >= end + 8)
-    const assignedLane = lane < 0 ? pointLaneEnds.length : lane
-    pointLaneEnds[assignedLane] = x + 30
+    const halfWidth = pointLabelWidths[pointIndex] / 2
+    const start = x - halfWidth
+    const end = x + halfWidth
+    let assignedLane = pointLaneIntervals.findIndex(intervals =>
+      intervals.every(interval => end < interval.start - 8 || start > interval.end + 8))
+    if (assignedLane < 0) assignedLane = pointLaneIntervals.length
+    pointLaneIntervals[assignedLane] ??= []
+    pointLaneIntervals[assignedLane].push({ start, end })
     return assignedLane
   })
+  const routeY = (buses.length ? 64 + Math.max(0, busLaneIntervals.length - 1) * 24 : 108)
+    + pointLaneIntervals.length * 22
   const labelLaneEnds: number[] = []
   const labelLanes = route.stops.map((_, index) => {
     const labelWidth = Math.max(36, ...stopLabels[index].map(line => line.length * 5.2))
@@ -198,9 +208,26 @@ function RouteRow({ route, snapshot, arrivals, routes, incidents, showPositions,
     current.push(incident)
     linksByPair.set(key, current)
   })
-  const maxGapLanes = Math.min(2, Math.max(0, headways.length))
+  const gapLaneIntervals: Array<Array<{ start: number; end: number }>> = []
+  const gapLanes = headways.map(headway => {
+    const front = buses.find(bus => bus.order === headway.frontOrder)
+    const following = buses.find(bus => bus.order === headway.followingOrder)
+    if (!front || !following) return 0
+    const center = (xForDistance(front.distanceAlongRouteM) + xForDistance(following.distanceAlongRouteM)) / 2
+    const label = headway.source === 'same-stop-eta' ? `Same-stop ETA ${formatGap(headway.seconds)}` :
+      headway.source === 'estimate' ? `~${formatGap(headway.seconds)} estimate` : formatDistance(headway.distanceMeters)
+    const halfWidth = Math.max(54, label.length * 6 + 14) / 2
+    const start = center - halfWidth
+    const end = center + halfWidth
+    let lane = gapLaneIntervals.findIndex(intervals => intervals.every(interval => end < interval.start || start > interval.end))
+    if (lane < 0) lane = gapLaneIntervals.length
+    gapLaneIntervals[lane] ??= []
+    gapLaneIntervals[lane].push({ start, end })
+    return lane
+  })
+  const maxGapLanes = gapLaneIntervals.length
   const gapStartY = labelsEndY + 14
-  const gapY = (index: number) => gapStartY + (index % maxGapLanes) * 24
+  const gapY = (index: number) => gapStartY + gapLanes[index] * 24
   const height = Math.max(labelsEndY + 18, gapStartY + maxGapLanes * 24 + 12)
 
   return <div className="border-b last:border-b-0">
@@ -287,7 +314,7 @@ function RouteRow({ route, snapshot, arrivals, routes, incidents, showPositions,
         {selectedPoints.map((point, index) => {
           if (!point.projection) return null
           const x = xForDistance(point.projection.distanceAlongRouteM)
-          const labelY = routeY - 60 - pointLanes[index] * 22
+          const labelY = routeY - Math.max(0, busLaneIntervals.length - 1) * 24 - 56 - pointLanes[index] * 22
           const etaSeconds = Math.max(0, Math.round((Date.parse(point.arrival.estimatedArrivalAt ?? '') - nowMs) / 1000))
           const label = `${point.label} · ${formatGap(etaSeconds)}`
           const labelWidth = Math.max(52, label.length * 5.3 + 12)

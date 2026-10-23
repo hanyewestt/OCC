@@ -30,7 +30,8 @@ public class PostgisRoutePositionRepository implements RoutePositionRepository {
                 HAVING count(*) >= 2
             )
             SELECT route.operator, route.direction_id, observation.id AS observation_id,
-                   observation.raw_observation_id AS snapshot_id, observation.stop_code,
+                   observation.raw_observation_id AS snapshot_id,
+                   poll_run.route_position_poll_cycle_id AS poll_cycle_id, observation.stop_code,
                    route_stop.stop_sequence, observation.visit_order, observation.estimated_arrival_at,
                    ST_Length(route.route_line) AS route_length_m,
                    CASE WHEN observation.id IS NULL THEN NULL ELSE
@@ -80,6 +81,7 @@ public class PostgisRoutePositionRepository implements RoutePositionRepository {
             LEFT JOIN ingestion.bus_stop observed_stop
               ON observed_stop.reference_version_id = route_stop.reference_version_id
              AND observed_stop.stop_code = route_stop.stop_code
+            LEFT JOIN ingestion.poll_run poll_run ON poll_run.id = observation.poll_run_id
             ORDER BY route.operator, route.direction_id, observation.fetched_at
             """;
 
@@ -97,7 +99,8 @@ public class PostgisRoutePositionRepository implements RoutePositionRepository {
             statement.setTimestamp(3, Timestamp.from(to));
         }, (result, rowNumber) -> new RoutePositionRow(result.getString("operator"),
                 result.getInt("direction_id"), result.getObject("observation_id", java.util.UUID.class),
-                result.getObject("snapshot_id", java.util.UUID.class), result.getString("stop_code"),
+                result.getObject("snapshot_id", java.util.UUID.class),
+                result.getObject("poll_cycle_id", java.util.UUID.class), result.getString("stop_code"),
                 result.getObject("stop_sequence") == null ? 0 : result.getInt("stop_sequence"),
                 result.getObject("visit_order") == null ? 0 : result.getInt("visit_order"),
                 result.getTimestamp("estimated_arrival_at") == null ? null : result.getTimestamp("estimated_arrival_at").toInstant(),
@@ -111,8 +114,8 @@ public class PostgisRoutePositionRepository implements RoutePositionRepository {
             RouteKey key = new RouteKey(row.operator(), row.directionId());
             RouteBuilder route = routes.computeIfAbsent(key, ignored -> new RouteBuilder(row.routeLengthMeters()));
             if (row.distanceAlongRouteMeters() != null && row.fetchedAt() != null)
-                route.readings().add(new RoutePositionReading(row.observationId(), row.snapshotId(), row.stopCode(),
-                        row.stopSequence(), row.visitOrder(), row.distanceAlongRouteMeters(), row.stopDistanceAlongRouteMeters(),
+                route.readings().add(new RoutePositionReading(row.observationId(), row.snapshotId(), row.pollCycleId(),
+                        row.stopCode(), row.stopSequence(), row.visitOrder(), row.distanceAlongRouteMeters(), row.stopDistanceAlongRouteMeters(),
                         row.estimatedArrivalAt(), row.fetchedAt()));
         }
         return routes.entrySet().stream().map(entry -> new RoutePositionRoute(entry.getKey().operator(),
@@ -124,7 +127,7 @@ public class PostgisRoutePositionRepository implements RoutePositionRepository {
     }
 
     private record RoutePositionRow(String operator, int directionId, java.util.UUID observationId,
-                                    java.util.UUID snapshotId, String stopCode, int stopSequence, int visitOrder,
+                                    java.util.UUID snapshotId, java.util.UUID pollCycleId, String stopCode, int stopSequence, int visitOrder,
                                     Instant estimatedArrivalAt, double routeLengthMeters, Double distanceAlongRouteMeters,
                                     Double stopDistanceAlongRouteMeters, Instant fetchedAt) {
     }

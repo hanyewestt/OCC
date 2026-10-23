@@ -49,6 +49,7 @@ class BusArrivalServiceTest {
         assertThat(run.getIdempotencyKey()).isEqualTo("DATAMALL-stop:44009-" + now.getEpochSecond() / 60);
         assertThat(run.getCompletedAt()).isEqualTo(now);
         assertThat(observation.getPollRunId()).isEqualTo(run.getId());
+        assertThat(run.getRoutePositionPollCycleId()).isNotNull();
     }
 
     @Test
