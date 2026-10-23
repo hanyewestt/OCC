@@ -28,7 +28,7 @@ export type EstimatedRouteHeadway = {
   followingOrder: number
   seconds: number | null
   distanceMeters: number | null
-  source: 'distance' | 'eta' | 'unavailable'
+  source: 'distance' | 'estimate' | 'same-stop-eta' | 'unavailable'
   etaStopCode?: string
 }
 export type EtaHeadwayFallback = { seconds: number | null; stopCode: string }
@@ -95,12 +95,17 @@ export function estimateRouteHeadways(buses: RoutePositionBus[], etaFallbacks: E
     const distanceGap = front.distanceAlongRouteM - following.distanceAlongRouteM
     const eta = etaFallbacks[index]
     const validEta = eta !== undefined && eta.seconds !== null && Number.isFinite(eta.seconds) && eta.seconds >= 0
+    const meanSpeed = front.speedMps !== null && following.speedMps !== null
+      ? (front.speedMps + following.speedMps) / 2 : null
+    const estimatedSeconds = meanSpeed !== null && Number.isFinite(meanSpeed) && meanSpeed > 0 && distanceGap >= 0
+      ? Math.round(distanceGap / meanSpeed) : null
     return {
       frontOrder: front.order,
       followingOrder: following.order,
-      seconds: validEta ? eta.seconds : null,
+      seconds: validEta ? eta.seconds : estimatedSeconds,
       distanceMeters: Number.isFinite(distanceGap) && distanceGap >= 0 ? Math.round(distanceGap) : null,
-      source: validEta ? 'eta' as const : Number.isFinite(distanceGap) && distanceGap >= 0 ? 'distance' as const : 'unavailable' as const,
+      source: validEta ? 'same-stop-eta' as const : estimatedSeconds !== null ? 'estimate' as const :
+        Number.isFinite(distanceGap) && distanceGap >= 0 ? 'distance' as const : 'unavailable' as const,
       ...(validEta ? { etaStopCode: eta.stopCode } : {}),
     }
   })
@@ -239,6 +244,24 @@ export function arrivalDirectionMatches(arrival: Arrival, route: RouteDirection,
   return directions.size === 1 && directions.has(route.directionId)
 }
 
+export function oldestStopDataAgeSeconds(arrivals: Arrival[], routes: RouteDirection[], nowMs: number): number | null {
+  const latestByRouteStop = new Map<string, number>()
+  for (const arrival of arrivals) {
+    const fetchedAt = Date.parse(arrival.fetchedAt)
+    if (!Number.isFinite(fetchedAt)) continue
+    for (const route of routes) {
+      if (route.serviceId !== arrival.serviceId ||
+        !route.stops.some(stop => stop.stopCode === arrival.stopCode) ||
+        !arrivalDirectionMatches(arrival, route, routes)) continue
+      const key = `${routeKey(route)}:${arrival.stopCode}`
+      latestByRouteStop.set(key, Math.max(latestByRouteStop.get(key) ?? Number.NEGATIVE_INFINITY, fetchedAt))
+    }
+  }
+  if (latestByRouteStop.size === 0) return null
+  const oldestLatestFetch = Math.min(...latestByRouteStop.values())
+  return Math.max(0, (nowMs - oldestLatestFetch) / 1000)
+}
+
 export type ProjectedRoutePoint = { distanceAlongRouteM: number; offsetMeters: number }
 
 export function projectCoordinateToRoute(route: RouteDirection, latitude: number, longitude: number,
@@ -299,7 +322,7 @@ export function etaFallbacksForRoute(route: RouteDirection, routes: RouteDirecti
       if (!first || !followingIds.size) continue
       for (const followingId of followingIds) {
         const second = arrivalsByObservationId.get(followingId)
-        if (!second || first.stopCode !== second.stopCode) continue
+        if (!second || first.stopCode !== second.stopCode || first.fetchedAt !== second.fetchedAt) continue
         const stopIndex = route.stops.findIndex(stop => stop.stopCode === first.stopCode)
         if (stopIndex < 0) continue
         const stopDistance = routeDistances.distancesM[stopIndex] ?? 0
@@ -315,7 +338,10 @@ export function etaFallbacksForRoute(route: RouteDirection, routes: RouteDirecti
     }
 
     const closest = [...sharedStops.entries()].sort((first, second) => first[1].stopDistance - second[1].stopDistance)[0]
-    if (closest) return { seconds: Math.round((closest[1].followingEta - closest[1].frontEta) / 1000), stopCode: closest[0] }
+    if (closest) {
+      const seconds = Math.round((closest[1].followingEta - closest[1].frontEta) / 1000)
+      if (seconds >= 0) return { seconds, stopCode: closest[0] }
+    }
     return { seconds: null, stopCode: '' }
   })
 }

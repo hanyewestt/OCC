@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import type { Arrival, BunchingAlert, RouteDirection, RoutePositionDirection, RouteStop } from '../../src/lib/api'
 import {
   arrivalGaps, estimateRouteHeadways, etaFallbacksForRoute, formatGap, gapSeverity, groupRouteIncidents,
-  linkIncidentToPosition, projectCoordinateToRoute, routeStopDistances, tightestArrivalGap,
+  linkIncidentToPosition, oldestStopDataAgeSeconds, projectCoordinateToRoute, routeStopDistances, tightestArrivalGap,
 } from '../../src/lib/route-strip'
 
 const now = Date.parse('2026-10-23T04:00:20Z')
@@ -44,7 +44,7 @@ test('gap helper calculates saved prediction gaps and severity boundaries', () =
   expect(formatGap(125)).toBe('2m 5s')
 })
 
-test('uses shared-stop ETA for time headway and otherwise shows distance only', () => {
+test('uses same-snapshot ETA first and estimates time from distance and speed otherwise', () => {
   const buses = [
     { order: 2, distanceAlongRouteM: 3_500, uncertaintyM: 70, speedMps: null },
     { order: 1, distanceAlongRouteM: 4_300, uncertaintyM: 70, speedMps: 6.2 },
@@ -54,13 +54,17 @@ test('uses shared-stop ETA for time headway and otherwise shows distance only', 
   expect(estimateRouteHeadways(buses, [
     { seconds: 120, stopCode: 'B01' }, { seconds: 180, stopCode: 'C01' },
   ])).toEqual([
-    { frontOrder: 1, followingOrder: 2, seconds: 120, distanceMeters: 800, source: 'eta', etaStopCode: 'B01' },
-    { frontOrder: 2, followingOrder: 3, seconds: 180, distanceMeters: 1_000, source: 'eta', etaStopCode: 'C01' },
+    { frontOrder: 1, followingOrder: 2, seconds: 120, distanceMeters: 800, source: 'same-stop-eta', etaStopCode: 'B01' },
+    { frontOrder: 2, followingOrder: 3, seconds: 180, distanceMeters: 1_000, source: 'same-stop-eta', etaStopCode: 'C01' },
   ])
   expect(estimateRouteHeadways(buses)).toEqual([
     { frontOrder: 1, followingOrder: 2, seconds: null, distanceMeters: 800, source: 'distance' },
     { frontOrder: 2, followingOrder: 3, seconds: null, distanceMeters: 1_000, source: 'distance' },
   ])
+  expect(estimateRouteHeadways([
+    { order: 1, distanceAlongRouteM: 4_300, uncertaintyM: 50, speedMps: 6 },
+    { order: 2, distanceAlongRouteM: 3_700, uncertaintyM: 50, speedMps: 6 },
+  ])).toEqual([{ frontOrder: 1, followingOrder: 2, seconds: 100, distanceMeters: 600, source: 'estimate' }])
 })
 
 test('ETA fallback links exact source observations at their next shared stop', () => {
@@ -85,9 +89,31 @@ test('ETA fallback links exact source observations at their next shared stop', (
 
   expect(fallbacks).toEqual([{ seconds: 60, stopCode: 'B01' }, { seconds: 120, stopCode: 'B01' }])
   expect(estimateRouteHeadways(buses, fallbacks)).toEqual([
-    { frontOrder: 1, followingOrder: 2, seconds: 60, distanceMeters: 300, source: 'eta', etaStopCode: 'B01' },
-    { frontOrder: 2, followingOrder: 3, seconds: 120, distanceMeters: 300, source: 'eta', etaStopCode: 'B01' },
+    { frontOrder: 1, followingOrder: 2, seconds: 60, distanceMeters: 300, source: 'same-stop-eta', etaStopCode: 'B01' },
+    { frontOrder: 2, followingOrder: 3, seconds: 120, distanceMeters: 300, source: 'same-stop-eta', etaStopCode: 'B01' },
   ])
+})
+
+test('05039 replay retains all three close buses and shows the 94 second same-stop ETA gap', () => {
+  const route = makeRoute(1, ['A01', '05039', '05019'])
+  const snapshotAt = '2026-10-23T04:00:10Z'
+  const arrivals: Arrival[] = [132, 226, 603].map((seconds, index) => ({
+    observationId: `05039-next-${index + 1}`, serviceId: '190', stopCode: '05039', operator: 'SMRT', directionId: 1,
+    visitOrder: index + 1, estimatedArrivalAt: new Date(now + seconds * 1000).toISOString(),
+    fetchedAt: snapshotAt, loadCategory: null,
+  }))
+  const buses = arrivals.map((arrival, index) => ({
+    order: index + 1, distanceAlongRouteM: 1_000, uncertaintyM: 50, speedMps: null,
+    evidenceObservationIds: [arrival.observationId],
+  }))
+  const fallbacks = etaFallbacksForRoute(route, [route], arrivals, buses, 2_224, now, 120)
+
+  expect(buses).toHaveLength(3)
+  expect(fallbacks[0]).toEqual({ seconds: 94, stopCode: '05039' })
+  expect(estimateRouteHeadways(buses, fallbacks)[0]).toEqual({
+    frontOrder: 1, followingOrder: 2, seconds: 94, distanceMeters: 0,
+    source: 'same-stop-eta', etaStopCode: '05039',
+  })
 })
 
 test('adjacent alerts with a matching time and gap are grouped, but separated alerts are not', () => {
@@ -169,4 +195,19 @@ test('links an incident by its exact bunching observation evidence when both mar
   expect(linkIncidentToPosition(incident, route, position, '2026-10-23T04:00:20Z', 60)).toEqual({
     frontOrder: 1, followingOrder: 2, stopCode: 'B01', match: 'evidence',
   })
+})
+
+test('freshness checks each stop’s newest observation rather than the newest record overall', () => {
+  const route = makeRoute()
+  const makeArrival = (stopCode: string, fetchedAt: string): Arrival => ({
+    observationId: `${stopCode}-${fetchedAt}`, serviceId: '190', stopCode, operator: 'SMRT', directionId: 1,
+    visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:01:00Z', fetchedAt, loadCategory: null,
+  })
+  const arrivals = [
+    makeArrival('A01', '2026-10-23T03:59:30Z'),
+    makeArrival('B01', '2026-10-23T03:57:00Z'),
+    makeArrival('B01', '2026-10-23T03:58:10Z'),
+  ]
+
+  expect(oldestStopDataAgeSeconds(arrivals, [route], now)).toBe(130)
 })

@@ -145,7 +145,7 @@ test('controller route strip shows inferred live bus positions with uncertainty'
   await login(page)
   await expect(page.getByRole('heading', { name: 'Live route strip', exact: true })).toBeVisible()
   await expect(page.getByRole('img', { name: /Estimated bus 1, approximate position.*plus or minus 70 metres/ })).toBeVisible()
-  await expect(page.getByText(/#1→#2 2m 34s \(position estimate\)/)).toBeVisible()
+  await expect(page.getByText(/#1→#2 ~2m 34s \(estimated from distance\/speed\)/)).toBeVisible()
   await expect(page.getByText(/Last updated .* · Refreshes every 30 seconds/)).toBeVisible()
 })
 
