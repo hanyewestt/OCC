@@ -18,6 +18,22 @@ function session(role: string, lifetime = 3600) {
 }
 type Options = { invalidPassword?: boolean; sessionFailure?: boolean; accessFailure?: boolean; refreshFailure?: boolean }
 async function mockAuth(context: BrowserContext, role: string, options: Options = {}) {
+  const stop = (stopCode: string, stopSequence: number) => ({
+    stopCode, roadName: 'Sample Road', description: `Stop ${stopCode}`,
+    latitude: 1.38, longitude: 103.75, stopSequence, distanceKm: stopSequence * 0.2,
+  })
+  const directions = (serviceId: string) => serviceId === '190' ? [
+    { directionId: 1, stops: [stop('A01', 1), stop('B01', 2), stop('C01', 3)] },
+    { directionId: 2, stops: [stop('D01', 1), stop('E01', 2), stop('F01', 3)] },
+  ] : [
+    { directionId: 1, stops: [stop('G01', 1), stop('G02', 2), stop('G03', 3)] },
+    { directionId: 2, stops: [stop('H01', 1), stop('H02', 2), stop('H03', 3)] },
+  ]
+  await context.route('**/api/v1/bus-routes/*', route => {
+    const serviceId = new URL(route.request().url()).pathname.split('/').pop() ?? ''
+    if (!['190', '972'].includes(serviceId)) return route.fulfill({ status: 404 })
+    return route.fulfill({ json: { serviceId, operators: [{ operator: 'SMRT', category: null, directions: directions(serviceId) }] } })
+  })
   await context.route('**/api/v1/bus-stops/*', route => route.fulfill({ json: { description: 'Teck Whye Secondary School', roadName: 'Teck Whye Ave' } }))
   await context.route('**/api/v1/arrivals?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/live-bunching-alerts?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
@@ -83,6 +99,25 @@ function arrivalEvidence(classification: string, directionId: number) {
     serviceId: '190', stopCode: 'B01', directionId, visitOrder, estimatedArrivalAt: `2026-10-22T01:0${visitOrder}:00Z`,
   })) } })
 }
+
+test('controller route strip uses ordered reference stops and selects alert details by keyboard', async ({ page, context }) => {
+  await mockDashboard(context)
+  await login(page)
+  await expect(page.getByRole('heading', { name: 'Route strip', exact: true })).toBeVisible()
+  await expect(page.getByText('Simulation events; not live incidents.', { exact: true })).toBeVisible()
+  const service190Direction1 = page.getByRole('group', { name: 'Service 190, direction 1, ordered route stops and bunching detections' })
+  await expect(service190Direction1.getByText('B01', { exact: true })).toBeVisible()
+  await expect(service190Direction1.locator('tspan').filter({ hasText: /^Stop B01$/ })).toBeVisible()
+  await page.locator('html').evaluate(element => element.classList.add('dark'))
+  expect(await page.locator('html').evaluate(element => getComputedStyle(element).getPropertyValue('--background').trim())).toBe('oklch(0.145 0 0)')
+  await page.screenshot({ path: 'node_modules/.cache/controller-route-strip.png', fullPage: true })
+  const marker = page.getByRole('button', { name: /Service 190, direction 1, bunching detected at stop B01/ })
+  await marker.focus()
+  await marker.press('Enter')
+  await expect(page.getByRole('heading', { name: /Service 190 · Direction 1 · Teck Whye Secondary School/ })).toBeVisible()
+  await expect(page.getByText('Bus 1–2: 60 seconds (Under 90 seconds)', { exact: true })).toBeVisible()
+  await expect(page.getByText('SIMULATION', { exact: true })).toBeVisible()
+})
 
 test('bunching predictions preserve slots and reject unrelated or malformed evidence', () => {
   const alert = { eventId: 'event-1', action: 'OPENED', classification: 'SIMULATION', serviceId: '190', stopCode: 'B01', directionId: 1, detectedAt: '2026-10-22T01:00:00Z', evidence: arrivalEvidence('SIMULATION', 1) }
