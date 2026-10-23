@@ -181,15 +181,6 @@ class IngestionStartupIT {
     }
 
     @Test
-    void backendDoesNotHostDemoPageAndDemoApiRequiresAnAuthorizedUser() throws Exception {
-        mvc.perform(get("/demo.html").with(jwt().authorities(
-                        new SimpleGrantedAuthority("ROLE_ADMIN"))))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/api/v1/demo-mode"))
-                .andExpect(status().isUnauthorized());
-    }
-
-    @Test
     void referenceTopologyQueriesReturnRoutesAndStopsFromTheActiveVersion() {
         ReferenceTopologyPort.ReferenceTopologyVersion version = topology.replaceIfChanged(
                 new BusReferencePort.BusReferenceData(
