@@ -297,6 +297,15 @@ For metrics endpoints, see [Monitoring](MONITORING.md).
 
 Start optional pgAdmin with `.\scripts\app.ps1 start-pgadmin` (PowerShell)
 or `bash scripts/app.sh start-pgadmin` (Bash).
+Open [pgAdmin through the local proxy](http://localhost/pgadmin/), adjusting the
+port to `OCC_NGINX_PORT`, or use its direct loopback port at
+[localhost:6700](http://localhost:6700) (`PGADMIN_PORT`). Sign in with
+`PGADMIN_DEFAULT_EMAIL` and `PGADMIN_DEFAULT_PASSWORD` from your local `.env`.
+`OCC_PGADMIN_INTERNAL_URL` defaults to `http://pgadmin:80` and controls only the
+local Nginx upstream. The local override connects pgAdmin to both the database
+and edge networks so Nginx can reach it and Docker can publish its host port.
+The `/pgadmin/` route exists only in the local HTTP proxy configuration; production
+does not expose it. Nginx can start while the optional pgAdmin container is stopped.
 
 ## Run tests
 
