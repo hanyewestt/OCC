@@ -22,6 +22,8 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
   await context.route('**/api/v1/bus-stops/*', route => route.fulfill({ json: { description: 'Teck Whye Secondary School', roadName: 'Teck Whye Ave' } }))
   await context.route('**/api/v1/arrivals?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/live-bunching-alerts?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
+  await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
+  await context.route('**/api/v1/planning/recommendations/decisions?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ status: 204 }))
   await context.route('**/frontend-config', route => route.fulfill({ json: {
     projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
@@ -60,20 +62,33 @@ async function login(page: Page) {
 async function mockDashboard(context: BrowserContext, options: { arrivalFailure?: boolean; conflict?: boolean } = {}) {
   await mockAuth(context, 'CONTROLLER')
   const alert = { eventId: 'event-1', action: 'OPENED', classification: 'SIMULATION', serviceId: '190', stopCode: 'B01', stopName: 'Teck Whye Secondary School', directionId: 1, detectedAt: '2026-10-22T01:00:00Z', evidence: arrivalEvidence('SIMULATION', 1) }
-  let decision: { recommendationId: string; action: string; decidedAt: string } | null = null
+  const recommendation = {
+    recommendationId: 'recommendation-1', classification: 'SIMULATION', status: 'RECOMMENDED',
+    serviceId: '190', directionId: 1, monitoredStopCode: 'B01', detectedAt: '2026-10-22T01:00:00Z', createdAt: '2026-10-22T01:01:00Z',
+    expectedHeadwaySeconds: 180, observedHeadwaySeconds: 60, mitigationType: 'HOLD', targetBusReference: 'SAMPLE-BUS', affectedBusReferences: ['SAMPLE-BUS'], controlStopCode: 'B01', adjustmentSeconds: 120,
+    explanation: { rationale: 'Restore spacing between the buses.', likelyCause: 'Sample congestion', diagnosisConfidence: 0.86, tradeOffs: ['Adds waiting time at the stop.'], limitations: ['Simulation only.'] },
+    expectedImpact: { headwayBeforeSeconds: 60, headwayAfterSeconds: 180, queueBeforePassengers: 20, queueAfterPassengers: 12, passengerMinutesBefore: 40, passengerMinutesAfter: 28 },
+  }
+  let decision: { recommendationId: string; action: string; actorSubject: string; overrideInstructions: { busReference: string; instruction: string }[]; controllerRationale: string | null; decidedAt: string } | null = null
   await context.route('**/api/v1/arrivals?*', route => options.arrivalFailure ? route.fulfill({ status: 503 }) : route.fulfill({ json: {
     items: [{ observationId: 'arrival-1', serviceId: '190', stopCode: 'B01', estimatedArrivalAt: '2026-10-22T01:05:00Z', fetchedAt: '2026-10-22T01:00:00Z', loadCategory: 'SEA' }], page: 0, totalItems: 1, totalPages: 1,
   } }))
   await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ json: { id: 'run-1', status: 'REPLAY_COMPLETE', alerts: [alert] } }))
-  await context.route('**/api/v1/demo-runs/run-1/recommendation', route => route.fulfill({ json: {
-    recommendationId: 'recommendation-1', classification: 'SIMULATION', status: 'RECOMMENDED', mitigationType: 'HOLD', targetBusReference: 'SAMPLE-BUS', controlStopCode: 'B01', adjustmentSeconds: 120,
-    rationale: 'Restore spacing between the buses.', likelyCause: 'Sample congestion', tradeOffs: ['Adds waiting time at the stop.'], limitations: ['Simulation only.'],
+  await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: {
+    items: decision ? [] : [recommendation], page: 0, totalItems: decision ? 0 : 1, totalPages: decision ? 0 : 1,
+  } }))
+  await context.route('**/api/v1/planning/recommendations/decisions?*', route => route.fulfill({ json: {
+    items: decision ? [decision] : [], page: 0, totalItems: decision ? 1 : 0, totalPages: decision ? 1 : 0,
   } }))
   await context.route('**/api/v1/planning/recommendations/recommendation-1/decision', route => {
     expect(route.request().headers().authorization).toMatch(/^Bearer /)
     if (route.request().method() === 'POST') {
-      decision = { recommendationId: 'recommendation-1', action: options.conflict ? 'REJECTED' : route.request().postDataJSON().action, decidedAt: '2026-10-22T01:10:00Z' }
-      if (options.conflict) return route.fulfill({ status: 409 })
+      const body = route.request().postDataJSON()
+      if (options.conflict) {
+        decision = { recommendationId: 'recommendation-1', action: 'REJECTED', actorSubject: userId, overrideInstructions: [{ busReference: 'SAMPLE-BUS', instruction: 'Hold for 60 seconds.' }], controllerRationale: 'Earlier controller decision.', decidedAt: '2026-10-22T01:10:00Z' }
+        return route.fulfill({ status: 409 })
+      }
+      decision = { recommendationId: 'recommendation-1', action: body.action, actorSubject: userId, overrideInstructions: body.overrideInstructions ?? [], controllerRationale: body.controllerRationale ?? null, decidedAt: '2026-10-22T01:10:00Z' }
     }
     return decision ? route.fulfill({ json: decision }) : route.fulfill({ status: 204 })
   })
@@ -143,12 +158,12 @@ test('controller switches the shared backend mode from the dashboard without lea
   await expect(page.getByRole('status').filter({ hasText: /^Simulation$/ })).toBeVisible()
   await expect(page.getByRole('link', { name: /Simulation detections/ })).toContainText('1')
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Return to live', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Start simulation', exact: true })).toBeEnabled()
   await expect(page.getByRole('status').filter({ hasText: /^Live$/ })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0)
-  await expect(page).toHaveURL(/\/controller\/planning$/)
+  await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/\/controller\/planning/)
   expect(starts).toBe(1); expect(closes).toBe(1)
 })
 
@@ -181,24 +196,32 @@ test('controller sidebar, summary links and deep links work through all four scr
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Disruptions', exact: true })).toBeVisible()
   await page.getByRole('navigation', { name: 'Controller navigation' }).getByRole('link', { name: 'Planning & mitigation' }).click()
-  await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toBeVisible()
   await page.getByRole('link', { name: 'Audit log', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'AI audit logs' })).toBeVisible()
-  await expect(page.getByText('No saved decision for the current simulation.')).toBeVisible()
+  await expect(page.getByText('No controller decisions have been saved.')).toBeVisible()
   await page.goto('/controller/unknown')
   await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible()
 })
 
-for (const [action, button] of [['APPROVED', 'Approve'], ['REJECTED', 'Reject']] as const) {
+for (const [action, button] of [['APPROVED', 'Approve recommendation'], ['REJECTED', 'Enter controller recommendation']] as const) {
   test(`controller saves ${action.toLowerCase()} and shows it in the audit log after reload`, async ({ page, context }) => {
     await mockDashboard(context)
     await login(page)
     await page.getByRole('link', { name: /Awaiting decision/ }).click()
     const posted = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/decision'))
     await page.getByRole('button', { name: button, exact: true }).click()
-    expect((await posted).postDataJSON()).toEqual({ action })
-    await expect(page.getByText(new RegExp(`^${action} ·`))).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Approve', exact: true })).toHaveCount(0)
+    if (action === 'REJECTED') {
+      await page.getByLabel('Controller rationale').fill('Use a shorter hold to reduce passenger delay.')
+      await page.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true }).click()
+    }
+    const body = (await posted).postDataJSON()
+    expect(body.action).toBe(action)
+    expect(body.overrideInstructions).toEqual(action === 'REJECTED'
+      ? [{ busReference: 'SAMPLE-BUS', instruction: 'Hold for 120 seconds at stop B01.' }] : [])
+    expect(body.controllerRationale).toBe(action === 'REJECTED' ? 'Use a shorter hold to reduce passenger delay.' : null)
+    await expect(page.getByText(action === 'APPROVED' ? 'Recommendation approved.' : 'AI recommendation replaced with controller instructions.')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toHaveCount(0)
     await page.getByRole('link', { name: 'Audit log', exact: true }).click()
     await expect(page.getByRole('cell', { name: action, exact: true })).toBeVisible()
     await page.reload()
@@ -210,8 +233,7 @@ test('controller handles conflicting decisions by retrieving the saved result', 
   await mockDashboard(context, { conflict: true })
   await login(page)
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
-  await page.getByRole('button', { name: 'Approve', exact: true }).click()
-  await expect(page.getByText(/^REJECTED ·/)).toBeVisible()
+  await page.getByRole('button', { name: 'Approve recommendation', exact: true }).click()
   await expect(page.getByText(/already has a decision/)).toBeVisible()
 })
 
