@@ -112,6 +112,22 @@ class RoutePositionPolicyTest {
     }
 
     @Test
+    void sameCycleCoordinateOutlierIsClampedInsteadOfBecomingAStrayBus() {
+        UUID batchId = UUID.randomUUID();
+        List<RoutePositionBus> buses = estimate(List.of(
+                reading(batchId, "44339", 15, 1, 3_138, 5_000, 160, 5),
+                reading(batchId, "44339", 15, 2, 1_147, 5_000, 1_160, 5),
+                reading(batchId, "44339", 15, 3, 1_147, 5_000, 1_780, 5),
+                reading(batchId, "09219", 25, 1, 25_057, 6_000, 640, 4),
+                reading(batchId, "09219", 25, 2, 3_138, 6_000, 1_440, 4),
+                reading(batchId, "09219", 25, 3, 1_147, 6_000, 2_060, 4)));
+
+        assertThat(buses).hasSize(3);
+        assertThat(buses).allSatisfy(bus -> assertThat(bus.evidenceObservationIds()).hasSize(2));
+        assertThat(buses).extracting(RoutePositionBus::distanceAlongRouteM).doesNotContain(10_000.0);
+    }
+
+    @Test
     void dropsStaleReadingsAndClampsProjectedPositionsAtTheEndOfTheRoute() {
         UUID stale = UUID.randomUUID();
         UUID fresh = UUID.randomUUID();

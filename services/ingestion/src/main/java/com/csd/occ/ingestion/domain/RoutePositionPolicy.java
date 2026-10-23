@@ -72,7 +72,10 @@ public final class RoutePositionPolicy {
                 RoutePositionReading candidate = snapshot.readings().get(candidateIndex);
                 if (trackIndex >= 0) {
                     Track track = eligible.get(trackIndex);
-                    track.add(candidate, snapshot.pollCycleId(), speedCapMetersPerSecond);
+                    boolean sameFetchBatch = track.lastPollCycleId().equals(snapshot.pollCycleId())
+                            && !track.last().stopCode().equals(candidate.stopCode());
+                    track.add(candidate, snapshot.pollCycleId(), speedCapMetersPerSecond,
+                            clusterToleranceMeters, sameFetchBatch);
                 } else {
                     tracks.add(new Track(candidate, snapshot.pollCycleId()));
                 }
@@ -110,13 +113,14 @@ public final class RoutePositionPolicy {
         double speed = learnedSpeed == null ? 0 : learnedSpeed;
         double alignedPrevious = previous.distanceAlongRouteM() + speed * seconds;
         double positionError = Math.abs(current.distanceAlongRouteM() - alignedPrevious);
-        double maximumMovement = speedCapMetersPerSecond * seconds + positionToleranceMeters * 2;
-        if (!sameFetchBatch && positionError > maximumMovement) return Double.POSITIVE_INFINITY;
-
         long routeDelta = (long) current.stopSequence() - previous.stopSequence();
         double stopDistanceDelta = current.stopDistanceAlongRouteM() - previous.stopDistanceAlongRouteM();
         if (routeDelta == 0 && Double.compare(stopDistanceDelta, 0) != 0) return Double.POSITIVE_INFINITY;
         if (routeDelta != 0 && Math.signum(routeDelta) != Math.signum(stopDistanceDelta)) return Double.POSITIVE_INFINITY;
+        double maximumMovement = sameFetchBatch
+                ? Math.abs(stopDistanceDelta) + positionToleranceMeters * 2
+                : speedCapMetersPerSecond * seconds + positionToleranceMeters * 2;
+        if (!sameFetchBatch && positionError > maximumMovement) return Double.POSITIVE_INFINITY;
         double plausibleSpeed = learnedSpeed != null && learnedSpeed >= 2
                 ? learnedSpeed : Math.max(1, speedCapMetersPerSecond / 2);
         double expectedEtaDelta = stopDistanceDelta / plausibleSpeed;
@@ -210,14 +214,26 @@ public final class RoutePositionPolicy {
             observationIds.add(first.observationId());
         }
 
-        private void add(RoutePositionReading reading, UUID pollCycleId, double speedCapMetersPerSecond) {
+        private void add(RoutePositionReading reading, UUID pollCycleId, double speedCapMetersPerSecond,
+                double positionToleranceMeters, boolean sameFetchBatch) {
             previous = last;
             double elapsed = Duration.between(previous.fetchedAt(), reading.fetchedAt()).toMillis() / 1000.0;
-            double advance = reading.distanceAlongRouteM() - previous.distanceAlongRouteM();
+            double distance = reading.distanceAlongRouteM();
+            if (sameFetchBatch) {
+                double maximumMovement = Math.abs(reading.stopDistanceAlongRouteM() - previous.stopDistanceAlongRouteM())
+                        + positionToleranceMeters * 2;
+                distance = Math.max(previous.distanceAlongRouteM() - maximumMovement,
+                        Math.min(previous.distanceAlongRouteM() + maximumMovement, distance));
+            }
+            RoutePositionReading effectiveReading = distance == reading.distanceAlongRouteM() ? reading :
+                    new RoutePositionReading(reading.observationId(), reading.snapshotId(), reading.pollCycleId(),
+                            reading.stopCode(), reading.stopSequence(), reading.visitOrder(), distance,
+                            reading.stopDistanceAlongRouteM(), reading.estimatedArrivalAt(), reading.fetchedAt());
+            double advance = effectiveReading.distanceAlongRouteM() - previous.distanceAlongRouteM();
             if (elapsed > 0 && advance >= 0 && advance <= speedCapMetersPerSecond * elapsed)
                 speedMps = advance / elapsed;
-            positionSpreadMeters = Math.abs(reading.distanceAlongRouteM() - previous.distanceAlongRouteM()) / 2;
-            last = reading;
+            positionSpreadMeters = Math.abs(effectiveReading.distanceAlongRouteM() - previous.distanceAlongRouteM()) / 2;
+            last = effectiveReading;
             lastPollCycleId = pollCycleId;
             observationIds.add(reading.observationId());
             if (observationIds.size() > 12) observationIds.removeFirst();
