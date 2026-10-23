@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class RoutePositionPolicyTest {
@@ -17,6 +18,19 @@ class RoutePositionPolicyTest {
                 reading(600, 70), reading(1_000, 5), reading(1_090, 6)));
 
         assertThat(buses).containsExactly(new RoutePositionBus(1, 1_045, 50, 445.0 / 65));
+    }
+
+    @Test
+    void keepsSourceObservationIdsOnThePositionEstimate() {
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+        List<RoutePositionBus> buses = RoutePositionPolicy.estimate(List.of(
+                new RoutePositionReading(first, 1_000, NOW.minusSeconds(5)),
+                new RoutePositionReading(second, 1_090, NOW.minusSeconds(6))),
+                10_000, NOW, POLL, 2, 150, 16.7);
+
+        assertThat(buses).singleElement().satisfies(bus ->
+                assertThat(bus.evidenceObservationIds()).containsExactlyInAnyOrder(first, second));
     }
 
     @Test

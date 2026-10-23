@@ -43,7 +43,10 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
           buses: serviceId === '190' ? [
             { order: 1, distanceAlongRouteM: 4_300, uncertaintyM: 70, speedMps: 6.2 },
             { order: 2, distanceAlongRouteM: 3_500, uncertaintyM: 70, speedMps: 4.2 },
-          ] : [] },
+          ] : [
+            { order: 1, distanceAlongRouteM: 3_300, uncertaintyM: 60, speedMps: 6.4 },
+            { order: 2, distanceAlongRouteM: 2_700, uncertaintyM: 60, speedMps: 6.1 },
+          ] },
         { operator: 'SMRT', directionId: 2, routeLengthM: 11_000, buses: [] },
       ],
     } })
@@ -54,6 +57,7 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
   await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ status: 204 }))
   await context.route('**/frontend-config', route => route.fulfill({ json: {
     projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
+    controllerRefreshIntervalSeconds: 30, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20,
   } }))
   await context.route('https://example.supabase.co/auth/v1/**', async route => {
     const url = new URL(route.request().url())
@@ -114,33 +118,35 @@ function arrivalEvidence(classification: string, directionId: number) {
   })) } })
 }
 
-test('controller route strip uses ordered reference stops and selects alert details by keyboard', async ({ page, context }) => {
+test('controller keeps live positions on the route strip and shows incidents separately', async ({ page, context }) => {
   await mockDashboard(context)
   await login(page)
-  await expect(page.getByRole('heading', { name: 'Route strip', exact: true })).toBeVisible()
-  await expect(page.getByText('Simulation events; not live incidents.', { exact: true })).toBeVisible()
-  const service190Direction1 = page.getByRole('group', { name: 'Service 190, direction 1, ordered route stops and bunching detections' })
+  await expect(page.getByRole('heading', { name: 'Live route strip', exact: true })).toBeVisible()
+  await expect(page.getByText('Simulation incident data is shown separately; the strip keeps live position estimates.', { exact: true })).toBeVisible()
+  const service190Direction1 = page.getByRole('group', { name: 'Service 190, direction 1, approximate bus positions and headways' })
   await expect(service190Direction1.getByText('B01', { exact: true })).toBeVisible()
   await expect(service190Direction1.locator('tspan').filter({ hasText: /^Stop B01$/ })).toBeVisible()
+  await expect(service190Direction1.getByRole('img', { name: /Estimated bus 1, approximate position/ })).toBeVisible()
+  await expect(page.getByRole('group', { name: /Service 972, direction 1, approximate bus positions/ })
+    .getByRole('img', { name: /Estimated bus 1, approximate position/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Bunching incidents', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Show historical (1)', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /bunching detected at stop/ })).toHaveCount(0)
   await page.locator('html').evaluate(element => element.classList.add('dark'))
   expect(await page.locator('html').evaluate(element => getComputedStyle(element).getPropertyValue('--background').trim())).toBe('oklch(0.145 0 0)')
   await page.screenshot({ path: 'node_modules/.cache/controller-route-strip.png', fullPage: true })
-  const marker = page.getByRole('button', { name: /Service 190, direction 1, bunching detected at stop B01/ })
-  await marker.focus()
-  await marker.press('Enter')
-  await expect(page.getByRole('heading', { name: /Service 190 · Direction 1 · Teck Whye Secondary School/ })).toBeVisible()
-  await expect(page.getByText('Bus 1–2: 60 seconds (Under 90 seconds)', { exact: true })).toBeVisible()
-  await expect(page.getByText('SIMULATION', { exact: true })).toBeVisible()
-  await expect(page.getByText('Live position estimates are hidden during simulation.', { exact: true })).toBeVisible()
+  await page.locator('section[aria-labelledby="route-strip-title"]').screenshot({ path: 'node_modules/.cache/route-strip-services-190-972.png' })
+  await page.getByRole('button', { name: 'Show historical (1)', exact: true }).click()
+  await expect(page.getByText('Teck Whye Secondary School', { exact: true })).toBeVisible()
 })
 
 test('controller route strip shows inferred live bus positions with uncertainty', async ({ page, context }) => {
   await mockAuth(context, 'CONTROLLER')
   await login(page)
-  await expect(page.getByRole('heading', { name: 'Route strip', exact: true })).toBeVisible()
-  await expect(page.getByRole('img', { name: /Estimated bus order 1, 4300 metres along the route, uncertainty plus or minus 70 metres/ })).toBeVisible()
-  await expect(page.getByText('Bus 1→2: 2m 34s (distance ÷ mean speed)', { exact: true })).toBeVisible()
-  await expect(page.getByText(/Estimated positions refreshed every 30–60 seconds/)).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Live route strip', exact: true })).toBeVisible()
+  await expect(page.getByRole('img', { name: /Estimated bus 1, approximate position.*plus or minus 70 metres/ })).toBeVisible()
+  await expect(page.getByText(/#1→#2 2m 34s \(position estimate\)/)).toBeVisible()
+  await expect(page.getByText(/Last updated .* · Refreshes every 30 seconds/)).toBeVisible()
 })
 
 test('bunching predictions preserve slots and reject unrelated or malformed evidence', () => {

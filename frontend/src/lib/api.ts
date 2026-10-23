@@ -29,7 +29,9 @@ export function homeFor(role: Identity['role']): string | null {
 export type PageResult<T> = { items: T[]; page: number; totalItems: number; totalPages: number }
 export type Arrival = {
   observationId: string; serviceId: string; stopCode: string; operator: string
+  directionId?: number | null; visitOrder?: number | null; visitNumber?: number | null
   estimatedArrivalAt: string | null; fetchedAt: string; loadCategory: string | null
+  latitude?: number | null; longitude?: number | null; vehicleType?: string | null
 }
 export type RouteStop = {
   stopCode: string; roadName: string | null; description: string | null
@@ -45,6 +47,7 @@ export type BusRoute = {
 export type RouteDirection = { serviceId: string; operator: string; directionId: number; stops: RouteStop[] }
 export type RoutePositionBus = {
   order: number; distanceAlongRouteM: number; uncertaintyM: number; speedMps: number | null
+  evidenceObservationIds?: string[]
 }
 export type RoutePositionDirection = {
   serviceId: string; operator: string; directionId: number; routeLengthM: number; buses: RoutePositionBus[]
@@ -55,6 +58,7 @@ export type RoutePositions = {
 export type BunchingAlert = {
   eventId: string; action: string; classification: string; serviceId: string
   stopCode: string; detectedAt: string; directionId?: number | null
+  fetchedAt?: string; rawObservationId?: string; pollRunId?: string
   stopName?: string | null; stopRoadName?: string | null; evidence?: string | null
 }
 export type DemoRun = { id: string; status: string; alerts: BunchingAlert[] }

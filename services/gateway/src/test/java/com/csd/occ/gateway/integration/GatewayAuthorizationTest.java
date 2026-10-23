@@ -23,6 +23,8 @@ import org.springframework.test.context.TestConstructor;
         "OCC_INGESTION_INTERNAL_URL=http://127.0.0.1:1",
         "OCC_DISRUPTION_INTERNAL_URL=http://127.0.0.1:1",
         "OCC_PLANNING_INTERNAL_URL=http://127.0.0.1:1",
+        "OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL=60s",
+        "OCC_ROUTE_INCIDENT_GAP_TOLERANCE=20s",
         "SUPABASE_PROJECT_URL=https://example.supabase.co",
         "SUPABASE_JWKS_URL=https://example.supabase.co/auth/v1/.well-known/jwks.json",
         "SUPABASE_JWT_AUDIENCE=authenticated",
@@ -89,7 +91,10 @@ class GatewayAuthorizationTest {
                 .andExpect(status().isOk())
                 .andExpect(content().json("""
                         {"projectUrl":"https://example.supabase.co",
-                         "publishableKey":"sb_publishable_synthetic-test"}
+                         "publishableKey":"sb_publishable_synthetic-test",
+                         "controllerRefreshIntervalSeconds":30,
+                         "ingestionPollIntervalSeconds":60,
+                         "routeIncidentGapToleranceSeconds":20}
                         """));
     }
 
