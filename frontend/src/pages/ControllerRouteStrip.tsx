@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import type { BunchingAlert, DemoRun, PageResult, RouteDirection, RoutePositionDirection, RoutePositions } from '@/lib/api'
 import {
-  arrivalGaps, formatGap, gapSeverity, placeRouteAlerts, routeKey,
+  arrivalGaps, estimateRouteHeadways, formatGap, gapSeverity, placeRouteAlerts, routeKey,
   ROUTE_STRIP_GAP_SEVERITY, tightestArrivalGap, type PositionedRouteAlert,
 } from '@/lib/route-strip'
 import { bunchingArrivals } from '@/lib/bunching'
@@ -65,6 +65,11 @@ function RouteRow({ route, events, position, selectedId, onSelect }: {
   const routeSpan = Math.max(0, route.stops.length - 1) * stopSpacing
   const busX = (distance: number) => leftPadding + (position?.routeLengthM
     ? Math.max(0, Math.min(1, distance / position.routeLengthM)) * routeSpan : 0)
+  const latestEtaAlert = events.map(event => event.alert)
+    .filter(alert => alert.classification === 'OBSERVATION_ONLY')
+    .sort((first, second) => Date.parse(second.detectedAt) - Date.parse(first.detectedAt))[0]
+  const etaFallbackGaps = latestEtaAlert ? arrivalGaps(latestEtaAlert).map(gap => gap.seconds) : []
+  const headways = estimateRouteHeadways(position?.buses ?? [], etaFallbackGaps)
 
   return <div className="border-b last:border-b-0">
     <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-4 pt-4">
@@ -124,6 +129,12 @@ function RouteRow({ route, events, position, selectedId, onSelect }: {
         </g>)}
       </svg>
     </div>
+    {headways.length > 0 && <p className="px-4 pb-3 text-xs text-muted-foreground">
+      Estimated headway: {headways.map((headway, index) => <span key={`${headway.frontOrder}:${headway.followingOrder}`}>
+        {index > 0 ? ' · ' : ''}Bus {headway.frontOrder}→{headway.followingOrder}: {headway.seconds === null ? 'Unavailable' : formatGap(headway.seconds)}
+        {headway.source === 'position' ? ' (distance ÷ mean speed)' : headway.source === 'eta' ? ' (ETA fallback)' : ''}
+      </span>)}
+    </p>}
   </div>
 }
 
