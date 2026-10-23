@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
-import type { BunchingAlert, DemoRun, PageResult, RouteDirection } from '@/lib/api'
+import type { BunchingAlert, DemoRun, PageResult, RouteDirection, RoutePositionDirection, RoutePositions } from '@/lib/api'
 import {
   arrivalGaps, formatGap, gapSeverity, placeRouteAlerts, routeKey,
   ROUTE_STRIP_GAP_SEVERITY, tightestArrivalGap, type PositionedRouteAlert,
@@ -13,6 +13,7 @@ type Props = {
   alerts: Resource<PageResult<BunchingAlert>>
   run: Resource<DemoRun>
   stops: Resource<RouteDirection[]>
+  positions: Resource<RoutePositions[]>
   loading: boolean
 }
 
@@ -43,8 +44,9 @@ function alertLabel(alert: BunchingAlert) {
   return `Service ${alert.serviceId}, direction ${alert.directionId ?? 'unavailable'}, bunching detected at stop ${alert.stopCode}; tightest predicted gap ${gap === null ? 'unavailable' : `${gap} seconds`}; detected ${timestamp(alert.detectedAt)}. Press Enter or Space to view details.`
 }
 
-function RouteRow({ route, events, selectedId, onSelect }: {
+function RouteRow({ route, events, position, selectedId, onSelect }: {
   route: RouteDirection; events: PositionedRouteAlert[]
+  position?: RoutePositionDirection
   selectedId: string | null; onSelect: (alert: BunchingAlert) => void
 }) {
   const markers = new Map<number, BunchingAlert[]>()
@@ -60,6 +62,9 @@ function RouteRow({ route, events, selectedId, onSelect }: {
   const height = routeY + 42 + maxNameLines * 11
   const width = Math.max(620, leftPadding * 2 + Math.max(0, route.stops.length - 1) * stopSpacing)
   const xFor = (position: number) => leftPadding + position * stopSpacing
+  const routeSpan = Math.max(0, route.stops.length - 1) * stopSpacing
+  const busX = (distance: number) => leftPadding + (position?.routeLengthM
+    ? Math.max(0, Math.min(1, distance / position.routeLengthM)) * routeSpan : 0)
 
   return <div className="border-b last:border-b-0">
     <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-4 pt-4">
@@ -71,6 +76,22 @@ function RouteRow({ route, events, selectedId, onSelect }: {
         width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="block max-w-none">
         <line x1={leftPadding - 22} y1={routeY} x2={xFor(route.stops.length - 1) + 22} y2={routeY}
           stroke="var(--border)" strokeWidth="4" strokeLinecap="round" />
+        {(position?.buses ?? []).map(bus => {
+          const x = busX(bus.distanceAlongRouteM)
+          const uncertaintyPx = position?.routeLengthM
+            ? Math.min(40, Math.max(3, bus.uncertaintyM / position.routeLengthM * routeSpan)) : 3
+          const description = `Estimated bus order ${bus.order}, ${Math.round(bus.distanceAlongRouteM)} metres along the route, uncertainty plus or minus ${Math.round(bus.uncertaintyM)} metres${bus.speedMps == null ? ', speed unavailable' : `, speed ${bus.speedMps.toFixed(1)} metres per second`}. Temporary inferred position, not a verified bus identity.`
+          return <g key={bus.order} role="img" aria-label={description} className="text-sky-700 dark:text-sky-400">
+            <title>{description}</title>
+            <line x1={x - uncertaintyPx} y1={routeY} x2={x + uncertaintyPx} y2={routeY} stroke="currentColor" strokeWidth="3" />
+            <line x1={x - uncertaintyPx} y1={routeY - 4} x2={x - uncertaintyPx} y2={routeY + 4} stroke="currentColor" strokeWidth="1.5" />
+            <line x1={x + uncertaintyPx} y1={routeY - 4} x2={x + uncertaintyPx} y2={routeY + 4} stroke="currentColor" strokeWidth="1.5" />
+            <rect x={x - 7} y={routeY - 7} width="14" height="13" rx="3" fill="var(--background)" stroke="currentColor" strokeWidth="2" />
+            <circle cx={x - 3.5} cy={routeY + 6} r="1.5" fill="currentColor" />
+            <circle cx={x + 3.5} cy={routeY + 6} r="1.5" fill="currentColor" />
+            <text x={x} y={routeY - 11} textAnchor="middle" fontSize="9" fontWeight="600" fill="currentColor">{bus.order}</text>
+          </g>
+        })}
         {route.stops.map((stop, index) => <g key={`${stop.stopCode}:${stop.stopSequence}`}>
           <title>{stop.description || `Stop ${stop.stopCode}`}</title>
           <circle cx={xFor(index)} cy={routeY} r="5" fill="var(--background)" stroke="var(--muted-foreground)" strokeWidth="2" />
@@ -106,7 +127,7 @@ function RouteRow({ route, events, selectedId, onSelect }: {
   </div>
 }
 
-export function ControllerRouteStrip({ alerts, run, stops, loading }: Props) {
+export function ControllerRouteStrip({ alerts, run, stops, positions, loading }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const simulation = run.data && run.data.status !== 'CLOSED' ? run.data : null
   const eventError = run.error || (!simulation ? alerts.error : '')
@@ -114,6 +135,9 @@ export function ControllerRouteStrip({ alerts, run, stops, loading }: Props) {
   const routes = !loading ? stops.data ?? noRoutes : noRoutes
 
   const { eventsByRoute, unplaced } = useMemo(() => placeRouteAlerts(events, routes), [events, routes])
+  const positionByRoute = useMemo(() => new Map<string, RoutePositionDirection>((positions.data ?? []).flatMap(snapshot =>
+    snapshot.directions.map(direction => [`${snapshot.serviceId}:${direction.operator}:${direction.directionId}`, direction] as const))),
+  [positions.data])
 
   const selected = events.find(alert => alert.eventId === selectedId) ?? null
   const selectedStop = selected && routes.flatMap(route => route.serviceId === selected.serviceId &&
@@ -127,9 +151,12 @@ export function ControllerRouteStrip({ alerts, run, stops, loading }: Props) {
   return <section aria-labelledby="route-strip-title" className="space-y-4">
     <div>
       <h2 id="route-strip-title" className="font-medium">Route strip</h2>
-      <p className="mt-1 text-xs text-muted-foreground">Stops follow imported route order. Markers show gaps between saved arrival predictions; bus positions and vehicle identities are not available here.</p>
+      <p className="mt-1 text-xs text-muted-foreground">Stops follow imported route order. Bus markers are inferred positions with an uncertainty range; they do not identify a physical bus.</p>
       {simulation && <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">Simulation events; not live incidents.</p>}
       {!simulation && <p className="mt-1 text-xs text-muted-foreground">Live detections are observation only.</p>}
+      {simulation && <p className="mt-1 text-xs text-muted-foreground">Live position estimates are hidden during simulation.</p>}
+      {!simulation && positions.data?.length ? <p className="mt-1 text-xs text-muted-foreground">Estimated positions refreshed every 30–60 seconds · calculated {timestamp(positions.data.map(value => value.computedAt).sort().at(-1) ?? '')}.</p> : null}
+      {!simulation && positions.error && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">{positions.error} Showing the last available estimates.</p>}
     </div>
 
     {!routes.length ? <DataMessage error={stops.error || 'Route reference data is unavailable.'} loading={loading} empty={false}>Route reference data is unavailable.</DataMessage> : <>
@@ -138,6 +165,7 @@ export function ControllerRouteStrip({ alerts, run, stops, loading }: Props) {
       <Card className="overflow-hidden">
         <div>
           {routes.map(route => <RouteRow key={routeKey(route)} route={route} events={eventsByRoute.get(routeKey(route)) ?? []}
+            position={simulation ? undefined : positionByRoute.get(routeKey(route))}
             selectedId={selectedId} onSelect={alert => setSelectedId(alert.eventId)} />)}
         </div>
         <CardContent className="flex flex-wrap gap-x-5 gap-y-2 border-t py-3 text-xs text-muted-foreground">
@@ -145,6 +173,7 @@ export function ControllerRouteStrip({ alerts, run, stops, loading }: Props) {
             <span className={`size-2.5 rounded-full ${severity.legendClassName}`} aria-hidden="true" />{severity.shortLabel}
           </span>)}
           <span className="inline-flex items-center gap-2"><span className="size-2.5 rounded-full border-2 border-muted-foreground" aria-hidden="true" />Bus stop</span>
+          <span className="inline-flex items-center gap-2"><span className="size-2.5 rounded-full border-2 border-sky-700 dark:border-sky-400" aria-hidden="true" />Estimated bus position · range shows uncertainty</span>
         </CardContent>
       </Card>
 

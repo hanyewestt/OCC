@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type PageResult, type Recommendation, type RouteDirection } from '@/lib/api'
+import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type PageResult, type Recommendation, type RouteDirection, type RoutePositions } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { ControllerSidebar, controllerPages } from '@/components/ControllerSidebar'
 import { ControllerOverview, ControllerDisruptions, ControllerAudit } from '@/pages/ControllerViews'
@@ -13,6 +13,22 @@ export type Resource<T> = { data: T | null; error: string }
 export type Planning = { recommendation: Recommendation | null; decision: Decision | null }
 const empty = { data: null, error: '' }
 
+async function loadRoutePositions(token: string, signal: AbortSignal): Promise<Resource<RoutePositions[]>> {
+  const results = await Promise.all(['190', '972'].map(async serviceId => {
+    try {
+      return { data: await apiRequest<RoutePositions>(`/api/v1/route-positions?service=${serviceId}`, token, signal), error: '' }
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401 && !signal.aborted) void signOut(error.message)
+      return { data: null, error: error instanceof ApiError && error.status === 403 ? 'Access denied for bus positions.' : 'Unable to load bus positions.' }
+    }
+  }))
+  const snapshots = results.flatMap(result => result.data ? [result.data] : [])
+  return {
+    data: snapshots.length ? snapshots : null,
+    error: results.some(result => result.error) ? 'Some estimated bus positions could not be loaded.' : '',
+  }
+}
+
 export function ControllerPage({ email, token }: { email: string; token: string }) {
   const { pathname } = useLocation()
   const current = controllerPages.find(page => page.path === pathname)!
@@ -21,6 +37,7 @@ export function ControllerPage({ email, token }: { email: string; token: string 
   const [arrivals, setArrivals] = useState<Resource<PageResult<Arrival>>>(empty)
   const [alerts, setAlerts] = useState<Resource<PageResult<BunchingAlert>>>(empty)
   const [routeStops, setRouteStops] = useState<Resource<RouteDirection[]>>(empty)
+  const [routePositions, setRoutePositions] = useState<Resource<RoutePositions[]>>(empty)
   const [run, setRun] = useState<Resource<DemoRun>>(empty)
   const [planning, setPlanning] = useState<Resource<Planning>>(empty)
   const [loaded, setLoaded] = useState('')
@@ -59,20 +76,36 @@ export function ControllerPage({ email, token }: { email: string; token: string 
         data: routeDirections(results.flatMap(result => result.data ? [result.data] : [])),
         error: results.some(result => result.error) ? 'Unable to load all route references.' : '',
       }))
+    const positionsPromise = loadRoutePositions(token, signal)
     void Promise.all([
       read(apiRequest<PageResult<Arrival>>(`/api/v1/arrivals?page=${arrivalPage}&size=50`, token, signal)),
       read(apiRequest<PageResult<BunchingAlert>>('/api/v1/live-bunching-alerts?size=200', token, signal).then(async value =>
         value ? { ...value, items: await enrichBunchingStops(value.items, token, signal) } : null)),
-      runPromise, planningPromise, routePromise,
-    ]).then(([nextArrivals, nextAlerts, nextRun, nextPlanning, nextRouteStops]) => {
+      runPromise, planningPromise, routePromise, positionsPromise,
+    ]).then(([nextArrivals, nextAlerts, nextRun, nextPlanning, nextRouteStops, nextRoutePositions]) => {
       if (signal.aborted) return
-      setArrivals(nextArrivals); setAlerts(nextAlerts); setRun(nextRun); setPlanning(nextPlanning); setRouteStops(nextRouteStops)
+      setArrivals(nextArrivals); setAlerts(nextAlerts); setRun(nextRun); setPlanning(nextPlanning); setRouteStops(nextRouteStops); setRoutePositions(nextRoutePositions)
       setLoaded(requestKey)
     })
     return () => controller.abort()
   }, [token, refresh, arrivalPage, requestKey])
 
   const simulation = run.data && run.data.status !== 'CLOSED' ? run.data : null
+  const positionRefreshSeconds = routePositions.data?.length
+    ? Math.min(...routePositions.data.map(value => value.refreshIntervalSeconds)) : 0
+  useEffect(() => {
+    if (pathname !== '/controller' || simulation || !routePositions.data?.length) return
+    const intervalMs = Math.max(30_000, Math.min(60_000, positionRefreshSeconds * 1000))
+    const controller = new AbortController()
+    const timer = window.setInterval(() => {
+      void loadRoutePositions(token, controller.signal).then(next => {
+        if (controller.signal.aborted) return
+        setRoutePositions(previous => next.data ? next : { data: previous.data, error: next.error })
+      })
+    }, intervalMs)
+    return () => { window.clearInterval(timer); controller.abort() }
+  }, [pathname, token, positionRefreshSeconds, routePositions.data?.length, simulation])
+
   const pending = planning.data?.recommendation?.classification === 'SIMULATION' &&
     planning.data.recommendation.status === 'RECOMMENDED' && !planning.data.decision ? 1 : 0
   const mode = loading ? 'Checking mode…' : run.error ? 'Mode unavailable' : simulation ? 'Simulation' : 'Live'
@@ -124,7 +157,7 @@ export function ControllerPage({ email, token }: { email: string; token: string 
               { title: 'Awaiting decision', value: planning.data ? pending : undefined, error: planning.error, note: 'Current simulation only →', to: '/controller/planning' },
             ].map(item => <Link key={item.title} to={item.to} className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"><Card className="h-full hover:bg-muted/30"><CardContent className="space-y-3 p-1 px-5"><p className="text-sm text-muted-foreground">{item.title}</p><p className="text-3xl font-semibold tabular-nums">{loading || item.error ? '—' : item.value ?? '—'}</p><p className="text-xs text-muted-foreground">{item.error ? 'Unavailable · refresh to retry' : item.note}</p></CardContent></Card></Link>)}
           </div>
-          <ControllerRouteStrip alerts={alerts} run={run} stops={routeStops} loading={loading} />
+          <ControllerRouteStrip alerts={alerts} run={run} stops={routeStops} positions={routePositions} loading={loading} />
           <ControllerOverview arrivals={arrivals} loading={loading} page={arrivalPage} onPage={setArrivalPage} />
         </>}
         {pathname.endsWith('/disruptions') && <ControllerDisruptions alerts={alerts} run={run} loading={loading} />}
