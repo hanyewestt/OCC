@@ -8,6 +8,8 @@ import org.springframework.context.annotation.Configuration;
 public class FrontendConfigConfiguration {
     @Bean
     FrontendConfig frontendConfig(FrontendProperties properties) {
-        return new FrontendConfig(properties.projectUrl().toString(), properties.publishableKey());
+        return new FrontendConfig(properties.projectUrl().toString(), properties.publishableKey(),
+                properties.controllerRefreshInterval().toSeconds(), properties.ingestionPollInterval().toSeconds(),
+                properties.routeIncidentGapTolerance().toSeconds());
     }
 }

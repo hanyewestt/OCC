@@ -20,8 +20,8 @@ public final class RoutePositionPolicy {
         List<RoutePositionReading> fresh = readings.stream()
                 .filter(reading -> reading.fetchedAt() != null && !reading.fetchedAt().isBefore(oldestAllowed)
                         && !reading.fetchedAt().isAfter(now))
-                .map(reading -> new RoutePositionReading(clamp(reading.distanceAlongRouteM(), routeLengthMeters),
-                        reading.fetchedAt()))
+                .map(reading -> new RoutePositionReading(reading.observationId(),
+                        clamp(reading.distanceAlongRouteM(), routeLengthMeters), reading.fetchedAt()))
                 .toList();
         if (fresh.isEmpty()) return List.of();
 
@@ -41,7 +41,8 @@ public final class RoutePositionPolicy {
             Cluster cluster = current.get(index);
             Double speed = matchPrevious(cluster, previous, matched, pollInterval, speedCapMetersPerSecond);
             buses.add(new RoutePositionBus(index + 1, cluster.distanceMeters(),
-                    Math.max(MIN_UNCERTAINTY_METERS, (cluster.maximumMeters() - cluster.minimumMeters()) / 2), speed));
+                    Math.max(MIN_UNCERTAINTY_METERS, (cluster.maximumMeters() - cluster.minimumMeters()) / 2), speed,
+                    cluster.evidenceObservationIds()));
         }
         return List.copyOf(buses);
     }
@@ -90,7 +91,8 @@ public final class RoutePositionPolicy {
     private static Cluster cluster(List<RoutePositionReading> members) {
         List<Double> distances = members.stream().map(RoutePositionReading::distanceAlongRouteM).sorted().toList();
         List<Instant> times = members.stream().map(RoutePositionReading::fetchedAt).sorted().toList();
-        return new Cluster(median(distances), distances.getFirst(), distances.getLast(), times.get(times.size() / 2));
+        return new Cluster(median(distances), distances.getFirst(), distances.getLast(), times.get(times.size() / 2),
+                members.stream().map(RoutePositionReading::observationId).filter(java.util.Objects::nonNull).distinct().toList());
     }
 
     private static double median(List<Double> values) {
@@ -102,6 +104,7 @@ public final class RoutePositionPolicy {
         return Math.max(0, Math.min(distance, routeLength));
     }
 
-    private record Cluster(double distanceMeters, double minimumMeters, double maximumMeters, Instant representativeTime) {
+    private record Cluster(double distanceMeters, double minimumMeters, double maximumMeters, Instant representativeTime,
+                           List<java.util.UUID> evidenceObservationIds) {
     }
 }

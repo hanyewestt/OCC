@@ -31,7 +31,7 @@ class RoutePositionsControllerTest {
         assertThat(response.directions()).hasSize(1);
         assertThat(response.directions().getFirst().directionId()).isEqualTo(1);
         assertThat(response.directions().getFirst().buses()).containsExactly(
-                new com.csd.occ.ingestion.api.dto.RoutePositionBusResponse(1, 4_300, 70, 6.2));
+                new com.csd.occ.ingestion.api.dto.RoutePositionBusResponse(1, 4_300, 70, 6.2, List.of()));
     }
 
     @Test

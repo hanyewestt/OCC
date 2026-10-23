@@ -51,8 +51,9 @@ class RoutePositionRepositoryIT {
         insertRouteStop(2, 1, "C");
         insertRouteStop(2, 2, "A");
         Instant now = Instant.now();
+        UUID observationId = UUID.randomUUID();
         jdbc.update("INSERT INTO ingestion.bus_arrival_observation VALUES (?, '190', 'B', null, 'OBSERVATION_ONLY', 1.300, 103.810, ?)",
-                UUID.randomUUID(), java.sql.Timestamp.from(now.minusSeconds(5)));
+                observationId, java.sql.Timestamp.from(now.minusSeconds(5)));
         jdbc.update("INSERT INTO ingestion.bus_arrival_observation VALUES (?, '190', 'A', null, 'OBSERVATION_ONLY', 1.300, 103.800, ?)",
                 UUID.randomUUID(), java.sql.Timestamp.from(now.minusSeconds(4)));
 
@@ -63,6 +64,7 @@ class RoutePositionRepositoryIT {
         var direction2 = routes.stream().filter(route -> route.directionId() == 2).findFirst().orElseThrow();
         assertThat(direction1.routeLengthM()).isBetween(2_100.0, 2_300.0);
         assertThat(direction1.readings()).hasSize(1);
+        assertThat(direction1.readings().getFirst().observationId()).isEqualTo(observationId);
         assertThat(direction1.readings().getFirst().distanceAlongRouteM())
                 .isCloseTo(direction1.routeLengthM() / 2, org.assertj.core.data.Offset.offset(2.0));
         assertThat(direction2.readings()).isEmpty();

@@ -29,7 +29,7 @@ public class PostgisRoutePositionRepository implements RoutePositionRepository {
                 GROUP BY route.reference_version_id, route.service_id, route.operator, route.direction_id
                 HAVING count(*) >= 2
             )
-            SELECT route.operator, route.direction_id,
+            SELECT route.operator, route.direction_id, observation.id AS observation_id,
                    ST_Length(route.route_line) AS route_length_m,
                    CASE WHEN observation.id IS NULL THEN NULL ELSE
                        ST_LineLocatePoint(route.route_line,
@@ -81,7 +81,7 @@ public class PostgisRoutePositionRepository implements RoutePositionRepository {
             statement.setTimestamp(2, Timestamp.from(from));
             statement.setTimestamp(3, Timestamp.from(to));
         }, (result, rowNumber) -> new RoutePositionRow(result.getString("operator"),
-                result.getInt("direction_id"), result.getDouble("route_length_m"),
+                result.getInt("direction_id"), result.getObject("observation_id", java.util.UUID.class), result.getDouble("route_length_m"),
                 result.getObject("distance_along_route_m") == null ? null : result.getDouble("distance_along_route_m"),
                 result.getTimestamp("fetched_at") == null ? null : result.getTimestamp("fetched_at").toInstant()));
 
@@ -90,7 +90,7 @@ public class PostgisRoutePositionRepository implements RoutePositionRepository {
             RouteKey key = new RouteKey(row.operator(), row.directionId());
             RouteBuilder route = routes.computeIfAbsent(key, ignored -> new RouteBuilder(row.routeLengthMeters()));
             if (row.distanceAlongRouteMeters() != null && row.fetchedAt() != null)
-                route.readings().add(new RoutePositionReading(row.distanceAlongRouteMeters(), row.fetchedAt()));
+                route.readings().add(new RoutePositionReading(row.observationId(), row.distanceAlongRouteMeters(), row.fetchedAt()));
         }
         return routes.entrySet().stream().map(entry -> new RoutePositionRoute(entry.getKey().operator(),
                 entry.getKey().directionId(), entry.getValue().routeLengthMeters(),
@@ -100,7 +100,7 @@ public class PostgisRoutePositionRepository implements RoutePositionRepository {
     private record RouteKey(String operator, int directionId) {
     }
 
-    private record RoutePositionRow(String operator, int directionId, double routeLengthMeters,
+    private record RoutePositionRow(String operator, int directionId, java.util.UUID observationId, double routeLengthMeters,
                                     Double distanceAlongRouteMeters, Instant fetchedAt) {
     }
 

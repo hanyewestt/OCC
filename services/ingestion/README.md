@@ -174,6 +174,9 @@ starting tolerances, not proof that observations came from the same physical
 bus. The response groups estimates by operator and direction and gives each
 position an uncertainty radius with a 50 m minimum. The UI refresh interval is
 based on `OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL` and clamped to 30–60 seconds.
+Each estimated position also returns the arrival observation IDs that contributed
+to its cluster. The controller uses shared IDs in saved bunching evidence for a
+stronger alert-to-position link; these IDs identify source records, not buses.
 
 The machine-readable OpenAPI document is at `/v3/api-docs`.
 
