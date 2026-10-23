@@ -12,7 +12,8 @@ $ErrorActionPreference = 'Stop'
 
 if ($Help) {
     Write-Output 'Usage: ./scripts/app.ps1 <up|start|stop|reset|clear|start-pgadmin|stop-pgadmin> [-ProjectName name] [-Yes]'
-    Write-Output 'Up starts existing images and frontend assets without building. Start builds before starting.'
+    Write-Output 'Up builds frontend assets and application images, then creates or updates containers. Start only resumes existing containers.'
+    Write-Output 'Start does not apply configuration changes; use up after changing .env.'
     Write-Output 'Reset deletes the selected project database and pgAdmin volumes, then rebuilds without layer cache.'
     Write-Output 'Clear removes the selected project containers, networks, volumes and referenced images; it does not restart.'
     Write-Output '-Yes skips the reset/clear confirmation. Stop preserves containers, networks and data; stop-pgadmin stops only pgAdmin.'
@@ -71,8 +72,8 @@ try {
     }
 
     switch ($Action) {
-        'up' { Invoke-AppCompose -Arguments @('up', '-d', '--no-build', '--wait') }
-        'start' { Build-Frontend; Invoke-AppCompose -Arguments @('up', '-d', '--build', '--wait') }
+        'up' { Build-Frontend; Invoke-AppCompose -Arguments @('up', '-d', '--build', '--wait') }
+        'start' { Invoke-AppCompose -Arguments @('start', '--wait') }
         'stop' { Invoke-AppCompose -Arguments @('--profile', 'tools', 'stop') }
         'reset' {
             if (-not $Yes) {
