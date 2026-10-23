@@ -1,4 +1,4 @@
-import type { BunchingAlert, RouteDirection } from './api'
+import type { BunchingAlert, RouteDirection, RoutePositionBus } from './api'
 import { bunchingArrivals } from './bunching'
 
 export const ROUTE_STRIP_GAP_SEVERITY = {
@@ -26,6 +26,12 @@ export type GapSeverity = keyof typeof ROUTE_STRIP_GAP_SEVERITY
 export type ArrivalGap = { label: 'Bus 1–2' | 'Bus 2–3'; seconds: number | null }
 export type PositionedRouteAlert = { alert: BunchingAlert; positions: number[] }
 export type RouteAlertPlacement = { eventsByRoute: Map<string, PositionedRouteAlert[]>; unplaced: BunchingAlert[] }
+export type EstimatedRouteHeadway = {
+  frontOrder: number
+  followingOrder: number
+  seconds: number | null
+  source: 'position' | 'eta' | 'unavailable'
+}
 
 export function routeKey(route: RouteDirection) {
   return `${route.serviceId}:${route.operator}:${route.directionId}`
@@ -89,4 +95,27 @@ export function formatGap(seconds: number | null): string {
   const minutes = Math.floor(seconds / 60)
   const remainingSeconds = seconds % 60
   return remainingSeconds ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`
+}
+
+export function estimateRouteHeadways(buses: RoutePositionBus[], etaFallbackSeconds: (number | null)[] = []): EstimatedRouteHeadway[] {
+  const ordered = [...buses].sort((first, second) => first.order - second.order)
+  return ordered.slice(0, -1).map((front, index) => {
+    const following = ordered[index + 1]
+    const meanSpeed = front.speedMps !== null && following.speedMps !== null
+      ? (front.speedMps + following.speedMps) / 2 : null
+    const distanceGap = front.distanceAlongRouteM - following.distanceAlongRouteM
+    if (meanSpeed !== null && Number.isFinite(meanSpeed) && meanSpeed > 0 && Number.isFinite(distanceGap) && distanceGap >= 0) {
+      return { frontOrder: front.order, followingOrder: following.order, seconds: Math.round(distanceGap / meanSpeed), source: 'position' as const }
+    }
+
+    const etaSeconds = etaFallbackSeconds[index]
+    return {
+      frontOrder: front.order,
+      followingOrder: following.order,
+      seconds: etaSeconds !== undefined && etaSeconds !== null && Number.isFinite(etaSeconds) && etaSeconds >= 0
+        ? etaSeconds : null,
+      source: etaSeconds !== undefined && etaSeconds !== null && Number.isFinite(etaSeconds) && etaSeconds >= 0
+        ? 'eta' as const : 'unavailable' as const,
+    }
+  })
 }

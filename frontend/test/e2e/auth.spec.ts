@@ -40,7 +40,10 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
       serviceId, computedAt: '2026-10-23T04:00:00Z', refreshIntervalSeconds: 60,
       directions: [
         { operator: 'SMRT', directionId: 1, routeLengthM: 12_000,
-          buses: serviceId === '190' ? [{ order: 1, distanceAlongRouteM: 4_300, uncertaintyM: 70, speedMps: 6.2 }] : [] },
+          buses: serviceId === '190' ? [
+            { order: 1, distanceAlongRouteM: 4_300, uncertaintyM: 70, speedMps: 6.2 },
+            { order: 2, distanceAlongRouteM: 3_500, uncertaintyM: 70, speedMps: 4.2 },
+          ] : [] },
         { operator: 'SMRT', directionId: 2, routeLengthM: 11_000, buses: [] },
       ],
     } })
@@ -136,6 +139,7 @@ test('controller route strip shows inferred live bus positions with uncertainty'
   await login(page)
   await expect(page.getByRole('heading', { name: 'Route strip', exact: true })).toBeVisible()
   await expect(page.getByRole('img', { name: /Estimated bus order 1, 4300 metres along the route, uncertainty plus or minus 70 metres/ })).toBeVisible()
+  await expect(page.getByText('Bus 1→2: 2m 34s (distance ÷ mean speed)', { exact: true })).toBeVisible()
   await expect(page.getByText(/Estimated positions refreshed every 30–60 seconds/)).toBeVisible()
 })
 

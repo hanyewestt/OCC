@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { BunchingAlert, RouteDirection, RouteStop } from '../../src/lib/api'
-import { arrivalGaps, formatGap, gapSeverity, placeRouteAlerts, tightestArrivalGap } from '../../src/lib/route-strip'
+import { arrivalGaps, estimateRouteHeadways, formatGap, gapSeverity, placeRouteAlerts, tightestArrivalGap } from '../../src/lib/route-strip'
 
 function makeAlert(overrides: Partial<BunchingAlert> = {}): BunchingAlert {
   return {
@@ -33,6 +33,27 @@ test('gap helper calculates saved prediction gaps and severity boundaries', () =
   expect(gapSeverity(181)).toBe('spaced')
   expect(gapSeverity(null)).toBeNull()
   expect(formatGap(125)).toBe('2m 5s')
+})
+
+test('headway uses distance and mean speed, then falls back to the ETA gap', () => {
+  const buses = [
+    { order: 2, distanceAlongRouteM: 3_500, uncertaintyM: 70, speedMps: null },
+    { order: 1, distanceAlongRouteM: 4_300, uncertaintyM: 70, speedMps: 6.2 },
+    { order: 3, distanceAlongRouteM: 2_500, uncertaintyM: 50, speedMps: null },
+  ]
+
+  expect(estimateRouteHeadways(buses, [120, 180])).toEqual([
+    { frontOrder: 1, followingOrder: 2, seconds: 120, source: 'eta' },
+    { frontOrder: 2, followingOrder: 3, seconds: 180, source: 'eta' },
+  ])
+  expect(estimateRouteHeadways([
+    { ...buses[0], order: 2, speedMps: 4.2 },
+    { ...buses[1], order: 1, speedMps: 6.2 },
+  ])).toEqual([{ frontOrder: 1, followingOrder: 2, seconds: 154, source: 'position' }])
+  expect(estimateRouteHeadways(buses)).toEqual([
+    { frontOrder: 1, followingOrder: 2, seconds: null, source: 'unavailable' },
+    { frontOrder: 2, followingOrder: 3, seconds: null, source: 'unavailable' },
+  ])
 })
 
 test('directionless alerts place only when their stop identifies one direction', () => {
