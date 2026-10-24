@@ -16,6 +16,7 @@ public class ConsumerState {
     private long lastSequence;
     private Instant updatedAt;
     @Version private long version;
+    public Instant selectedAt() { return updatedAt; }
     public String mode() { return mode; }
     public UUID demoRunId() { return demoRunId; }
     public long lastSequence() { return lastSequence; }

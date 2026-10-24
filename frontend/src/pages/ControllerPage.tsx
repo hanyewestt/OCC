@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type PageResult, type PendingRecommendation, type RouteDirection, type RoutePositions } from '@/lib/api'
+import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type PageResult, type PendingRecommendation, type RouteDirection, type RoutePositions, type PlanningDiagnosisPage } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { ControllerSidebar, controllerPages } from '@/components/ControllerSidebar'
 import { ControllerOverview, ControllerDisruptions, ControllerAudit } from '@/pages/ControllerViews'
@@ -10,7 +10,7 @@ import { ControllerRouteStrip } from '@/pages/ControllerRouteStrip'
 import { ControllerPlanning } from '@/pages/ControllerPlanning'
 
 export type Resource<T> = { data: T | null; error: string }
-export type Planning = { recommendations: PageResult<PendingRecommendation>; decisions: PageResult<Decision> }
+export type Planning = { recommendations: PageResult<PendingRecommendation> & { mode: string; demoRunId: string | null }; decisions: PageResult<Decision> }
 const empty = { data: null, error: '' }
 
 async function readResource<T>(operation: Promise<T | null>, signal: AbortSignal): Promise<Resource<T>> {
@@ -80,6 +80,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const [routePositions, setRoutePositions] = useState<Resource<RoutePositions[]>>(empty)
   const [run, setRun] = useState<Resource<DemoRun>>(empty)
   const [planning, setPlanning] = useState<Resource<Planning>>(empty)
+  const [diagnoses, setDiagnoses] = useState<Resource<PlanningDiagnosisPage>>(empty)
   const [loaded, setLoaded] = useState('')
   const [lastUpdated, setLastUpdated] = useState('')
   const [switching, setSwitching] = useState(false)
@@ -113,11 +114,11 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       value ? { ...value, alerts: await enrichBunchingStops(value.alerts, token, signal) } : null), signal)
     const planningPromise = readResource((async () => {
       const [recommendations, decisions] = await Promise.all([
-        apiRequest<PageResult<PendingRecommendation>>('/api/v1/planning/recommendations/pending?size=100', token, signal),
+        apiRequest<Planning['recommendations']>('/api/v1/planning/recommendations/pending?size=100', token, signal),
         apiRequest<PageResult<Decision>>('/api/v1/planning/recommendations/decisions?size=100', token, signal),
       ])
       return {
-        recommendations: recommendations ?? { items: [], page: 0, totalItems: 0, totalPages: 0 },
+        recommendations: recommendations ?? { mode: 'UNKNOWN', demoRunId: null, items: [], page: 0, totalItems: 0, totalPages: 0 },
         decisions: decisions ?? { items: [], page: 0, totalItems: 0, totalPages: 0 },
       }
     })(), signal)
@@ -127,13 +128,21 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         data: routeDirections(results.flatMap(result => result.data ? [result.data] : [])),
         error: results.some(result => result.error) ? 'Unable to load all route references.' : '',
       }))
-    void Promise.all([requestLiveData(signal), runPromise, planningPromise, routePromise])
-      .then(([live, nextRun, nextPlanning, nextRouteStops]) => {
+    void Promise.all([requestLiveData(signal), runPromise, planningPromise, routePromise,
+      readResource(apiRequest<PlanningDiagnosisPage>('/api/v1/planning/diagnoses?size=100', token, signal), signal)])
+      .then(([live, nextRun, nextPlanning, nextRouteStops, nextDiagnoses]) => {
       if (signal.aborted) return
       if (live) {
         setArrivals(live.arrivals); setAlerts(live.alerts); setRouteArrivals(live.routeArrivals); setRoutePositions(live.positions)
       }
-      setRun(nextRun); setPlanning(nextPlanning); setRouteStops(nextRouteStops); setLastUpdated(new Date().toISOString())
+      const activeRunId = nextRun.data && nextRun.data.status !== 'CLOSED' ? nextRun.data.id : null
+      const scopeMatches = !nextRun.error && nextDiagnoses.data?.mode === (activeRunId ? 'DEMO' : 'LIVE')
+        && (nextDiagnoses.data?.demoRunId ?? null) === activeRunId
+      setDiagnoses(scopeMatches ? nextDiagnoses : { data: null, error: nextDiagnoses.error || 'Data selection changed. Refresh to load the active mode.' })
+      const pendingScope = nextPlanning.data?.recommendations
+      const pendingMatches = !nextRun.error && pendingScope?.mode === (activeRunId ? 'DEMO' : 'LIVE')
+        && (pendingScope.demoRunId ?? null) === activeRunId
+      setRun(nextRun); setPlanning(pendingMatches ? nextPlanning : { data: null, error: 'Data selection changed. Refresh before making a decision.' }); setRouteStops(nextRouteStops); setLastUpdated(new Date().toISOString())
       setLoaded(requestKey)
     })
     return () => controller.abort()
@@ -161,6 +170,14 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     }, controllerRefreshIntervalSeconds * 1000)
     return () => { window.clearInterval(timer); controller.abort() }
   }, [pathname, requestLiveData, controllerRefreshIntervalSeconds])
+
+  useEffect(() => {
+    if (pathname !== '/controller/planning') return
+    const timer = window.setInterval(() => {
+      if (!switchingRef.current) setRefresh(value => value + 1)
+    }, controllerRefreshIntervalSeconds * 1000)
+    return () => window.clearInterval(timer)
+  }, [pathname, controllerRefreshIntervalSeconds])
 
   const pending = planning.data?.recommendations.totalItems
   const mode = loading ? 'Checking mode…' : run.error ? 'Mode unavailable' : simulation ? 'Simulation' : 'Live'
@@ -220,7 +237,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           <ControllerOverview arrivals={arrivals} loading={loading} page={arrivalPage} onPage={setArrivalPage} />
         </>}
         {pathname.endsWith('/disruptions') && <ControllerDisruptions alerts={alerts} run={run} loading={loading} />}
-        {pathname.endsWith('/planning') && <ControllerPlanning planning={planning} loading={loading} token={token} onSaved={() => setRefresh(value => value + 1)} />}
+        {pathname.endsWith('/planning') && <ControllerPlanning planning={planning} diagnoses={diagnoses} loading={loading} token={token} onSaved={() => setRefresh(value => value + 1)} />}
         {pathname.endsWith('/audit') && <ControllerAudit planning={planning} loading={loading} />}
       </div>
     </div>

@@ -279,3 +279,13 @@ V015 retires ingestion's obsolete cross-schema bunching views; V016 removes chil
 import timestamps; V017 records topology retirement. `current_bus_arrival` stays.
 Existing deployments must use the administrator-only reserved-schema procedure
 in [the reduction verification document](../../docs/plans/database-reduction-verification.md).
+
+### Live and simulation Planning evidence
+
+The Planning peer can read `/internal/v1/ingestion/planning-context` for live
+observations or `/internal/v1/ingestion/demo-runs/{demoRunId}/planning-context`
+for simulation observations. Both require the exact confirming arrival observation
+IDs and reject mixed scope, route or direction evidence. Live evidence must remain
+inside `OCC_INGESTION_RETENTION`; no current-provider request or synthetic fixture is
+substituted when retained observations are missing. Public JWTs and the Disruption
+peer token cannot read the live Planning evidence endpoint.

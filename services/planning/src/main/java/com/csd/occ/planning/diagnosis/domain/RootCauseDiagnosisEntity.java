@@ -44,6 +44,7 @@ public class RootCauseDiagnosisEntity {
     private String schemaVersion;
     private Instant completedAt;
 
+    public String evidenceSnapshotJson() { return evidenceSnapshot; }
     public UUID id() { return id; }
     public UUID requestId() { return requestId; }
     public String causeCode() { return causeCode; }

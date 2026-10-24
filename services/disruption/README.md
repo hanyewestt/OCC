@@ -58,3 +58,13 @@ Remove-Item Env:OCC_OPENAPI_EXPORT_TOKEN
 
 This updates `services/disruption/openapi/disruption.json` from the running API.
 Never save the token in `.env` or commit it.
+
+### Shared Planning data scope
+
+The existing consumer selection also controls Planning's active data scope.
+Known-direction live bunching and simulation bunching require two fresh, distinct
+poll confirmations before an event is submitted to Planning. Each submission retains
+its observation IDs and classification; live events have no demo run ID. The expected
+headway baseline uses `OCC_DISRUPTION_EXPECTED_HEADWAY` in both modes. Candidates
+older than `OCC_DISRUPTION_STALE_AFTER` or predating a return to Live are discarded.
+Unknown-direction detections remain observational alerts and are not sent for diagnosis.

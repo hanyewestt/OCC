@@ -386,3 +386,13 @@ Use `OCC_SUPABASE_TEST_CAPTAIN_EMAIL` and `OCC_SUPABASE_TEST_CAPTAIN_PASSWORD`
 from root `.env.example` for the CAPTAIN account. The smoke runner expects the
 actual JWT role to be CAPTAIN; invoke it with the `CAPTAIN` account label.
 See [authentication](AUTHENTICATION.md) for session refresh behavior.
+
+### Planning follows the shared data selection
+
+The existing Start simulation / Return to live control also selects the Planning
+queue and root-cause diagnoses. Live diagnoses are advisory and never reuse the
+simulation mitigation fixture. Switching modes clears ineligible queue selections;
+the server rejects decisions from inactive simulation runs. The Planning screen
+refreshes using `OCC_CONTROLLER_DATA_REFRESH_INTERVAL`. Diagnosis and recommendation
+records retain their original classification even if a model response completes
+after switching modes.

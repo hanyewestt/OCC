@@ -33,6 +33,7 @@ import java.util.concurrent.Executors;
 import static org.junit.jupiter.api.Assertions.*;
 
 @ActiveProfiles("test")
+@org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 @SpringBootTest(properties = {"occ.disruption.consumer-enabled=false", "occ.disruption.planning.worker-enabled=false",
         "occ.disruption.stale-after=120s",
         "spring.datasource.url=jdbc:postgresql://unused/test", "spring.datasource.password=synthetic-only"})
@@ -57,19 +58,37 @@ class BunchingAlertIT {
         this.transactions = transactions;
     }
 
+    @Autowired org.springframework.test.web.servlet.MockMvc mvc;
+
+    @Test
+    @org.junit.jupiter.api.condition.EnabledIfSystemProperty(named = "occ.exportOpenapi", matches = "true")
+    void exportsGeneratedContract() throws Exception {
+        String contract = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .get("http://localhost:6768/v3/api-docs").with(
+                        org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt()
+                                .authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        java.nio.file.Path output = java.nio.file.Path.of("openapi", "disruption.json");
+        java.nio.file.Files.createDirectories(output.getParent());
+        java.nio.file.Files.writeString(output, contract);
+    }
+
     @BeforeEach
-    void reset() { jdbc.execute("TRUNCATE disruption.planning_outbox, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption, disruption.source_processing_state"); }
+    void reset() { jdbc.update("UPDATE disruption.consumer_state SET mode='LIVE', demo_run_id=null, updated_at=?", java.sql.Timestamp.from(NOW.minusSeconds(3600))); jdbc.execute("TRUNCATE disruption.planning_outbox, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption, disruption.source_processing_state"); }
 
     @Test
     void opensOnceClearsAndReopensWithANewEpisode() {
         record(snapshot(0, 60, Optional.of(1)));
-        UUID episode = jdbc.queryForObject("SELECT disruption_id FROM disruption.disruption_event", UUID.class);
+        assertEquals(0, events());
         record(snapshot(1, 60, Optional.of(1)));
+        UUID episode = jdbc.queryForObject("SELECT disruption_id FROM disruption.disruption_event", UUID.class);
         assertEquals(1, events());
         record(snapshot(2, 90, Optional.of(1)));
         assertEquals(2, events());
         assertEquals(episode, jdbc.queryForObject("SELECT disruption_id FROM disruption.disruption_event WHERE action='CLEARED'", UUID.class));
         record(snapshot(3, 60, Optional.of(1)));
+        record(snapshot(4, 60, Optional.of(1)));
         assertEquals(3, events());
         assertEquals(2, jdbc.queryForObject("SELECT count(DISTINCT disruption_id) FROM disruption.disruption_event", Integer.class));
     }
@@ -86,6 +105,7 @@ class BunchingAlertIT {
     @Test
     void insufficientEvidencePreservesTheEpisodeAndBlocksOlderNormalEvidence() {
         record(snapshot(0, 60, Optional.of(1)));
+        record(snapshot(1, 60, Optional.of(1)));
         var source = snapshot(5, 60, Optional.of(1));
         record(new ArrivalSnapshot(source.rawObservationId(), source.pollRunId(), source.referenceVersionId(),
                 source.fetchedAt(), List.of(source.arrivals().getFirst())));
@@ -95,6 +115,7 @@ class BunchingAlertIT {
 
     @Test
     void concurrentSnapshotsAndRetriesCreateOneOpening() throws Exception {
+        record(snapshot(-1, 60, Optional.of(1)));
         var same = snapshot(0, 60, Optional.of(1));
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var first = executor.submit(() -> record(same));
@@ -109,7 +130,9 @@ class BunchingAlertIT {
     void directionsHaveIndependentEpisodesAndRetainEvidenceAfterSourceAuditDeletion() {
         record(snapshot(0, 60, Optional.of(1)));
         record(snapshot(0, 60, Optional.of(2)));
-        record(snapshot(1, 90, Optional.of(1)));
+        record(snapshot(1, 60, Optional.of(1)));
+        record(snapshot(1, 60, Optional.of(2)));
+        record(snapshot(2, 90, Optional.of(1)));
         assertEquals(3, events());
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM disruption.disruption_processing_state WHERE active_disruption_id IS NOT NULL", Integer.class));
         assertEquals(2, jdbc.queryForObject("SELECT direction_id FROM disruption.disruption_processing_state WHERE active_disruption_id IS NOT NULL", Integer.class));
@@ -126,6 +149,10 @@ class BunchingAlertIT {
                 new ArrivalSnapshot.Arrival(UUID.randomUUID(), "972", "44009", Optional.of(1), 1, Optional.of(NOW.plusSeconds(300))),
                 new ArrivalSnapshot.Arrival(UUID.randomUUID(), "972", "44009", Optional.of(1), 2, Optional.of(NOW.plusSeconds(360)))));
         record(source);
+        record(new ArrivalSnapshot(UUID.randomUUID(), UUID.randomUUID(), Optional.empty(), NOW.plusSeconds(1),
+                source.arrivals().stream().map(arrival -> new ArrivalSnapshot.Arrival(UUID.randomUUID(),
+                        arrival.serviceId(), arrival.stopCode(), arrival.directionId(), arrival.visitOrder(),
+                        arrival.estimatedArrivalAt())).toList()));
 
         var evidence = jdbc.queryForList("SELECT evidence FROM disruption.disruption_event", String.class);
         assertEquals(2, evidence.size());
@@ -138,6 +165,7 @@ class BunchingAlertIT {
 
     @Test
     void notificationArrivesAfterCommitWithinFiveSecondsAndReferencesDurableEvidence() throws Exception {
+        record(snapshot(-1, 60, Optional.of(1)));
         try (var connection = dataSource.getConnection(); var statement = connection.createStatement()) {
             statement.execute("LISTEN bunching_alert");
             long started = System.nanoTime();
@@ -172,14 +200,27 @@ class BunchingAlertIT {
 
     @Test
     void eventInsertFailureRollsBackEvaluationAndCanBeRetried() {
+        record(snapshot(-1, 60, Optional.of(1)));
         var input = snapshot(0, 60, Optional.of(1));
         jdbc.execute("ALTER TABLE disruption.disruption_event ADD CONSTRAINT test_reject_event CHECK(false) NOT VALID");
         try {
             assertThrows(RuntimeException.class, () -> record(input));
-            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM disruption.source_processing_state", Integer.class));
+            assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM disruption.source_processing_state", Integer.class));
         } finally { jdbc.execute("ALTER TABLE disruption.disruption_event DROP CONSTRAINT test_reject_event"); }
         record(input);
         assertEquals(1, events());
+    }
+
+    @Test
+    void confirmedLiveEventQueuesPlanningOnceWithRetainedObservationOnlyEvidence() {
+        record(snapshot(0, 60, Optional.of(1)));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM disruption.planning_outbox", Integer.class));
+        var second = snapshot(1, 60, Optional.of(1));
+        record(second);
+        record(second);
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM disruption.planning_outbox", Integer.class));
+        assertEquals("OBSERVATION_ONLY", jdbc.queryForObject(
+                "SELECT payload_json::jsonb ->> 'classification' FROM disruption.planning_outbox", String.class));
     }
 
     private void record(ArrivalSnapshot snapshot) {

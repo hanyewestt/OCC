@@ -79,6 +79,23 @@ class DiagnosisRequestPersistenceIT {
                 + "planning.diagnosis_result, planning.planning_request");
     }
 
+    @Test
+    void scopedRequestsKeepLiveAndEachSimulationRunSeparate() {
+        UUID run = UUID.randomUUID();
+        for (String scope : List.of("", run.toString(), UUID.randomUUID().toString())) {
+            var request = new com.csd.occ.planning.diagnosis.domain.DiagnosisRequest(UUID.randomUUID(),
+                    EventType.BUS_BUNCHING, PRODUCER, UUID.randomUUID(), DiagnosisRequestService.SCHEMA_VERSION, NOW);
+            String classification = scope.isEmpty() ? "OBSERVATION_ONLY" : "SIMULATION";
+            request.retainInput("{\"event\":{\"classification\":\"" + classification + "\",\"demoRunId\":"
+                    + (scope.isEmpty() ? "null" : "\"" + scope + "\"") + "}}");
+            repository.saveAndFlush(request);
+        }
+        var page = org.springframework.data.domain.PageRequest.of(0, 10);
+        assertThat(repository.findScoped("OBSERVATION_ONLY", "", page).getTotalElements()).isEqualTo(1);
+        assertThat(repository.findScoped("SIMULATION", run.toString(), page).getTotalElements()).isEqualTo(1);
+        assertThat(repository.findScoped("SIMULATION", UUID.randomUUID().toString(), page).getTotalElements()).isZero();
+    }
+
     @DynamicPropertySource
     static void database(DynamicPropertyRegistry registry) {
         registry.add("OCC_PLANNING_DB_INTERNAL_URL", POSTGRES::getJdbcUrl);
@@ -235,6 +252,36 @@ class DiagnosisRequestPersistenceIT {
                 Integer.class, requestId)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM planning.recommendation_job", Integer.class))
                 .isEqualTo(1);
+    }
+
+    @Test
+    void liveAdvisoryCompletionPersistsDiagnosisAndInvocationWithoutDeliveryAndIgnoresReplay() {
+        UUID requestId = UUID.randomUUID();
+        requests.enqueue(EventType.BUS_BUNCHING, PRODUCER, UUID.randomUUID(), requestId);
+        assertThat(requests.claimDueRequests(1, Duration.ofMinutes(1))).containsExactly(requestId);
+        RootCauseDiagnosis diagnosis = new RootCauseDiagnosis(UUID.randomUUID(), requestId, "UNKNOWN", null,
+                "Available evidence is insufficient.", 0.0, 0.0, List.of("evidence-1"), List.of(),
+                new ConfidenceComponents(1, 0, 0, 0, 0),
+                "{\"event\":{\"classification\":\"OBSERVATION_ONLY\",\"demoRunId\":null}}",
+                "evidence-hash", "GOOGLE_GENAI", "synthetic-model", "prompt-v1", "schema-v1", NOW);
+
+        completion.completeAdvisory(requestId, diagnosis, List.of(invocation("synthetic-model")), "evidence-hash");
+        completion.completeAdvisory(requestId, diagnosis, List.of(invocation("synthetic-model")), "evidence-hash");
+
+        var stored = repository.findById(requestId).orElseThrow();
+        assertThat(stored.status().name()).isEqualTo("COMPLETED");
+        assertThat(stored.policyOutcome()).isEqualTo("LIVE_DIAGNOSIS_NO_VALIDATED_OPERATIONAL_CONTEXT");
+        assertThat(stored.failureCode()).isNull();
+        assertThat(diagnoses.findByRequestId(requestId)).hasValueSatisfying(persisted ->
+                assertThat(persisted.id()).isEqualTo(diagnosis.id()));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM planning.model_invocation_record WHERE request_id = ?",
+                Integer.class, requestId)).isEqualTo(1);
+        assertThat(deliveries.count()).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM planning.recommendation_job", Integer.class)).isZero();
+        assertThatThrownBy(() -> jdbc.update("UPDATE planning.planning_request SET policy_outcome = ? WHERE id = ?",
+                "UNSUPPORTED_OUTCOME", requestId)).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        assertThat(repository.findById(requestId).orElseThrow().policyOutcome())
+                .isEqualTo("LIVE_DIAGNOSIS_NO_VALIDATED_OPERATIONAL_CONTEXT");
     }
 
     @Test

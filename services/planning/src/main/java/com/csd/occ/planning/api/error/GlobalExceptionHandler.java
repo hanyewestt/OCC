@@ -19,6 +19,13 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(com.csd.occ.planning.diagnosis.domain.PlanningScopePort.UnavailableException.class)
+    ProblemDetail handleScopeUnavailable(HttpServletRequest request) {
+        return problem(HttpStatus.SERVICE_UNAVAILABLE, "Data selection unavailable",
+                "The shared data selection cannot be verified. Retry when Disruption is available.",
+                "urn:occ:problem:data-selection-unavailable", request);
+    }
+
     @ExceptionHandler(DiagnosisQueryService.DiagnosisNotFoundException.class)
     ProblemDetail handleNotFound(HttpServletRequest request) {
         return problem(HttpStatus.NOT_FOUND, "Resource not found", "The requested planning resource does not exist.",

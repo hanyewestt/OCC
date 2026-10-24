@@ -131,3 +131,10 @@ export async function enrichBunchingStops(alerts: BunchingAlert[], token: string
     return { ...alert, stopName: stop?.description, stopRoadName: stop?.roadName }
   }))
 }
+
+export type PlanningDiagnosis = {
+  requestId: string; eventId: string; diagnosisId: string | null; classification: string; demoRunId: string | null
+  serviceId: string; directionId: number; stopCode: string; status: string; likelyCause: string | null
+  confidence: number | null; limitations: string[]; failureCode: string | null; policyOutcome: string | null; createdAt: string
+}
+export type PlanningDiagnosisPage = PageResult<PlanningDiagnosis> & { mode: 'LIVE' | 'DEMO'; demoRunId: string | null }
