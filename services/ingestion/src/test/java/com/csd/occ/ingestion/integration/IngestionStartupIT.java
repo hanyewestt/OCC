@@ -274,9 +274,12 @@ class IngestionStartupIT {
         topology.replaceIfChanged(new BusReferencePort.BusReferenceData(
                 List.of(new BusReferencePort.BusStopRecord("44251", "Demo Road", "Demo Stop",
                         new java.math.BigDecimal("1.377"), new java.math.BigDecimal("103.771"))),
-                List.of(new BusReferencePort.BusServiceRecord("190", "SBST", "TRUNK")),
+                List.of(new BusReferencePort.BusServiceRecord("190", "SBST", "TRUNK"),
+                        new BusReferencePort.BusServiceRecord("972", "SBST", "TRUNK")),
                 List.of(new BusReferencePort.BusRouteStopRecord("190", "SBST", 1, 1, "44251",
-                        java.math.BigDecimal.ZERO))), "e".repeat(64));
+                        java.math.BigDecimal.ZERO),
+                        new BusReferencePort.BusRouteStopRecord("972", "SBST", 1, 1, "44251",
+                                java.math.BigDecimal.ZERO))), "e".repeat(64));
         when(bunching.alerts(any(UUID.class))).thenReturn(List.of());
         DemoRunDetails started = demoRuns.start();
         for (int step = 0; step < DemoReplayScenario.STEP_COUNT; step++) replay.replayNext();
@@ -284,16 +287,31 @@ class IngestionStartupIT {
         List<PacingMetric> simulation = pacing.refresh().metrics().stream()
                 .filter(metric -> "SIMULATION".equals(metric.classification())).toList();
 
-        // The final replay step places bus B half the 90s detector threshold behind bus A.
-        assertThat(simulation).hasSize(2);
-        assertThat(simulation.get(0).vehicleReference()).startsWith("DEMO-BUS-").endsWith("-01");
-        assertThat(simulation.get(0).ahead()).isEmpty();
-        assertThat(simulation.get(0).behind()).hasValueSatisfying(gap -> {
-            assertThat(gap.headway()).isEqualTo(java.time.Duration.ofSeconds(45));
-            assertThat(gap.state()).isEqualTo(PacingState.TOO_CLOSE);
-        });
-        assertThat(simulation.get(1).vehicleReference()).startsWith("DEMO-BUS-").endsWith("-02");
-        assertThat(simulation.get(1).behind()).isEmpty();
+        // Only the latest step contributes: two route-190 buses and three route-972 buses.
+        assertThat(simulation).extracting(PacingMetric::vehicleReference).containsExactlyInAnyOrder(
+                "SBS8027Y", "SBS5898U", "SMB3123A", "SMB4567B", "SMB5890C");
+        for (String serviceId : List.of("190", "972")) {
+            List<PacingMetric> route = simulation.stream()
+                    .filter(metric -> serviceId.equals(metric.serviceId())).toList();
+            assertThat(route).extracting(PacingMetric::vehicleReference).containsExactlyElementsOf(
+                    "190".equals(serviceId) ? List.of("SBS8027Y", "SBS5898U")
+                            : List.of("SMB3123A", "SMB4567B", "SMB5890C"));
+            for (int index = 0; index < route.size(); index++) {
+                PacingMetric metric = route.get(index);
+                assertThat(metric.stopCode()).isEqualTo("44251");
+                assertThat(metric.directionId()).isEqualTo(1);
+                if (index == 0) assertThat(metric.ahead()).isEmpty();
+                else assertThat(metric.ahead()).hasValueSatisfying(gap -> {
+                    assertThat(gap.headway()).isEqualTo(java.time.Duration.ofSeconds(45));
+                    assertThat(gap.state()).isEqualTo(PacingState.TOO_CLOSE);
+                });
+                if (index == route.size() - 1) assertThat(metric.behind()).isEmpty();
+                else assertThat(metric.behind()).hasValueSatisfying(gap -> {
+                    assertThat(gap.headway()).isEqualTo(java.time.Duration.ofSeconds(45));
+                    assertThat(gap.state()).isEqualTo(PacingState.TOO_CLOSE);
+                });
+            }
+        }
 
         demoRuns.close(started.id());
 

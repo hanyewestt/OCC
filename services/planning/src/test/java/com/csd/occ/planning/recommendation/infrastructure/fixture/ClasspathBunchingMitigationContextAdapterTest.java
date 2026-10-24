@@ -55,6 +55,21 @@ class ClasspathBunchingMitigationContextAdapterTest {
             assertThat(value.expectedImpact().passengerMinutesAfter())
                     .isEqualByComparingTo("128");
         });
+        assertThat(adapter.findFor(confirmedEvent()).orElseThrow().context().affectedBusReferences())
+                .containsExactly("SBS8027Y", "SBS5898U");
+    }
+
+    @Test
+    void threeBusFixtureCarriesAllAffectedBusReferences() {
+        ClasspathBunchingMitigationContextAdapter adapter = new ClasspathBunchingMitigationContextAdapter(
+                new ObjectMapper(), new RecommendationFixtureProperties(
+                        new ClassPathResource("fixtures/bunching-mitigation-context.json")));
+        ConfirmedBunchingEvent event = new ConfirmedBunchingEvent(UUID.randomUUID(), "972", 1, "44251",
+                BunchingEventStatus.CONFIRMED, 600, List.of(45, 45), Instant.parse("2026-09-27T23:45:02Z"),
+                List.of("route972-arrival-a", "route972-arrival-b", "route972-arrival-c"));
+
+        assertThat(adapter.findFor(event).orElseThrow().context().affectedBusReferences())
+                .containsExactly("SMB3123A", "SMB4567B", "SMB5890C");
     }
 
     @Test

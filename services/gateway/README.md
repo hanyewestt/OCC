@@ -35,7 +35,15 @@ catch-all excludes the auth namespace. Other operational APIs remain limited
 to ADMIN/CONTROLLER. Health and internal-route rules are unchanged.
 
 Nginx serves the React build. `GET /frontend-config` exposes only the public
-Supabase project URL and publishable key, bound through `FrontendProperties`.
+Supabase project URL and publishable key, plus the controller refresh and
+ingestion poll intervals used to label data age. These values are bound through
+`FrontendProperties`. Set `OCC_CONTROLLER_DATA_REFRESH_INTERVAL` in the root
+`.env` to change the default 30-second overview refresh. The ingestion interval
+uses the existing `OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL` setting. Adjacent
+alerts are grouped when their saved gaps differ by no more than the configured
+`OCC_ROUTE_INCIDENT_GAP_TOLERANCE` (20 seconds by default).
+Change the tolerance in the root `.env` when local grouping should be more or
+less strict.
 The SDK persists browser sessions and refreshes tokens; Gateway verifies them
 before the UI renders role content. Sign-out uses local scope and propagates
 across tabs. See [authentication](../../docs/AUTHENTICATION.md) and

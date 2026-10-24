@@ -9,16 +9,24 @@ import { controllerPages } from '@/components/ControllerSidebar'
 import { CaptainPage } from '@/pages/CaptainPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { ErrorPage } from '@/components/ErrorPage'
+import { loadConfig, type PublicConfig } from '@/lib/config'
 
 export function App() {
   const auth = useAuth()
   const { pathname } = useLocation()
   const [retry, setRetry] = useState(0)
   const [access, setAccess] = useState({ key: '', status: '' })
+  const [publicConfig, setPublicConfig] = useState<PublicConfig | null>(null)
   const token = auth.session?.access_token
   const pageHome = controllerPages.some(page => page.path === pathname) ? '/controller' : pathname
   const key = `${token}:${pageHome}:${retry}`
   const home = auth.identity ? homeFor(auth.identity.role) : null
+
+  useEffect(() => {
+    let active = true
+    void loadConfig().then(config => { if (active) setPublicConfig(config) }).catch(() => {})
+    return () => { active = false }
+  }, [])
 
   useEffect(() => {
     if (auth.status !== 'ready' || !token || pageHome !== home) return
@@ -64,13 +72,18 @@ export function App() {
     content = <Navigate to={home!} replace />
   } else if (access.key !== key) {
     content = <p role="status" className="text-sm text-muted-foreground">Verifying access…</p>
+  } else if (home === '/controller' && !publicConfig) {
+    content = <p role="status" className="text-sm text-muted-foreground">Loading controller settings…</p>
   } else if (access.status === 'error') {
     content = <div className="space-y-4"><p role="alert">Unable to verify access.</p>
       <Button onClick={() => setRetry(value => value + 1)}>Try again</Button>
       <Button className="ml-2" variant="outline" onClick={() => void signOut()}>Sign out</Button></div>
   } else {
     const email = auth.session?.user.email ?? auth.identity?.subject ?? ''
-    if (home === '/controller') return <main><ControllerPage key={token} email={email} token={token!} /></main>
+    if (home === '/controller') return <main><ControllerPage key={token} email={email} token={token!}
+      controllerRefreshIntervalSeconds={publicConfig!.controllerRefreshIntervalSeconds}
+      ingestionPollIntervalSeconds={publicConfig!.ingestionPollIntervalSeconds}
+      routeIncidentGapToleranceSeconds={publicConfig!.routeIncidentGapToleranceSeconds} /></main>
     content = <CaptainPage email={email} />
   }
   return <main className="flex min-h-svh items-center justify-center px-5 py-12">{content}</main>

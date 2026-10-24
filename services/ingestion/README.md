@@ -16,8 +16,10 @@ Content-Type: application/json
 
 Setting `enabled` to `true` starts a replay if none is active, or resumes the currently active run. Setting it to `false` first switches bunching to the live feed, then closes the active run. The persisted setting is initialized to `false` by Flyway and survives an ingestion restart. The start/close run endpoints provide equivalent control with explicit run IDs.
 
-Replay uses a fictional, deterministic route-190 scenario and produces simulation-only
-bunching alerts and recommendations. The bunching consumer runs independently, so
+Replay uses a fictional, deterministic multi-route scenario. Each run produces one
+two-bus bunching event for service 190 and one three-bus bunching event for service
+972, with stable vehicle registrations shared by the Planning fixtures. The replay
+produces simulation-only bunching alerts and recommendations. The bunching consumer runs independently, so
 results can arrive after replay completes. Replay support requires
 `OCC_DISRUPTION_INTERNAL_URL` and `OCC_PLANNING_INTERNAL_URL`; live DataMall polling remains enabled.
 `GET /api/v1/live-bunching-alerts` retrieves the immutable opening `alert_event`
@@ -158,6 +160,25 @@ With the service running in Compose, browse the interactive API at `http://local
 | `GET /api/v1/bus-routes/{serviceId}` | Ordered bus stops for every direction of a bus service |
 | `GET /api/v1/bus-stops?page=&size=` | Bus stops in the active reference topology |
 | `GET /api/v1/bus-stops/{stopCode}` | One bus stop by stop code |
+| `GET /api/v1/route-positions?service=190` | Recent, direction-scoped position estimates for a bus service |
+
+Route positions are temporary order-based estimates, not vehicle identities. The
+service filters out missing/zero coordinates and readings older than
+`OCC_INGESTION_ROUTE_POSITION_MAX_POLL_AGE_CYCLES` bus-arrival poll cycles
+(default `2`). It snaps remaining coordinates to a line built from the ordered
+stop coordinates because the active reference data contains stop points but no
+road-level route polyline. The line can cut across road bends; treat the result
+as an approximate route position. Readings within
+`OCC_INGESTION_ROUTE_POSITION_CLUSTER_TOLERANCE_M` (default `150` m) are
+clustered, and a prior-cycle match estimates speed up to
+`OCC_INGESTION_ROUTE_POSITION_SPEED_CAP_MPS` (default `16.7` m/s). These are
+starting tolerances, not proof that observations came from the same physical
+bus. The response groups estimates by operator and direction and gives each
+position an uncertainty radius with a 50 m minimum. The UI refresh interval is
+based on `OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL` and clamped to 30–60 seconds.
+Each estimated position also returns the arrival observation IDs that contributed
+to its cluster. The controller uses shared IDs in saved bunching evidence for a
+stronger alert-to-position link; these IDs identify source records, not buses.
 
 The machine-readable OpenAPI document is at `/v3/api-docs`.
 

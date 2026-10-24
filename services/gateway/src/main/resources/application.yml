@@ -33,6 +33,9 @@ occ:
   frontend:
     project-url: ${SUPABASE_PROJECT_URL}
     publishable-key: ${SUPABASE_SB_PUBLISHABLE:}
+    controller-refresh-interval: ${OCC_CONTROLLER_DATA_REFRESH_INTERVAL:30s}
+    ingestion-poll-interval: ${OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL}
+    route-incident-gap-tolerance: ${OCC_ROUTE_INCIDENT_GAP_TOLERANCE:20s}
   security:
     supabase:
       project-url: ${SUPABASE_PROJECT_URL}
