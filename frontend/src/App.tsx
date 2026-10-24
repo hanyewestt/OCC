@@ -44,19 +44,12 @@ export function App() {
   }, [auth.status, auth.identity, token, pageHome, home, key])
 
   let content
-  if (!['/', '/login', ...controllerPages.map(page => page.path), '/captain', '/401', '/403'].includes(pathname)) {
+  if (pathname === '/404' || !['/', '/login', ...controllerPages.map(page => page.path), '/captain', '/401', '/403'].includes(pathname)) {
     content = <NotFoundPage />
   } else if (pathname === '/401') {
     content = <ErrorPage code={401} title="Sign-in required" description="Your session is missing or has expired. Sign in to continue.">
       <Button variant="outline" asChild><Link to="/login">Sign in</Link></Button>
     </ErrorPage>
-  } else if (auth.status === 'loading') {
-    content = <p role="status" className="text-sm text-muted-foreground">Checking session…</p>
-  } else if (auth.status === 'error') {
-    content = <div className="max-w-sm space-y-4"><p role="alert">{auth.message}</p>
-      <div className="flex gap-2"><Button onClick={retryAuth}>Try again</Button><Button variant="outline" onClick={() => void signOut()}>Sign out</Button></div></div>
-  } else if (auth.status === 'unauthorized' && pathname !== '/login') {
-    content = <Navigate to="/401" replace />
   } else if (pathname === '/403' || (auth.status === 'ready' && (
     !home || (pathname !== '/' && pathname !== '/login' && pageHome !== home) ||
     (access.key === key && access.status === 'denied')
@@ -66,6 +59,13 @@ export function App() {
       {auth.session ? <Button variant="outline" onClick={() => void signOut()}>Sign out</Button> :
         <Button variant="outline" asChild><Link to="/login">Sign in</Link></Button>}
     </ErrorPage>
+  } else if (auth.status === 'loading') {
+    content = <p role="status" className="text-sm text-muted-foreground">Checking session…</p>
+  } else if (auth.status === 'error') {
+    content = <div className="max-w-sm space-y-4"><p role="alert">{auth.message}</p>
+      <div className="flex gap-2"><Button onClick={retryAuth}>Try again</Button><Button variant="outline" onClick={() => void signOut()}>Sign out</Button></div></div>
+  } else if (auth.status === 'unauthorized' && pathname !== '/login') {
+    content = <Navigate to="/401" replace />
   } else if (auth.status === 'signedOut' || auth.status === 'unauthorized') {
     content = pathname === '/login' ? <LoginPage message={auth.message} /> : <Navigate to="/login" replace />
   } else if (pathname === '/' || pathname === '/login') {
