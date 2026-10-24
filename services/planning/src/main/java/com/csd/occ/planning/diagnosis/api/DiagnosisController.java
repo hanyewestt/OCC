@@ -19,8 +19,24 @@ import org.springframework.http.ProblemDetail;
 @Tag(name = "Root-cause diagnoses")
 public class DiagnosisController {
     private final DiagnosisQueryService diagnoses;
+    private final com.csd.occ.planning.diagnosis.domain.PlanningScopeService scopes;
 
-    public DiagnosisController(DiagnosisQueryService diagnoses) { this.diagnoses = diagnoses; }
+    public DiagnosisController(DiagnosisQueryService diagnoses, com.csd.occ.planning.diagnosis.domain.PlanningScopeService scopes) {
+        this.diagnoses = diagnoses; this.scopes = scopes;
+    }
+
+    @GetMapping
+    @Operation(operationId = "listActivePlanningDiagnoses", summary = "List live diagnoses or diagnoses for the active simulation run")
+    @ApiResponse(responseCode = "200", description = "Scoped diagnosis lifecycle and results, newest first")
+    @ApiResponse(responseCode = "400", description = "Invalid page bounds")
+    @ApiResponse(responseCode = "401", description = "Authentication required")
+    @ApiResponse(responseCode = "403", description = "ADMIN or CONTROLLER role required")
+    @ApiResponse(responseCode = "503", description = "Shared data selection is unavailable")
+    public com.csd.occ.planning.diagnosis.api.dto.PlanningDiagnosisPageResponse list(
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "0") int page,
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "50") int size) {
+        return com.csd.occ.planning.diagnosis.api.dto.PlanningDiagnosisPageResponse.from(scopes.list(page, size));
+    }
 
     @GetMapping("/{diagnosisId}")
     @Operation(operationId = "getDiagnosis", summary = "Get a diagnosis result when processing has completed")

@@ -48,17 +48,19 @@ public class RootCauseDiagnosisProcessor {
                     || event.confirmingObservationIds().stream().filter(java.util.Objects::nonNull).distinct().count() < 2)
                 throw new DiagnosisFailureException("INCOMPLETE_EVENT_FACTS", false);
             RootCauseContext context = bound(retained == null ? evidenceContext.findContext(event) : retained.context(), event);
-            if (!event.demoRunId().equals(context.demoRunId()) || !"SIMULATION".equals(context.classification()))
+            if (!PlanningScope.valid(event.classification(), event.demoRunId())
+                    || !java.util.Objects.equals(event.demoRunId(), context.demoRunId())
+                    || !event.classification().equals(context.classification()))
                 throw new DiagnosisFailureException("EVIDENCE_PROVENANCE_MISMATCH", false);
             Instant latestConfirmationAt = event.confirmingObservationTimes().getLast();
-            if (context.arrivals().stream().anyMatch(arrival -> !"SIMULATION".equals(arrival.classification())
-                    || !event.demoRunId().equals(arrival.demoRunId())
+            if (context.arrivals().stream().anyMatch(arrival -> !event.classification().equals(arrival.classification())
+                    || !java.util.Objects.equals(event.demoRunId(), arrival.demoRunId())
                     || !event.serviceId().equals(arrival.serviceId())
                     || !event.monitoredStopCode().equals(arrival.stopCode())
                     || !java.util.Objects.equals(event.directionId(), arrival.directionId())
                     || arrival.fetchedAt() == null || arrival.fetchedAt().isAfter(latestConfirmationAt))
-                    || context.incidents().stream().anyMatch(incident -> !"SIMULATION".equals(incident.classification())
-                    || !event.demoRunId().equals(incident.demoRunId()) || incident.fetchedAt() == null
+                    || context.incidents().stream().anyMatch(incident -> !event.classification().equals(incident.classification())
+                    || !java.util.Objects.equals(event.demoRunId(), incident.demoRunId()) || incident.fetchedAt() == null
                     || incident.fetchedAt().isAfter(event.firstConfirmedAt())
                     || incident.observedAt() != null && incident.observedAt().isAfter(event.firstConfirmedAt())))
                 throw new DiagnosisFailureException("EVIDENCE_PROVENANCE_MISMATCH", false);
@@ -119,6 +121,10 @@ public class RootCauseDiagnosisProcessor {
                     limitations, score.components(), snapshotJson, snapshotHash, "GOOGLE_GENAI",
                     invocationDetails.getLast().model(), invocationDetails.getLast().promptVersion(),
                     invocationDetails.getLast().schemaVersion(), clock.instant());
+            if ("OBSERVATION_ONLY".equals(event.classification())) {
+                completion.completeAdvisory(request.id(), diagnosis, invocationDetails, snapshotHash);
+                return;
+            }
             UUID deliveryId = UUID.randomUUID();
             String payload = payloads.encode(deliveryId, event, diagnosis, event.classification());
             completion.complete(request.id(), diagnosis, invocationDetails, snapshotHash, payload, deliveryId);
@@ -141,7 +147,8 @@ public class RootCauseDiagnosisProcessor {
                 incident.classification(), incident.demoRunId()))
                 .filter(incident -> {
                     Instant relevantAt = incident.observedAt() == null ? incident.fetchedAt() : incident.observedAt();
-                    return relevantAt != null && !relevantAt.isBefore(cutoff)
+                    return incident.fetchedAt() != null && !incident.fetchedAt().isAfter(event.firstConfirmedAt())
+                            && relevantAt != null && !relevantAt.isBefore(cutoff)
                             && !relevantAt.isAfter(event.firstConfirmedAt());
                 })
                 .sorted(java.util.Comparator.comparing(incident -> incident.observedAt() == null
@@ -177,6 +184,8 @@ public class RootCauseDiagnosisProcessor {
 
     private List<String> limitations(ModelOutput output, RootCauseContext context, double score) {
         List<String> values = new ArrayList<>(output.limitations());
+        if ("OBSERVATION_ONLY".equals(context.classification()))
+            values.add("Live diagnosis only: validated vehicle assignments, control stops and crowd-safety inputs are unavailable; no operational instruction is issued.");
         if ("UNKNOWN".equals(output.causeCode())) values.add("No contextual evidence supported a specific cause.");
         context.missingFields().stream().map(field -> "Missing evidence field: " + field).forEach(values::add);
         if (score < settings.confidenceThreshold()) values.add(LOW_CONFIDENCE_LIMITATION);

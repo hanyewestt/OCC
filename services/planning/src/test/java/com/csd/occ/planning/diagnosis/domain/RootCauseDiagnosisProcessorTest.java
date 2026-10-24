@@ -161,6 +161,47 @@ class RootCauseDiagnosisProcessorTest {
                 any(Instant.class), eq(List.of(invocation)), anyString());
     }
 
+    @Test
+    void liveEvidenceProducesAnAdvisoryWithoutUsingSimulationRecommendations() {
+        event = new BunchingEventFacts(event.eventId(), event.bunchingEventId(), "OBSERVATION_ONLY", null,
+                "190", 1, "44009", firstObservationId, secondObservationId, "CONFIRMED", 600,
+                List.of(360, 390), NOW, event.confirmingObservationTimes(), event.confirmingObservationIds(),
+                event.evidenceIds(), event.detectionRuleVersion());
+        context = new RootCauseContext("OBSERVATION_ONLY", null, null,
+                List.of(liveArrival(firstObservationId), liveArrival(secondObservationId)), List.of(), List.of());
+        when(eventFacts.findConfirmedEvent(request.eventId())).thenReturn(event);
+        when(contextEvidence.findContext(event)).thenReturn(context);
+        when(model.diagnose(any(EvidenceSnapshot.class), anyList(), eq(1))).thenReturn(
+                new RootCauseModelPort.ModelCallResult(new ModelOutput("UNKNOWN", null, null, event.evidenceIds(), List.of()), invocation(1)));
+
+        processor.process(requestId);
+
+        var result = ArgumentCaptor.forClass(RootCauseDiagnosis.class);
+        verify(completion).completeAdvisory(eq(requestId), result.capture(), anyList(), anyString());
+        assertThat(result.getValue().limitations()).anyMatch(value -> value.startsWith("Live diagnosis only:"));
+        verify(payloads, never()).encode(any(), any(), any(), any());
+        verify(completion, never()).complete(any(), any(), anyList(), any(), any(), any());
+    }
+
+    @Test
+    void liveEventCannotUseSimulationEvidence() {
+        event = new BunchingEventFacts(event.eventId(), event.bunchingEventId(), "OBSERVATION_ONLY", null,
+                "190", 1, "44009", firstObservationId, secondObservationId, "CONFIRMED", 600,
+                List.of(360, 390), NOW, event.confirmingObservationTimes(), event.confirmingObservationIds(),
+                event.evidenceIds(), event.detectionRuleVersion());
+        when(eventFacts.findConfirmedEvent(request.eventId())).thenReturn(event);
+        when(contextEvidence.findContext(event)).thenReturn(context);
+        processor.process(requestId);
+        verify(model, never()).diagnose(any(), anyList(), anyInt());
+        verify(completion).fail(eq(requestId), eq("EVIDENCE_PROVENANCE_MISMATCH"), eq(false), eq(true), any(), anyList(), any());
+    }
+
+    private ArrivalEvidence liveArrival(UUID observationId) {
+        return new ArrivalEvidence("bus-arrival:" + observationId, observationId, UUID.randomUUID(), UUID.randomUUID(),
+                "190", "44009", 1, NOW.plusSeconds(60), NOW.minusSeconds(60),
+                BigDecimal.ONE, BigDecimal.ONE, "LOW", "DD", "OBSERVATION_ONLY", null, null);
+    }
+
     private ArrivalEvidence arrival(UUID observationId, String evidenceId) {
         return new ArrivalEvidence(evidenceId, observationId, UUID.randomUUID(), UUID.randomUUID(),
                 "190", "44009", 1, NOW.plusSeconds(60), NOW.minusSeconds(60),

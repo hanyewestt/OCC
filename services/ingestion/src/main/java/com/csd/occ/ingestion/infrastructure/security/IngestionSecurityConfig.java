@@ -38,7 +38,8 @@ public class IngestionSecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/internal/v1/arrival-snapshots/**",
                                 "/internal/v1/demo-runs/*/arrival-snapshots/**", "/internal/v1/traffic-incident-polls")
                         .hasAuthority(PeerCapabilityAuthenticationFilter.DISRUPTION_AUTHORITY)
-                        .requestMatchers(HttpMethod.GET, "/internal/v1/ingestion/demo-runs/*/planning-context")
+                        .requestMatchers(HttpMethod.GET, "/internal/v1/ingestion/demo-runs/*/planning-context",
+                                "/internal/v1/ingestion/planning-context")
                         .hasAuthority(PeerCapabilityAuthenticationFilter.PLANNING_AUTHORITY)
                         .requestMatchers("/internal/v1/**").denyAll()
                         // Bus captains read pacing on their On Board Unit; every other API stays controller-only.

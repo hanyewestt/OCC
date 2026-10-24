@@ -18,14 +18,15 @@ class DiagnosisRequestServiceTest {
     private static final String FINGERPRINT = "a".repeat(64);
     private static final Instant NOW = Instant.parse("2026-09-28T00:00:00Z");
 
-    @Test
-    void acceptedSubmissionPersistsProducerFactsBeforeReturning() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"SIMULATION", "OBSERVATION_ONLY"})
+    void acceptedSubmissionPersistsProducerFactsBeforeReturning(String classification) {
         DiagnosisRequestRepository requests = mock(DiagnosisRequestRepository.class);
         DiagnosisInputService inputs = mock(DiagnosisInputService.class);
         EventSubmissionFingerprintPort fingerprints = mock(EventSubmissionFingerprintPort.class);
         DiagnosisRequestPersistenceService persistence = mock(DiagnosisRequestPersistenceService.class);
         DiagnosisRequestService service = new DiagnosisRequestService(persistence, inputs, fingerprints);
-        ProducerEventSubmission submission = submission();
+        ProducerEventSubmission submission = submission(classification);
         UUID key = UUID.randomUUID();
         DiagnosisRequest stored = new DiagnosisRequest(key, EventType.BUS_BUNCHING, "disruption",
                 submission.eventId(), DiagnosisRequestService.SCHEMA_VERSION, NOW);
@@ -132,19 +133,21 @@ class DiagnosisRequestServiceTest {
         verify(persistence).enqueueProducer(submission, key, "immutable-traffic-input");
     }
 
-    private ProducerEventSubmission submission() {
+    private ProducerEventSubmission submission() { return submission("SIMULATION"); }
+
+    private ProducerEventSubmission submission(String classification) {
         UUID eventId = UUID.randomUUID();
         UUID disruptionId = UUID.randomUUID();
-        UUID demoRunId = UUID.randomUUID();
+        UUID demoRunId = "SIMULATION".equals(classification) ? UUID.randomUUID() : null;
         List<UUID> observations = List.of(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
         List<String> evidenceIds = java.util.stream.Stream.concat(
                 java.util.stream.Stream.of("bunching-alert-event:" + eventId),
                 observations.stream().map(id -> "bus-arrival:" + id)).toList();
         Instant first = NOW.minusSeconds(300);
-        BunchingEventFacts facts = new BunchingEventFacts(eventId, disruptionId, "SIMULATION", demoRunId, "190", 1,
+        BunchingEventFacts facts = new BunchingEventFacts(eventId, disruptionId, classification, demoRunId, "190", 1,
                 "44009", observations.get(2), observations.get(3), "CONFIRMED", 600, List.of(360, 390), first,
                 List.of(first, NOW), observations, evidenceIds, "bunching-gap-v1");
         return new ProducerEventSubmission("planning-event-v1", EventType.BUS_BUNCHING, "disruption", eventId,
-                disruptionId, "SIMULATION", demoRunId, NOW.plusMillis(1), "bunching-gap-v1", evidenceIds, facts);
+                disruptionId, classification, demoRunId, NOW.plusMillis(1), "bunching-gap-v1", evidenceIds, facts);
     }
 }

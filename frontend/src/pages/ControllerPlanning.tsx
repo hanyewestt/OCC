@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ApiError, apiRequest, type ControllerBusInstruction, type Decision, type PendingRecommendation } from '@/lib/api'
+import { ApiError, apiRequest, type ControllerBusInstruction, type Decision, type PendingRecommendation, type PlanningDiagnosisPage } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import type { Planning, Resource } from './ControllerPage'
 import { DataMessage, timestamp } from './ControllerViews'
@@ -33,8 +33,8 @@ function initialInstructions(recommendation: PendingRecommendation): ControllerB
   }))
 }
 
-export function ControllerPlanning({ planning, loading, token, onSaved }: {
-  planning: Resource<Planning>; loading: boolean; token: string
+export function ControllerPlanning({ planning, diagnoses, loading, token, onSaved }: {
+  planning: Resource<Planning>; diagnoses: Resource<PlanningDiagnosisPage>; loading: boolean; token: string
   onSaved: () => void
 }) {
   const recommendations = useMemo(
@@ -59,6 +59,22 @@ export function ControllerPlanning({ planning, loading, token, onSaved }: {
   }
 
   return <section aria-label="Mitigation recommendations" className="space-y-4">
+    <section aria-labelledby="planning-diagnoses-title" className="space-y-4">
+      <h2 id="planning-diagnoses-title" className="font-medium">Root-cause diagnoses</h2>
+      <p className="text-sm text-muted-foreground">Uses the shared Live/Simulation selection. Live diagnoses are advisory; operational recommendations require validated vehicle, control-stop and crowd-safety inputs.</p>
+      <DataMessage error={diagnoses.error} loading={loading} empty={!diagnoses.data?.items?.length}>No confirmed bunching events have reached Planning in this mode.</DataMessage>
+      {!loading && !diagnoses.error && diagnoses.data?.items?.map(item => <Card key={item.requestId}>
+        <CardContent className="space-y-2 text-sm">
+          <p className="font-medium">Service {item.serviceId} · Direction {item.directionId} · Stop {item.stopCode}</p>
+          <p className="text-xs text-muted-foreground">{item.classification === 'SIMULATION' ? 'Simulation' : 'Live · observation only'} · {item.status.replaceAll('_', ' ')} · {timestamp(item.createdAt)}</p>
+          {item.likelyCause && <p>{item.likelyCause}</p>}
+          {item.confidence !== null && <p>Evidence-support score: {Math.round(item.confidence * 100)}%</p>}
+          {item.failureCode && <p role="alert">Diagnosis unavailable: {item.failureCode.replaceAll('_', ' ')}.</p>}
+          {!!item.limitations.length && <ul className="list-disc space-y-1 pl-5 text-muted-foreground">{item.limitations.map(value => <li key={value}>{value}</li>)}</ul>}
+        </CardContent>
+      </Card>)}
+      {!!diagnoses.data && diagnoses.data.totalItems > diagnoses.data.items.length && <p className="text-xs text-muted-foreground">Showing {diagnoses.data.items.length} of {diagnoses.data.totalItems} diagnoses.</p>}
+    </section>
     <DataMessage error={planning.error} loading={loading} empty={!recommendations.length}>No recommendations are awaiting a decision.</DataMessage>
     {message && <p role="status" className="text-sm">{message}</p>}
     {!!recommendations.length && <div className="grid items-start gap-4 lg:grid-cols-[minmax(16rem,0.36fr)_minmax(0,1fr)]">

@@ -18,6 +18,31 @@ users cannot use public Planning routes. The token is a per-peer capability,
 not a Supabase user token; keep its value in the ignored root `.env` or a
 deployment secret store.
 
+The application's existing Live/Simulation selection also scopes Planning. Planning reads
+Disruption's authoritative consumer selection; it has no independent mode toggle.
+Confirmed live bunching events carry `OBSERVATION_ONLY` evidence with no demo run ID.
+Simulation events carry `SIMULATION` evidence and the active run ID. Captured inputs
+keep their original scope through retries and mode changes.
+
+`GET /api/v1/planning/diagnoses` returns a paginated list of requests and diagnosis
+results for the selected mode (only the active run in Simulation). Provider failures
+remain visible. Switching modes does not relabel or delete retained diagnoses.
+Live diagnoses finish with `LIVE_DIAGNOSIS_NO_VALIDATED_OPERATIONAL_CONTEXT` and do
+not call the simulation mitigation fixture or create operational instructions.
+Validated live vehicle assignments, control stops and crowd-safety inputs are still
+required before live mitigation decisions can be supported.
+
+Migration V007 expands the request policy-outcome constraint for live advisory
+completion. Apply it before enabling live diagnosis workers. It preserves existing
+requests and traffic outcomes; an application rollback can leave the expanded
+constraint in place without deleting retained live results.
+
+The pending recommendation queue only includes the active simulation run. Decisions
+are rejected when their retained diagnosis does not belong to the current scope.
+Historical results remain available by ID for review. Recommendation AI enablement
+is independent of data selection: `OCC_PLANNING_RECOMMENDATION_AI_ENABLED` only
+controls mitigation candidate generation, not the Gemini diagnosis client.
+
 Controllers review actionable simulation recommendations through the pending
 queue at `/api/v1/planning/recommendations/pending`. Approving records the AI
 recommendation as accepted. Rejecting requires one to three controller-authored

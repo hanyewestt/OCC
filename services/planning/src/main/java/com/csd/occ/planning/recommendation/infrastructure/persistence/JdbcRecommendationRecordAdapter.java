@@ -105,6 +105,25 @@ public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort
         return count == null ? 0 : count;
     }
 
+    private static final String ACTIVE_RUN_FILTER = """
+               AND EXISTS (SELECT 1 FROM planning.diagnosis_result diagnosis
+                    WHERE diagnosis.id::text = recommendation.request_payload -> 'diagnosis' ->> 'diagnosisId'
+                      AND diagnosis.evidence_snapshot -> 'event' ->> 'classification' = 'SIMULATION'
+                      AND diagnosis.evidence_snapshot -> 'event' ->> 'demoRunId' = ?)
+            """;
+
+    @Override
+    public List<RecommendationRecord> findPendingForRun(UUID demoRunId, int offset, int limit) {
+        String query = FIND_PENDING.replace("ORDER BY", ACTIVE_RUN_FILTER + " ORDER BY");
+        return jdbc.query(query, this::mapRecord, demoRunId.toString(), offset, limit);
+    }
+
+    @Override
+    public long countPendingForRun(UUID demoRunId) {
+        Long count = jdbc.queryForObject(COUNT_PENDING + ACTIVE_RUN_FILTER, Long.class, demoRunId.toString());
+        return count == null ? 0 : count;
+    }
+
     @Override
     public boolean saveIfAbsent(RecommendationRecord record) {
         PersistedRequest request = new PersistedRequest(

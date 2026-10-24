@@ -35,8 +35,8 @@ final class PeerCapabilityAuthenticationFilter extends OncePerRequestFilter {
                 || path.equals("/internal/v1/traffic-incident-polls"))) {
             authority = DISRUPTION_AUTHORITY;
             expectedToken = properties.disruptionToIngestionToken();
-        } else if (HttpMethod.GET.matches(request.getMethod()) && path.startsWith("/internal/v1/ingestion/demo-runs/")
-                && path.endsWith("/planning-context")) {
+        } else if (HttpMethod.GET.matches(request.getMethod()) && (path.startsWith("/internal/v1/ingestion/demo-runs/")
+                && path.endsWith("/planning-context") || path.equals("/internal/v1/ingestion/planning-context"))) {
             authority = PLANNING_AUTHORITY;
             expectedToken = properties.planningToIngestionToken();
         }

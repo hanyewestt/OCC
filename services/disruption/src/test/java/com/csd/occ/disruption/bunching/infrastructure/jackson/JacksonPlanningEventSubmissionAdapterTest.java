@@ -13,14 +13,15 @@ import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
 
 class JacksonPlanningEventSubmissionAdapterTest {
-    @Test
-    void encodedBodyHasStableIdentityAndRecomputableSemanticFingerprint() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"SIMULATION", "OBSERVATION_ONLY"})
+    void encodedBodyHasStableIdentityAndRecomputableSemanticFingerprint(String classification) {
         Instant first = Instant.parse("2026-09-27T23:55:00Z");
         Instant second = Instant.parse("2026-09-28T00:00:00Z");
-        UUID run = UUID.randomUUID();
+        UUID run = "SIMULATION".equals(classification) ? UUID.randomUUID() : null;
         UUID[] observations = {UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()};
         AlertEvent event = new AlertEvent(UUID.randomUUID(), "OPENED", "190", "44009", 1, UUID.randomUUID(),
-                UUID.randomUUID(), second, second, "{}", "SIMULATION", run, observations[2], observations[3],
+                UUID.randomUUID(), second, second, "{}", classification, run, observations[2], observations[3],
                 600, 360, 390, first, second, observations[0], observations[1], observations[2], observations[3],
                 "bunching-gap-v1");
         PlanningEventSubmissionPort adapter = new JacksonPlanningEventSubmissionAdapter(

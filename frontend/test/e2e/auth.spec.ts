@@ -55,8 +55,9 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
   await context.route('**/api/v1/bus-stops/*', route => route.fulfill({ json: { description: 'Teck Whye Secondary School', roadName: 'Teck Whye Ave' } }))
   await context.route('**/api/v1/arrivals?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/live-bunching-alerts?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
-  await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
+  await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: { mode: 'LIVE', demoRunId: null, items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/planning/recommendations/decisions?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
+  await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: { mode: 'LIVE', demoRunId: null, items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ status: 204 }))
   await context.route('**/frontend-config', route => route.fulfill({ json: {
     projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
@@ -107,9 +108,10 @@ async function mockDashboard(context: BrowserContext, options: { arrivalFailure?
   await context.route('**/api/v1/arrivals?*', route => options.arrivalFailure ? route.fulfill({ status: 503 }) : route.fulfill({ json: {
     items: [{ observationId: 'arrival-1', serviceId: '190', stopCode: 'B01', estimatedArrivalAt: '2026-10-22T01:05:00Z', fetchedAt: '2026-10-22T01:00:00Z', loadCategory: 'SEA' }], page: 0, totalItems: 1, totalPages: 1,
   } }))
+  await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: { mode: 'DEMO', demoRunId: 'run-1', items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ json: { id: 'run-1', status: 'REPLAY_COMPLETE', alerts: [alert] } }))
   await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: {
-    items: decision ? [] : [recommendation], page: 0, totalItems: decision ? 0 : 1, totalPages: decision ? 0 : 1,
+    mode: 'DEMO', demoRunId: 'run-1', items: decision ? [] : [recommendation], page: 0, totalItems: decision ? 0 : 1, totalPages: decision ? 0 : 1,
   } }))
   await context.route('**/api/v1/planning/recommendations/decisions?*', route => route.fulfill({ json: {
     items: decision ? [decision] : [], page: 0, totalItems: decision ? 1 : 0, totalPages: decision ? 1 : 0,
@@ -149,7 +151,7 @@ test('controller keeps live positions on the route strip and shows incidents sep
   await expect(page.getByRole('button', { name: 'Show historical (1)', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: /bunching detected at stop/ })).toHaveCount(0)
   await page.locator('html').evaluate(element => element.classList.add('dark'))
-  expect(await page.locator('html').evaluate(element => getComputedStyle(element).getPropertyValue('--background').trim())).toBe('oklch(0.145 0 0)')
+  expect(await page.locator('html').evaluate(element => getComputedStyle(element).getPropertyValue('--background').trim())).toMatch(/^oklch\((?:0\.145|14\.5%) 0 0\)$/)
   await page.screenshot({ path: 'node_modules/.cache/controller-route-strip.png', fullPage: true })
   await page.locator('section[aria-labelledby="route-strip-title"]').screenshot({ path: 'node_modules/.cache/route-strip-services-190-972.png' })
   await page.getByRole('button', { name: 'Show historical (1)', exact: true }).click()
@@ -161,7 +163,7 @@ test('controller route strip shows inferred live bus positions with uncertainty'
   await login(page)
   await expect(page.getByRole('heading', { name: 'Live route strip', exact: true })).toBeVisible()
   await expect(page.getByRole('img', { name: /Estimated bus 1, approximate position.*plus or minus 70 metres/ })).toBeVisible()
-  await expect(page.getByText(/#1→#2 ~2m 34s \(estimated from distance\/speed\)/)).toBeVisible()
+  await expect(page.getByRole('img', { name: 'Estimated buses 1 and 2: ~2m 34s estimate. Approximate time from position gap divided by estimated speed.', exact: true })).toBeVisible()
   await expect(page.getByText(/Last updated .* · Refreshes every 30 seconds/)).toBeVisible()
 })
 
@@ -180,7 +182,8 @@ for (const simulation of [true, false]) {
   test(`bunching ${simulation ? 'simulation' : 'live'} table shows stop name, direction and three saved arrival times`, async ({ page, context }) => {
     await mockDashboard(context)
     if (!simulation) {
-      await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ status: 204 }))
+      await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: { mode: 'LIVE', demoRunId: null, items: [], page: 0, totalItems: 0, totalPages: 0 } }))
+  await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ status: 204 }))
       await context.route('**/api/v1/live-bunching-alerts?*', route => route.fulfill({ json: {
         items: [{ eventId: 'event-1', action: 'OPENED', classification: 'OBSERVATION_ONLY', serviceId: '190', stopCode: 'B01', directionId: 2, detectedAt: '2026-10-22T01:00:00Z', evidence: arrivalEvidence('OBSERVATION_ONLY', 2) }], page: 0, totalItems: 1, totalPages: 1,
       } }))
@@ -227,7 +230,7 @@ test('controller switches the shared backend mode from the dashboard without lea
   await page.getByRole('button', { name: 'Return to live', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Start simulation', exact: true })).toBeEnabled()
   await expect(page.getByRole('status').filter({ hasText: /^Live$/ })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toHaveCount(0)
   await expect(page).toHaveURL(/\/controller\/planning/)
   expect(starts).toBe(1); expect(closes).toBe(1)
 })
@@ -583,4 +586,42 @@ test('captain pacing supports narrow screens, scenario links and persistent day 
   await expect(display).toHaveAttribute('data-theme', 'day')
   await expect(page.getByRole('button', { name: 'Night mode', exact: true })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})
+
+// These journeys use synthetic evidence and never contact Gemini.
+test('shared mode toggle switches Planning diagnoses without mixing live and simulation results', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  let activeRun: string | null = null
+  await context.route('**/api/v1/demo-runs/active', route => activeRun
+    ? route.fulfill({ json: { id: activeRun, status: 'RUNNING', alerts: [] } }) : route.fulfill({ status: 204 }))
+  await context.route('**/api/v1/demo-runs', route => {
+    activeRun = 'simulation-run'
+    return route.fulfill({ json: { id: activeRun, status: 'RUNNING', alerts: [] } })
+  })
+  await context.route('**/api/v1/demo-runs/simulation-run/close', route => {
+    activeRun = null
+    return route.fulfill({ json: { id: 'simulation-run', status: 'CLOSED', alerts: [] } })
+  })
+  await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: {
+    mode: activeRun ? 'DEMO' : 'LIVE', demoRunId: activeRun,
+    items: [{ requestId: activeRun ?? 'live-request', eventId: 'event', diagnosisId: 'diagnosis',
+      classification: activeRun ? 'SIMULATION' : 'OBSERVATION_ONLY', demoRunId: activeRun,
+      serviceId: '190', directionId: 1, stopCode: '44009', status: 'COMPLETED',
+      likelyCause: activeRun ? 'Synthetic simulation diagnosis' : 'Live evidence diagnosis', confidence: 0.7,
+      limitations: ['No operational instruction is issued.'], failureCode: null, policyOutcome: null, createdAt: '2026-10-24T00:00:00Z' }],
+    page: 0, totalItems: 1, totalPages: 1,
+  } }))
+  await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: {
+    mode: activeRun ? 'DEMO' : 'LIVE', demoRunId: activeRun, items: [], page: 0, totalItems: 0, totalPages: 0,
+  } }))
+  await login(page)
+  await page.goto('/controller/planning')
+  await expect(page.getByText('Live evidence diagnosis', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
+  await expect(page.getByText('Synthetic simulation diagnosis', { exact: true })).toBeVisible()
+  await expect(page.getByText('Live evidence diagnosis', { exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: /Return to live|Stop simulation|End simulation/ }).click()
+  await expect(page.getByText('Live evidence diagnosis', { exact: true })).toBeVisible()
+  await expect(page.getByText('Synthetic simulation diagnosis', { exact: true })).toHaveCount(0)
 })

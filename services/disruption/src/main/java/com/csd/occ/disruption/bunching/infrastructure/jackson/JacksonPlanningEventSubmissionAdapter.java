@@ -27,8 +27,7 @@ public class JacksonPlanningEventSubmissionAdapter implements PlanningEventSubmi
 
     @Override
     public EncodedPlanningEventSubmission encode(AlertEvent event) {
-        if (!"OPENED".equals(event.action()) || !"SIMULATION".equals(event.classification())
-                || event.demoRunId() == null || event.expectedHeadwaySeconds() == null
+        if (!"OPENED".equals(event.action()) || !validScope(event.classification(), event.demoRunId()) || event.expectedHeadwaySeconds() == null
                 || event.firstObservedHeadwaySeconds() == null || event.secondObservedHeadwaySeconds() == null
                 || event.firstConfirmingAt() == null || event.secondConfirmingAt() == null
                 || event.detectionRuleVersion() == null || event.confirmingObservationIds().size() != 4) {
@@ -83,7 +82,7 @@ public class JacksonPlanningEventSubmissionAdapter implements PlanningEventSubmi
         }
         if ("BUS_BUNCHING".equals(submission.eventType())) {
             var facts = submission.eventSnapshot();
-            if (!"SIMULATION".equals(submission.classification()) || submission.demoRunId() == null || facts == null
+            if (!validScope(submission.classification(), submission.demoRunId()) || facts == null
                     || submission.trafficSnapshot() != null
                     || !Objects.equals(submission.eventId(), facts.eventId())
                     || !Objects.equals(submission.disruptionId(), facts.bunchingEventId())
@@ -108,6 +107,11 @@ public class JacksonPlanningEventSubmissionAdapter implements PlanningEventSubmi
             return;
         }
         throw new IllegalArgumentException("Persisted Planning event type is unsupported");
+    }
+
+    private boolean validScope(String classification, UUID runId) {
+        return "SIMULATION".equals(classification) && runId != null
+                || "OBSERVATION_ONLY".equals(classification) && runId == null;
     }
 
     private String sha256(String value) {

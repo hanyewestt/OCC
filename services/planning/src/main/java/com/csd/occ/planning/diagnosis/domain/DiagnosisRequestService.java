@@ -83,22 +83,22 @@ public class DiagnosisRequestService {
                 || submission.evidenceIds() == null || submission.evidenceIds().isEmpty()
                 || submission.evidenceIds().size() > 100
                 || submission.evidenceIds().stream().anyMatch(java.util.Objects::isNull))
-            throw new UnsupportedEventTypeException("Event submission is not a supported confirmed simulation event");
+            throw new UnsupportedEventTypeException("Event submission is not a supported confirmed event");
 
         if (submission.eventType() == EventType.TRAFFIC_INCIDENT) {
             validateTrafficIncident(submission);
             return;
         }
         if (submission.eventType() != EventType.BUS_BUNCHING || submission.trafficSnapshot() != null
-                || !"SIMULATION".equals(submission.classification()) || submission.demoRunId() == null
+                || !PlanningScope.valid(submission.classification(), submission.demoRunId())
                 || submission.eventSnapshot() == null)
-            throw new UnsupportedEventTypeException("Event submission is not a supported confirmed simulation event");
+            throw new UnsupportedEventTypeException("Event submission is not a supported confirmed event");
 
         BunchingEventFacts event = submission.eventSnapshot();
         if (!submission.eventId().equals(event.eventId())
                 || !submission.disruptionId().equals(event.bunchingEventId())
                 || !submission.classification().equals(event.classification())
-                || !submission.demoRunId().equals(event.demoRunId())
+                || !java.util.Objects.equals(submission.demoRunId(), event.demoRunId())
                 || !submission.detectionRuleVersion().equals(event.detectionRuleVersion())
                 || !"CONFIRMED".equals(event.status()) || event.serviceId() == null
                 || event.monitoredStopCode() == null || event.detectionRuleVersion() == null

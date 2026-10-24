@@ -10,9 +10,9 @@ public final class BunchingEvidenceSupportPolicy {
 
     public ScoredEvidence score(BunchingEventFacts event, RootCauseContext context, ModelOutput output,
                                 Duration lookback, double radiusKm) {
-        boolean validScope = "SIMULATION".equals(event.classification())
-                && "SIMULATION".equals(context.classification())
-                && event.demoRunId() != null && event.demoRunId().equals(context.demoRunId());
+        boolean validScope = PlanningScope.valid(event.classification(), event.demoRunId())
+                && event.classification().equals(context.classification())
+                && java.util.Objects.equals(event.demoRunId(), context.demoRunId());
         if (!validScope) throw new IllegalArgumentException("Simulation evidence provenance does not match event");
         if (!List.of("TRAFFIC_INCIDENT", "UNKNOWN").contains(output.causeCode()))
             throw new IllegalArgumentException("Unsupported cause code");

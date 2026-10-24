@@ -10,6 +10,21 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface DiagnosisRequestRepository extends JpaRepository<DiagnosisRequest, UUID> {
+    @Query(value = """
+            select * from planning.planning_request
+            where event_type = 'BUS_BUNCHING' and input_snapshot is not null
+              and cast(input_snapshot as jsonb) -> 'event' ->> 'classification' = :classification
+              and coalesce(cast(input_snapshot as jsonb) -> 'event' ->> 'demoRunId', '') = :runId
+            order by created_at desc, id
+            """, countQuery = """
+            select count(*) from planning.planning_request
+            where event_type = 'BUS_BUNCHING' and input_snapshot is not null
+              and cast(input_snapshot as jsonb) -> 'event' ->> 'classification' = :classification
+              and coalesce(cast(input_snapshot as jsonb) -> 'event' ->> 'demoRunId', '') = :runId
+            """, nativeQuery = true)
+    org.springframework.data.domain.Page<DiagnosisRequest> findScoped(
+            @Param("classification") String classification, @Param("runId") String runId,
+            org.springframework.data.domain.Pageable pageable);
     @Modifying
     @Query("delete from DiagnosisRequest request where request.status = 'FAILED_TERMINAL' and request.updatedAt < :cutoff and not exists (select attempt from ModelInvocationRecord attempt where attempt.requestId = request.id) and not exists (select result from RootCauseDiagnosisEntity result where result.requestId = request.id)")
     int deleteUnreferencedTerminalBefore(@Param("cutoff") Instant cutoff);

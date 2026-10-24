@@ -26,7 +26,8 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import com.csd.occ.planning.infrastructure.security.PlanningSecurityConfig;
 import com.csd.occ.planning.infrastructure.security.SupabaseRoleConverter;
 
-@WebMvcTest(value = {BunchingRecommendationController.class, RecommendationDecisionController.class}, properties = {
+@WebMvcTest(value = {BunchingRecommendationController.class, RecommendationDecisionController.class,
+        com.csd.occ.planning.diagnosis.api.DiagnosisController.class}, properties = {
         "occ.security.supabase.project-url=https://example.supabase.co",
         "occ.security.supabase.jwks-url=https://example.supabase.co/auth/v1/.well-known/jwks.json",
         "occ.security.supabase.audience=authenticated",
@@ -47,6 +48,12 @@ class BunchingRecommendationControllerTest {
     private RecommendationRecordPort records;
 
     @MockitoBean
+    private com.csd.occ.planning.diagnosis.domain.PlanningScopePort scopes;
+
+    @MockitoBean private com.csd.occ.planning.diagnosis.domain.PlanningScopeService scopeQueries;
+    @MockitoBean private com.csd.occ.planning.diagnosis.domain.DiagnosisQueryService diagnosisQueries;
+
+    @MockitoBean
     private RecommendationDecisionService decisions;
 
     @TestConfiguration(proxyBeanMethods = false)
@@ -59,6 +66,25 @@ class BunchingRecommendationControllerTest {
 
     BunchingRecommendationControllerTest(MockMvcTester mvc) {
         this.mvc = mvc;
+    }
+
+    @Test
+    void diagnosisListRequiresAControllerAndReturnsTheServerSelectedScope() {
+        org.mockito.Mockito.when(scopeQueries.list(0, 50)).thenReturn(
+                new com.csd.occ.planning.diagnosis.domain.ScopedDiagnosisPage("LIVE", null, java.util.List.of(), 0, 50, 0, 0));
+        assertThat(mvc.get().uri("/api/v1/planning/diagnoses").exchange()).hasStatus(401);
+        assertThat(mvc.get().uri("/api/v1/planning/diagnoses").with(user("captain").roles("CAPTAIN")).exchange()).hasStatus(403);
+        assertThat(mvc.get().uri("/api/v1/planning/diagnoses").with(user("controller").roles("CONTROLLER")).exchange())
+                .hasStatusOk().bodyJson().extractingPath("$.mode").isEqualTo("LIVE");
+    }
+
+    @Test
+    void liveSelectionDoesNotReturnSimulationRecommendations() {
+        org.mockito.Mockito.when(scopes.current()).thenReturn(new com.csd.occ.planning.diagnosis.domain.PlanningScope("LIVE", null));
+        assertThat(mvc.get().uri("/api/v1/planning/recommendations/pending").with(user("controller").roles("CONTROLLER")).exchange())
+                .hasStatusOk().bodyJson().extractingPath("$.totalItems").isEqualTo(0);
+        org.mockito.Mockito.verify(records, org.mockito.Mockito.never()).findPendingForRun(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt());
     }
 
     @Test

@@ -21,9 +21,11 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(name = "Planning recommendations")
 public class BunchingRecommendationController {
     private final RecommendationRecordPort records;
+    private final com.csd.occ.planning.diagnosis.domain.PlanningScopePort scopes;
 
-    public BunchingRecommendationController(RecommendationRecordPort records) {
-        this.records = records;
+    public BunchingRecommendationController(RecommendationRecordPort records,
+            com.csd.occ.planning.diagnosis.domain.PlanningScopePort scopes) {
+        this.records = records; this.scopes = scopes;
     }
 
     @GetMapping("/by-disruption-event/{bunchingEventId}")
@@ -42,19 +44,22 @@ public class BunchingRecommendationController {
 
     @GetMapping("/pending")
     @Operation(operationId = "listPendingBunchingRecommendations",
-            summary = "List recommendations awaiting a controller decision")
-    @ApiResponse(responseCode = "200", description = "Pending recommendations returned oldest first")
+            summary = "List recommendations for the active simulation awaiting a controller decision")
+    @ApiResponse(responseCode = "200", description = "Pending recommendations for the selected run; empty in Live mode")
+    @ApiResponse(responseCode = "503", description = "Shared data selection is unavailable")
     public PendingRecommendationPageResponse pending(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
         if (page < 0 || size < 1 || size > 100) {
             throw new IllegalArgumentException("page and size are outside the supported range");
         }
-        List<PendingRecommendationResponse> items = records.findPending(page * size, size).stream()
+        var scope = scopes.current();
+        if (scope.demoRunId() == null) return new PendingRecommendationPageResponse(List.of(), page, size, 0, 0, scope.mode(), scope.demoRunId());
+        List<PendingRecommendationResponse> items = records.findPendingForRun(scope.demoRunId(), page * size, size).stream()
                 .map(PendingRecommendationResponse::from)
                 .toList();
-        long totalItems = records.countPending();
+        long totalItems = records.countPendingForRun(scope.demoRunId());
         int totalPages = totalItems == 0 ? 0 : (int) ((totalItems + size - 1) / size);
-        return new PendingRecommendationPageResponse(items, page, size, totalItems, totalPages);
+        return new PendingRecommendationPageResponse(items, page, size, totalItems, totalPages, scope.mode(), scope.demoRunId());
     }
 }
