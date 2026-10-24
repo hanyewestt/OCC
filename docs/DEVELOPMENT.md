@@ -178,8 +178,9 @@ session and page permission before role content appears. Captain uses the
 `CAPTAIN` claim. Persistent sessions and local-scope sign-out are
 described in [authentication](AUTHENTICATION.md).
 
-`/401` and `/403` are SPA error screens served as HTML with HTTP 200; they do
-not replace API responses. APIs keep their actual 401/403 status and bodies.
+`/401`, `/403` and `/404` are explicit SPA error screens served as HTML with
+HTTP 200, including when authentication is unavailable. They do not replace
+API responses. APIs keep their actual error status and bodies.
 Unknown website URLs return HTTP 404 with a separately built `404.html` that
 reuses the same error layout and needs no auth bootstrap. Missing assets remain
 404s, and internal/management routes remain blocked. Keep the React route list

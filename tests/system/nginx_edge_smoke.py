@@ -48,7 +48,7 @@ def main() -> int:
             raise AssertionError("Unknown website route does not serve the custom 404 artifact")
     print("PASS custom website error page retains HTTP 404")
     for route in ("/", "/login", "/controller", "/controller/disruptions",
-                  "/controller/planning", "/controller/audit", "/captain", "/401", "/403"):
+                  "/controller/planning", "/controller/audit", "/captain", "/401", "/403", "/404"):
         with urllib.request.urlopen(base_url + route, context=ssl._create_unverified_context(), timeout=10) as response:
             if response.read() != html or "text/html" not in response.headers.get("Content-Type", ""):
                 raise AssertionError(f"{route}: response differs from the React entry HTML")
