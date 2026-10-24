@@ -61,6 +61,7 @@ public class BusArrivalService {
             log.warn("Skipping bus-arrival polling because no active bus reference topology is available.");
             return;
         }
+        UUID routePositionPollCycleId = UUID.randomUUID();
         for (PollTarget target : enabledTargets) {
             Instant now = Instant.now(clock);
             String idempotencyKey = target.getSource() + "-" + target.getScopeKey() + "-" + now.getEpochSecond() / 60;
@@ -70,6 +71,7 @@ public class BusArrivalService {
             }
             PollRun run = new PollRun();
             run.setId(UUID.randomUUID());
+            run.setRoutePositionPollCycleId(routePositionPollCycleId);
             run.setSource(target.getSource());
             run.setScopeKey(target.getScopeKey());
             run.setIdempotencyKey(idempotencyKey);

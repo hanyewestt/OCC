@@ -74,7 +74,7 @@ occ:
       default-page-size: ${OCC_INGESTION_TRAFFIC_POLL_PAGE_SIZE:100}
       max-page-size: ${OCC_INGESTION_TRAFFIC_POLL_MAX_PAGE_SIZE:250}
     demo:
-      scenario: ${OCC_INGESTION_DEMO_SCENARIO:route190-bunching-v1}
+      scenario: ${OCC_INGESTION_DEMO_SCENARIO:multi-route-bunching-v2}
       seed: ${OCC_INGESTION_DEMO_SEED:190}
       step-interval: ${OCC_INGESTION_DEMO_STEP_INTERVAL:5s}
       bunching-threshold: ${OCC_INGESTION_DEMO_BUNCHING_THRESHOLD:90s}
@@ -90,3 +90,7 @@ occ:
       stale-after: ${OCC_INGESTION_PACING_STALE_AFTER:180s}
       stream-timeout: ${OCC_INGESTION_PACING_STREAM_TIMEOUT:30m}
       max-subscribers: ${OCC_INGESTION_PACING_MAX_SUBSCRIBERS:200}
+    route-positions:
+      cluster-tolerance-meters: ${OCC_INGESTION_ROUTE_POSITION_CLUSTER_TOLERANCE_M:150}
+      max-poll-age-cycles: ${OCC_INGESTION_ROUTE_POSITION_MAX_POLL_AGE_CYCLES:2}
+      speed-cap-meters-per-second: ${OCC_INGESTION_ROUTE_POSITION_SPEED_CAP_MPS:16.7}

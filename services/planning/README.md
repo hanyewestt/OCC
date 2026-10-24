@@ -18,6 +18,13 @@ users cannot use public Planning routes. The token is a per-peer capability,
 not a Supabase user token; keep its value in the ignored root `.env` or a
 deployment secret store.
 
+Controllers review actionable simulation recommendations through the pending
+queue at `/api/v1/planning/recommendations/pending`. Approving records the AI
+recommendation as accepted. Rejecting requires one to three controller-authored
+bus instructions and a rationale; both are stored with the authenticated
+controller subject. `/api/v1/planning/recommendations/decisions` returns the
+persisted decision history, newest first, for the controller audit screen.
+
 The demo checks `/api/v1/planning/requests/by-event/{eventId}` when a recommendation
 is not yet available. This authenticated lookup reports pending, retryable and
 terminal diagnosis states even if no diagnosis result was created. It defaults
