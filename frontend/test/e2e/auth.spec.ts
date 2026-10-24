@@ -19,6 +19,39 @@ function session(role: string, lifetime = 3600) {
 }
 type Options = { invalidPassword?: boolean; sessionFailure?: boolean; accessFailure?: boolean; refreshFailure?: boolean }
 async function mockAuth(context: BrowserContext, role: string, options: Options = {}) {
+  const stop = (stopCode: string, stopSequence: number) => ({
+    stopCode, roadName: 'Sample Road', description: `Stop ${stopCode}`,
+    latitude: 1.38, longitude: 103.75, stopSequence, distanceKm: stopSequence * 0.2,
+  })
+  const directions = (serviceId: string) => serviceId === '190' ? [
+    { directionId: 1, stops: [stop('A01', 1), stop('B01', 2), stop('C01', 3)] },
+    { directionId: 2, stops: [stop('D01', 1), stop('E01', 2), stop('F01', 3)] },
+  ] : [
+    { directionId: 1, stops: [stop('G01', 1), stop('G02', 2), stop('G03', 3)] },
+    { directionId: 2, stops: [stop('H01', 1), stop('H02', 2), stop('H03', 3)] },
+  ]
+  await context.route('**/api/v1/bus-routes/*', route => {
+    const serviceId = new URL(route.request().url()).pathname.split('/').pop() ?? ''
+    if (!['190', '972'].includes(serviceId)) return route.fulfill({ status: 404 })
+    return route.fulfill({ json: { serviceId, operators: [{ operator: 'SMRT', category: null, directions: directions(serviceId) }] } })
+  })
+  await context.route('**/api/v1/route-positions?*', route => {
+    const serviceId = new URL(route.request().url()).searchParams.get('service') ?? ''
+    return route.fulfill({ json: {
+      serviceId, computedAt: '2026-10-23T04:00:00Z', refreshIntervalSeconds: 60,
+      directions: [
+        { operator: 'SMRT', directionId: 1, routeLengthM: 12_000,
+          buses: serviceId === '190' ? [
+            { order: 1, distanceAlongRouteM: 4_300, uncertaintyM: 70, speedMps: 6.2 },
+            { order: 2, distanceAlongRouteM: 3_500, uncertaintyM: 70, speedMps: 4.2 },
+          ] : [
+            { order: 1, distanceAlongRouteM: 3_300, uncertaintyM: 60, speedMps: 6.4 },
+            { order: 2, distanceAlongRouteM: 2_700, uncertaintyM: 60, speedMps: 6.1 },
+          ] },
+        { operator: 'SMRT', directionId: 2, routeLengthM: 11_000, buses: [] },
+      ],
+    } })
+  })
   await context.route('**/api/v1/bus-stops/*', route => route.fulfill({ json: { description: 'Teck Whye Secondary School', roadName: 'Teck Whye Ave' } }))
   await context.route('**/api/v1/arrivals?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/live-bunching-alerts?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
@@ -27,6 +60,7 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
   await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ status: 204 }))
   await context.route('**/frontend-config', route => route.fulfill({ json: {
     projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
+    controllerRefreshIntervalSeconds: 30, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20,
   } }))
   await context.route('https://example.supabase.co/auth/v1/**', async route => {
     const url = new URL(route.request().url())
@@ -99,6 +133,37 @@ function arrivalEvidence(classification: string, directionId: number) {
     serviceId: '190', stopCode: 'B01', directionId, visitOrder, estimatedArrivalAt: `2026-10-22T01:0${visitOrder}:00Z`,
   })) } })
 }
+
+test('controller keeps live positions on the route strip and shows incidents separately', async ({ page, context }) => {
+  await mockDashboard(context)
+  await login(page)
+  await expect(page.getByRole('heading', { name: 'Live route strip', exact: true })).toBeVisible()
+  await expect(page.getByText('Simulation incident data is shown separately; the strip keeps live position estimates.', { exact: true })).toBeVisible()
+  const service190Direction1 = page.getByRole('group', { name: 'Service 190, direction 1, approximate bus positions and headways' })
+  await expect(service190Direction1.getByText('B01', { exact: true })).toBeVisible()
+  await expect(service190Direction1.locator('tspan').filter({ hasText: /^Stop B01$/ })).toBeVisible()
+  await expect(service190Direction1.getByRole('img', { name: /Estimated bus 1, approximate position/ })).toBeVisible()
+  await expect(page.getByRole('group', { name: /Service 972, direction 1, approximate bus positions/ })
+    .getByRole('img', { name: /Estimated bus 1, approximate position/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Bunching incidents', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Show historical (1)', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /bunching detected at stop/ })).toHaveCount(0)
+  await page.locator('html').evaluate(element => element.classList.add('dark'))
+  expect(await page.locator('html').evaluate(element => getComputedStyle(element).getPropertyValue('--background').trim())).toBe('oklch(0.145 0 0)')
+  await page.screenshot({ path: 'node_modules/.cache/controller-route-strip.png', fullPage: true })
+  await page.locator('section[aria-labelledby="route-strip-title"]').screenshot({ path: 'node_modules/.cache/route-strip-services-190-972.png' })
+  await page.getByRole('button', { name: 'Show historical (1)', exact: true }).click()
+  await expect(page.getByText('Teck Whye Secondary School', { exact: true })).toBeVisible()
+})
+
+test('controller route strip shows inferred live bus positions with uncertainty', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  await login(page)
+  await expect(page.getByRole('heading', { name: 'Live route strip', exact: true })).toBeVisible()
+  await expect(page.getByRole('img', { name: /Estimated bus 1, approximate position.*plus or minus 70 metres/ })).toBeVisible()
+  await expect(page.getByText(/#1→#2 ~2m 34s \(estimated from distance\/speed\)/)).toBeVisible()
+  await expect(page.getByText(/Last updated .* · Refreshes every 30 seconds/)).toBeVisible()
+})
 
 test('bunching predictions preserve slots and reject unrelated or malformed evidence', () => {
   const alert = { eventId: 'event-1', action: 'OPENED', classification: 'SIMULATION', serviceId: '190', stopCode: 'B01', directionId: 1, detectedAt: '2026-10-22T01:00:00Z', evidence: arrivalEvidence('SIMULATION', 1) }

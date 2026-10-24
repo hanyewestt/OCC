@@ -90,3 +90,7 @@ occ:
       stale-after: ${OCC_INGESTION_PACING_STALE_AFTER:180s}
       stream-timeout: ${OCC_INGESTION_PACING_STREAM_TIMEOUT:30m}
       max-subscribers: ${OCC_INGESTION_PACING_MAX_SUBSCRIBERS:200}
+    route-positions:
+      cluster-tolerance-meters: ${OCC_INGESTION_ROUTE_POSITION_CLUSTER_TOLERANCE_M:150}
+      max-poll-age-cycles: ${OCC_INGESTION_ROUTE_POSITION_MAX_POLL_AGE_CYCLES:2}
+      speed-cap-meters-per-second: ${OCC_INGESTION_ROUTE_POSITION_SPEED_CAP_MPS:16.7}

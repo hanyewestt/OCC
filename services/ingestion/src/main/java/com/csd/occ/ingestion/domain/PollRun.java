@@ -26,6 +26,7 @@ public class PollRun {
     private String errorMessage;
     private String classification = "OBSERVATION_ONLY";
     private UUID demoRunId;
+    private UUID routePositionPollCycleId;
 
     // Getters and setters
     public UUID getId() { return id; }
@@ -54,6 +55,8 @@ public class PollRun {
     public void setClassification(String classification) { this.classification = classification; }
     public UUID getDemoRunId() { return demoRunId; }
     public void setDemoRunId(UUID demoRunId) { this.demoRunId = demoRunId; }
+    public UUID getRoutePositionPollCycleId() { return routePositionPollCycleId; }
+    public void setRoutePositionPollCycleId(UUID routePositionPollCycleId) { this.routePositionPollCycleId = routePositionPollCycleId; }
 
     @PrePersist
     void defaultToLiveClassification() {

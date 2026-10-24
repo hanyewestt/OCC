@@ -47,6 +47,7 @@ class GatewayRoutesTest {
         registry.add("OCC_INGESTION_INTERNAL_URL", GatewayRoutesTest::backendUrl);
         registry.add("OCC_DISRUPTION_INTERNAL_URL", GatewayRoutesTest::backendUrl);
         registry.add("OCC_PLANNING_INTERNAL_URL", GatewayRoutesTest::backendUrl);
+        registry.add("OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL", () -> "60s");
         registry.add("SUPABASE_PROJECT_URL", () -> "https://example.supabase.co");
         registry.add("SUPABASE_JWKS_URL", () -> "https://example.supabase.co/auth/v1/.well-known/jwks.json");
         registry.add("SUPABASE_JWT_AUDIENCE", () -> "authenticated");
