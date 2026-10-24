@@ -24,7 +24,7 @@ export function ControllerOverview({ arrivals, loading, page, onPage }: {
   return <section id="arrivals" aria-labelledby="arrivals-title" className="space-y-4">
     <div><h2 id="arrivals-title" className="font-medium">Current bus arrivals</h2><p className="mt-1 text-xs text-muted-foreground">Live feed · arrival times shown in your local time zone.</p></div>
     <DataMessage error={arrivals.error} loading={loading} empty={!data?.items.length}>No current arrivals.</DataMessage>
-    {!!data?.items.length && <div className="rounded-lg border"><Table><TableCaption className="mb-3">Latest fetched records; this view does not update automatically.</TableCaption>
+    {!!data?.items.length && <div className="rounded-lg border"><Table><TableCaption className="mb-3">Latest fetched records; this view refreshes with the controller data.</TableCaption>
       <TableHeader><TableRow><TableHead>Service</TableHead><TableHead>Stop</TableHead><TableHead>Arrival</TableHead><TableHead>Load</TableHead><TableHead>Fetched</TableHead></TableRow></TableHeader>
       <TableBody>{data.items.map(arrival => <TableRow key={arrival.observationId}><TableCell className="font-medium">{arrival.serviceId}</TableCell><TableCell>{arrival.stopCode}</TableCell><TableCell>{timestamp(arrival.estimatedArrivalAt)}</TableCell><TableCell>{arrival.loadCategory ?? '—'}</TableCell><TableCell className="text-muted-foreground">{timestamp(arrival.fetchedAt)}</TableCell></TableRow>)}</TableBody>
     </Table></div>}
