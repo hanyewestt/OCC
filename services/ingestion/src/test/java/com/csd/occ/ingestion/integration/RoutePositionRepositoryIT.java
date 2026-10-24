@@ -3,9 +3,11 @@ package com.csd.occ.ingestion.integration;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.csd.occ.ingestion.infrastructure.persistence.PostgisRoutePositionRepository;
-import java.time.Instant;
+import java.sql.Timestamp;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.UUID;
+import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -33,16 +35,24 @@ class RoutePositionRepositoryIT {
         jdbc = new JdbcTemplate(dataSource);
         jdbc.execute("CREATE EXTENSION IF NOT EXISTS postgis");
         jdbc.execute("CREATE SCHEMA ingestion");
-        jdbc.execute("CREATE TABLE ingestion.reference_dataset_version (id uuid, dataset varchar(40), status varchar(20))");
-        jdbc.execute("CREATE TABLE ingestion.bus_stop (reference_version_id uuid, stop_code varchar(12), location geometry(Point,4326))");
-        jdbc.execute("CREATE TABLE ingestion.bus_route_stop (reference_version_id uuid, service_id varchar(20), operator varchar(40), direction_id smallint, stop_sequence integer, stop_code varchar(12))");
-        jdbc.execute("CREATE TABLE ingestion.bus_arrival_observation (id uuid, raw_observation_id uuid, service_id varchar(20), stop_code varchar(12), direction_id smallint, visit_order smallint, estimated_arrival_at timestamptz, classification varchar(30), latitude numeric(10,7), longitude numeric(10,7), fetched_at timestamptz)");
+        Flyway.configure().dataSource(dataSource).defaultSchema("ingestion").schemas("ingestion")
+                .locations("classpath:db/migration").load().migrate();
         repository = new PostgisRoutePositionRepository(jdbc);
     }
 
     @Test
     void snapsCoordinateToPostgisRouteAndDoesNotGuessASharedStopsDirection() {
-        jdbc.update("INSERT INTO ingestion.reference_dataset_version VALUES (?, 'BUS_TOPOLOGY', 'ACTIVE')", VERSION_ID);
+        Instant now = Instant.parse("2026-10-24T00:00:00Z");
+        UUID pollCycleId = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO ingestion.reference_dataset_version
+                    (id, dataset, version_key, checksum, status, imported_at, activated_at)
+                VALUES (?, 'BUS_TOPOLOGY', 'fixture', ?, 'ACTIVE', ?, ?)
+                """, VERSION_ID, "a".repeat(64), Timestamp.from(now), Timestamp.from(now));
+        jdbc.update("""
+                INSERT INTO ingestion.bus_service (reference_version_id, service_id, operator, category)
+                VALUES (?, '190', 'SMRT', 'TRUNK')
+                """, VERSION_ID);
         insertStop("A", 103.800, 1.300);
         insertStop("B", 103.810, 1.300);
         insertStop("C", 103.820, 1.300);
@@ -51,12 +61,11 @@ class RoutePositionRepositoryIT {
         insertRouteStop(1, 3, "C");
         insertRouteStop(2, 1, "C");
         insertRouteStop(2, 2, "A");
-        Instant now = Instant.now();
         UUID observationId = UUID.randomUUID();
-        jdbc.update("INSERT INTO ingestion.bus_arrival_observation VALUES (?, ?, '190', 'B', null, 1, ?, 'OBSERVATION_ONLY', 1.300, 103.810, ?)",
-                observationId, UUID.randomUUID(), java.sql.Timestamp.from(now.plusSeconds(120)), java.sql.Timestamp.from(now.minusSeconds(5)));
-        jdbc.update("INSERT INTO ingestion.bus_arrival_observation VALUES (?, ?, '190', 'A', null, 1, ?, 'OBSERVATION_ONLY', 1.300, 103.800, ?)",
-                UUID.randomUUID(), UUID.randomUUID(), java.sql.Timestamp.from(now.plusSeconds(180)), java.sql.Timestamp.from(now.minusSeconds(4)));
+        UUID snapshotId = insertObservation(observationId, pollCycleId, "B", 103.810,
+                now.plusSeconds(120), now.minusSeconds(5));
+        insertObservation(UUID.randomUUID(), pollCycleId, "A", 103.800,
+                now.plusSeconds(180), now.minusSeconds(4));
 
         var routes = repository.findRoutesWithObservations("190", now.minusSeconds(120), now);
 
@@ -66,7 +75,8 @@ class RoutePositionRepositoryIT {
         assertThat(direction1.routeLengthM()).isBetween(2_100.0, 2_300.0);
         assertThat(direction1.readings()).hasSize(1);
         assertThat(direction1.readings().getFirst().observationId()).isEqualTo(observationId);
-        assertThat(direction1.readings().getFirst().snapshotId()).isNotNull();
+        assertThat(direction1.readings().getFirst().snapshotId()).isEqualTo(snapshotId);
+        assertThat(direction1.readings().getFirst().pollCycleId()).isEqualTo(pollCycleId);
         assertThat(direction1.readings().getFirst().stopCode()).isEqualTo("B");
         assertThat(direction1.readings().getFirst().stopSequence()).isEqualTo(2);
         assertThat(Math.abs(Duration.between(now.plusSeconds(120),
@@ -77,12 +87,48 @@ class RoutePositionRepositoryIT {
     }
 
     private void insertStop(String code, double longitude, double latitude) {
-        jdbc.update("INSERT INTO ingestion.bus_stop VALUES (?, ?, ST_SetSRID(ST_MakePoint(?, ?),4326))",
+        jdbc.update("""
+                INSERT INTO ingestion.bus_stop (reference_version_id, stop_code, road_name, description, location)
+                VALUES (?, ?, 'Fixture Road', 'Fixture stop', ST_SetSRID(ST_MakePoint(?, ?),4326))
+                """,
                 VERSION_ID, code, longitude, latitude);
     }
 
     private void insertRouteStop(int direction, int sequence, String stopCode) {
-        jdbc.update("INSERT INTO ingestion.bus_route_stop VALUES (?, '190', 'SMRT', ?, ?, ?)",
+        jdbc.update("""
+                INSERT INTO ingestion.bus_route_stop
+                    (reference_version_id, service_id, operator, direction_id, stop_sequence, stop_code)
+                VALUES (?, '190', 'SMRT', ?, ?, ?)
+                """,
                 VERSION_ID, direction, sequence, stopCode);
+    }
+
+    private UUID insertObservation(UUID observationId, UUID pollCycleId, String stopCode, double longitude,
+                                   Instant estimatedArrivalAt, Instant fetchedAt) {
+        UUID pollRunId = UUID.randomUUID();
+        UUID snapshotId = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO ingestion.poll_run
+                    (id, source, scope_key, idempotency_key, started_at, completed_at, outcome,
+                     route_position_poll_cycle_id)
+                VALUES (?, 'DATAMALL', ?, ?, ?, ?, 'SUCCESS', ?)
+                """, pollRunId, "stop:" + stopCode, pollRunId.toString(), Timestamp.from(fetchedAt),
+                Timestamp.from(fetchedAt), pollCycleId);
+        jdbc.update("""
+                INSERT INTO ingestion.raw_observation
+                    (id, poll_run_id, source, source_key, request_parameters, payload, payload_checksum,
+                     fetched_at, ingested_at, http_status)
+                VALUES (?, ?, 'DATAMALL', ?, '{}'::jsonb, '{}'::jsonb, ?, ?, ?, 200)
+                """, snapshotId, pollRunId, "stop:" + stopCode, "b".repeat(64), Timestamp.from(fetchedAt),
+                Timestamp.from(fetchedAt));
+        jdbc.update("""
+                INSERT INTO ingestion.bus_arrival_observation
+                    (id, raw_observation_id, poll_run_id, reference_version_id, service_id, stop_code,
+                     operator, direction_id, visit_order, estimated_arrival_at, classification, latitude,
+                     longitude, fetched_at, ingested_at, record_checksum)
+                VALUES (?, ?, ?, ?, '190', ?, 'SMRT', null, 1, ?, 'OBSERVATION_ONLY', 1.300, ?, ?, ?, ?)
+                """, observationId, snapshotId, pollRunId, VERSION_ID, stopCode, Timestamp.from(estimatedArrivalAt),
+                longitude, Timestamp.from(fetchedAt), Timestamp.from(fetchedAt), "c".repeat(64));
+        return snapshotId;
     }
 }
