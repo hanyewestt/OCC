@@ -232,7 +232,7 @@ test('controller route strip shows inferred live bus positions with uncertainty'
   await expect(page.getByRole('group', { name: /Service 972/ })).toHaveCount(0)
   await expect(page.getByRole('img', { name: /Estimated bus 1, approximate position.*plus or minus 70 metres/ })).toBeVisible()
   await expect(page.getByRole('img', { name: 'Estimated buses 1 and 2: ~2m 34s estimate. Approximate time from position gap divided by estimated speed.', exact: true })).toBeVisible()
-  await expect(page.getByText(/Last updated .* · Refreshes every 30 seconds/)).toBeVisible()
+  await expect(page.getByLabel('Arrivals freshness')).toContainText(/Last successful refresh .* · Refreshes every 30 seconds/)
 })
 
 test('route destination uses all service pages and reports conflicts instead of trusting page zero', async ({ page, context }) => {
@@ -720,6 +720,37 @@ test('recommendation editor keeps edits on API failure and cannot close or submi
 
   await save.click()
   await expect.poll(() => attempts).toBe(2)
+  await expect(editor).toHaveCount(0)
+  await expect(page.getByText('AI recommendation replaced with controller instructions.')).toBeVisible()
+})
+
+test('decision result survives a poll removing the recommendation while saving', async ({ page, context }) => {
+  await page.clock.install()
+  await mockDashboard(context)
+  let saving = false
+  let release!: () => void
+  await context.route('**/api/v1/planning/recommendations/pending?*', route => saving
+    ? route.fulfill({ json: { mode: 'DEMO', demoRunId: 'run-1', items: [], page: 0, totalItems: 0, totalPages: 0 } })
+    : route.fallback())
+  await context.route('**/api/v1/planning/recommendations/recommendation-1/decision', async route => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    saving = true
+    await new Promise<void>(resolve => { release = resolve })
+    await route.fulfill({ json: { recommendationId: 'recommendation-1', action: 'REJECTED' } })
+  })
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
+  await editor.getByLabel('Controller rationale').fill('Keep the submitted decision visible until its response.')
+  await editor.locator('form button[type="submit"]').click()
+  await expect.poll(() => saving).toBe(true)
+  const polled = page.waitForResponse(response => response.url().includes('/recommendations/pending?'))
+  await page.clock.runFor(30000)
+  await polled
+  await expect(editor).toBeVisible()
+  await expect(editor.getByRole('button', { name: 'Saving…', exact: true })).toBeDisabled()
+  release()
   await expect(editor).toHaveCount(0)
   await expect(page.getByText('AI recommendation replaced with controller instructions.')).toBeVisible()
 })
@@ -1531,6 +1562,62 @@ test('controller pending queue filters on the server and can page through all pe
   const managed = page.getByRole('region', { name: 'Managed notices', exact: true })
   await page.getByRole('button', { name: 'Load more managed notices', exact: true }).click()
   await expect(managed.getByRole('heading', { name: notices[1].title, exact: true })).toBeVisible()
+})
+
+test('planning loads later source hazards and resolves an advisory source independently', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const hazard = (id: string) => ({ disruptionId: id, kind: 'FLOOD', status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
+    updatedAt: '2026-10-25T04:00:00Z', facts: { title: id, description: `Description ${id}`, instruction: null, effectiveUntil: null },
+    exposures: [{ busId: 'demo-190-b', serviceId: '190', stopCode: 'B01', stopName: 'Later source stop', stopSequence: 2, basis: 'POINT_PROXIMITY' }], limitations: [] })
+  await context.route('**/api/v1/disruption/hazards?*', route => {
+    const page = Number(new URL(route.request().url()).searchParams.get('page'))
+    return route.fulfill({ json: { items: [hazard(page ? 'later-source' : 'first-source')], page, size: 100, totalElements: 101, feeds: [] } })
+  })
+  await context.route('**/api/v1/disruption/hazards/later-source', route => route.fulfill({ json: hazard('later-source') }))
+  await context.route('**/api/v1/planning/advisories?*', route => route.fulfill({ json: { items: [{
+    id: 'later-advisory', disruptionId: 'later-source', demoRunId: null, busId: 'demo-190-b', status: 'PENDING',
+    candidate: { type: 'BE_CAUTIOUS', parameters: { stopCode: 'B01', stopName: 'Later source stop', stopSequence: 2 }, rationale: 'Source after page zero.' },
+    finalCandidate: null, preview: 'Later advisory', hazardClassification: 'OBSERVATION_ONLY', limitations: [], createdAt: '2026-10-25T04:00:00Z',
+  }], page: 0, totalItems: 1, totalPages: 1 } }))
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await page.getByRole('button', { name: 'Edit instruction', exact: true }).click()
+  await expect(page.getByLabel('Starting stop').locator('option', { hasText: 'Later source stop' })).toHaveCount(1)
+  await page.getByRole('button', { name: 'Draft notice', exact: true }).click()
+  await expect(page.locator('#notice-source option[value="later-source"]')).toHaveCount(1)
+  await page.getByLabel('Source hazard', { exact: true }).selectOption('later-source')
+  await expect(page.getByLabel('Title', { exact: true })).toHaveValue('later-source')
+})
+
+test('hazard feed freshness keeps same-kind source and simulation scopes distinct', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: {
+    items: [], page: 0, size: 100, totalElements: 0, feeds: [
+      { kind: 'FLOOD', source: 'LIVE_API', scope: 'SINGAPORE', classification: 'OBSERVATION_ONLY', demoRunId: null, status: 'FAILED', lastAttemptAt: null, lastSuccessAt: null },
+      { kind: 'FLOOD', source: 'SIMULATION', scope: 'SINGAPORE', classification: 'SIMULATION', demoRunId: 'run-1', status: 'HEALTHY', lastAttemptAt: '2026-10-25T04:00:00Z', lastSuccessAt: '2026-10-25T04:00:00Z' },
+    ],
+  } }))
+  await login(page)
+  await page.getByRole('link', { name: 'Disruptions', exact: true }).click()
+  const health = page.getByRole('group', { name: 'Hazard feed freshness' })
+  await expect(health.getByText(/LIVE API · SINGAPORE · live · failed/i)).toBeVisible()
+  await expect(health.getByText(/SIMULATION · SINGAPORE · simulation · run run-1 · healthy/i)).toBeVisible()
+})
+
+test('scoped freshness retains last successful arrival refresh after failures', async ({ page, context }) => {
+  await page.clock.install()
+  await mockDashboard(context)
+  await login(page)
+  const freshness = page.getByLabel('Arrivals freshness', { exact: true })
+  await expect(freshness).toContainText('Last successful refresh')
+  const before = await freshness.innerText()
+  await context.route('**/api/v1/arrivals?*', route => route.fulfill({ status: 503, json: { detail: 'Unavailable' } }))
+  const failed = page.waitForResponse(response => response.url().includes('/arrivals?') && response.status() === 503)
+  await page.clock.runFor(30000)
+  await failed
+  await expect(freshness).toHaveText(before)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await expect(page.getByLabel('Recommendations freshness', { exact: true })).toContainText('Last successful refresh')
 })
 
 test('controller names an empty filtered hazard list', async ({ page, context }) => {

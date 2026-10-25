@@ -9,7 +9,7 @@ import { ControllerOverview, ControllerDisruptions, ControllerAudit } from '@/pa
 import { ControllerRouteStrip } from '@/pages/ControllerRouteStrip'
 import { ControllerPlanning } from '@/pages/ControllerPlanning'
 import { ControllerAdvisories } from '@/pages/ControllerAdvisories'
-import { formatSgtTime } from '@/lib/time'
+import { formatSgtDateTime } from '@/lib/time'
 import { usePagedCollection } from '@/lib/paged-collection'
 
 export type Resource<T> = { data: T | null; error: string }
@@ -96,7 +96,6 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const [routePositions, setRoutePositions] = useState<Resource<RoutePositions[]>>(empty)
   const [run, setRun] = useState<Resource<DemoRun>>(empty)
   const [loaded, setLoaded] = useState('')
-  const [lastUpdated, setLastUpdated] = useState('')
   const [switching, setSwitching] = useState(false)
   const [modeError, setModeError] = useState('')
   const modeRequestRef = useRef<AbortController | null>(null)
@@ -210,7 +209,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       if (signal.aborted) return
       if (live) { setRouteArrivals(live.routeArrivals); setRoutePositions(live.positions) }
       setRun(previous => nextRun.error && previous.data ? { ...previous, error: nextRun.error } : nextRun)
-      setRouteStops(nextRouteStops); setLastUpdated(new Date().toISOString())
+      setRouteStops(nextRouteStops)
       setLoaded(requestKey)
     })
     return () => controller.abort()
@@ -231,7 +230,6 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         for (const snapshot of live.positions.data ?? []) byService.set(snapshot.serviceId, snapshot)
         return { data: byService.size ? [...byService.values()] : null, error: live.positions.error }
       })
-      setLastUpdated(new Date().toISOString())
     }
     const timer = window.setInterval(() => {
       void refreshAll()
@@ -297,7 +295,9 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
             reloadArrivals()
             setRefresh(value => value + 1)
           }}>{loading ? 'Refreshing…' : 'Refresh'}</Button></div>
-        <p className="text-xs text-muted-foreground">Last updated {formatSgtTime(lastUpdated)} · Refreshes every {controllerRefreshIntervalSeconds} seconds</p>
+        {pathname === '/controller' && <p aria-label="Arrivals freshness" className="text-xs text-muted-foreground">
+          {arrivalCollection.lastSuccessAt ? `Last successful refresh ${formatSgtDateTime(arrivalCollection.lastSuccessAt)}` : 'Arrivals have not refreshed successfully yet'} · Refreshes every {controllerRefreshIntervalSeconds} seconds
+        </p>}
         {run.error && !loading && <p role="alert" className="text-sm text-destructive">{run.error} Simulation state could not be verified.</p>}
         {modeError && <p role="alert" className="text-sm text-destructive">{modeError}</p>}
         {pathname === '/controller' && <>
@@ -314,7 +314,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           </div>
           <ControllerRouteStrip alerts={alertResource} run={run} stops={routeStops} positions={routePositions}
             arrivals={routeArrivals} pollIntervalSeconds={pollIntervalSeconds}
-            incidentGapToleranceSeconds={routeIncidentGapToleranceSeconds} lastUpdated={lastUpdated} loading={loading || alertCollection.isLoading}
+            incidentGapToleranceSeconds={routeIncidentGapToleranceSeconds} lastUpdated={arrivalCollection.lastSuccessAt ?? ''} loading={loading || alertCollection.isLoading}
             fetchStopArrivals={fetchStopArrivals} fetchStopName={fetchStopName} />
           <ControllerOverview collection={arrivalCollection} search={arrivalStopName} onSearch={setArrivalStopName}
             sortBy={arrivalSortBy} sortDirection={arrivalSortDirection} onSort={column => {

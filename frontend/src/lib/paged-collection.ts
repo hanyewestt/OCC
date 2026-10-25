@@ -10,6 +10,7 @@ type CollectionState<T, P> = {
   isLoading: boolean
   isLoadingMore: boolean
   error: unknown
+  lastSuccessAt: string | null
 }
 
 export type PagedCollection<T, P extends PagedResult<T>> = CollectionState<T, P> & {
@@ -21,7 +22,7 @@ export type PagedCollection<T, P extends PagedResult<T>> = CollectionState<T, P>
 
 function emptyState<T, P>(collectionKey: string, isLoading: boolean): CollectionState<T, P> {
   return { collectionKey, items: [], latestPage: null, nextPage: 0, hasMore: false,
-    isLoading, isLoadingMore: false, error: null }
+    isLoading, isLoadingMore: false, error: null, lastSuccessAt: null }
 }
 
 export function usePagedCollection<T, P extends PagedResult<T>>(
@@ -58,7 +59,7 @@ export function usePagedCollection<T, P extends PagedResult<T>>(
       }
       publish({ ...current, collectionKey: key, items: merged, latestPage: response,
         nextPage: page + 1, hasMore: response.items.length > 0 && page + 1 < response.totalPages,
-        isLoading: false, isLoadingMore: false, error: null })
+        isLoading: false, isLoadingMore: false, error: null, lastSuccessAt: new Date().toISOString() })
     } catch (error) {
       if (!controller.signal.aborted && requestGeneration === generation.current && key === latestKey.current) {
         const current = stateRef.current.collectionKey === key ? stateRef.current : emptyState<T, P>(key, false)
@@ -74,7 +75,8 @@ export function usePagedCollection<T, P extends PagedResult<T>>(
     const requestGeneration = ++generation.current
     const controller = new AbortController()
     activeRequest.current = { generation: requestGeneration, controller }
-    publish(emptyState<T, P>(collectionKey, true))
+    const previous = stateRef.current.collectionKey === collectionKey ? stateRef.current : emptyState<T, P>(collectionKey, true)
+    publish({ ...emptyState<T, P>(collectionKey, true), lastSuccessAt: previous.lastSuccessAt })
     void fetchPage(0, requestGeneration, collectionKey, controller)
   }, [collectionKey, fetchPage, publish])
 

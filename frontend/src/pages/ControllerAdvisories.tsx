@@ -85,6 +85,14 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
       throw failure
     }
   }, request => request.requestId)
+  const { items: hazardItems, hasMore: hazardHasMore, isLoading: hazardsLoading, isLoadingMore: hazardsLoadingMore,
+    error: hazardError, loadNext: loadNextHazard } = hazards
+
+  useEffect(() => {
+    if (!edit || hazardItems.some(hazard => hazard.disruptionId === edit.advisory.disruptionId) ||
+      hazardsLoading || hazardsLoadingMore || hazardError !== null || !hazardHasMore) return
+    loadNextHazard()
+  }, [edit, hazardError, hazardHasMore, hazardsLoading, hazardsLoadingMore, hazardItems, loadNextHazard])
 
   useEffect(() => {
     if (pending) return
@@ -177,7 +185,8 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
       <div role="group" aria-label="Hazard feed freshness" className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
         <span className="font-medium">Feed freshness</span>
         {!hazards.latestPage?.feeds?.length ? <span>Feed status unavailable.</span> : hazards.latestPage.feeds.map(feed =>
-          <span key={feed.kind}>{feed.kind.replace('_', ' ')} · {feed.status.toLowerCase()}
+          <span key={[feed.kind, feed.source, feed.scope, feed.classification, feed.demoRunId ?? 'none'].join(':')}>
+            {feed.kind.replaceAll('_', ' ')} · {feed.source.replaceAll('_', ' ')} · {feed.scope.replaceAll('_', ' ')} · {dataClassificationLabel(feed.classification)}{feed.demoRunId ? ` · run ${feed.demoRunId}` : ''} · {feed.status.toLowerCase()}
             {feed.lastSuccessAt ? ` · last success ${formatSgtDateTime(feed.lastSuccessAt)}` : ''}</span>)}
       </div>
       <div className="max-w-xs space-y-2"><Label htmlFor="hazard-kind">Hazard type</Label><select id="hazard-kind" value={kind} onChange={e => setKind(e.target.value)} className="h-9 w-full rounded-md border bg-background px-3 text-sm">
@@ -278,7 +287,9 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
         <div className="space-y-2"><Label htmlFor="notice-source">Source hazard</Label><select id="notice-source" required className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={draft.disruptionId} disabled={!!draft.previousId} onChange={e => {
           const source = hazards.items.find(h => h.disruptionId === e.target.value)
           updateDraft({ ...draft, disruptionId: e.target.value, title: source?.facts.title ?? '', message: [source?.facts.description, source?.facts.instruction].filter(Boolean).join('\n') })
-        }}><option value="">Select a hazard</option>{hazards.items.map(h => <option key={h.disruptionId} value={h.disruptionId}>{h.facts.title} · {dataClassificationLabel(h.classification)}</option>)}</select></div>
+        }}><option value="">Select a hazard</option>{hazards.items.map(h => <option key={h.disruptionId} value={h.disruptionId}>{h.facts.title} · {dataClassificationLabel(h.classification)}</option>)}</select>
+        <PagedCollectionControls label="source hazards" hasItems={!!hazards.items.length} hasMore={hazards.hasMore}
+          isLoadingMore={hazards.isLoadingMore} error={hazards.error} reload={hazards.reload} loadNext={hazards.loadNext} /></div>
         <Button type="button" variant="outline" disabled={pending || !draft.disruptionId || hazards.items.find(h => h.disruptionId === draft.disruptionId)?.status === 'CLEARED'} onClick={() => void suggestNotice()}>Suggest passenger wording</Button>
         <div className="space-y-2"><Label htmlFor="notice-title">Title</Label><Input id="notice-title" required maxLength={160} value={draft.title} onChange={e => updateDraft({ ...draft, title: e.target.value })} /></div>
         <div className="space-y-2"><Label htmlFor="notice-message">Passenger message</Label><textarea id="notice-message" required maxLength={2000} rows={4} className="w-full rounded-md border bg-background p-3 text-sm" value={draft.message} onChange={e => updateDraft({ ...draft, message: e.target.value })} /></div>

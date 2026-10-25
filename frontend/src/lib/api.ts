@@ -44,7 +44,8 @@ export function homeFor(role: Identity['role']): string | null {
   return role === 'CONTROLLER' ? '/controller' : role === 'CAPTAIN' ? '/captain' : null
 }
 
-export type HazardFeedHealth = { kind: string; status: 'UNKNOWN' | 'HEALTHY' | 'STALE' | 'DEGRADED' | 'FAILED'; lastAttemptAt: string | null; lastSuccessAt: string | null }
+export type HazardFeedHealth = { kind: string; source: string; scope: string; classification: string; demoRunId: string | null;
+  status: 'UNKNOWN' | 'HEALTHY' | 'STALE' | 'DEGRADED' | 'FAILED'; lastAttemptAt: string | null; lastSuccessAt: string | null }
 export type PageResult<T> = { items: T[]; page: number; totalItems: number; totalPages: number; serverTime?: string; feeds?: HazardFeedHealth[] }
 export type Arrival = {
   observationId: string; serviceId: string; stopCode: string; operator: string
