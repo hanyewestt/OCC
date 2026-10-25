@@ -90,7 +90,13 @@ export type Recommendation = {
 }
 export type RecommendationExplanation = {
   rationale: string; likelyCause: string; diagnosisConfidence: number | null
-  tradeOffs: string[]; limitations: string[]
+  tradeOffs: string[]; limitations: string[]; evidenceDetails?: DiagnosisEvidenceDetail[]
+}
+export type DiagnosisEvidenceDetail = {
+  evidenceId: string; incidentType: string; message: string
+  reportTime: string | null; fetchedAt: string | null; firstConfirmedAt: string | null
+  secondsBeforeFirstConfirmed: number | null; distanceMetersFromSuppliedBusPosition: number | null
+  busPositionEvidenceId: string | null; monitoredStopCode: string | null
 }
 export type RecommendationImpact = {
   headwayBeforeSeconds: number; headwayAfterSeconds: number
@@ -158,8 +164,9 @@ export async function enrichBunchingStops(alerts: BunchingAlert[], token: string
 
 export type PlanningDiagnosis = {
   requestId: string; eventId: string; diagnosisId: string | null; classification: string; demoRunId: string | null
-  serviceId: string; directionId: number; stopCode: string; status: string; likelyCause: string | null
-  confidence: number | null; limitations: string[]; failureCode: string | null; policyOutcome: string | null; createdAt: string
+  serviceId: string | null; directionId: number | null; stopCode: string | null; status: string; likelyCause: string | null
+  confidence: number | null; limitations: string[]; evidenceDetails?: DiagnosisEvidenceDetail[]
+  failureCode: string | null; policyOutcome: string | null; createdAt: string
 }
 export type PlanningDiagnosisPage = PageResult<PlanningDiagnosis> & { mode: 'LIVE' | 'DEMO'; demoRunId: string | null }
 export type PlanningHazardRequest = {

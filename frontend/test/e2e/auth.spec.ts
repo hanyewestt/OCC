@@ -556,6 +556,56 @@ test('controller handles conflicting decisions by retrieving the saved result', 
   await expect(page.getByText(/already has a decision/)).toBeVisible()
 })
 
+test('controller sees concise diagnosis summaries and source facts in the evidence disclosure', async ({ page, context }) => {
+  await mockDashboard(context)
+  const likelyCause = 'Possible contributor: Vehicle Breakdown. The provider reported: Breakdown near Teck Whye Avenue.'
+  const evidenceDetails = [{ evidenceId: 'traffic-incident:4b61cb14-7a2a-4ebd-8245-7e65eec5d23c',
+    incidentType: 'Vehicle Breakdown', message: 'Breakdown near Teck Whye Avenue',
+    reportTime: '2026-10-25T07:05:31.590871Z', fetchedAt: '2026-10-25T07:05:32Z',
+    firstConfirmedAt: '2026-10-25T07:05:31.590871Z', secondsBeforeFirstConfirmed: 0,
+    distanceMetersFromSuppliedBusPosition: 1807, busPositionEvidenceId: 'bus-arrival:077f6b4f-4da2-41dd-bd85-8740a9244f7c',
+    monitoredStopCode: '44251' },
+    { evidenceId: 'traffic-incident:missing-confirmation', incidentType: 'Road obstruction',
+      message: 'Road obstruction reported', reportTime: '2026-10-25T07:04:00Z', fetchedAt: '2026-10-25T07:05:32Z',
+      firstConfirmedAt: null, secondsBeforeFirstConfirmed: null, distanceMetersFromSuppliedBusPosition: null,
+      busPositionEvidenceId: null, monitoredStopCode: '44251' },
+    { evidenceId: 'traffic-incident:subsecond-report', incidentType: 'Road works',
+      message: 'Road works reported', reportTime: '2026-10-25T07:05:31.090871Z', fetchedAt: '2026-10-25T07:05:32Z',
+      firstConfirmedAt: '2026-10-25T07:05:31.590871Z', secondsBeforeFirstConfirmed: 0,
+      distanceMetersFromSuppliedBusPosition: null, busPositionEvidenceId: null, monitoredStopCode: '44251' }]
+  await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: { mode: 'DEMO', demoRunId: 'run-1', items: [{
+    requestId: 'request-1', eventId: 'event-1', diagnosisId: 'diagnosis-1', classification: 'SIMULATION', demoRunId: 'run-1',
+    serviceId: '190', directionId: 1, stopCode: '44251', status: 'COMPLETED', likelyCause, confidence: null,
+    limitations: ['Road and direction relevance have not been verified; proximity does not establish impact or causation.'],
+    evidenceDetails, failureCode: null, policyOutcome: null, createdAt: '2026-10-25T07:05:31.590871Z',
+  }], page: 0, size: 100, totalItems: 1, totalPages: 1 } }))
+  await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: { mode: 'DEMO', demoRunId: 'run-1', items: [{
+    recommendationId: 'recommendation-1', classification: 'SIMULATION', status: 'RECOMMENDED',
+    serviceId: '190', directionId: 1, monitoredStopCode: '44251', detectedAt: '2026-10-25T07:05:31Z', createdAt: '2026-10-25T07:06:00Z',
+    expectedHeadwaySeconds: 180, observedHeadwaySeconds: 60, mitigationType: 'HOLD', targetBusReference: 'SAMPLE-BUS',
+    affectedBusReferences: ['SAMPLE-BUS'], controlStopCode: '44251', adjustmentSeconds: 120,
+    explanation: { rationale: 'Restore spacing between buses.', likelyCause, diagnosisConfidence: null,
+      tradeOffs: ['Adds waiting time.'], limitations: ['Simulation only.'], evidenceDetails },
+    expectedImpact: { headwayBeforeSeconds: 60, headwayAfterSeconds: 180, queueBeforePassengers: 20, queueAfterPassengers: 12,
+      passengerMinutesBefore: 40, passengerMinutesAfter: 28 },
+  }], page: 0, size: 50, totalItems: 1, totalPages: 1 } }))
+
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  const diagnoses = page.getByRole('region', { name: 'Root-cause diagnoses', exact: true })
+  await expect(diagnoses.getByText(likelyCause)).toBeVisible()
+  await diagnoses.getByText('Evidence and limitations').click()
+  await expect(diagnoses.getByText(/same time as the first confirmed irregularity/).first()).toBeVisible()
+  await expect(diagnoses.getByText(/but timing relative to the first confirmed irregularity is unavailable/).first()).toBeVisible()
+  await expect(diagnoses.getByText(/Reported less than 1 second before the first confirmed irregularity/).first()).toBeVisible()
+  await expect(diagnoses.getByText(/1,807 m from the supplied bus position near stop 44251/).first()).toBeVisible()
+
+  const recommendationEvidence = page.locator('details').filter({ hasText: 'Supporting incident evidence' })
+  await expect(page.getByText(likelyCause).nth(1)).toBeVisible()
+  await page.getByText('Evidence and limitations').nth(1).click()
+  await expect(recommendationEvidence.getByText(/Bus-position evidence/)).toBeVisible()
+})
+
 test('dirty controller recommendation editor confirms dismissal and discards only explicitly', async ({ page, context }) => {
   await mockDashboard(context)
   let decisionRequests = 0
