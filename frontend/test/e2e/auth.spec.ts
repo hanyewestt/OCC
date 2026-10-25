@@ -598,6 +598,10 @@ test('controller sees concise diagnosis summaries and source facts in the eviden
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   const diagnoses = page.getByRole('region', { name: 'Root-cause diagnoses', exact: true })
   await expect(diagnoses.getByText(likelyCause)).toBeVisible()
+  await expect.poll(async () => {
+    const [viewport, card] = await Promise.all([diagnoses.locator('[data-slot="scroll-area-viewport"]').boundingBox(), diagnoses.locator('[data-slot="card"]').first().boundingBox()])
+    return viewport !== null && card !== null && card.x > viewport.x && card.y > viewport.y
+  }).toBe(true)
   await diagnoses.getByText('Evidence and limitations').click()
   await expect(diagnoses.getByText(/same time as the first confirmed irregularity/).first()).toBeVisible()
   await expect(diagnoses.getByText(/but timing relative to the first confirmed irregularity is unavailable/).first()).toBeVisible()
