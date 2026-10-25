@@ -72,8 +72,8 @@ export function App() {
     content = <Navigate to={home!} replace />
   } else if (access.key !== key) {
     content = <p role="status" className="text-sm text-muted-foreground">Verifying access…</p>
-  } else if (home === '/controller' && !publicConfig) {
-    content = <p role="status" className="text-sm text-muted-foreground">Loading controller settings…</p>
+  } else if ((home === '/controller' || home === '/captain') && !publicConfig) {
+    content = <p role="status" className="text-sm text-muted-foreground">Loading application settings…</p>
   } else if (access.status === 'error') {
     content = <div className="space-y-4"><p role="alert">Unable to verify access.</p>
       <Button onClick={() => setRetry(value => value + 1)}>Try again</Button>
@@ -84,7 +84,8 @@ export function App() {
       controllerRefreshIntervalSeconds={publicConfig!.controllerRefreshIntervalSeconds}
       ingestionPollIntervalSeconds={publicConfig!.ingestionPollIntervalSeconds}
       routeIncidentGapToleranceSeconds={publicConfig!.routeIncidentGapToleranceSeconds} /></main>
-    content = <CaptainPage email={email} />
+    content = <CaptainPage email={email} token={token!}
+      refreshIntervalSeconds={publicConfig!.controllerRefreshIntervalSeconds} />
   }
   return <main className="flex min-h-svh items-center justify-center px-5 py-12">{content}</main>
 }

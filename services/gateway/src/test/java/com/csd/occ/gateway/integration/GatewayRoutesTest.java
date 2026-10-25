@@ -102,6 +102,34 @@ class GatewayRoutesTest {
     }
 
     @Test
+    void captainsReachMockObuInstructionsOnPlanning() {
+        ResponseEntity<String> response = get(
+                "/api/v1/planning/bus-instructions?busReference=SBS5898U", "CAPTAIN");
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(lastBackendPath.get()).isEqualTo("/api/v1/planning/bus-instructions");
+
+        lastBackendPath.set(null);
+        assertThat(get("/api/v1/planning/recommendations/pending", "CAPTAIN")
+                .getStatusCode().value()).isEqualTo(403);
+        assertThat(lastBackendPath.get()).isNull();
+    }
+
+    @Test
+    void captainsAndAdministratorsAcknowledgeMockObuInstructions() {
+        String path = "/api/v1/planning/bus-instructions/17be89f4-e22d-36a7-ac09-ae447f1b3084/acknowledgement";
+
+        assertThat(exchange(path, "CAPTAIN", HttpMethod.POST).getStatusCode().value()).isEqualTo(200);
+        assertThat(lastBackendPath.get()).isEqualTo(path);
+        assertThat(exchange(path, "ADMIN", HttpMethod.POST).getStatusCode().value()).isEqualTo(200);
+
+        lastBackendPath.set(null);
+        assertThat(exchange(path, "CONTROLLER", HttpMethod.POST).getStatusCode().value()).isEqualTo(403);
+        assertThat(exchange(path, "UNASSIGNED", HttpMethod.POST).getStatusCode().value()).isEqualTo(403);
+        assertThat(lastBackendPath.get()).isNull();
+    }
+
+    @Test
     void backendDoesNotRouteDemoPages() {
         lastBackendPath.set(null);
         ResponseEntity<String> response = get("/demo.html", "ADMIN");
@@ -110,10 +138,14 @@ class GatewayRoutesTest {
     }
 
     private ResponseEntity<String> get(String path, String role) {
+        return exchange(path, role, HttpMethod.GET);
+    }
+
+    private ResponseEntity<String> exchange(String path, String role, HttpMethod method) {
         String url = "http://localhost:" + applicationContext.getEnvironment().getProperty("local.server.port") + path;
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(role.toLowerCase());
-        return rest.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+        return rest.exchange(url, method, new HttpEntity<>(headers), String.class);
     }
 
     private static synchronized void startBackend() {

@@ -6,7 +6,10 @@ email/password sign-in, exclusive controller and captain pages, and shared
 session and role access before protected content appears.
 
 The Captain page includes the OBU sample pacing display, scenario controls and
-day/night mode. It uses no live bus data.
+day/night mode. Pacing remains built-in sample data. A separate mock-OBU panel
+polls Planning for controller-issued instructions for simulated bus `SBS5898U`
+and gives the captain one confirmation button. The first acknowledgement stores
+the authenticated subject and server time; a page refresh retains that state.
 
 The Controller dashboard includes simulation controls and bunching detections.
 Planning & mitigation presents every pending recommendation in an oldest-first

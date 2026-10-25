@@ -57,6 +57,9 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
   await context.route('**/api/v1/live-bunching-alerts?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/planning/recommendations/decisions?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
+  await context.route('**/api/v1/planning/bus-instructions?*', route => route.fulfill({ json: {
+    items: [], page: 0, size: 20, totalItems: 0, totalPages: 0,
+  } }))
   await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ status: 204 }))
   await context.route('**/frontend-config', route => route.fulfill({ json: {
     projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
@@ -514,7 +517,7 @@ test('pacing treats threshold boundaries and missing measurements consistently',
   expect(initialScenario('?scenario=invalid')).toBe('bunched')
 })
 
-test('captain pacing updates samples and switches scenarios without operational API calls', async ({ page, context }) => {
+test('captain pacing updates samples while only loading its mock OBU instructions', async ({ page, context }) => {
   await mockAuth(context, 'CAPTAIN')
   await page.clock.install()
   const operationalRequests: string[] = []
@@ -540,7 +543,92 @@ test('captain pacing updates samples and switches scenarios without operational 
   await page.getByRole('button', { name: 'No bus behind', exact: true }).click()
   await expect(behind.getByText('--:--', { exact: true })).toBeVisible()
   await expect(behind).toHaveAttribute('data-state', 'unknown')
-  expect(operationalRequests).toEqual([])
+  expect(operationalRequests.length).toBeGreaterThan(0)
+  expect([...new Set(operationalRequests)]).toEqual(['/api/v1/planning/bus-instructions'])
+})
+
+test('captain confirms a controller instruction once and sees the durable status after refresh', async ({ page, context }) => {
+  await mockAuth(context, 'CAPTAIN')
+  let acknowledgementRequests = 0
+  let instruction = {
+    instructionId: '17be89f4-e22d-36a7-ac09-ae447f1b3084',
+    recommendationId: '0d319a5b-6611-49cc-8462-b5c64f65d122',
+    busReference: 'SBS5898U', instruction: 'Hold for 120 seconds at stop 44241.', status: 'SENT',
+    sentAt: '2026-10-24T04:00:00Z', acknowledgedAt: null as string | null, acknowledgedBy: null as string | null,
+  }
+  await context.route('**/api/v1/planning/bus-instructions?*', route => route.fulfill({ json: {
+    items: [instruction], page: 0, size: 20, totalItems: 1, totalPages: 1,
+  } }))
+  await context.route('**/api/v1/planning/bus-instructions/*/acknowledgement', route => {
+    acknowledgementRequests += 1
+    expect(route.request().method()).toBe('POST')
+    expect(route.request().headers().authorization).toMatch(/^Bearer /)
+    instruction = { ...instruction, status: 'ACKNOWLEDGED',
+      acknowledgedAt: '2026-10-24T04:01:00Z', acknowledgedBy: userId }
+    return route.fulfill({ json: instruction })
+  })
+
+  await login(page)
+  await expect(page.getByRole('heading', { name: 'Controller instruction', exact: true })).toBeVisible()
+  await expect(page.getByText('Hold for 120 seconds at stop 44241.', { exact: true })).toBeVisible()
+  await expect(page.getByText('Bus SBS5898U', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Confirm instruction', exact: true }).click()
+  await expect(page.getByText(/Instruction confirmed at/)).toBeVisible()
+  expect(acknowledgementRequests).toBe(1)
+
+  await page.reload()
+  await expect(page.getByText(/Instruction confirmed at/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Confirm instruction', exact: true })).toHaveCount(0)
+  expect(acknowledgementRequests).toBe(1)
+})
+
+test('captain can retry a failed instruction confirmation', async ({ page, context }) => {
+  await mockAuth(context, 'CAPTAIN')
+  const sent = {
+    instructionId: '17be89f4-e22d-36a7-ac09-ae447f1b3084',
+    recommendationId: '0d319a5b-6611-49cc-8462-b5c64f65d122',
+    busReference: 'SBS5898U', instruction: 'Hold for 120 seconds at stop 44241.', status: 'SENT',
+    sentAt: '2026-10-24T04:00:00Z', acknowledgedAt: null, acknowledgedBy: null,
+  }
+  let attempts = 0
+  await context.route('**/api/v1/planning/bus-instructions?*', route => route.fulfill({ json: {
+    items: [sent], page: 0, size: 20, totalItems: 1, totalPages: 1,
+  } }))
+  await context.route('**/api/v1/planning/bus-instructions/*/acknowledgement', route => {
+    attempts += 1
+    return attempts === 1 ? route.fulfill({ status: 503 }) : route.fulfill({ json: {
+      ...sent, status: 'ACKNOWLEDGED', acknowledgedAt: '2026-10-24T04:01:00Z', acknowledgedBy: userId,
+    } })
+  })
+
+  await login(page)
+  await page.getByRole('button', { name: 'Confirm instruction', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Unable to confirm')
+  await page.getByRole('button', { name: 'Try confirmation again', exact: true }).click()
+  await expect(page.getByText(/Instruction confirmed at/)).toBeVisible()
+  expect(attempts).toBe(2)
+})
+
+test('captain polling discovers a newly issued instruction', async ({ page, context }) => {
+  await mockAuth(context, 'CAPTAIN')
+  await page.clock.install()
+  let available = false
+  const instruction = {
+    instructionId: '17be89f4-e22d-36a7-ac09-ae447f1b3084',
+    recommendationId: '0d319a5b-6611-49cc-8462-b5c64f65d122',
+    busReference: 'SBS5898U', instruction: 'Hold for 120 seconds at stop 44241.', status: 'SENT',
+    sentAt: '2026-10-24T04:00:00Z', acknowledgedAt: null, acknowledgedBy: null,
+  }
+  await context.route('**/api/v1/planning/bus-instructions?*', route => route.fulfill({ json: {
+    items: available ? [instruction] : [], page: 0, size: 20,
+    totalItems: available ? 1 : 0, totalPages: available ? 1 : 0,
+  } }))
+
+  await login(page)
+  await expect(page.getByText('No controller instruction for this bus.', { exact: true })).toBeVisible()
+  available = true
+  await page.clock.fastForward(30_000)
+  await expect(page.getByText('Hold for 120 seconds at stop 44241.', { exact: true })).toBeVisible()
 })
 
 test('consecutive skipped stops form one group in route order', () => {

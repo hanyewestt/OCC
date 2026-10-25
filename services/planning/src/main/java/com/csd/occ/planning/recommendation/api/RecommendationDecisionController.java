@@ -42,7 +42,7 @@ public class RecommendationDecisionController {
     @PostMapping("/{recommendationId}/decision")
     @Operation(operationId = "decideBunchingRecommendation",
             summary = "Approve or replace a recommendation",
-            description = "The first decision is stored with the authenticated controller subject. A rejection requires one to three replacement bus instructions and a rationale. Repeating the same complete decision is safe; changing it returns 409. A decision records controller intent only and does not dispatch a bus instruction.")
+            description = "The first decision is stored with the authenticated controller subject and atomically publishes SENT instructions for the mock OBU. A rejection requires one to three replacement bus instructions and a rationale. Repeating the same complete decision is safe; changing it returns 409.")
     @ApiResponse(responseCode = "200", description = "Decision stored or the same decision replayed")
     @ApiResponse(responseCode = "400", description = "Decision request is invalid")
     @ApiResponse(responseCode = "404", description = "Recommendation not found")

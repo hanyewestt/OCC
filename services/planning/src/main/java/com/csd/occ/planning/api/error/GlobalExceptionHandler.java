@@ -4,6 +4,8 @@ import com.csd.occ.planning.diagnosis.domain.DiagnosisQueryService;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisFailureException;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestService;
 import com.csd.occ.planning.recommendation.domain.IdempotencyConflictException;
+import com.csd.occ.planning.recommendation.domain.BusInstructionAcknowledgementConflictException;
+import com.csd.occ.planning.recommendation.domain.BusInstructionNotFoundException;
 import com.csd.occ.planning.recommendation.domain.RecommendationDecisionService;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
@@ -29,6 +31,20 @@ public class GlobalExceptionHandler {
     ProblemDetail handleRecommendationNotFound(HttpServletRequest request) {
         return problem(HttpStatus.NOT_FOUND, "Recommendation not found",
                 "The requested recommendation does not exist.", "urn:occ:problem:recommendation-not-found", request);
+    }
+
+    @ExceptionHandler(BusInstructionNotFoundException.class)
+    ProblemDetail handleBusInstructionNotFound(HttpServletRequest request) {
+        return problem(HttpStatus.NOT_FOUND, "Bus instruction not found",
+                "The requested bus instruction does not exist.",
+                "urn:occ:problem:bus-instruction-not-found", request);
+    }
+
+    @ExceptionHandler(BusInstructionAcknowledgementConflictException.class)
+    ProblemDetail handleBusInstructionAcknowledgementConflict(HttpServletRequest request) {
+        return problem(HttpStatus.CONFLICT, "Bus instruction already acknowledged",
+                "This instruction was already acknowledged by a different user.",
+                "urn:occ:problem:bus-instruction-acknowledgement-conflict", request);
     }
 
     @ExceptionHandler(RecommendationDecisionService.RecommendationDecisionConflictException.class)

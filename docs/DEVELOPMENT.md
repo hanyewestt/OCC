@@ -122,8 +122,10 @@ Open [the app](http://localhost/login), adjusting the port to `OCC_NGINX_PORT`.
 The [root README](../README.md#pages-and-access) lists the frontend routes.
 
 The OBU pacing display is the CAPTAIN-only `/captain` screen. It uses built-in
-sample gaps; no operational API or live-data polling was added. Day/night mode
-is saved in the `occ-obu-theme` browser preference.
+sample gaps; no live bus-data polling was added. The mock-OBU instruction panel
+polls Planning for simulated bus `SBS5898U` and lets the captain acknowledge the
+newest controller-issued instruction once. Day/night mode is saved in the
+`occ-obu-theme` browser preference.
 
 Use the controller dashboard for simulation controls, bunching detections and
 recommendation review. These workflows use the React app's verified Supabase

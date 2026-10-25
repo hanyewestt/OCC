@@ -7,7 +7,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
-@Schema(description = "Persisted controller decision; approval does not itself dispatch a bus instruction")
+@Schema(description = "Persisted controller decision that publishes instructions for the mock OBU")
 public record RecommendationDecisionResponse(
         UUID recommendationId,
         RecommendationDecisionAction action,

@@ -10,6 +10,8 @@ import com.csd.occ.planning.recommendation.domain.ModelInvocationOutcome;
 import com.csd.occ.planning.recommendation.domain.ModelInvocationProvider;
 import com.csd.occ.planning.recommendation.domain.ModelInvocationRecord;
 import com.csd.occ.planning.recommendation.domain.ModelInvocationRecordPort;
+import com.csd.occ.planning.recommendation.domain.BusInstructionAcknowledgementConflictException;
+import com.csd.occ.planning.recommendation.domain.BusInstructionService;
 import com.csd.occ.planning.recommendation.domain.MitigationCandidate;
 import com.csd.occ.planning.recommendation.domain.ModelTokenUsage;
 import com.csd.occ.planning.recommendation.infrastructure.config.RecommendationAiProperties;
@@ -17,24 +19,32 @@ import com.csd.occ.planning.recommendation.infrastructure.config.RecommendationG
 import com.csd.occ.planning.recommendation.infrastructure.gemini.GeminiMitigationCandidateAdapter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors;
 import org.springframework.test.web.servlet.MockMvc;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -78,6 +88,7 @@ class PlanningRecommendationPersistenceIT {
     @Autowired private MockMvc mvc;
     @Autowired private PlanningRecommendationAdapter planningRecommendations;
     @Autowired private ModelInvocationRecordPort modelInvocations;
+    @Autowired private BusInstructionService busInstructions;
     @Autowired private RecommendationAiProperties aiProperties;
     @Autowired private RecommendationGeminiProperties geminiProperties;
     @Autowired private JsonMapper json;
@@ -86,6 +97,8 @@ class PlanningRecommendationPersistenceIT {
 
     @BeforeEach
     void clearPlanningRecommendationRows() {
+        jdbc.update("DELETE FROM planning.bus_instruction");
+        jdbc.update("DELETE FROM planning.recommendation_decision");
         jdbc.update("DELETE FROM planning.model_invocation_record");
         jdbc.update("DELETE FROM planning.recommendation");
     }
@@ -114,6 +127,137 @@ class PlanningRecommendationPersistenceIT {
         assertThat(response.get("targetBusReference").asText()).isEqualTo("SBS5898U");
         assertThat(response.get("controlStopCode").asText()).isEqualTo("44241");
         assertThat(response.get("expectedImpact").get("headwayAfterSeconds").asInt()).isEqualTo(341);
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "occ.exportOpenapi", matches = "true")
+    void exportsGeneratedPlanningContract() throws Exception {
+        String contract = mvc.perform(get("/v3/api-docs")
+                        .with(request -> {
+                            request.setServerName("localhost");
+                            request.setServerPort(6769);
+                            return request;
+                        })
+                        .with(SecurityMockMvcRequestPostProcessors.jwt()
+                                .jwt(token -> token.subject("admin-subject").claim("occ_role", "ADMIN"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        Path output = Path.of("openapi", "planning.json");
+        Files.createDirectories(output.getParent());
+        Files.writeString(output, contract + System.lineSeparator());
+    }
+
+    @Test
+    void controllerApprovalPublishesInstructionForCaptainMockObu() throws Exception {
+        submit(validRequest());
+
+        mvc.perform(post("/api/v1/planning/recommendations/{recommendationId}/decision", IDEMPOTENCY_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"APPROVED\",\"overrideInstructions\":[]}")
+                        .with(SecurityMockMvcRequestPostProcessors.jwt()
+                                .jwt(token -> token.subject("controller-subject").claim("occ_role", "CONTROLLER"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"))))
+                .andExpect(status().isOk());
+
+        mvc.perform(get("/api/v1/planning/bus-instructions")
+                        .param("busReference", "SBS5898U")
+                        .with(SecurityMockMvcRequestPostProcessors.jwt()
+                                .jwt(token -> token.subject("captain-subject").claim("occ_role", "CAPTAIN"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_CAPTAIN"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalItems").value(1))
+                .andExpect(jsonPath("$.items[0].recommendationId").value(IDEMPOTENCY_KEY))
+                .andExpect(jsonPath("$.items[0].busReference").value("SBS5898U"))
+                .andExpect(jsonPath("$.items[0].instruction")
+                        .value("Hold for 120 seconds at stop 44241."))
+                .andExpect(jsonPath("$.items[0].status").value("SENT"))
+                .andExpect(jsonPath("$.items[0].acknowledgedAt").isEmpty())
+                .andExpect(jsonPath("$.items[0].acknowledgedBy").isEmpty());
+
+        assertThat(jdbc.queryForMap("""
+                SELECT bus_reference, instruction, status, sent_at, acknowledged_at, acknowledged_by
+                  FROM planning.bus_instruction
+                 WHERE recommendation_id = ?::uuid
+                """, IDEMPOTENCY_KEY))
+                .containsEntry("bus_reference", "SBS5898U")
+                .containsEntry("instruction", "Hold for 120 seconds at stop 44241.")
+                .containsEntry("status", "SENT")
+                .containsEntry("acknowledged_at", null)
+                .containsEntry("acknowledged_by", null)
+                .satisfies(row -> assertThat(row.get("sent_at")).isNotNull());
+
+        UUID instructionId = jdbc.queryForObject("""
+                SELECT instruction_id
+                  FROM planning.bus_instruction
+                 WHERE recommendation_id = ?::uuid
+                """, UUID.class, IDEMPOTENCY_KEY);
+
+        mvc.perform(post("/api/v1/planning/bus-instructions/{instructionId}/acknowledgement", instructionId)
+                        .with(SecurityMockMvcRequestPostProcessors.jwt()
+                                .jwt(token -> token.subject("captain-subject").claim("occ_role", "CAPTAIN"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_CAPTAIN"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACKNOWLEDGED"))
+                .andExpect(jsonPath("$.acknowledgedBy").value("captain-subject"))
+                .andExpect(jsonPath("$.acknowledgedAt").isNotEmpty());
+
+        mvc.perform(post("/api/v1/planning/bus-instructions/{instructionId}/acknowledgement", instructionId)
+                        .with(SecurityMockMvcRequestPostProcessors.jwt()
+                                .jwt(token -> token.subject("captain-subject").claim("occ_role", "CAPTAIN"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_CAPTAIN"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.acknowledgedBy").value("captain-subject"));
+
+        mvc.perform(post("/api/v1/planning/bus-instructions/{instructionId}/acknowledgement", instructionId)
+                        .with(SecurityMockMvcRequestPostProcessors.jwt()
+                                .jwt(token -> token.subject("second-captain").claim("occ_role", "CAPTAIN"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_CAPTAIN"))))
+                .andExpect(status().isConflict());
+
+        assertThat(jdbc.queryForMap("""
+                SELECT status, acknowledged_at, acknowledged_by
+                  FROM planning.bus_instruction
+                 WHERE instruction_id = ?
+                """, instructionId))
+                .containsEntry("status", "ACKNOWLEDGED")
+                .containsEntry("acknowledged_by", "captain-subject")
+                .satisfies(row -> assertThat(row.get("acknowledged_at")).isNotNull());
+    }
+
+    @Test
+    void concurrentAcknowledgementsPreserveTheFirstCaptain() throws Exception {
+        submit(validRequest());
+        mvc.perform(post("/api/v1/planning/recommendations/{recommendationId}/decision", IDEMPOTENCY_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"APPROVED\",\"overrideInstructions\":[]}")
+                        .with(SecurityMockMvcRequestPostProcessors.jwt()
+                                .jwt(token -> token.subject("controller-subject").claim("occ_role", "CONTROLLER"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"))))
+                .andExpect(status().isOk());
+        UUID instructionId = jdbc.queryForObject(
+                "SELECT instruction_id FROM planning.bus_instruction WHERE recommendation_id = ?::uuid",
+                UUID.class, IDEMPOTENCY_KEY);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> acknowledgeAfterSignal(instructionId, "first-captain", ready, start));
+            var second = executor.submit(() -> acknowledgeAfterSignal(instructionId, "second-captain", ready, start));
+            ready.await();
+            start.countDown();
+
+            List<String> outcomes = List.of(first.get(), second.get());
+            assertThat(outcomes).contains("CONFLICT");
+            String winner = outcomes.stream().filter(value -> !value.equals("CONFLICT")).findFirst().orElseThrow();
+            assertThat(jdbc.queryForMap("""
+                    SELECT status, acknowledged_by
+                      FROM planning.bus_instruction
+                     WHERE instruction_id = ?
+                    """, instructionId))
+                    .containsEntry("status", "ACKNOWLEDGED")
+                    .containsEntry("acknowledged_by", winner);
+        }
     }
 
     @Test
@@ -238,6 +382,17 @@ class PlanningRecommendationPersistenceIT {
 
     private com.csd.occ.planning.diagnosis.domain.RecommendationSubmissionPort.DeliveryResult submit(String request) {
         return planningRecommendations.submit(UUID.fromString(IDEMPOTENCY_KEY), request);
+    }
+
+    private String acknowledgeAfterSignal(UUID instructionId, String actor, CountDownLatch ready,
+            CountDownLatch start) throws InterruptedException {
+        ready.countDown();
+        start.await();
+        try {
+            return busInstructions.acknowledge(instructionId, actor).acknowledgedBy().orElseThrow();
+        } catch (BusInstructionAcknowledgementConflictException exception) {
+            return "CONFLICT";
+        }
     }
 
     private String validRequest() throws IOException {

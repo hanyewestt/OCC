@@ -1,12 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { signOut } from '@/lib/auth'
+import { acknowledgeBusInstruction, ApiError, getBusInstructions, type BusInstruction } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { classify, clockText, deltaText, gapFlex, initialScenario, sampleGaps,
   scenarios, SAMPLE_REFRESH_MS, SAMPLE_TARGET_SECONDS, type GapState, type Scenario } from '@/lib/obu-pacing'
 import { groupStops, sampleUpcomingStops, skipLabel } from '@/lib/skip-stops'
+
+const DEMO_BUS_REFERENCE = 'SBS5898U'
 
 const states: Record<GapState, { symbol: string; label: string; color: string }> = {
   close: { symbol: '▲', label: 'TOO CLOSE', color: 'text-red-700 dark:text-red-400' },
@@ -74,7 +77,125 @@ function UpcomingStops() {
   </section>
 }
 
-export function CaptainPage({ email }: { email: string }) {
+function instructionTime(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? 'Unknown time' : new Intl.DateTimeFormat(undefined, {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).format(date)
+}
+
+function InstructionPanel({ token, refreshIntervalSeconds }: { token: string; refreshIntervalSeconds: number }) {
+  const [instruction, setInstruction] = useState<BusInstruction | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [confirmationError, setConfirmationError] = useState('')
+  const [confirming, setConfirming] = useState(false)
+  const [refreshRevision, setRefreshRevision] = useState(0)
+  const acknowledgementRequest = useRef<AbortController | null>(null)
+
+  const handleLoadError = useCallback((error: unknown, signal: AbortSignal) => {
+    if (signal.aborted) return
+    if (error instanceof ApiError && error.status === 401) void signOut(error.message)
+    else setLoadError(error instanceof ApiError && error.status === 403
+      ? 'This account cannot read bus instructions.'
+      : 'Unable to load controller instructions. Try again.')
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    let request: AbortController | null = null
+    let inFlight = false
+    const refresh = async () => {
+      if (inFlight) return
+      inFlight = true
+      request = new AbortController()
+      try {
+        const page = await getBusInstructions(DEMO_BUS_REFERENCE, token, request.signal)
+        if (!active || request.signal.aborted) return
+        const latest = page?.items[0] ?? null
+        setInstruction(current => current && latest && current.instructionId === latest.instructionId &&
+          current.status === 'ACKNOWLEDGED' && latest.status === 'SENT' ? current : latest)
+        setLoadError('')
+        setConfirmationError('')
+      } catch (error) {
+        handleLoadError(error, request.signal)
+      } finally {
+        if (active) setLoading(false)
+        inFlight = false
+      }
+    }
+    void refresh()
+    const timer = window.setInterval(() => void refresh(), refreshIntervalSeconds * 1000)
+    return () => {
+      active = false
+      request?.abort()
+      window.clearInterval(timer)
+    }
+  }, [handleLoadError, refreshIntervalSeconds, refreshRevision, token])
+
+  useEffect(() => () => acknowledgementRequest.current?.abort(), [])
+
+  const confirm = async () => {
+    if (!instruction || instruction.status !== 'SENT' || confirming) return
+    acknowledgementRequest.current?.abort()
+    const controller = new AbortController()
+    acknowledgementRequest.current = controller
+    setConfirming(true)
+    setConfirmationError('')
+    try {
+      const acknowledged = await acknowledgeBusInstruction(instruction.instructionId, token, controller.signal)
+      if (acknowledged) setInstruction(acknowledged)
+    } catch (error) {
+      if (controller.signal.aborted) return
+      if (error instanceof ApiError && error.status === 401) void signOut(error.message)
+      else if (error instanceof ApiError && error.status === 409) {
+        setConfirmationError('Another user already confirmed this instruction. Refresh to see its status.')
+      } else if (error instanceof ApiError && error.status === 403) {
+        setConfirmationError('This account cannot confirm bus instructions.')
+      } else setConfirmationError('Unable to confirm the instruction. Try again.')
+    } finally {
+      if (!controller.signal.aborted) setConfirming(false)
+    }
+  }
+
+  return <section aria-labelledby="controller-instruction-heading"
+    className="space-y-4 rounded-xl border-4 border-blue-700 bg-card p-4 dark:border-blue-400 sm:p-6">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h2 id="controller-instruction-heading" className="text-xl font-black uppercase sm:text-2xl">
+        Controller instruction
+      </h2>
+      <span className="text-sm font-bold text-muted-foreground">Bus {DEMO_BUS_REFERENCE}</span>
+    </div>
+    {loading && !instruction && <p role="status">Loading controller instructions…</p>}
+    {loadError && <div className="space-y-3"><p role="alert">{loadError}</p>
+      <Button variant="outline" onClick={() => { setLoading(true); setRefreshRevision(value => value + 1) }}>
+        Try again
+      </Button></div>}
+    {!loading && !loadError && !instruction &&
+      <p role="status" className="text-lg font-semibold">No controller instruction for this bus.</p>}
+    {instruction && <div className="space-y-4">
+      <p className="text-2xl font-black leading-snug sm:text-3xl">{instruction.instruction}</p>
+      <p className="text-sm text-muted-foreground">Sent at {instructionTime(instruction.sentAt)}</p>
+      {instruction.status === 'SENT' ? <Button size="lg" className="min-h-14 w-full text-lg font-black sm:w-auto"
+        disabled={confirming} onClick={() => void confirm()}>
+        {confirming ? 'Confirming…' : 'Confirm instruction'}
+      </Button> : <p role="status" className="text-lg font-bold text-green-700 dark:text-green-400">
+        Instruction confirmed at {instructionTime(instruction.acknowledgedAt!)}
+      </p>}
+      {confirmationError && <div className="space-y-3"><p role="alert">{confirmationError}</p>
+        <Button variant="outline" onClick={() => void confirm()} disabled={confirming}>Try confirmation again</Button>
+      </div>}
+    </div>}
+    <p className="sr-only" aria-live="polite" aria-atomic="true">
+      {instruction?.status === 'SENT' ? `New controller instruction: ${instruction.instruction}` :
+        instruction?.status === 'ACKNOWLEDGED' ? 'Controller instruction confirmed.' : ''}
+    </p>
+  </section>
+}
+
+export function CaptainPage({ email, token, refreshIntervalSeconds }: {
+  email: string; token: string; refreshIntervalSeconds: number
+}) {
   const { search } = useLocation()
   const [sample, setSample] = useState(() => ({ scenario: initialScenario(search), tick: 0 }))
   const [theme, setTheme] = useState(initialTheme)
@@ -104,7 +225,7 @@ export function CaptainPage({ email }: { email: string }) {
 
     <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
       <div><p className="text-xl font-bold">Service 190 · Direction 1</p>
-        <p className="text-sm text-muted-foreground">DEMO-190-B</p></div>
+        <p className="text-sm text-muted-foreground">{DEMO_BUS_REFERENCE}</p></div>
       <span className="border-2 border-amber-700 px-3 py-1 text-sm font-bold dark:border-amber-400">SAMPLE DATA</span>
       <p className="text-lg sm:ml-auto">Target gap <strong className="tabular-nums">{clockText(SAMPLE_TARGET_SECONDS)}</strong></p>
     </div>
@@ -137,6 +258,7 @@ export function CaptainPage({ email }: { email: string }) {
         variant={sample.scenario === name ? 'default' : 'outline'} aria-pressed={sample.scenario === name}
         onClick={() => setSample({ scenario: name, tick: 0 })}>{scenarios[name].label}</Button>)}
     </div>
+    <InstructionPanel token={token} refreshIntervalSeconds={refreshIntervalSeconds} />
     <UpcomingStops />
     <footer className="space-y-1 border-t pt-4 text-sm text-muted-foreground">
       <p>Built-in samples update every 10 seconds. No live bus data.</p>

@@ -28,6 +28,9 @@ class RecommendationDecisionServiceTest {
     @Mock
     private RecommendationRecordPort recommendations;
 
+    @Mock
+    private BusInstructionService busInstructions;
+
     private RecommendationRecord actionableRecommendation;
 
     @BeforeEach
@@ -52,6 +55,7 @@ class RecommendationDecisionServiceTest {
         assertThat(result.action()).isEqualTo(RecommendationDecisionAction.APPROVED);
         assertThat(result.actorSubject()).isEqualTo("controller-subject");
         assertThat(result.decidedAt()).isEqualTo(NOW);
+        verify(busInstructions).issueFor(actionableRecommendation, result);
     }
 
     @Test
@@ -113,7 +117,7 @@ class RecommendationDecisionServiceTest {
     }
 
     private RecommendationDecisionService service() {
-        return new RecommendationDecisionService(decisions, recommendations,
+        return new RecommendationDecisionService(decisions, recommendations, busInstructions,
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }
 

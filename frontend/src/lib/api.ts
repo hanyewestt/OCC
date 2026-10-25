@@ -91,6 +91,11 @@ export type Decision = {
   recommendationId: string; action: 'APPROVED' | 'REJECTED'; actorSubject: string
   overrideInstructions: ControllerBusInstruction[]; controllerRationale: string | null; decidedAt: string
 }
+export type BusInstruction = {
+  instructionId: string; recommendationId: string; busReference: string; instruction: string
+  status: 'SENT' | 'ACKNOWLEDGED'; sentAt: string
+  acknowledgedAt: string | null; acknowledgedBy: string | null
+}
 
 export function routeDirections(routes: BusRoute[]): RouteDirection[] {
   return routes.flatMap(route => route.operators.flatMap(operator => operator.directions.map(direction => ({
@@ -112,6 +117,20 @@ export async function apiRequest<T>(path: string, token: string, signal: AbortSi
   })
   if (!response.ok) throw new ApiError(response.status)
   return response.status === 204 ? null : await response.json() as T
+}
+
+export async function getBusInstructions(busReference: string, token: string, signal: AbortSignal) {
+  return apiRequest<PageResult<BusInstruction>>(
+    `/api/v1/planning/bus-instructions?busReference=${encodeURIComponent(busReference)}&page=0&size=20`,
+    token, signal,
+  )
+}
+
+export async function acknowledgeBusInstruction(instructionId: string, token: string, signal: AbortSignal) {
+  return apiRequest<BusInstruction>(
+    `/api/v1/planning/bus-instructions/${encodeURIComponent(instructionId)}/acknowledgement`,
+    token, signal, { method: 'POST' },
+  )
 }
 
 export async function enrichBunchingStops(alerts: BunchingAlert[], token: string, signal: AbortSignal): Promise<BunchingAlert[]> {

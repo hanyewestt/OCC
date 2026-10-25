@@ -36,6 +36,13 @@ public record RecommendationDecision(
             if (controllerRationale != null && controllerRationale.length() > 1000) {
                 throw new IllegalArgumentException("controllerRationale must be at most 1000 characters");
             }
+            long distinctBusReferences = overrideInstructions.stream()
+                    .map(ControllerBusInstruction::busReference)
+                    .distinct()
+                    .count();
+            if (distinctBusReferences != overrideInstructions.size()) {
+                throw new IllegalArgumentException("override instructions require unique bus references");
+            }
         }
         Objects.requireNonNull(decidedAt, "decidedAt is required");
     }

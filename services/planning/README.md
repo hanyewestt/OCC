@@ -11,8 +11,9 @@ recommendation workflow. Traffic lifecycle snapshots are retained as immutable
 request evidence and finish with `policyOutcome=TRAFFIC_INCIDENT_NO_OPERATIONAL_ACTION`;
 phase 1 deliberately defines no traffic intervention policy.
 
-The public API uses `/api/v1/planning/...` and accepts Supabase JWTs with an
-`occ_role` claim of `ADMIN` or `CONTROLLER`. The internal request endpoint only
+The public API uses `/api/v1/planning/...` and normally accepts Supabase JWTs with an
+`occ_role` claim of `ADMIN` or `CONTROLLER`. Captains may only read and acknowledge
+mock-OBU bus instructions. The internal request endpoint only
 accepts the configured `X-OCC-Peer-Token` from Disruption. Captain and unassigned
 users cannot use public Planning routes. The token is a per-peer capability,
 not a Supabase user token; keep its value in the ignored root `.env` or a
@@ -23,7 +24,20 @@ queue at `/api/v1/planning/recommendations/pending`. Approving records the AI
 recommendation as accepted. Rejecting requires one to three controller-authored
 bus instructions and a rationale; both are stored with the authenticated
 controller subject. `/api/v1/planning/recommendations/decisions` returns the
-persisted decision history, newest first, for the controller audit screen.
+persisted decision history, newest first, for the controller audit screen. A
+saved decision also atomically publishes durable `SENT` bus instructions. An
+approval publishes the validated recommendation for its `targetBusReference`;
+a rejection publishes the controller-authored replacement instructions.
+
+The mock OBU reads those instructions from
+`GET /api/v1/planning/bus-instructions?busReference=SBS5898U`. Results are
+newest first and include a stable `instructionId`. A CAPTAIN or ADMIN confirms
+one with
+`POST /api/v1/planning/bus-instructions/{instructionId}/acknowledgement`.
+The first confirmation atomically stores the authenticated subject and server
+time. The same subject may replay it safely; another subject receives `409` and
+cannot replace the audit record. The query parameter deliberately selects a
+simulated vehicle registration and is not production bus-assignment authorization.
 
 The demo checks `/api/v1/planning/requests/by-event/{eventId}` when a recommendation
 is not yet available. This authenticated lookup reports pending, retryable and

@@ -43,6 +43,11 @@ public class PlanningSecurityConfig {
                                 "/internal/v1/planning/recommendations/by-disruption-event/*")
                         .hasAuthority(PeerCapabilityAuthenticationFilter.INGESTION_AUTHORITY)
                         .requestMatchers("/internal/v1/**").denyAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/planning/bus-instructions")
+                        .hasAnyRole("ADMIN", "CONTROLLER", "CAPTAIN")
+                        .requestMatchers(HttpMethod.POST,
+                                "/api/v1/planning/bus-instructions/*/acknowledgement")
+                        .hasAnyRole("ADMIN", "CAPTAIN")
                         .requestMatchers("/api/v1/**").hasAnyRole("ADMIN", "CONTROLLER")
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")
                         .hasAnyRole("ADMIN", "CONTROLLER")

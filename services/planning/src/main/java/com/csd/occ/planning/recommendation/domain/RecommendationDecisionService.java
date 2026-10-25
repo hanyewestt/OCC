@@ -5,22 +5,27 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class RecommendationDecisionService {
     private final RecommendationDecisionPort decisions;
     private final RecommendationRecordPort recommendations;
+    private final BusInstructionService busInstructions;
     private final Clock clock;
 
     public RecommendationDecisionService(
             RecommendationDecisionPort decisions,
             RecommendationRecordPort recommendations,
+            BusInstructionService busInstructions,
             Clock clock) {
         this.decisions = decisions;
         this.recommendations = recommendations;
+        this.busInstructions = busInstructions;
         this.clock = clock;
     }
 
+    @Transactional
     public RecommendationDecision decide(UUID recommendationId, RecommendationDecisionAction action,
             String actorSubject, List<ControllerBusInstruction> overrideInstructions, String controllerRationale) {
         RecommendationRecord recommendation = recommendations.findByIdempotencyKey(recommendationId)
@@ -39,6 +44,7 @@ public class RecommendationDecisionService {
                 || !Objects.equals(persisted.controllerRationale(), requested.controllerRationale())) {
             throw new RecommendationDecisionConflictException(recommendationId);
         }
+        busInstructions.issueFor(recommendation, persisted);
         return persisted;
     }
 
