@@ -453,7 +453,7 @@ export function ControllerRouteStrip({ alerts, run, stops, positions, arrivals, 
           onChange={event => setSelectedRouteKey(event.target.value)}
           className="h-10 min-w-64 max-w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
           {routes.map(route => <option key={routeKey(route)} value={routeKey(route)}>
-            {`Service ${route.serviceId} · ${destinationText(routeDestinations.get(routeKey(route)) ?? { status: 'unavailable' }, stopNames)} · ${route.operator} · Direction ${route.directionId}`}
+            {`Service ${route.serviceId} · ${destinationText(routeDestinations.get(routeKey(route)) ?? { status: 'unavailable' }, stopNames)} · ${route.operator}`}
           </option>)}
         </select>
       </div>
