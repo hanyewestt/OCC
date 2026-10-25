@@ -49,6 +49,7 @@ export type PageResult<T> = { items: T[]; page: number; totalItems: number; tota
 export type Arrival = {
   observationId: string; serviceId: string; stopCode: string; operator: string
   directionId?: number | null; visitOrder?: number | null; visitNumber?: number | null
+  originCode?: string | null; destinationCode?: string | null
   estimatedArrivalAt: string | null; fetchedAt: string; loadCategory: string | null
   latitude?: number | null; longitude?: number | null; vehicleType?: string | null
 }

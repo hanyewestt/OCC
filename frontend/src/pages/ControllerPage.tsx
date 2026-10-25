@@ -40,12 +40,30 @@ async function loadRoutePositions(token: string, signal: AbortSignal): Promise<R
   }
 }
 
+async function loadRouteArrivalsForService(token: string, serviceId: string, signal: AbortSignal): Promise<Resource<Arrival[]>> {
+  try {
+    const params = new URLSearchParams({ serviceId, page: '0', size: '200' })
+    const firstPage = await apiRequest<PageResult<Arrival>>(`/api/v1/arrivals?${params}`, token, signal)
+    if (!firstPage) return { data: null, error: '' }
+    const items = [...firstPage.items]
+    // Read only this service's finite current-snapshot pages; each response is capped at 200 rows by the API.
+    for (let page = 1; page < firstPage.totalPages; page++) {
+      params.set('page', String(page))
+      const result = await apiRequest<PageResult<Arrival>>(`/api/v1/arrivals?${params}`, token, signal)
+      if (!result) throw new Error('Route arrival page was empty.')
+      items.push(...result.items)
+    }
+    return { data: items, error: '' }
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401 && !signal.aborted) void signOut(error.message)
+    return { data: null, error: `Service ${serviceId}: route arrivals are unavailable.` }
+  }
+}
+
 async function loadRouteArrivals(token: string, signal: AbortSignal): Promise<Resource<Arrival[]>> {
-  const results = await Promise.all(['190', '972'].map(serviceId => readResource(
-    apiRequest<PageResult<Arrival>>(`/api/v1/arrivals?serviceId=${serviceId}&page=0&size=200`, token, signal), signal)))
-  const items = results.flatMap(result => result.data?.items ?? [])
-  const errors = results.flatMap((result, index) => result.error ? [`Service ${['190', '972'][index]}: ${result.error}`] : [])
-  return { data: items.length ? items : null, error: errors.join('; ') }
+  const results = await Promise.all(['190', '972'].map(serviceId => loadRouteArrivalsForService(token, serviceId, signal)))
+  const errors = results.flatMap(result => result.error ? [result.error] : [])
+  return { data: errors.length ? null : results.flatMap(result => result.data ?? []), error: errors.join(' ') }
 }
 
 type LiveData = {
@@ -101,6 +119,17 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       return result?.items ?? []
     } catch (error) {
       if (error instanceof ApiError && error.status === 401 && !signal.aborted) void signOut(error.message)
+      throw error
+    }
+  }, [token])
+  const fetchStopName = useCallback(async (stopCode: string): Promise<string | null> => {
+    try {
+      const result = await apiRequest<{ description: string | null }>(
+        `/api/v1/bus-stops/${encodeURIComponent(stopCode)}`, token, new AbortController().signal,
+      )
+      return result?.description ?? null
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) void signOut(error.message)
       throw error
     }
   }, [token])
@@ -207,9 +236,9 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   return <div className="flex min-h-svh w-full bg-background">
     <ControllerSidebar email={email} />
     <div className="min-w-0 flex-1">
-      <header className="flex min-h-16 flex-wrap items-center justify-between gap-3 border-b px-5 py-3 md:px-8">
+      <header className="sticky top-0 z-10 flex min-h-16 flex-wrap items-center justify-between gap-3 border-b bg-background px-5 py-3 md:px-8">
         <p className="text-sm text-muted-foreground">Operations control</p>
-        <div className="flex flex-wrap items-center gap-4"><span role="status" className="flex items-center gap-2 text-xs font-medium"><span className="size-1.5 rounded-full bg-current" />{mode}</span>
+        <div className="flex flex-wrap items-center gap-4"><span role="status" className={`flex items-center gap-2 text-xs font-medium ${simulation ? 'text-amber-700 dark:text-amber-400' : !loading && !run.error ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground'}`}><span className="size-1.5 rounded-full bg-current" />{mode}</span>
           <Button variant="outline" disabled={loading || !!run.error} onClick={() => void switchMode()}>{switching ? 'Switching…' : simulation ? 'Return to live' : 'Start simulation'}</Button>
         </div>
       </header>
@@ -230,7 +259,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           <ControllerRouteStrip alerts={alerts} run={run} stops={routeStops} positions={routePositions}
             arrivals={routeArrivals} pollIntervalSeconds={pollIntervalSeconds}
             incidentGapToleranceSeconds={routeIncidentGapToleranceSeconds} lastUpdated={lastUpdated} loading={loading}
-            fetchStopArrivals={fetchStopArrivals} />
+            fetchStopArrivals={fetchStopArrivals} fetchStopName={fetchStopName} />
           <ControllerOverview arrivals={arrivals} loading={loading} page={arrivalPage} onPage={setArrivalPage} />
         </>}
         {pathname.endsWith('/disruptions') && <ControllerDisruptions alerts={alerts} run={run} loading={loading} />}
