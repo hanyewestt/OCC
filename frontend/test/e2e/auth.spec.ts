@@ -1528,6 +1528,43 @@ test('controller pending queue filters on the server and can page through all pe
   await expect(managed.getByRole('heading', { name: notices[1].title, exact: true })).toBeVisible()
 })
 
+test('controller names an empty filtered hazard list', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: {
+    items: [{ disruptionId: 'flood-hazard', kind: 'FLOOD', status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
+      updatedAt: '2026-10-25T04:00:00Z', facts: { title: 'Flood report', description: 'Water reported near Example Stop.', instruction: null, effectiveUntil: null },
+      exposures: [], limitations: [] }],
+    page: 0, size: 100, totalElements: 1, feeds: [],
+  } }))
+
+  await login(page)
+  await page.goto('/controller/disruptions')
+  await page.getByLabel('Hazard type', { exact: true }).selectOption('TRAFFIC_INCIDENT')
+  await expect(page.getByText('No hazards found for the selected type.', { exact: true })).toBeVisible()
+})
+
+test('controller scrolls hazard conditions beyond the visible cards', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: {
+    items: Array.from({ length: 5 }, (_, index) => ({
+      disruptionId: `hazard-${index}`, kind: 'FLOOD', status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
+      updatedAt: '2026-10-25T04:00:00Z', facts: { title: `Hazard ${index + 1}`, description: 'Water reported near Example Stop.', instruction: null, effectiveUntil: null },
+      exposures: [], limitations: [],
+    })),
+    page: 0, size: 100, totalElements: 5, feeds: [],
+  } }))
+
+  await login(page)
+  await page.goto('/controller/disruptions')
+  const hazards = page.getByRole('region', { name: 'Hazard conditions', exact: true })
+  const viewport = hazards.locator('[data-slot="scroll-area-viewport"]')
+  await expect(hazards.getByRole('heading', { name: 'Hazard 5', exact: true })).toHaveCount(1)
+  await expect.poll(() => viewport.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+  await viewport.focus()
+  await page.keyboard.press('End')
+  await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+})
+
 test('controller can withdraw a published notice from managed notice history', async ({ page, context }) => {
   await mockAuth(context, 'CONTROLLER')
   let status = 'PUBLISHED'
