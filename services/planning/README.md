@@ -29,8 +29,12 @@ Simulation events carry `SIMULATION` evidence and the active run ID. Captured in
 keep their original scope through retries and mode changes.
 
 `GET /api/v1/planning/diagnoses` returns paginated bunching requests and diagnosis
-results for the selected mode (only the active run in Simulation). Provider failures
-remain visible. `GET /api/v1/planning/diagnoses/hazard-requests` lists the latest
+results for the selected mode (only the active run in Simulation). Summaries use
+validated incident evidence and keep uncertain causality explicit; bounded source
+facts and limitations are returned separately for the controller's evidence
+disclosure. Existing retained diagnoses are presented from stored snapshots without
+rerunning AI or changing decisions. Provider failures remain visible.
+`GET /api/v1/planning/diagnoses/hazard-requests` lists the latest
 unfinished hazard request per disruption in that same scope, including pending,
 retrying and terminal failures. The controller planning page shows those failures;
 failed processing never creates an instruction. Switching modes does not relabel

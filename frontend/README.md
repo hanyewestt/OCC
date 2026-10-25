@@ -8,14 +8,19 @@ session and role access before protected content appears.
 The Captain page includes the OBU sample pacing display, scenario controls and
 day/night mode. It uses no live bus data.
 
-The Controller dashboard includes simulation controls and bunching detections.
-Planning & mitigation presents every pending recommendation in an oldest-first
-split queue that controllers can filter by service number. Controllers can
-approve the AI recommendation or replace it with instructions for up to three
-buses and a rationale. The audit log shows the authenticated controller, saved
-decision, replacement instructions and rationale from the Planning database.
-The simulation supplies a two-bus service 190 event and a three-bus service 972
-event so both controller-recommendation forms can be exercised in one run.
+The Controller dashboard includes simulation controls, a selectable approximate
+live route strip, searchable and sortable live arrivals, and bunching detections.
+Operational lists keep a bounded viewport and progressively load later pages.
+Visible timestamps use SGT and a 24-hour clock. Planning & mitigation presents
+pending recommendations in an oldest-first split queue that controllers can
+filter by service number. Diagnosis cards show a concise possible-contributor
+summary and optional source evidence. Controllers can approve an AI recommendation
+or replace it with instructions for up to three buses and a rationale in a modal;
+unsaved edits require explicit discard confirmation. The audit log shows the
+authenticated controller, saved decision, replacement instructions and rationale
+from the Planning database. The simulation supplies a two-bus service 190 event
+and a three-bus service 972 event so controller workflows can be exercised in one
+run.
 
 See the [app overview and route table](../README.md#pages-and-access) for page
 behavior and permissions. Setup, Vite development, builds, environment settings

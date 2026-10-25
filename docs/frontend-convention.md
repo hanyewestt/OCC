@@ -110,6 +110,16 @@ coverage, test reports and saved sessions. Never put secrets in `public/`.
   Add a query library only if repeated fetching, polling or caching becomes
   difficult to manage with the existing code.
 
+For operational collections, keep backend paging as the source of truth and use
+the shared paged-collection hook for progressive scrolling where the endpoint is
+paginated. Show no more than 10 compact rows or four larger cards in a collection
+viewport, while keeping later pages reachable. Give each collection its own key,
+loading/error state and refresh behavior so stale responses cannot mix different
+filters or modes. Keep table headings keyboard-accessible when they control
+sorting. Use the existing Dialog and AlertDialog primitives for multi-field
+controller edits; preserve drafts on validation or API errors, confirm before
+discarding changed values, and block duplicate or stale submissions.
+
 [React state](https://react.dev/learn/choosing-the-state-structure),
 [Effects](https://react.dev/learn/you-might-not-need-an-effect).
 
