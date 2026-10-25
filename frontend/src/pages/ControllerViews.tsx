@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { Arrival, BunchingAlert, DemoRun, PageResult } from '@/lib/api'
 import { bunchingArrivals } from '@/lib/bunching'
@@ -17,18 +19,69 @@ export function DataMessage({ error, loading, empty, children }: {
       empty ? <p className="py-6 text-sm text-muted-foreground">{children}</p> : null
 }
 
-export function ControllerOverview({ arrivals, loading, page, onPage }: {
-  arrivals: Resource<PageResult<Arrival>>; loading: boolean; page: number; onPage: (page: number) => void
+type ArrivalCollection = {
+  items: Arrival[]; latestPage: PageResult<Arrival> | null; isLoading: boolean; isLoadingMore: boolean
+  hasMore: boolean; error: unknown; reload: () => void; loadNext: () => void
+  onScroll: React.UIEventHandler<HTMLDivElement>
+}
+
+export function ControllerOverview({ collection, search, onSearch, sortBy, sortDirection, onSort }: {
+  collection: ArrivalCollection; search: string; onSearch: (value: string) => void
+  sortBy: 'arrival' | 'stopName'; sortDirection: 'asc' | 'desc'; onSort: (value: 'arrival' | 'stopName') => void
 }) {
-  const data = !loading && !arrivals.error ? arrivals.data : null
-  return <section id="arrivals" aria-labelledby="arrivals-title" className="space-y-4">
-    <div><h2 id="arrivals-title" className="font-medium">Current bus arrivals</h2><p className="mt-1 text-xs text-muted-foreground">Live feed · arrival times shown in your local time zone.</p></div>
-    <DataMessage error={arrivals.error} loading={loading} empty={!data?.items.length}>No current arrivals.</DataMessage>
-    {!!data?.items.length && <div className="rounded-lg border"><Table><TableCaption className="mb-3">Latest fetched records; this view refreshes with the controller data.</TableCaption>
-      <TableHeader><TableRow><TableHead>Service</TableHead><TableHead>Stop</TableHead><TableHead>Arrival</TableHead><TableHead>Load</TableHead><TableHead>Fetched</TableHead></TableRow></TableHeader>
-      <TableBody>{data.items.map(arrival => <TableRow key={arrival.observationId}><TableCell className="font-medium">{arrival.serviceId}</TableCell><TableCell>{arrival.stopCode}</TableCell><TableCell>{timestamp(arrival.estimatedArrivalAt)}</TableCell><TableCell>{arrival.loadCategory ?? '—'}</TableCell><TableCell className="text-muted-foreground">{timestamp(arrival.fetchedAt)}</TableCell></TableRow>)}</TableBody>
-    </Table></div>}
-    {data && data.totalPages > 1 && <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground"><span>Page {page + 1} of {data.totalPages} · {data.totalItems} arrivals</span><div className="flex gap-2"><Button variant="outline" disabled={loading || page === 0} onClick={() => onPage(page - 1)}>Previous</Button><Button variant="outline" disabled={loading || page + 1 >= data.totalPages} onClick={() => onPage(page + 1)}>Next</Button></div></div>}
+  const [searchInput, setSearchInput] = useState(search)
+  const data = collection.latestPage ? { ...collection.latestPage, items: collection.items } : null
+  const initialError = collection.error !== null && !collection.items.length ? 'Unable to load arrivals.' : ''
+  const loadMoreError = collection.error !== null && collection.items.length > 0
+  const loadCategory = (value: string | null) => value === null ? '—' : ({
+    SEA: 'Seats Available', SDA: 'Standing Available', LSD: 'Limited Standing',
+  }[value] ?? value)
+  return <section id="arrivals" aria-labelledby="arrivals-title" className="scroll-mt-20 space-y-4">
+    <div><h2 id="arrivals-title" tabIndex={-1} className="w-fit font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">Current bus arrivals</h2></div>
+    <form role="search" onSubmit={event => { event.preventDefault(); onSearch(searchInput.trim()) }} className="flex flex-wrap items-end gap-2">
+      <div className="w-full max-w-sm space-y-1.5">
+        <label htmlFor="arrival-stop-search" className="text-sm font-medium">Search bus stop name</label>
+        <Input id="arrival-stop-search" type="search" value={searchInput} onChange={event => setSearchInput(event.target.value)} />
+      </div>
+      <Button type="submit" variant="outline">Search</Button>
+      {(searchInput || search) && <Button type="button" variant="ghost" onClick={() => { setSearchInput(''); onSearch('') }}>Clear</Button>}
+    </form>
+    <DataMessage error={initialError} loading={collection.isLoading} empty={!data?.items.length}>
+      {search ? 'No arrivals match this stop name' : 'No current arrivals.'}
+    </DataMessage>
+    {!!data?.items.length && <Table containerProps={{ role: 'region', 'aria-label': 'Current bus arrivals', tabIndex: 0,
+      onScroll: collection.onScroll, className: 'max-h-[26rem] overflow-auto rounded-lg border' }} className="min-w-[42rem]">
+      <TableCaption className="sr-only">Current bus arrivals</TableCaption>
+      <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
+        <TableRow><TableHead>Service</TableHead>
+          <TableHead aria-sort={sortBy === 'stopName' ? sortDirection === 'asc' ? 'ascending' : 'descending' : undefined}>
+            <Button type="button" variant="ghost" size="sm"
+              aria-label={`Sort stop names ${sortBy === 'stopName' && sortDirection === 'asc' ? 'descending' : 'ascending'}`}
+              onClick={() => onSort('stopName')}>Stop <span aria-hidden="true">{sortBy === 'stopName' ? sortDirection === 'asc' ? '↑' : '↓' : '↕'}</span></Button>
+          </TableHead>
+          <TableHead aria-sort={sortBy === 'arrival' ? sortDirection === 'asc' ? 'ascending' : 'descending' : undefined}>
+            <Button type="button" variant="ghost" size="sm"
+              aria-label={`Sort arrival times ${sortBy === 'arrival' && sortDirection === 'asc' ? 'descending' : 'ascending'}`}
+              onClick={() => onSort('arrival')}>Arrival <span aria-hidden="true">{sortBy === 'arrival' ? sortDirection === 'asc' ? '↑' : '↓' : '↕'}</span></Button>
+          </TableHead>
+          <TableHead>Load</TableHead><TableHead>Fetched</TableHead></TableRow>
+      </TableHeader>
+      <TableBody>{data.items.map(arrival => <TableRow key={arrival.observationId}>
+        <TableCell className="font-medium">{arrival.serviceId}</TableCell>
+        <TableCell>{`${arrival.stopName?.trim() || `Stop ${arrival.stopCode}`} (${arrival.stopCode})`}</TableCell>
+        <TableCell>{timestamp(arrival.estimatedArrivalAt)}</TableCell>
+        <TableCell>{loadCategory(arrival.loadCategory)}</TableCell>
+        <TableCell className="text-muted-foreground">{timestamp(arrival.fetchedAt)}</TableCell>
+      </TableRow>)}</TableBody>
+    </Table>}
+    {loadMoreError && <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-destructive">
+      <span>Unable to load more arrivals.</span>
+      <Button variant="outline" size="sm" disabled={collection.isLoadingMore} onClick={collection.loadNext}>Retry loading more arrivals</Button>
+    </div>}
+    {collection.hasMore && !loadMoreError && <Button variant="outline" disabled={collection.isLoadingMore} onClick={collection.loadNext}>
+      {collection.isLoadingMore ? 'Loading more arrivals…' : 'Load more arrivals'}
+    </Button>}
+    {collection.error !== null && !collection.items.length && <Button variant="outline" onClick={collection.reload}>Retry arrivals</Button>}
   </section>
 }
 
