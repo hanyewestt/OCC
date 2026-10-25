@@ -209,7 +209,8 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       .then(([live, nextRun, nextRouteStops]) => {
       if (signal.aborted) return
       if (live) { setRouteArrivals(live.routeArrivals); setRoutePositions(live.positions) }
-      setRun(nextRun); setRouteStops(nextRouteStops); setLastUpdated(new Date().toISOString())
+      setRun(previous => nextRun.error && previous.data ? { ...previous, error: nextRun.error } : nextRun)
+      setRouteStops(nextRouteStops); setLastUpdated(new Date().toISOString())
       setLoaded(requestKey)
     })
     return () => controller.abort()
@@ -323,7 +324,8 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         </>}
         {pathname.endsWith('/disruptions') && <ControllerDisruptions liveAlerts={alertCollection} run={run} loading={loading} />}
         {pathname.endsWith('/planning') && <ControllerPlanning recommendations={recommendationCollection} diagnoses={diagnosisCollection}
-          loading={loading} modeError={run.error} mode={modeValue} demoRunId={simulation?.id ?? null} token={token} onSaved={() => setRefresh(value => value + 1)} />}
+          loading={loading} modeError={run.error} mode={modeValue} demoRunId={simulation?.id ?? null} token={token}
+          onRefresh={() => setRefresh(value => value + 1)} onSaved={() => setRefresh(value => value + 1)} />}
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} loading={loading} />}
         {pathname !== '/controller' && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
           refreshIntervalSeconds={controllerRefreshIntervalSeconds}
