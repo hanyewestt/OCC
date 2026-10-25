@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -37,6 +39,8 @@ function initialInstructions(recommendation: PendingRecommendation): ControllerB
   }))
 }
 
+type EditingRecommendation = { identity: string; scopeIdentity: string; recommendation: PendingRecommendation }
+
 export function ControllerPlanning({ recommendations, diagnoses, loading, modeError, mode, demoRunId, token, onSaved }: {
   recommendations: PagedCollection<PendingRecommendation, Planning['recommendations']>
   diagnoses: PagedCollection<PlanningDiagnosisPage['items'][number], PlanningDiagnosisPage>
@@ -46,6 +50,7 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
   const [searchParams, setSearchParams] = useSearchParams()
   const [filter, setFilter] = useState('')
   const [message, setMessage] = useState('')
+  const [editingRecommendation, setEditingRecommendation] = useState<EditingRecommendation | null>(null)
   const recommendationPage = recommendations.latestPage
   const recommendationScopeMatches = !modeError && recommendationPage?.mode === mode &&
     (recommendationPage.demoRunId ?? null) === demoRunId
@@ -62,6 +67,14 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
   const visible = recommendationItems.filter(item => item.serviceId.includes(filter.trim()))
   const requestedId = searchParams.get('recommendation')
   const selected = recommendationItems.find(item => item.recommendationId === requestedId) ?? visible[0] ?? recommendationItems[0]
+  const scopeIdentity = `${mode}:${demoRunId ?? 'none'}`
+  const selectedIdentity = selected ? `${scopeIdentity}:${JSON.stringify(selected)}` : null
+  const editorUnavailable = editingRecommendation !== null && !recommendations.isLoading && recommendations.error !== null
+  const editorStale = editingRecommendation !== null && (editingRecommendation.scopeIdentity !== scopeIdentity ||
+    !recommendations.isLoading && !editorUnavailable && selectedIdentity !== editingRecommendation.identity)
+  const detailRecommendation = selected ?? (editingRecommendation && recommendations.isLoading && editingRecommendation.scopeIdentity === scopeIdentity
+    ? editingRecommendation.recommendation : undefined)
+  const detailIdentity = detailRecommendation ? `${scopeIdentity}:${JSON.stringify(detailRecommendation)}` : null
 
   useEffect(() => {
     if (selected && selected.recommendationId !== requestedId) {
@@ -92,9 +105,12 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
       <PagedCollectionControls label="diagnoses" hasItems={!!diagnoses.items.length} hasMore={diagnoses.hasMore}
         isLoadingMore={diagnoses.isLoadingMore} error={diagnoses.error} reload={diagnoses.reload} loadNext={diagnoses.loadNext} />
     </section>
-    <DataMessage error={recommendationError} loading={loading || recommendations.isLoading && !recommendationPage} empty={!recommendationItems.length}>No recommendations are awaiting a decision.</DataMessage>
+    <DataMessage error={recommendationError} loading={loading || recommendations.isLoading && !recommendationPage} empty={!recommendationItems.length && !detailRecommendation}>No recommendations are awaiting a decision.</DataMessage>
     {message && <p role="status" className="text-sm">{message}</p>}
-    {!!recommendationItems.length && <div className="grid items-start gap-4 lg:grid-cols-[minmax(16rem,0.36fr)_minmax(0,1fr)]">
+    {editorStale && <p role="status" className="text-sm">{editorUnavailable
+      ? 'Unable to confirm this recommendation is current. The editor was closed; refresh before making a decision.'
+      : 'This recommendation is no longer current. The editor was closed; review the latest data before making a decision.'}</p>}
+    {!!recommendationItems.length || !!detailRecommendation ? <div className="grid items-start gap-4 lg:grid-cols-[minmax(16rem,0.36fr)_minmax(0,1fr)]">
       <Card className="gap-0 py-0">
         <div className="space-y-3 border-b p-4">
           <div className="flex items-center justify-between gap-3"><h2 className="text-sm font-medium">Awaiting decision</h2><span className="text-xs text-muted-foreground">Oldest first</span></div>
@@ -116,25 +132,65 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
           isLoadingMore={recommendations.isLoadingMore} error={recommendations.error} reload={recommendations.reload} loadNext={recommendations.loadNext} /></div>
       </Card>
 
-      {selected && <RecommendationDetail key={selected.recommendationId} selected={selected} token={token} onSaved={onSaved} onMessage={setMessage} />}
-    </div>}
+      {detailRecommendation && detailIdentity && <RecommendationDetail key={detailIdentity} selected={detailRecommendation} identity={detailIdentity}
+        scopeIdentity={scopeIdentity} token={token} onSaved={onSaved} onMessage={setMessage} onEditorChange={setEditingRecommendation} />}
+    </div> : null}
   </section>
 }
 
-function RecommendationDetail({ selected, token, onSaved, onMessage }: {
-  selected: PendingRecommendation; token: string; onSaved: () => void; onMessage: (message: string) => void
+function RecommendationDetail({ selected, identity, scopeIdentity, token, onSaved, onMessage, onEditorChange }: {
+  selected: PendingRecommendation; identity: string; scopeIdentity: string; token: string
+  onSaved: () => void; onMessage: (message: string) => void; onEditorChange: (value: EditingRecommendation | null) => void
 }) {
   const [pending, setPending] = useState(false)
   const [message, setMessage] = useState('')
-  const [replacing, setReplacing] = useState(false)
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [discardOpen, setDiscardOpen] = useState(false)
   const [instructions, setInstructions] = useState<ControllerBusInstruction[]>(() => initialInstructions(selected))
   const [rationale, setRationale] = useState('')
+  const [openingDraft, setOpeningDraft] = useState<{ instructions: ControllerBusInstruction[]; rationale: string } | null>(null)
   const submitting = useRef(false)
   const mutationRef = useRef<AbortController | null>(null)
+  const firstBusReference = useRef<HTMLInputElement>(null)
+  const dirty = openingDraft !== null && (rationale !== openingDraft.rationale || JSON.stringify(instructions) !== JSON.stringify(openingDraft.instructions))
 
   useEffect(() => () => mutationRef.current?.abort(), [])
 
+  function openEditor() {
+    const nextInstructions = initialInstructions(selected)
+    setInstructions(nextInstructions)
+    setRationale('')
+    setOpeningDraft({ instructions: nextInstructions, rationale: '' })
+    setMessage('')
+    setDiscardOpen(false)
+    setEditorOpen(true)
+    onEditorChange({ identity, scopeIdentity, recommendation: selected })
+  }
+
+  function closeEditor(force = false) {
+    if (pending && !force) return
+    setEditorOpen(false)
+    setDiscardOpen(false)
+    setInstructions(initialInstructions(selected))
+    setRationale('')
+    setOpeningDraft(null)
+    setMessage('')
+    onEditorChange(null)
+  }
+
+  function requestClose() {
+    if (pending) return
+    if (dirty) setDiscardOpen(true)
+    else closeEditor()
+  }
+
+  function changeEditorOpen(open: boolean) {
+    if (open) openEditor()
+    else requestClose()
+  }
+
   function updateInstruction(index: number, field: keyof ControllerBusInstruction, value: string) {
+    setMessage('')
     setInstructions(items => items.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: value } : item))
   }
 
@@ -161,14 +217,15 @@ function RecommendationDetail({ selected, token, onSaved, onMessage }: {
       })
       if (!controller.signal.aborted) {
         onMessage(action === 'APPROVED' ? 'Recommendation approved.' : 'AI recommendation replaced with controller instructions.')
-        setReplacing(false)
+        closeEditor(true)
         onSaved()
       }
     } catch (error) {
       if (controller.signal.aborted) return
       if (error instanceof ApiError && error.status === 401) void signOut(error.message)
       else if (error instanceof ApiError && error.status === 409) {
-        onMessage('This recommendation has changed or already has a decision. The latest state has been requested.'); onSaved()
+        onMessage('This recommendation has changed or already has a decision. The latest state has been requested.')
+        closeEditor(true); onSaved()
       } else setMessage(error instanceof ApiError && error.status === 403 ? 'You do not have permission to record this decision.' : 'Unable to save the decision. Check the instructions and try again.')
     } finally {
       submitting.current = false
@@ -200,7 +257,51 @@ function RecommendationDetail({ selected, token, onSaved, onMessage }: {
         </div>
 
         <div className="flex flex-wrap justify-end gap-2 border-b pb-4">
-          <Button variant="outline" disabled={pending} onClick={() => setReplacing(true)}>Enter controller recommendation</Button>
+          <Dialog open={editorOpen} onOpenChange={changeEditorOpen}>
+            <DialogTrigger asChild><Button variant="outline" disabled={pending}>Enter controller recommendation</Button></DialogTrigger>
+            <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl"
+              onOpenAutoFocus={event => { event.preventDefault(); firstBusReference.current?.focus() }}
+              onEscapeKeyDown={event => { if (pending) event.preventDefault() }}
+              onInteractOutside={event => { if (pending) event.preventDefault() }}>
+              <DialogHeader>
+                <DialogTitle>Enter controller recommendation</DialogTitle>
+                <DialogDescription>Replace the AI proposal with instructions for each affected bus. Enter a rationale to save.</DialogDescription>
+              </DialogHeader>
+              {message && <p role="alert" className="rounded-lg border p-3 text-sm">{message}</p>}
+              <form className="space-y-4" noValidate onSubmit={event => { event.preventDefault(); void decide('REJECTED') }}>
+                {instructions.map((item, index) => <div key={index} className="grid gap-3 rounded-lg border p-4 sm:grid-cols-[minmax(10rem,0.35fr)_1fr_auto]">
+                  <div className="space-y-2"><Label htmlFor={`bus-reference-${index}`}>Bus reference</Label><Input ref={index === 0 ? firstBusReference : undefined} id={`bus-reference-${index}`} maxLength={80} value={item.busReference} onChange={event => updateInstruction(index, 'busReference', event.target.value)} required /></div>
+                  <div className="space-y-2"><Label htmlFor={`bus-instruction-${index}`}>Instruction</Label><textarea id={`bus-instruction-${index}`} maxLength={500} rows={2} value={item.instruction} onChange={event => updateInstruction(index, 'instruction', event.target.value)} required className="min-h-16 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50" /></div>
+                  {instructions.length > 1 && <Button type="button" variant="ghost" className="self-end" disabled={pending} onClick={() => setInstructions(items => items.filter((_, itemIndex) => itemIndex !== index))}>Remove</Button>}
+                </div>)}
+                {instructions.length < 3 && <Button type="button" variant="outline" disabled={pending} onClick={() => setInstructions(items => [...items, { busReference: '', instruction: '' }])}>Add bus instruction</Button>}
+                <div className="space-y-2"><Label htmlFor="controller-rationale">Controller rationale</Label><textarea id="controller-rationale" maxLength={1000} rows={3} value={rationale} onChange={event => { setRationale(event.target.value); setMessage('') }} required className="w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50" /></div>
+                <DialogFooter>
+                  <DialogClose asChild><Button type="button" variant="outline" disabled={pending}>Close</Button></DialogClose>
+                  <Button type="button" variant="outline" disabled={pending} onClick={requestClose}>Cancel</Button>
+                  <Button type="submit" disabled={pending}>{pending ? 'Saving…' : 'Reject AI suggestion & save instructions'}</Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+          <AlertDialog open={discardOpen} onOpenChange={open => { if (!open) setDiscardOpen(false) }}>
+            <AlertDialogContent onEscapeKeyDown={event => {
+              event.preventDefault()
+              event.stopPropagation()
+              setDiscardOpen(false)
+            }} onCloseAutoFocus={event => {
+              if (editorOpen) { event.preventDefault(); firstBusReference.current?.focus() }
+            }}>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Discard unsaved changes?</AlertDialogTitle>
+                <AlertDialogDescription>Your controller recommendation edits will be lost.</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Keep editing</AlertDialogCancel>
+                <AlertDialogAction onClick={() => closeEditor()}>Discard changes</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           <Button disabled={pending} onClick={() => void decide('APPROVED')}>{pending ? 'Saving…' : 'Approve recommendation'}</Button>
           {['HOLD', 'DWELL_ADJUSTMENT'].includes(selected.mitigationType) && <Button variant="outline" disabled={pending} onClick={() => void approveAndSendToObu()}>Approve and send to bus</Button>}
         </div>
@@ -221,16 +322,5 @@ function RecommendationDetail({ selected, token, onSaved, onMessage }: {
 
         <details className="border-t pt-4"><summary className="cursor-pointer text-sm font-medium">Evidence and limitations</summary><div className="mt-4 grid gap-5 sm:grid-cols-2"><div><h3 className="text-sm font-medium">Trade-offs</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.tradeOffs.map((item, index) => <li key={index}>{item}</li>)}</ul></div><div><h3 className="text-sm font-medium">Limitations</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.limitations.map((item, index) => <li key={index}>{item}</li>)}</ul></div></div></details>
 
-        {replacing && <form className="space-y-4 border-t pt-5" onSubmit={event => { event.preventDefault(); void decide('REJECTED') }}>
-          <div><h3 className="font-medium">Controller recommendation</h3><p className="mt-1 text-xs text-muted-foreground">Replace the AI suggestion with instructions for each affected bus.</p></div>
-          {instructions.map((item, index) => <div key={index} className="grid gap-3 rounded-lg border p-4 sm:grid-cols-[minmax(10rem,0.35fr)_1fr_auto]">
-            <div className="space-y-2"><Label htmlFor={`bus-reference-${index}`}>Bus reference</Label><Input id={`bus-reference-${index}`} maxLength={80} value={item.busReference} onChange={event => updateInstruction(index, 'busReference', event.target.value)} required /></div>
-            <div className="space-y-2"><Label htmlFor={`bus-instruction-${index}`}>Instruction</Label><textarea id={`bus-instruction-${index}`} maxLength={500} rows={2} value={item.instruction} onChange={event => updateInstruction(index, 'instruction', event.target.value)} required className="min-h-16 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50" /></div>
-            {instructions.length > 1 && <Button type="button" variant="ghost" className="self-end" onClick={() => setInstructions(items => items.filter((_, itemIndex) => itemIndex !== index))}>Remove</Button>}
-          </div>)}
-          {instructions.length < 3 && <Button type="button" variant="outline" onClick={() => setInstructions(items => [...items, { busReference: '', instruction: '' }])}>Add bus instruction</Button>}
-          <div className="space-y-2"><Label htmlFor="controller-rationale">Controller rationale</Label><textarea id="controller-rationale" maxLength={1000} rows={3} value={rationale} onChange={event => setRationale(event.target.value)} required className="w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50" /></div>
-          <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={() => setReplacing(false)}>Cancel</Button><Button type="submit" disabled={pending}>{pending ? 'Saving…' : 'Reject AI suggestion & save instructions'}</Button></div>
-        </form>}
       </CardContent></Card>
 }
