@@ -89,7 +89,22 @@ public class DiagnosisRequestService {
             validateTrafficIncident(submission);
             return;
         }
-        if (submission.eventType() != EventType.BUS_BUNCHING || submission.trafficSnapshot() != null
+        if (submission.eventType() == EventType.HAZARD) {
+            var event = submission.hazardSnapshot();
+            if (event == null || submission.eventSnapshot() != null || submission.trafficSnapshot() != null
+                    || !PlanningScope.valid(submission.classification(), submission.demoRunId())
+                    || !submission.eventId().equals(event.eventId()) || !submission.disruptionId().equals(event.disruptionId())
+                    || !submission.classification().equals(event.classification())
+                    || !java.util.Objects.equals(submission.demoRunId(), event.demoRunId())
+                    || !submission.detectedAt().equals(event.eventAt()) || event.facts() == null
+                    || !List.of("FLOOD", "RAIL_DISRUPTION", "ROADWORKS").contains(event.facts().kind())
+                    || !List.of("OPENED", "UPDATED", "CLEARED").contains(event.action())
+                    || !"hazard-observation-v1".equals(submission.detectionRuleVersion())
+                    || !submission.evidenceIds().equals(List.of(event.sourceObservationId().toString())))
+                throw new IllegalArgumentException("Hazard submission facts are inconsistent");
+            return;
+        }
+        if (submission.eventType() != EventType.BUS_BUNCHING || submission.trafficSnapshot() != null || submission.hazardSnapshot() != null
                 || !PlanningScope.valid(submission.classification(), submission.demoRunId())
                 || submission.eventSnapshot() == null)
             throw new UnsupportedEventTypeException("Event submission is not a supported confirmed event");
@@ -118,7 +133,7 @@ public class DiagnosisRequestService {
 
     private void validateTrafficIncident(ProducerEventSubmission submission) {
         TrafficIncidentEventFacts event = submission.trafficSnapshot();
-        if (event == null || submission.eventSnapshot() != null
+        if (event == null || submission.eventSnapshot() != null || submission.hazardSnapshot() != null
                 || !submission.eventId().equals(event.eventId())
                 || !submission.disruptionId().equals(event.disruptionId())
                 || !submission.classification().equals(event.classification())

@@ -17,8 +17,8 @@ public class RootCauseDiagnosisEntity {
                                     String componentsJson) {
         id = diagnosis.id(); requestId = diagnosis.requestId(); causeCode = diagnosis.causeCode();
         causeSubtype = diagnosis.causeSubtype(); likelyCause = diagnosis.likelyCause();
-        confidence = java.math.BigDecimal.valueOf(diagnosis.confidence());
-        evidenceSupportScore = java.math.BigDecimal.valueOf(diagnosis.evidenceSupportScore());
+        confidence = diagnosis.confidence() == null ? null : java.math.BigDecimal.valueOf(diagnosis.confidence());
+        evidenceSupportScore = diagnosis.evidenceSupportScore() == null ? null : java.math.BigDecimal.valueOf(diagnosis.evidenceSupportScore());
         supportingEvidenceIds = evidenceIdsJson;
         limitations = limitationsJson; confidenceComponents = componentsJson;
         evidenceSnapshot = diagnosis.evidenceSnapshot(); evidenceSnapshotHash = diagnosis.evidenceSnapshotHash();
@@ -50,8 +50,8 @@ public class RootCauseDiagnosisEntity {
     public String causeCode() { return causeCode; }
     public String causeSubtype() { return causeSubtype; }
     public String likelyCause() { return likelyCause; }
-    public double confidence() { return confidence.doubleValue(); }
-    public double evidenceSupportScore() { return evidenceSupportScore.doubleValue(); }
+    public Double confidence() { return confidence == null ? null : confidence.doubleValue(); }
+    public Double evidenceSupportScore() { return evidenceSupportScore == null ? null : evidenceSupportScore.doubleValue(); }
     public String supportingEvidenceIdsJson() { return supportingEvidenceIds; }
     public String limitationsJson() { return limitations; }
     public Instant completedAt() { return completedAt; }

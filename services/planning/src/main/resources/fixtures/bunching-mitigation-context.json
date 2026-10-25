@@ -7,7 +7,7 @@
       "context": {
         "followingBusReference": "SBS5898U",
         "affectedBusReferences": ["SBS8027Y", "SBS5898U"],
-        "approvedControlStopCode": "44241",
+        "approvedControlStopCode": "44251",
         "followingBusState": "READY_TO_DEPART",
         "maximumHoldSeconds": 120,
         "maximumDwellAdjustmentSeconds": 75,
@@ -34,7 +34,7 @@
       "context": {
         "followingBusReference": "SMB5890C",
         "affectedBusReferences": ["SMB3123A", "SMB4567B", "SMB5890C"],
-        "approvedControlStopCode": "44241",
+        "approvedControlStopCode": "44251",
         "followingBusState": "READY_TO_DEPART",
         "maximumHoldSeconds": 120,
         "maximumDwellAdjustmentSeconds": 75,

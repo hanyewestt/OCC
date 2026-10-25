@@ -23,20 +23,22 @@ public class DiagnosisWorker {
     private final RecommendationSubmissionPort recommendation;
     private final DiagnosisProperties properties;
     private final Clock clock;
+    private final com.csd.occ.planning.advisory.domain.HazardAdvisoryProcessor hazards;
     private final RetryBackoffPolicy retryBackoff = new RetryBackoffPolicy();
 
     public DiagnosisWorker(DiagnosisRequestService requests, RootCauseDiagnosisProcessor processor,
             RecommendationDeliveryService deliveries, RecommendationSubmissionPort recommendation,
-            DiagnosisProperties properties, Clock clock) {
+            DiagnosisProperties properties, Clock clock, com.csd.occ.planning.advisory.domain.HazardAdvisoryProcessor hazards) {
         this.requests = requests; this.processor = processor; this.deliveries = deliveries;
         this.recommendation = recommendation; this.properties = properties; this.clock = clock;
+        this.hazards = hazards;
     }
 
     @Scheduled(fixedDelayString = "${occ.diagnosis.worker-interval}")
     public void processDueWork() {
         // AI calls can outlive the queue lease; claim one diagnosis at a time to avoid duplicate model work.
         List<java.util.UUID> requestIds = requests.claimDueRequests(1, properties.leaseDuration());
-        requestIds.forEach(processor::process);
+        requestIds.forEach(id -> { if (!hazards.processIfHazard(id)) processor.process(id); });
         deliverDueRecommendations();
     }
 
