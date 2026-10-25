@@ -99,6 +99,7 @@ export function usePagedCollection<T, P extends PagedResult<T>>(
   }, [collectionKey, fetchPage, publish])
 
   const onScroll: UIEventHandler<HTMLDivElement> = useCallback(event => {
+    if (stateRef.current.error !== null) return
     const viewport = event.currentTarget
     if (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 48) loadNext()
   }, [loadNext])

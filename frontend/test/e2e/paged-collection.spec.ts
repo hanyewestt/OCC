@@ -96,10 +96,13 @@ test('ignores late results from an old scope and allows a later-page retry', asy
   await expect(page.getByTestId('arrival-row')).toHaveCount(10)
   await viewport.evaluate(element => {
     element.scrollTop = element.scrollHeight
-    element.dispatchEvent(new Event('scroll', { bubbles: true }))
   })
+  await expect.poll(() => requests.filter(value => value === 'beta:1')).toHaveLength(1)
   await expect(page.getByRole('alert')).toHaveText('Could not load more rows.')
   await expect(page.getByTestId('arrival-row')).toHaveCount(10)
+  await viewport.evaluate(element => element.dispatchEvent(new Event('scroll', { bubbles: true })))
+  await page.waitForLoadState('networkidle')
+  expect(requests.filter(value => value === 'beta:1')).toHaveLength(1)
   await page.getByRole('button', { name: 'Retry loading more' }).focus()
   await page.keyboard.press('Enter')
   await expect(page.getByTestId('arrival-row')).toHaveCount(19)
