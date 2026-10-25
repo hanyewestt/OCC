@@ -37,24 +37,45 @@ public interface BusArrivalObservationRepository extends JpaRepository<BusArriva
             @Param("observationId") UUID observationId);
 
     @Query(value = """
-            select id as id, stop_code as stopCode, service_id as serviceId, operator as operator,
-                   direction_id as directionId, visit_order as visitOrder, visit_number as visitNumber,
-                   estimated_arrival_at as estimatedArrivalAt, origin_code as originCode,
-                   destination_code as destinationCode, monitored as monitored, latitude as latitude,
-                   longitude as longitude, load_category as loadCategory, feature as feature,
-                   vehicle_type as vehicleType, fetched_at as fetchedAt, age_seconds as ageSeconds,
-                   reference_version_id as referenceVersionId
-            from ingestion.current_bus_arrival
-            where (:stopCode is null or stop_code = :stopCode)
-              and (:serviceId is null or service_id = :serviceId)
-            order by estimated_arrival_at nulls last, service_id, visit_order
+            select arrival.id as id, arrival.stop_code as stopCode, stop.description as stopName,
+                   arrival.service_id as serviceId, arrival.operator as operator,
+                   arrival.direction_id as directionId, arrival.visit_order as visitOrder,
+                   arrival.visit_number as visitNumber, arrival.estimated_arrival_at as estimatedArrivalAt,
+                   arrival.origin_code as originCode, arrival.destination_code as destinationCode,
+                   arrival.monitored as monitored, arrival.latitude as latitude, arrival.longitude as longitude,
+                   arrival.load_category as loadCategory, arrival.feature as feature,
+                   arrival.vehicle_type as vehicleType, arrival.fetched_at as fetchedAt,
+                   arrival.age_seconds as ageSeconds, arrival.reference_version_id as referenceVersionId
+            from ingestion.current_bus_arrival arrival
+            left join ingestion.bus_stop stop
+              on stop.reference_version_id = arrival.reference_version_id
+             and stop.stop_code = arrival.stop_code
+            where (:stopCode is null or arrival.stop_code = :stopCode)
+              and (:serviceId is null or arrival.service_id = :serviceId)
+              and (:stopNamePattern is null or lower(stop.description) like lower(:stopNamePattern) escape '!')
+            order by case when :sortBy = 'arrival' and arrival.estimated_arrival_at is null then 1
+                          when :sortBy = 'stopName' and stop.description is null then 1 else 0 end,
+                     case when :sortBy = 'arrival' and :sortDirection = 'asc'
+                          then arrival.estimated_arrival_at end asc,
+                     case when :sortBy = 'arrival' and :sortDirection = 'desc'
+                          then arrival.estimated_arrival_at end desc,
+                     case when :sortBy = 'stopName' and :sortDirection = 'asc'
+                          then lower(stop.description) end asc,
+                     case when :sortBy = 'stopName' and :sortDirection = 'desc'
+                          then lower(stop.description) end desc,
+                     arrival.service_id, arrival.visit_order nulls last, arrival.id
             """, countQuery = """
-            select count(*) from ingestion.current_bus_arrival
-            where (:stopCode is null or stop_code = :stopCode)
-              and (:serviceId is null or service_id = :serviceId)
+            select count(*) from ingestion.current_bus_arrival arrival
+            left join ingestion.bus_stop stop
+              on stop.reference_version_id = arrival.reference_version_id
+             and stop.stop_code = arrival.stop_code
+            where (:stopCode is null or arrival.stop_code = :stopCode)
+              and (:serviceId is null or arrival.service_id = :serviceId)
+              and (:stopNamePattern is null or lower(stop.description) like lower(:stopNamePattern) escape '!')
             """, nativeQuery = true)
     Page<CurrentBusArrivalView> findCurrent(@Param("stopCode") String stopCode,
-            @Param("serviceId") String serviceId, Pageable pageable);
+            @Param("serviceId") String serviceId, @Param("stopNamePattern") String stopNamePattern,
+            @Param("sortBy") String sortBy, @Param("sortDirection") String sortDirection, Pageable pageable);
 
     /**
      * Latest live prediction set per polled stop plus the latest replay step of the active demo run.

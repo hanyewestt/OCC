@@ -202,7 +202,7 @@ With the service running in Compose, browse the interactive API at `http://local
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/v1/arrivals?stopCode=&serviceId=&page=&size=` | Latest complete per-stop arrival snapshot |
+| `GET /api/v1/arrivals?stopCode=&serviceId=&stopName=&sortBy=&sortDirection=&page=&size=` | Latest complete per-stop arrival snapshot |
 | `GET /api/v1/arrivals/history?stopCode=&serviceId=&from=&to=&page=&size=` | Retained normalized observation history |
 | `GET /api/v1/feed-status` | Poll freshness and failures by stop |
 | `GET /api/v1/poll-runs?page=&size=` | Poll audit runs |
@@ -232,6 +232,14 @@ to its cluster. The controller uses shared IDs in saved bunching evidence for a
 stronger alert-to-position link; these IDs identify source records, not buses.
 
 The machine-readable OpenAPI document is at `/v3/api-docs`.
+
+Current arrivals can be filtered by a trimmed, case-insensitive literal substring
+of the version-matched stop name through `stopName`. It is combined with the exact
+`stopCode` and `serviceId` filters before pagination. `sortBy` accepts `arrival`
+(default) or `stopName`; `sortDirection` accepts `asc` (default) or `desc`.
+Missing arrival times and unresolved stop names remain last in either direction.
+Equal sort values use service, visit order and observation ID as deterministic
+tie-breakers. Page size remains bounded to 200.
 
 ### Bus captain pacing (WQAP-68)
 

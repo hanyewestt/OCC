@@ -8,6 +8,7 @@ import java.util.UUID;
 public interface CurrentBusArrivalView {
     UUID getId();
     String getStopCode();
+    String getStopName();
     String getServiceId();
     String getOperator();
     Integer getDirectionId();
