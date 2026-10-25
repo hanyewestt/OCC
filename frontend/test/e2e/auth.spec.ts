@@ -527,8 +527,12 @@ for (const [action, button] of [['APPROVED', 'Approve recommendation'], ['REJECT
     const posted = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/decision'))
     await page.getByRole('button', { name: button, exact: true }).click()
     if (action === 'REJECTED') {
-      await page.getByLabel('Controller rationale').fill('Use a shorter hold to reduce passenger delay.')
-      await page.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true }).click()
+      const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
+      await expect(editor).toBeVisible()
+      await expect(editor.getByLabel('Bus reference').first()).toBeFocused()
+      await editor.getByLabel('Controller rationale').fill('Use a shorter hold to reduce passenger delay.')
+      await editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true }).click()
+      await expect(editor).toHaveCount(0)
     }
     const body = (await posted).postDataJSON()
     expect(body.action).toBe(action)
@@ -550,6 +554,193 @@ test('controller handles conflicting decisions by retrieving the saved result', 
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   await page.getByRole('button', { name: 'Approve recommendation', exact: true }).click()
   await expect(page.getByText(/already has a decision/)).toBeVisible()
+})
+
+test('dirty controller recommendation editor confirms dismissal and discards only explicitly', async ({ page, context }) => {
+  await mockDashboard(context)
+  let decisionRequests = 0
+  await context.route('**/api/v1/planning/recommendations/recommendation-1/decision', async route => {
+    if (route.request().method() === 'POST') decisionRequests++
+    return route.fallback()
+  })
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  const opener = page.getByRole('button', { name: 'Enter controller recommendation', exact: true })
+  await opener.focus()
+  await page.keyboard.press('Enter')
+  const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
+  await expect(editor).toBeVisible()
+  const busReference = editor.getByLabel('Bus reference').first()
+  const instruction = editor.getByLabel('Instruction').first()
+  const rationale = editor.getByLabel('Controller rationale')
+  await expect(busReference).toBeFocused()
+  const submit = editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true })
+  await submit.focus()
+  await page.keyboard.press('Tab')
+  await expect(busReference).toBeFocused()
+  await busReference.fill('SAMPLE-BUS-EDITED')
+  await instruction.fill('Take the next stop slowly.')
+  await submit.click()
+  await expect(editor.getByRole('alert')).toContainText('Enter a bus reference and instruction for every affected bus, plus a controller rationale.')
+  expect(decisionRequests).toBe(0)
+  await rationale.fill('Avoid sudden braking near the report.')
+  await expect(editor.getByRole('alert')).toHaveCount(0)
+
+  await page.keyboard.press('Escape')
+  let confirmation = page.getByRole('alertdialog', { name: 'Discard unsaved changes?', exact: true })
+  await expect(confirmation).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(confirmation).toHaveCount(0)
+  await expect(editor).toBeVisible()
+  await expect(busReference).toHaveValue('SAMPLE-BUS-EDITED')
+  await expect(instruction).toHaveValue('Take the next stop slowly.')
+  await expect(rationale).toHaveValue('Avoid sudden braking near the report.')
+
+  await editor.getByRole('button', { name: 'Cancel', exact: true }).click()
+  confirmation = page.getByRole('alertdialog', { name: 'Discard unsaved changes?', exact: true })
+  await expect(confirmation).toBeVisible()
+  await confirmation.getByRole('button', { name: 'Keep editing', exact: true }).click()
+  await expect(editor).toBeVisible()
+  await expect(busReference).toHaveValue('SAMPLE-BUS-EDITED')
+  await expect(instruction).toHaveValue('Take the next stop slowly.')
+  await expect(rationale).toHaveValue('Avoid sudden braking near the report.')
+
+  await page.mouse.click(4, 4)
+  confirmation = page.getByRole('alertdialog', { name: 'Discard unsaved changes?', exact: true })
+  await expect(confirmation).toBeVisible()
+  await confirmation.getByRole('button', { name: 'Discard changes', exact: true }).click()
+  await expect(editor).toHaveCount(0)
+  await expect(opener).toBeFocused()
+  expect(decisionRequests).toBe(0)
+
+  await opener.click()
+  const reopened = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
+  await expect(reopened.getByLabel('Bus reference').first()).toHaveValue('SAMPLE-BUS')
+  await expect(reopened.getByLabel('Instruction').first()).toHaveValue('Hold for 120 seconds at stop B01.')
+  await reopened.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(reopened).toHaveCount(0)
+  await expect(page.getByRole('alertdialog')).toHaveCount(0)
+  await expect(opener).toBeFocused()
+})
+
+test('recommendation editor keeps edits on API failure and cannot close or submit twice while saving', async ({ page, context }) => {
+  await mockDashboard(context)
+  let attempts = 0
+  let releaseFirstRequest!: () => void
+  let signalRequestStarted!: () => void
+  const requestStarted = new Promise<void>(resolve => { signalRequestStarted = resolve })
+  await context.route('**/api/v1/planning/recommendations/recommendation-1/decision', async route => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    attempts++
+    if (attempts === 1) {
+      signalRequestStarted()
+      await new Promise<void>(resolve => { releaseFirstRequest = resolve })
+      return route.fulfill({ status: 503, json: { detail: 'Decision service is temporarily unavailable.' } })
+    }
+    return route.fulfill({ json: { recommendationId: 'recommendation-1', action: 'REJECTED', actorSubject: userId,
+      overrideInstructions: [{ busReference: 'SAMPLE-BUS', instruction: 'Hold for 120 seconds at stop B01.' }],
+      controllerRationale: 'Use the controller proposal.', decidedAt: '2026-10-25T07:00:00Z' } })
+  })
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
+  const rationale = editor.getByLabel('Controller rationale')
+  await rationale.fill('Use the controller proposal.')
+  const save = editor.locator('form button[type="submit"]')
+  await save.click()
+  await requestStarted
+  await expect(save).toBeDisabled()
+  await page.keyboard.press('Escape')
+  await expect(editor).toBeVisible()
+  await expect(page.getByRole('alertdialog')).toHaveCount(0)
+  expect(attempts).toBe(1)
+  releaseFirstRequest()
+  await expect(editor.getByRole('alert')).toContainText('Unable to save the decision.')
+  await expect(rationale).toHaveValue('Use the controller proposal.')
+  await expect(save).toBeEnabled()
+
+  await save.click()
+  await expect.poll(() => attempts).toBe(2)
+  await expect(editor).toHaveCount(0)
+  await expect(page.getByText('AI recommendation replaced with controller instructions.')).toBeVisible()
+})
+
+test('recommendation editor remains during a poll and closes if its recommendation is removed', async ({ page, context }) => {
+  await page.clock.install()
+  await mockDashboard(context)
+  await context.route('**/frontend-config', route => route.fulfill({ json: {
+    projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
+    controllerRefreshIntervalSeconds: 1, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20, captainRefreshIntervalSeconds: 5, publicNoticeRefreshIntervalSeconds: 30,
+  } }))
+  let removed = false
+  let releasePage!: () => void
+  let signalRefreshStarted!: () => void
+  const refreshStarted = new Promise<void>(resolve => { signalRefreshStarted = resolve })
+  let decisionRequests = 0
+  await context.route('**/api/v1/planning/recommendations/pending?*', async route => {
+    if (!removed) return route.fallback()
+    signalRefreshStarted()
+    await new Promise<void>(resolve => { releasePage = resolve })
+    return route.fulfill({ json: { mode: 'DEMO', demoRunId: 'run-1', items: [], page: 0, totalItems: 0, totalPages: 0 } })
+  })
+  await context.route('**/api/v1/planning/recommendations/recommendation-1/decision', async route => {
+    if (route.request().method() === 'POST') decisionRequests++
+    return route.fallback()
+  })
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
+  await editor.getByLabel('Controller rationale').fill('Keep the saved draft only while current.')
+
+  removed = true
+  await page.clock.fastForward(1000)
+  await refreshStarted
+  await expect(editor).toBeVisible()
+  releasePage()
+  await expect(editor).toHaveCount(0)
+  await expect(page.getByRole('status').filter({ hasText: 'recommendation is no longer current' })).toBeVisible()
+  expect(decisionRequests).toBe(0)
+})
+
+test('recommendation editor closes when the active simulation run changes', async ({ page, context }) => {
+  await page.clock.install()
+  await mockDashboard(context)
+  await context.route('**/frontend-config', route => route.fulfill({ json: {
+    projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
+    controllerRefreshIntervalSeconds: 1, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20, captainRefreshIntervalSeconds: 5, publicNoticeRefreshIntervalSeconds: 30,
+  } }))
+  let runId = 'run-1'
+  let signalNewRun!: () => void
+  const newRunLoaded = new Promise<void>(resolve => { signalNewRun = resolve })
+  await context.route('**/api/v1/demo-runs/active', route => {
+    if (runId === 'run-2') signalNewRun()
+    return route.fulfill({ json: { id: runId, status: 'REPLAY_COMPLETE', alerts: [] } })
+  })
+  let newRunPending = false
+  await context.route('**/api/v1/planning/recommendations/pending?*', route => newRunPending
+    ? route.fulfill({ json: { mode: 'DEMO', demoRunId: 'run-2', items: [], page: 0, totalItems: 0, totalPages: 0 } })
+    : route.fallback())
+  let decisionRequests = 0
+  await context.route('**/api/v1/planning/recommendations/recommendation-1/decision', async route => {
+    if (route.request().method() === 'POST') decisionRequests++
+    return route.fallback()
+  })
+
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
+  await editor.getByLabel('Controller rationale').fill('Only use this draft in the current run.')
+
+  runId = 'run-2'
+  newRunPending = true
+  await page.clock.fastForward(1000)
+  await newRunLoaded
+  await expect(editor).toHaveCount(0)
+  await expect(page.getByRole('status').filter({ hasText: 'recommendation is no longer current' })).toBeVisible()
+  expect(decisionRequests).toBe(0)
 })
 
 test('controller distinguishes failed arrivals from empty arrivals and can retry', async ({ page, context }) => {
