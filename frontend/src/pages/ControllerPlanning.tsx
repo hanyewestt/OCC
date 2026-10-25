@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -11,6 +11,7 @@ import { PagedCollectionControls } from '@/components/PagedCollectionControls'
 import { ApiError, apiRequest, type ControllerBusInstruction, type Decision, type DiagnosisEvidenceDetail, type PendingRecommendation, type PlanningDiagnosisPage } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { dataClassificationLabel, diagnosisStatusLabel } from '@/lib/presentation'
+import { formatSgtDateTime } from '@/lib/time'
 import type { Planning } from './ControllerPage'
 import type { PagedCollection } from '@/lib/paged-collection'
 import { DataMessage, timestamp } from './ControllerViews'
@@ -75,7 +76,7 @@ function EvidenceDetailList({ items }: { items: DiagnosisEvidenceDetail[] }) {
   </ul>
 }
 
-type EditingRecommendation = { identity: string; scopeIdentity: string; recommendation: PendingRecommendation }
+type EditingRecommendation = { identity: string; scopeIdentity: string; recommendation: PendingRecommendation; pending?: boolean }
 
 export function ControllerPlanning({ recommendations, diagnoses, loading, modeError, mode, demoRunId, token, onRefresh, onSaved }: {
   recommendations: PagedCollection<PendingRecommendation, Planning['recommendations']>
@@ -110,14 +111,14 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
   const editingItemIsLoaded = !!editingItem
   const editNeedsRevalidation = !!editingInScope && !editingItem && (!!modeError || recommendations.isLoading || recommendations.isLoadingMore ||
     recommendationHasMore || recommendationLoadError !== null)
-  const selected = editNeedsRevalidation ? editingInScope.recommendation
+  const selected = editingInScope && !editingItem && (editNeedsRevalidation || editingRecommendation?.pending) ? editingInScope.recommendation
     : recommendationItems.find(item => item.recommendationId === requestedId) ?? visible[0] ?? recommendationItems[0]
-  const selectedIdentity = selected ? `${scopeIdentity}:${JSON.stringify(selected)}` : null
+  const selectedIdentity = selected ? `${scopeIdentity}:${selected.recommendationId}` : null
   const editorUnavailable = !!editingInScope && !editingItem && (!!modeError || recommendationLoadError !== null)
   const editorStale = editingRecommendation !== null && (editingRecommendation.scopeIdentity !== scopeIdentity ||
     !editNeedsRevalidation && selectedIdentity !== editingRecommendation.identity)
   const detailRecommendation = selected
-  const detailIdentity = detailRecommendation ? `${scopeIdentity}:${JSON.stringify(detailRecommendation)}` : null
+  const detailIdentity = detailRecommendation ? `${scopeIdentity}:${detailRecommendation.recommendationId}` : null
   const selectionIsCurrent = !!selected && recommendationItems.some(item => item.recommendationId === selected.recommendationId &&
     JSON.stringify(item) === JSON.stringify(selected))
 
@@ -139,6 +140,9 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
   }
 
   return <section aria-label="Mitigation recommendations" className="space-y-4">
+    <p aria-label="Recommendations freshness" className="text-xs text-muted-foreground">
+      {recommendations.lastSuccessAt ? `Last successful refresh ${formatSgtDateTime(recommendations.lastSuccessAt)}` : 'Recommendations have not refreshed successfully yet'}
+    </p>
     <section aria-labelledby="planning-diagnoses-title" className="space-y-4">
       <h2 id="planning-diagnoses-title" className="font-medium">Root-cause diagnoses</h2>
       <p className="text-sm text-muted-foreground">Live diagnoses are advisory; actions require validated vehicle, control-stop and crowd-safety inputs.</p>
@@ -197,7 +201,7 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
 function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurrent, validationFailed, retryCurrentCheck, onSaved, onMessage, onEditorChange }: {
   selected: PendingRecommendation; identity: string; scopeIdentity: string; token: string
   isCurrent: boolean; validationFailed: boolean; retryCurrentCheck: () => void
-  onSaved: () => void; onMessage: (message: string) => void; onEditorChange: (value: EditingRecommendation | null) => void
+  onSaved: () => void; onMessage: (message: string) => void; onEditorChange: Dispatch<SetStateAction<EditingRecommendation | null>>
 }) {
   const [pending, setPending] = useState(false)
   const [message, setMessage] = useState('')
@@ -261,6 +265,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
       return
     }
     submitting.current = true; setPending(true); setMessage('')
+    onEditorChange({ identity, scopeIdentity, recommendation: selected, pending: true })
     mutationRef.current?.abort()
     const controller = new AbortController()
     mutationRef.current = controller
@@ -286,7 +291,10 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
       } else setMessage(error instanceof ApiError && error.status === 403 ? 'You do not have permission to record this decision.' : 'Unable to save the decision. Check the instructions and try again.')
     } finally {
       submitting.current = false
-      if (!controller.signal.aborted) setPending(false)
+      if (!controller.signal.aborted) {
+        setPending(false)
+        onEditorChange(value => value?.identity === identity ? { ...value, pending: false } : value)
+      }
     }
   }
 
@@ -295,6 +303,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
     submitting.current = true; setPending(true); setMessage('')
     const controller = new AbortController()
     mutationRef.current?.abort(); mutationRef.current = controller
+    onEditorChange({ identity, scopeIdentity, recommendation: selected, pending: true })
     try {
       await apiRequest(`/api/v1/planning/recommendations/${encodeURIComponent(selected.recommendationId)}/obu-decisions`, token, controller.signal, { method: 'POST' })
       if (!controller.signal.aborted) { setMessage('Validated instruction issued to the assigned captain.'); onSaved() }
@@ -302,7 +311,10 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
       if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : 'Unable to issue the instruction.')
     } finally {
       submitting.current = false
-      if (!controller.signal.aborted) setPending(false)
+      if (!controller.signal.aborted) {
+        setPending(false)
+        onEditorChange(value => value?.identity === identity ? { ...value, pending: false } : value)
+      }
     }
   }
 
