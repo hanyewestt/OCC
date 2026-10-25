@@ -13,7 +13,6 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class RootCauseDiagnosisProcessor {
-    private static final String UNKNOWN_CAUSE = "Available evidence does not identify a supported contributing cause.";
     private final DiagnosisRequestRepository requests;
     private final EventFactsPort eventFacts;
     private final ContextEvidencePort evidenceContext;
@@ -22,6 +21,7 @@ public class RootCauseDiagnosisProcessor {
     private final RecommendationPayloadCodecPort payloads;
     private final DiagnosisCompletionService completion;
     private final BunchingEvidenceSupportPolicy associations = new BunchingEvidenceSupportPolicy();
+    private final DiagnosisSummaryPolicy summaries = new DiagnosisSummaryPolicy();
     private final RetryBackoffPolicy retryBackoff = new RetryBackoffPolicy();
     private final DiagnosisPolicySettings settings;
     private final Clock clock;
@@ -111,9 +111,8 @@ public class RootCauseDiagnosisProcessor {
             }
             if (output == null || association == null) throw new DiagnosisFailureException("MODEL_OUTPUT_INVALID", false);
             List<String> limitations = limitations(output, context, association);
-            String likelyCause = "UNKNOWN".equals(association.causeCode()) ? UNKNOWN_CAUSE
-                    : "Possible contributing incident: " + String.join(" ", association.facts());
-            likelyCause = truncate(likelyCause, 1000);
+            String likelyCause = summaries.summarize(association.causeCode(), association.causeSubtype(),
+                    association.evidenceIds(), snapshot).likelyCause();
             UUID diagnosisId = UUID.randomUUID();
             RootCauseDiagnosis diagnosis = new RootCauseDiagnosis(diagnosisId, request.id(), association.causeCode(),
                     association.causeSubtype(), likelyCause, null, null, association.evidenceIds(),
@@ -207,7 +206,9 @@ public class RootCauseDiagnosisProcessor {
 
     private String truncate(String value, int limit) {
         if (value == null) return null;
-        return value.length() <= limit ? value : value.substring(0, limit);
+        if (value.length() <= limit) return value;
+        int end = Character.isHighSurrogate(value.charAt(limit - 1)) ? limit - 1 : limit;
+        return value.substring(0, end).stripTrailing();
     }
 
     private String hash(String value) {

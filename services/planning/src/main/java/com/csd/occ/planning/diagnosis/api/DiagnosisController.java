@@ -63,6 +63,7 @@ public class DiagnosisController {
                 view.causeSubtype(), view.likelyCause(), view.confidence(), view.evidenceSupportScore(),
                 view.evidenceIds(), view.limitations(), view.completedAt(), view.eventType(), view.eventId(), view.producer(),
                 view.recommendationDeliveryStatus(),
-                view.recommendationDeliveryFailureCode());
+                view.recommendationDeliveryFailureCode(), view.evidenceDetails().stream()
+                        .map(com.csd.occ.planning.diagnosis.api.dto.DiagnosisEvidenceDetailResponse::from).toList());
     }
 }

@@ -22,10 +22,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class BunchingRecommendationController {
     private final RecommendationRecordPort records;
     private final com.csd.occ.planning.diagnosis.domain.PlanningScopePort scopes;
+    private final com.csd.occ.planning.diagnosis.domain.DiagnosisQueryService diagnoses;
 
     public BunchingRecommendationController(RecommendationRecordPort records,
-            com.csd.occ.planning.diagnosis.domain.PlanningScopePort scopes) {
-        this.records = records; this.scopes = scopes;
+            com.csd.occ.planning.diagnosis.domain.PlanningScopePort scopes,
+            com.csd.occ.planning.diagnosis.domain.DiagnosisQueryService diagnoses) {
+        this.records = records; this.scopes = scopes; this.diagnoses = diagnoses;
     }
 
     @GetMapping("/by-disruption-event/{bunchingEventId}")
@@ -35,11 +37,12 @@ public class BunchingRecommendationController {
     @ApiResponse(responseCode = "404", description = "No recommendation is available for the event")
     public ResponseEntity<BunchingRecommendationResponse> findByDisruptionEventId(
             @PathVariable UUID bunchingEventId) {
-        return records.findByBunchingEventId(bunchingEventId)
-                .map(record -> BunchingRecommendationResponse.from(
-                        record.requestId(), record.classification(), record.recommendation()))
-                .map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.notFound().build());
+        var record = records.findByBunchingEventId(bunchingEventId).orElse(null);
+        if (record == null) return ResponseEntity.notFound().build();
+        var summary = diagnoses.summariesByDiagnosisIds(List.of(record.diagnosis().diagnosisId()))
+                .get(record.diagnosis().diagnosisId());
+        return ResponseEntity.ok(BunchingRecommendationResponse.from(record.requestId(), record.classification(),
+                record.recommendation(), summary));
     }
 
     @GetMapping("/pending")
@@ -55,8 +58,13 @@ public class BunchingRecommendationController {
         }
         var scope = scopes.current();
         if (scope.demoRunId() == null) return new PendingRecommendationPageResponse(List.of(), page, size, 0, 0, scope.mode(), scope.demoRunId());
-        List<PendingRecommendationResponse> items = records.findPendingForRun(scope.demoRunId(), page * size, size).stream()
-                .map(PendingRecommendationResponse::from)
+        var pendingRecords = records.findPendingForRun(scope.demoRunId(), page * size, size);
+        var summaries = pendingRecords.isEmpty() ? java.util.Map.<UUID,
+                com.csd.occ.planning.diagnosis.domain.DiagnosisSummaryPolicy.Summary>of()
+                : diagnoses.summariesByDiagnosisIds(pendingRecords.stream().map(record -> record.diagnosis().diagnosisId()).toList());
+        List<PendingRecommendationResponse> items = pendingRecords.stream()
+                .map(record -> PendingRecommendationResponse.from(record,
+                        summaries.get(record.diagnosis().diagnosisId())))
                 .toList();
         long totalItems = records.countPendingForRun(scope.demoRunId());
         int totalPages = totalItems == 0 ? 0 : (int) ((totalItems + size - 1) / size);

@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
-import { ApiError, apiRequest, type ControllerBusInstruction, type Decision, type PendingRecommendation, type PlanningDiagnosisPage } from '@/lib/api'
+import { ApiError, apiRequest, type ControllerBusInstruction, type Decision, type DiagnosisEvidenceDetail, type PendingRecommendation, type PlanningDiagnosisPage } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { dataClassificationLabel, diagnosisStatusLabel } from '@/lib/presentation'
 import type { Planning } from './ControllerPage'
@@ -37,6 +37,42 @@ function initialInstructions(recommendation: PendingRecommendation): ControllerB
     busReference,
     instruction: index === 0 ? suggestedInstruction(recommendation) : '',
   }))
+}
+
+function incidentTiming(item: DiagnosisEvidenceDetail) {
+  if (item.reportTime === null) {
+    return `Provider report time unavailable${item.fetchedAt ? `; fetched ${timestamp(item.fetchedAt)}, which does not establish incident chronology` : ''}.`
+  }
+  if (item.firstConfirmedAt === null || item.secondsBeforeFirstConfirmed === null) {
+    return `Report time ${timestamp(item.reportTime)} is available, but timing relative to the first confirmed irregularity is unavailable.`
+  }
+  if (item.reportTime === item.firstConfirmedAt) {
+    return `Reported at the same time as the first confirmed irregularity (${timestamp(item.reportTime)}).`
+  }
+
+  const differenceMs = Date.parse(item.firstConfirmedAt) - Date.parse(item.reportTime)
+  if (Math.abs(differenceMs) < 1_000) {
+    const direction = item.secondsBeforeFirstConfirmed < 0 ? 'after' : 'before'
+    return `Reported less than 1 second ${direction} the first confirmed irregularity (${timestamp(item.reportTime)}).`
+  }
+
+  const offset = Math.abs(item.secondsBeforeFirstConfirmed)
+  const unit = offset === 1 ? 'second' : 'seconds'
+  const direction = item.secondsBeforeFirstConfirmed > 0 ? 'before' : 'after'
+  return `Reported ${offset} ${unit} ${direction} the first confirmed irregularity (${timestamp(item.reportTime)}).`
+}
+
+function EvidenceDetailList({ items }: { items: DiagnosisEvidenceDetail[] }) {
+  if (!items.length) return null
+  return <ul className="mt-2 list-disc space-y-3 pl-5 text-xs text-muted-foreground">
+    {items.map(item => <li key={item.evidenceId}>
+      {item.incidentType && <p className="font-medium text-foreground">{item.incidentType}</p>}
+      {item.message && <p>{item.message}</p>}
+      <p>{incidentTiming(item)}</p>
+      {item.distanceMetersFromSuppliedBusPosition !== null && <p>Approx. {Math.round(item.distanceMetersFromSuppliedBusPosition).toLocaleString('en-SG')} m from the supplied bus position near stop {item.monitoredStopCode}.</p>}
+      <p>Incident evidence: {item.evidenceId}{item.busPositionEvidenceId ? ` · Bus-position evidence: ${item.busPositionEvidenceId}` : ''}</p>
+    </li>)}
+  </ul>
 }
 
 type EditingRecommendation = { identity: string; scopeIdentity: string; recommendation: PendingRecommendation }
@@ -94,11 +130,14 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
       {!!diagnosisItems.length && <ScrollArea role="region" aria-label="Root-cause diagnoses" tabIndex={0} className="max-h-[28rem]"
         viewportProps={{ onScroll: diagnoses.onScroll }}><div className="space-y-3">{diagnosisItems.map(item => <Card key={item.requestId} className="min-h-28">
           <CardContent className="space-y-2 text-sm">
-            <p className="font-medium">Service {item.serviceId} · Direction {item.directionId} · Stop {item.stopCode}</p>
+            <p className="font-medium">Service {item.serviceId ?? 'unavailable'} · {item.directionId === null ? 'Direction unavailable' : `Direction ${item.directionId}`} · Stop {item.stopCode ?? 'unavailable'}</p>
             <p className="text-xs text-muted-foreground">{dataClassificationLabel(item.classification)} · {diagnosisStatusLabel(item.status)} · {timestamp(item.createdAt)}</p>
             {item.likelyCause && <p>{item.likelyCause}</p>}
             {item.failureCode && <p role="alert">Diagnosis unavailable: {item.failureCode.replaceAll('_', ' ')}.</p>}
-            {!!item.limitations.length && <details className="text-xs text-muted-foreground"><summary className="cursor-pointer font-medium">Evidence and limitations</summary><ul className="mt-2 list-disc space-y-1 pl-5">{item.limitations.map(value => <li key={value}>{value}</li>)}</ul></details>}
+            {!!item.evidenceDetails?.length || !!item.limitations.length ? <details className="text-xs text-muted-foreground"><summary className="cursor-pointer font-medium">Evidence and limitations</summary>
+              <EvidenceDetailList items={item.evidenceDetails ?? []} />
+              {!!item.limitations.length && <ul className="mt-2 list-disc space-y-1 pl-5">{item.limitations.map(value => <li key={value}>{value}</li>)}</ul>}
+            </details> : null}
           </CardContent>
         </Card>)}</div></ScrollArea>}
       {!!diagnosisPage && diagnosisPage.totalItems > diagnosisItems.length && <p className="text-xs text-muted-foreground">Showing {diagnosisItems.length} of {diagnosisPage.totalItems} diagnoses.</p>}
@@ -320,7 +359,12 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, onSave
 
         <div className="grid gap-5 border-t pt-4 sm:grid-cols-2"><div><h3 className="text-sm font-medium">Why this action</h3><p className="mt-2 text-sm text-muted-foreground">{selected.explanation.rationale}</p></div><dl className="space-y-2 text-sm"><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Passenger minutes</dt><dd>{selected.expectedImpact.passengerMinutesBefore} → {selected.expectedImpact.passengerMinutesAfter}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Queue passengers</dt><dd>{selected.expectedImpact.queueBeforePassengers} → {selected.expectedImpact.queueAfterPassengers}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Adjustment</dt><dd>{selected.adjustmentSeconds} seconds</dd></div></dl></div>
 
-        <details className="border-t pt-4"><summary className="cursor-pointer text-sm font-medium">Evidence and limitations</summary><div className="mt-4 grid gap-5 sm:grid-cols-2"><div><h3 className="text-sm font-medium">Trade-offs</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.tradeOffs.map((item, index) => <li key={index}>{item}</li>)}</ul></div><div><h3 className="text-sm font-medium">Limitations</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.limitations.map((item, index) => <li key={index}>{item}</li>)}</ul></div></div></details>
+        <details className="border-t pt-4"><summary className="cursor-pointer text-sm font-medium">Evidence and limitations</summary>
+          <div className="mt-4 space-y-4">
+            {!!selected.explanation.evidenceDetails?.length && <div><h3 className="text-sm font-medium">Supporting incident evidence</h3><EvidenceDetailList items={selected.explanation.evidenceDetails} /></div>}
+            <div className="grid gap-5 sm:grid-cols-2"><div><h3 className="text-sm font-medium">Trade-offs</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.tradeOffs.map((item, index) => <li key={index}>{item}</li>)}</ul></div><div><h3 className="text-sm font-medium">Limitations</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.limitations.map((item, index) => <li key={index}>{item}</li>)}</ul></div></div>
+          </div>
+        </details>
 
       </CardContent></Card>
 }

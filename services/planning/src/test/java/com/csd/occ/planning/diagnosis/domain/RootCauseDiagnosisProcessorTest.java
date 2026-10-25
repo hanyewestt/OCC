@@ -137,7 +137,8 @@ class RootCauseDiagnosisProcessorTest {
             assertThat(diagnosis.confidence()).isNull();
             assertThat(diagnosis.evidenceSupportScore()).isNull();
             assertThat(diagnosis.confidenceComponents()).isNull();
-            assertThat(diagnosis.likelyCause()).contains("reported 180 seconds before", "supplied bus position");
+            assertThat(diagnosis.likelyCause()).isEqualTo(
+                    "Possible contributor: Vehicle Breakdown. The provider reported: Provider-reported breakdown.");
             assertThat(diagnosis.limitations()).noneMatch(value -> value.toLowerCase(java.util.Locale.ROOT).contains("threshold"));
         });
         verify(completion, never()).fail(any(UUID.class), anyString(), anyBoolean(), anyBoolean(),

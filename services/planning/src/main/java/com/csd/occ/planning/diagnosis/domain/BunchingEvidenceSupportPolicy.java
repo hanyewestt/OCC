@@ -1,5 +1,6 @@
 package com.csd.occ.planning.diagnosis.domain;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -47,10 +48,7 @@ public final class BunchingEvidenceSupportPolicy {
             throw new IllegalArgumentException("Cited incident provenance does not match event");
 
         // Coordinates are bus-position observations, not verified road paths or stop geometry.
-        var position = context.arrivals().stream()
-                .filter(arrival -> event.monitoredStopCode().equals(arrival.stopCode())
-                        && arrival.latitude() != null && arrival.longitude() != null)
-                .sorted(Comparator.comparing(ArrivalEvidence::evidenceId)).findFirst();
+        var position = busPositionFor(event, context);
         List<String> facts = new ArrayList<>();
         List<String> limitations = new ArrayList<>();
         List<IncidentEvidence> associated = new ArrayList<>();
@@ -69,7 +67,7 @@ public final class BunchingEvidenceSupportPolicy {
                 else limitations.add(label + ": report time is outside the preceding evidence window.");
             }
             boolean supportedLocation = false;
-            if (incident.latitude() == null || incident.longitude() == null || position.isEmpty()) {
+            if (!hasValidCoordinates(incident.latitude(), incident.longitude()) || position.isEmpty()) {
                 limitations.add(label + ": distance cannot be computed from the available coordinates.");
             } else {
                 var arrival = position.orElseThrow();
@@ -97,7 +95,25 @@ public final class BunchingEvidenceSupportPolicy {
         return new AssociatedEvidence("TRAFFIC_INCIDENT", subtype, ids, facts, limitations);
     }
 
-    private double distanceKm(double lat1, double lon1, double lat2, double lon2) {
+    static java.util.Optional<ArrivalEvidence> busPositionFor(BunchingEventFacts event, RootCauseContext context) {
+        return context.arrivals().stream()
+                .filter(arrival -> Objects.equals(event.classification(), arrival.classification())
+                        && Objects.equals(event.demoRunId(), arrival.demoRunId())
+                        && Objects.equals(event.serviceId(), arrival.serviceId())
+                        && Objects.equals(event.directionId(), arrival.directionId())
+                        && Objects.equals(event.monitoredStopCode(), arrival.stopCode())
+                        && hasValidCoordinates(arrival.latitude(), arrival.longitude()))
+                .sorted(Comparator.comparing(ArrivalEvidence::evidenceId,
+                        Comparator.nullsLast(Comparator.naturalOrder()))).findFirst();
+    }
+
+    static boolean hasValidCoordinates(BigDecimal latitude, BigDecimal longitude) {
+        return latitude != null && longitude != null
+                && latitude.compareTo(BigDecimal.valueOf(-90)) >= 0 && latitude.compareTo(BigDecimal.valueOf(90)) <= 0
+                && longitude.compareTo(BigDecimal.valueOf(-180)) >= 0 && longitude.compareTo(BigDecimal.valueOf(180)) <= 0;
+    }
+
+    static double distanceKm(double lat1, double lon1, double lat2, double lon2) {
         double latDistance = Math.toRadians(lat2 - lat1);
         double lonDistance = Math.toRadians(lon2 - lon1);
         double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
