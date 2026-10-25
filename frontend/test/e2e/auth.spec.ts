@@ -313,6 +313,107 @@ test('route selection resets to the first route when its route identity disappea
   await expect(selector).toHaveValue('190:SMRT:1')
 })
 
+test('arrivals search, sorting and scrolling use isolated server pages and preserve route selection', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const timestamp = '2026-10-25T07:00:00Z'
+  const allArrivals = Array.from({ length: 60 }, (_, index) => ({
+    observationId: `table-arrival-${index}`, serviceId: '190', stopCode: String(5000 + index), stopName: `Stop Name ${index}`,
+    operator: 'SMRT', directionId: 1, originCode: '1000', destinationCode: '9000',
+    estimatedArrivalAt: new Date(Date.parse(timestamp) + index * 60_000).toISOString(), fetchedAt: timestamp,
+    loadCategory: ['SEA', 'SDA', 'LSD', 'FUTURE', null][index % 5],
+  }))
+  const requests: URLSearchParams[] = []
+  let oldQueryResolved = false
+  await context.route('**/api/v1/arrivals?*', async route => {
+    const params = new URL(route.request().url()).searchParams
+    if (params.has('serviceId') || params.has('stopCode')) {
+      return route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } })
+    }
+    requests.push(new URLSearchParams(params))
+    const stopName = params.get('stopName')?.toLowerCase()
+    if (stopName === 'market') return route.fulfill({ json: {
+      items: [{ ...allArrivals[59], observationId: 'market-arrival', stopCode: 'MKT01', stopName: 'Example Market' }],
+      page: 0, totalItems: 1, totalPages: 1,
+    } })
+    if (stopName === 'none') return route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } })
+    if (stopName === 'old') {
+      await new Promise(resolve => setTimeout(resolve, 250))
+      oldQueryResolved = true
+      return route.fulfill({ json: { items: [{ ...allArrivals[0], observationId: 'old-arrival', stopName: 'Old result' }], page: 0, totalItems: 1, totalPages: 1 } })
+    }
+    const pageNumber = Number(params.get('page'))
+    return route.fulfill({ json: {
+      items: pageNumber === 0 ? allArrivals.slice(0, 50) : allArrivals.slice(50),
+      page: pageNumber, totalItems: allArrivals.length, totalPages: 2,
+    } })
+  })
+  await login(page)
+  const viewport = page.locator('[data-slot="table-container"][role="region"][aria-label="Current bus arrivals"]')
+  const rows = viewport.locator('tbody tr')
+  await expect(rows).toHaveCount(50)
+  await expect(rows.nth(0).getByRole('cell').nth(1)).toHaveText('Stop Name 0 (5000)')
+  await expect(rows.nth(0).getByRole('cell').nth(3)).toHaveText('Seats Available')
+  await expect(rows.nth(1).getByRole('cell').nth(3)).toHaveText('Standing Available')
+  await expect(rows.nth(2).getByRole('cell').nth(3)).toHaveText('Limited Standing')
+  await expect(rows.nth(3).getByRole('cell').nth(3)).toHaveText('FUTURE')
+  await expect(rows.nth(4).getByRole('cell').nth(3)).toHaveText('—')
+
+  const stopHeader = viewport.locator('thead th').nth(1)
+  const arrivalHeader = viewport.locator('thead th').nth(2)
+  await stopHeader.getByRole('button').click()
+  await expect(stopHeader).toHaveAttribute('aria-sort', 'ascending')
+  await expect(arrivalHeader).not.toHaveAttribute('aria-sort')
+  await expect.poll(() => requests.some(params => params.get('sortBy') === 'stopName' && params.get('sortDirection') === 'asc')).toBe(true)
+  await stopHeader.getByRole('button').click()
+  await expect(stopHeader).toHaveAttribute('aria-sort', 'descending')
+  await expect.poll(() => requests.some(params => params.get('sortBy') === 'stopName' && params.get('sortDirection') === 'desc')).toBe(true)
+  await arrivalHeader.getByRole('button').click()
+  await expect(arrivalHeader).toHaveAttribute('aria-sort', 'ascending')
+  await arrivalHeader.getByRole('button').click()
+  await expect(arrivalHeader).toHaveAttribute('aria-sort', 'descending')
+
+  const search = page.getByRole('searchbox', { name: 'Search bus stop name' })
+  await search.fill('MARKET')
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect(rows).toHaveCount(1)
+  await expect(rows.first()).toContainText('Example Market (MKT01)')
+  await expect.poll(() => requests.some(params => params.get('stopName') === 'MARKET' && params.get('sortBy') === 'arrival' && params.get('sortDirection') === 'desc')).toBe(true)
+  await page.getByLabel('Route', { exact: true }).selectOption('972:SMRT:1')
+  await expect(page.getByRole('heading', { name: /Service 972 ·/ })).toBeVisible()
+  await expect(rows.first()).toContainText('Example Market')
+
+  await search.fill('none')
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect(page.getByText('No arrivals match this stop name', { exact: true })).toBeVisible()
+  await search.fill('')
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect(rows).toHaveCount(50)
+  await viewport.evaluate(element => {
+    element.scrollTop = element.scrollHeight
+    element.dispatchEvent(new Event('scroll', { bubbles: true }))
+  })
+  await expect(rows).toHaveCount(60)
+  expect(requests.some(params => params.get('page') === '1')).toBe(true)
+  await expect(page.getByRole('button', { name: /Previous|Next/ })).toHaveCount(0)
+
+  await search.fill('old')
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect.poll(() => requests.some(params => params.get('stopName') === 'old')).toBe(true)
+  await search.fill('MARKET')
+  await page.getByRole('button', { name: 'Search', exact: true }).click()
+  await expect(rows.first()).toContainText('Example Market')
+  await expect.poll(() => oldQueryResolved).toBe(true)
+  await expect(rows).toHaveCount(1)
+  await expect(rows.first()).not.toContainText('Old result')
+
+  await page.getByRole('link', { name: /Current arrivals/ }).click()
+  await expect(page).toHaveURL(/#arrivals$/)
+  await expect(page.getByRole('heading', { name: 'Current bus arrivals' })).toBeFocused()
+  await page.goto('/controller/disruptions')
+  await page.goto('/controller#arrivals')
+  await expect(page.getByRole('heading', { name: 'Current bus arrivals' })).toBeFocused()
+})
+
 test('bunching predictions preserve slots and reject unrelated or malformed evidence', () => {
   const alert = { eventId: 'event-1', action: 'OPENED', classification: 'SIMULATION', serviceId: '190', stopCode: 'B01', directionId: 1, detectedAt: '2026-10-22T01:00:00Z', evidence: arrivalEvidence('SIMULATION', 1) }
   expect(bunchingArrivals(alert)).toEqual(['2026-10-22T01:01:00Z', '2026-10-22T01:02:00Z', '2026-10-22T01:03:00Z'])
@@ -455,7 +556,7 @@ test('controller distinguishes failed arrivals from empty arrivals and can retry
   const options = { arrivalFailure: true }
   await mockDashboard(context, options)
   await login(page)
-  await expect(page.getByRole('alert')).toContainText('Unable to load this data')
+  await expect(page.getByRole('alert')).toContainText('Unable to load arrivals')
   await expect(page.getByText('No current arrivals.')).toHaveCount(0)
   options.arrivalFailure = false
   await page.getByRole('button', { name: 'Refresh', exact: true }).click()
