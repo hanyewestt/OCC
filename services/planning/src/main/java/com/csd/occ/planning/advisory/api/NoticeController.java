@@ -4,6 +4,9 @@ import com.csd.occ.planning.advisory.api.dto.*;
 import com.csd.occ.planning.advisory.domain.PublicNoticeService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.UUID;
@@ -12,6 +15,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
 @RestController @RequestMapping("/api/v1/planning") @Tag(name = "Public advisories")
+@SecurityRequirement(name = "SupabaseJWT")
 public class NoticeController {
     private final PublicNoticeService notices;
     public NoticeController(PublicNoticeService notices) { this.notices = notices; }
@@ -36,6 +40,8 @@ public class NoticeController {
     }
     @PostMapping("/notices/{id}/publications")
     @Operation(operationId = "publishNotice", summary = "Publish an approved notice", description = "Controller/admin only. Published content is immutable. Repeating returns the original publication timestamp.")
+    @ApiResponse(responseCode = "404", description = "Notice not found", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = org.springframework.http.ProblemDetail.class)))
+    @ApiResponse(responseCode = "409", description = "Notice is not eligible for publication", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = org.springframework.http.ProblemDetail.class)))
     public NoticeResponse publish(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) { return NoticeResponse.from(notices.publish(id, jwt.getSubject())); }
     @PostMapping("/notices/{id}/withdrawals")
     @Operation(operationId = "withdrawNotice", summary = "Withdraw a public notice", description = "Controller/admin only. Repeated withdrawal is safe; public reads exclude it immediately.")
