@@ -12,5 +12,6 @@ public record PublishedNoticeResponse(UUID id, String classification, String tit
         return new PublishedNoticeResponse(n.id(), n.classification(), n.title(), n.message(), n.services(), n.locations(),
                 n.effectiveFrom(), n.effectiveUntil(), n.publishedAt());
     }
+    @io.swagger.v3.oas.annotations.media.Schema(name = "PublishedNoticePageResponse")
     public record PageResponse(List<PublishedNoticeResponse> items, int page, int size, long totalItems, int totalPages) {}
 }

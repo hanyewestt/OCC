@@ -5,6 +5,9 @@ import com.csd.occ.planning.advisory.domain.InstructionService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -16,6 +19,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
 @RestController @RequestMapping("/api/v1/planning") @Tag(name = "Captain advisories")
+@SecurityRequirement(name = "SupabaseJWT")
 public class AdvisoryController {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AdvisoryController.class);
     private final InstructionService instructions;
@@ -43,9 +47,9 @@ public class AdvisoryController {
             description = "Controller/admin only. Actor comes from JWT. Identical repeated decisions return the original instruction; "
                     + "conflicting decisions return 409. Overrides require a rationale. Explicit replaceInstructionId cancels a conflicting movement instruction atomically.")
     @ApiResponse(responseCode = "200", description = "Issued instruction or identical replay")
-    @ApiResponse(responseCode = "400", description = "Invalid structured parameters")
-    @ApiResponse(responseCode = "404", description = "Proposal not found")
-    @ApiResponse(responseCode = "409", description = "Scope, evidence or movement conflict")
+    @ApiResponse(responseCode = "400", description = "Invalid structured parameters", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = org.springframework.http.ProblemDetail.class)))
+    @ApiResponse(responseCode = "404", description = "Proposal not found", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = org.springframework.http.ProblemDetail.class)))
+    @ApiResponse(responseCode = "409", description = "Scope, evidence or movement conflict", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = org.springframework.http.ProblemDetail.class)))
     public InstructionResponse decide(@PathVariable UUID id, @RequestBody @Valid DecideAdvisoryRequest body,
                                       @AuthenticationPrincipal Jwt jwt) {
         var result = instructions.decide(id, body.override(), body.rationale(), jwt.getSubject(), body.replaceInstructionId());
@@ -78,6 +82,8 @@ public class AdvisoryController {
     @Operation(operationId = "acknowledgeCaptainInstruction", summary = "Acknowledge an assigned instruction",
             description = "CAPTAIN only. No request body. Server records subject/time. A replay returns the original acknowledgement; "
                     + "REDUCE_SPEED duration starts on first acknowledgement. Other captains receive 404; expired/cancelled first acknowledgements return 409.")
+    @ApiResponse(responseCode = "404", description = "Instruction is not assigned to this captain", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = org.springframework.http.ProblemDetail.class)))
+    @ApiResponse(responseCode = "409", description = "Instruction is expired, cancelled or outside the active run", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = org.springframework.http.ProblemDetail.class)))
     public InstructionResponse acknowledge(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
         var result = instructions.acknowledge(id, jwt.getSubject());
         metrics.counter("occ.planning.instruction.acknowledgement", "type", result.type().name()).increment();

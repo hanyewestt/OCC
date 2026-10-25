@@ -9,6 +9,15 @@ import com.csd.occ.planning.advisory.domain.*;
 import com.csd.occ.planning.diagnosis.domain.PlanningScope;
 import com.csd.occ.planning.diagnosis.domain.PlanningScopePort;
 import java.sql.Timestamp;
+import java.math.BigDecimal;
+import com.csd.occ.planning.recommendation.domain.*;
+import com.csd.occ.planning.diagnosis.domain.PlanningScopeService;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.test.web.servlet.MockMvc;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -44,6 +53,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
         "OCC_PLANNING_GEMINI_API_KEY=test-no-network", "SUPABASE_PROJECT_URL=https://issuer.test",
         "SUPABASE_JWKS_URL=https://issuer.test/auth/v1/jwks"
 })
+@AutoConfigureMockMvc
 @Import(AdvisoryPersistenceIT.Time.class)
 @Testcontainers(disabledWithoutDocker = true)
 class AdvisoryPersistenceIT {
@@ -60,7 +70,11 @@ class AdvisoryPersistenceIT {
     }
 
     @Autowired JdbcTemplate jdbc;
+    @Autowired MockMvc mvc;
+    @Autowired RecommendationRecordPort records;
+    @MockitoBean PlanningScopeService recommendationScopes;
     @Autowired InstructionService instructions;
+    @Autowired BunchingInstructionService bunchingInstructions;
     @Autowired PublicNoticeService notices;
     @Autowired AdvisoryReconciliationService reconciliation;
     @Autowired InstructionRunReconciliationService instructionRuns;
@@ -81,7 +95,9 @@ class AdvisoryPersistenceIT {
     @BeforeEach
     void resetRowsAndExternalContext() {
         jdbc.execute("TRUNCATE planning.issued_instruction, planning.advisory_proposal, planning.advisory_model_evidence, planning.public_notice");
+        jdbc.execute("TRUNCATE planning.recommendation_decision, planning.model_invocation_record, planning.recommendation");
         sources.clear();
+        when(recommendationScopes.includesDiagnosis(any())).thenReturn(true);
         run = UUID.randomUUID(); captain = UUID.randomUUID();
         bus = new AdvisoryContextPort.Bus("demo-190-b", "demo-190-b", "SBS5898U", "190", 1, captain, "ASSIGNED",
                 new AdvisoryContextPort.Progress("44251", 10, NOW, 30, List.of(5), List.of(300)));
@@ -125,6 +141,45 @@ class AdvisoryPersistenceIT {
 
         assertThat(page.getTotalElements()).isEqualTo(1);
         assertThat(page.getContent()).extracting(AdvisoryProposal::id).containsExactly(pending.id());
+    }
+
+    @Test
+    void generatedOpenApiAndRuntimeErrorMatchAdvisoryContracts() throws Exception {
+        mvc.perform(get("/v3/api-docs").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/v1/planning/advisories'].get.responses['200'].content['*/*'].schema.$ref")
+                        .value("#/components/schemas/AdvisoryPageResponse"))
+                .andExpect(jsonPath("$.paths['/api/v1/planning/instructions'].get.responses['200'].content['*/*'].schema.$ref")
+                        .value("#/components/schemas/InstructionPageResponse"))
+                .andExpect(jsonPath("$.paths['/api/v1/planning/captain/instructions'].get.responses['200'].content['*/*'].schema.$ref")
+                        .value("#/components/schemas/InstructionPageResponse"))
+                .andExpect(jsonPath("$.paths['/api/v1/planning/notices'].get.responses['200'].content['*/*'].schema.$ref")
+                        .value("#/components/schemas/ManagedNoticePageResponse"))
+                .andExpect(jsonPath("$.paths['/api/v1/planning/public/notices'].get.responses['200'].content['*/*'].schema.$ref")
+                        .value("#/components/schemas/PublishedNoticePageResponse"))
+                .andExpect(jsonPath("$.components.schemas.AdvisoryPageResponse.properties.items.items.$ref")
+                        .value("#/components/schemas/AdvisoryResponse"))
+                .andExpect(jsonPath("$.components.schemas.InstructionPageResponse.properties.items.items.$ref")
+                        .value("#/components/schemas/InstructionResponse"))
+                .andExpect(jsonPath("$.components.schemas.InstructionPageResponse.properties.serverTime.type").value("string"))
+                .andExpect(jsonPath("$.components.schemas.ManagedNoticePageResponse.properties.items.items.$ref")
+                        .value("#/components/schemas/NoticeResponse"))
+                .andExpect(jsonPath("$.components.schemas.PublishedNoticePageResponse.properties.items.items.$ref")
+                        .value("#/components/schemas/PublishedNoticeResponse"))
+                .andExpect(jsonPath("$.paths['/api/v1/planning/advisories/{id}/decisions'].post.security[0].SupabaseJWT").isArray())
+                .andExpect(jsonPath("$.paths['/api/v1/planning/advisories/{id}/decisions'].post.responses['404'].content['application/problem+json'].schema.$ref")
+                        .value("#/components/schemas/ProblemDetail"))
+                .andExpect(jsonPath("$.components.schemas.ProblemDetail.properties.status.type").value("integer"))
+                .andExpect(jsonPath("$.components.schemas.ProblemDetail.properties.detail.type").value("string"));
+
+        mvc.perform(post("/api/v1/planning/advisories/" + UUID.randomUUID() + "/decisions")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                        .contentType("application/json").content("{}"))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.detail").isNotEmpty())
+                .andExpect(jsonPath("$.instance").isNotEmpty());
     }
 
     @Test
@@ -272,6 +327,94 @@ class AdvisoryPersistenceIT {
         assertThat(evidence.finalCandidate()).isEqualTo(proposal.candidate());
         assertThat(evidence.controllerSubject()).isEqualTo("controller");
         assertThat(evidence.decidedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void holdAtomicallyReplacesExplicitMovementAndReplaysOnlyTheSamePredecessor() throws Exception {
+        var predecessor = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, "controller", null);
+        var id = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
+        mvc.perform(post("/api/v1/planning/recommendations/" + id + "/obu-decisions")
+                .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                .contentType("application/json").content("{\"replaceInstructionId\":\"" + predecessor.id() + "\"}"))
+                .andDo(org.springframework.test.web.servlet.result.MockMvcResultHandlers.print())
+                .andExpect(status().isOk()).andExpect(jsonPath("type").value("HOLD"));
+        assertThat(issued.findById(predecessor.id()).orElseThrow().status()).isEqualTo("CANCELLED");
+        mvc.perform(post("/api/v1/planning/recommendations/" + id + "/obu-decisions")
+                .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                .contentType("application/json").content("{\"replaceInstructionId\":\"" + predecessor.id() + "\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("id").value(id.toString()));
+        mvc.perform(post("/api/v1/planning/recommendations/" + id + "/obu-decisions")
+                .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"))))
+                .andExpect(status().isConflict());
+        assertThat(issued.count()).isEqualTo(2);
+    }
+
+    @Test
+    void competingReplacementReportsWinningInstructionAndFailedIssueRollsBackCancellation() throws Exception {
+        var predecessor = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, "controller", null);
+        var first = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
+        var second = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
+        var body = "{\"replaceInstructionId\":\"" + predecessor.id() + "\"}";
+        var pool = Executors.newFixedThreadPool(2);
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+        try {
+            var requests = List.of(first, second).stream().map(id -> pool.submit(() -> {
+                ready.countDown();
+                start.await();
+                return mvc.perform(post("/api/v1/planning/recommendations/" + id + "/obu-decisions")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                        .contentType("application/json").content(body)).andReturn().getResponse();
+            })).toList();
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            var responses = requests.stream().map(f -> {
+                try { return f.get(10, TimeUnit.SECONDS); }
+                catch (Exception e) { throw new AssertionError(e); }
+            }).toList();
+            var success = responses.stream().filter(response -> response.getStatus() == 200).findFirst().orElseThrow();
+            var conflict = responses.stream().filter(response -> response.getStatus() == 409).findFirst().orElseThrow();
+            var winnerId = issued.findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(run, bus.busId(), List.of("ISSUED", "ACKNOWLEDGED"))
+                    .stream().filter(i -> i.type() != InstructionType.BE_CAUTIOUS).findFirst().orElseThrow().id();
+            assertThat(conflict.getContentAsString()).contains(winnerId.toString());
+            assertThat(success.getContentAsString()).contains(winnerId.toString());
+        } finally {
+            pool.shutdownNow();
+        }
+
+        jdbc.execute("TRUNCATE planning.issued_instruction, planning.advisory_proposal, planning.advisory_model_evidence, planning.recommendation_decision, planning.model_invocation_record, planning.recommendation");
+        var rollbackPredecessor = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, "controller", null);
+        var rollbackId = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
+        jdbc.execute("ALTER TABLE planning.issued_instruction ADD CONSTRAINT test_reject_bunching_instruction CHECK(false) NOT VALID");
+        try {
+            assertThatThrownBy(() -> bunchingInstructions.approveAndIssue(rollbackId, "controller", rollbackPredecessor.id()))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+        } finally {
+            jdbc.execute("ALTER TABLE planning.issued_instruction DROP CONSTRAINT test_reject_bunching_instruction");
+        }
+        assertThat(issued.findById(rollbackPredecessor.id()).orElseThrow().status()).isEqualTo("ISSUED");
+        assertThat(jdbc.queryForObject("select count(*) from planning.recommendation_decision where recommendation_id = ?", Integer.class, rollbackId)).isZero();
+    }
+
+    private UUID bunchingRecommendation(FollowingBusState state) {
+        UUID id = UUID.randomUUID();
+        var event = new ConfirmedBunchingEvent(id, "190", 1, "44251", BunchingEventStatus.CONFIRMED,
+                600, List.of(276, 221), NOW, List.of("arrival-1", "arrival-2"));
+        var diagnosis = new BunchingRootCauseDiagnosis(UUID.randomUUID(), "synthetic scenario evidence", null,
+                List.of("scenario-fixture"), List.of("Synthetic demonstration only"));
+        var mitigation = new ValidatedMitigationContext("SBS5898U", "44251", state, 120, 75,
+                CrowdSafetyStatus.PASSED, MitigationValidationStatus.VALIDATED, List.of("scenario-fixture"));
+        var recommendation = new BunchingRecommendationPolicy().evaluate(id, SourceClassification.SIMULATION,
+                event, diagnosis, mitigation, new SimulatedImpactEstimate(221, 341, 38, 24,
+                        new BigDecimal("190"), new BigDecimal("128"))).orElseThrow();
+        records.saveIfAbsent(new RecommendationRecord(id, "a".repeat(64), UUID.randomUUID(), SourceClassification.SIMULATION,
+                event, diagnosis, mitigation, recommendation, NOW));
+        sources.put(id, new AdvisoryContextPort.Hazard(id, "BUNCHING", "ACTIVE", null, "SIMULATION", run,
+                null, NOW, null, List.of(), List.of()));
+        when(context.route("190")).thenReturn(new AdvisoryContextPort.Route("190", List.of(
+                new AdvisoryContextPort.Operator("SBS Transit", "BUS", List.of(
+                        new AdvisoryContextPort.Direction(1, List.of(new AdvisoryContextPort.Stop("44251", "School", 10))))))));
+        return id;
     }
 
     private boolean decideAfter(CountDownLatch start, UUID id) throws InterruptedException {

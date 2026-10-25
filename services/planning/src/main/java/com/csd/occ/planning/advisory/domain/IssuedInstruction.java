@@ -10,6 +10,7 @@ import org.hibernate.type.SqlTypes;
 public class IssuedInstruction {
     @Id private UUID id;
     private UUID proposalId;
+    private UUID replacedInstructionId;
     private UUID disruptionId;
     private UUID demoRunId;
     private String busId;
@@ -31,7 +32,13 @@ public class IssuedInstruction {
     public IssuedInstruction(UUID proposalId, UUID disruptionId, UUID runId, AdvisoryContextPort.Bus bus,
             AdvisoryCandidate chosen, String message, String hazardClassification, String controller, Instant now,
             java.time.Duration acknowledgementWindow) {
+        this(proposalId, null, disruptionId, runId, bus, chosen, message, hazardClassification, controller, now, acknowledgementWindow);
+    }
+    public IssuedInstruction(UUID proposalId, UUID replacedInstructionId, UUID disruptionId, UUID runId, AdvisoryContextPort.Bus bus,
+            AdvisoryCandidate chosen, String message, String hazardClassification, String controller, Instant now,
+            java.time.Duration acknowledgementWindow) {
         id = proposalId; this.proposalId = proposalId; this.disruptionId = disruptionId; demoRunId = runId;
+        this.replacedInstructionId = replacedInstructionId;
         busId = bus.busId(); captainUserId = java.util.Objects.requireNonNull(bus.captainUserId()); type = chosen.type();
         parameters = chosen.parameters(); this.message = message; this.hazardClassification = hazardClassification;
         controllerSubject = controller; status = "ISSUED"; issuedAt = now; acknowledgementDeadline = now.plus(acknowledgementWindow);
@@ -52,6 +59,7 @@ public class IssuedInstruction {
     }
     public UUID id() { return id; }
     public UUID proposalId() { return proposalId; }
+    public UUID replacedInstructionId() { return replacedInstructionId; }
     public UUID disruptionId() { return disruptionId; }
     public UUID demoRunId() { return demoRunId; }
     public String busId() { return busId; }
