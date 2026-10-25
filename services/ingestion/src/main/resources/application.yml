@@ -1,4 +1,8 @@
 spring:
+  task:
+    scheduling:
+      pool:
+        size: ${OCC_INGESTION_SCHEDULER_POOL_SIZE:8}
   application:
     name: ingestion
   datasource:
@@ -56,6 +60,28 @@ occ:
     traffic-incident-max-pages: ${OCC_DATAMALL_TRAFFIC_INCIDENT_MAX_PAGES:10}
     max-response-bytes: ${OCC_DATAMALL_MAX_RESPONSE_BYTES:5000000}
   ingestion:
+    station-reference:
+      location: ${OCC_INGESTION_STATION_REFERENCE_LOCATION:}
+      max-bytes: ${OCC_INGESTION_STATION_REFERENCE_MAX_BYTES:1000000}
+    hazards:
+      page-size: ${OCC_INGESTION_HAZARD_PAGE_SIZE:500}
+      max-pages: ${OCC_INGESTION_HAZARD_MAX_PAGES:10}
+      source-timezone: ${OCC_INGESTION_HAZARD_SOURCE_TIMEZONE:Asia/Singapore}
+      flood:
+        enabled: ${OCC_INGESTION_FLOOD_ENABLED:false}
+        interval: ${OCC_INGESTION_FLOOD_INTERVAL:3m}
+        initial-delay: ${OCC_INGESTION_FLOOD_INITIAL_DELAY:30s}
+        stale-after: ${OCC_INGESTION_FLOOD_STALE_AFTER:10m}
+      rail:
+        enabled: ${OCC_INGESTION_RAIL_ENABLED:false}
+        interval: ${OCC_INGESTION_RAIL_INTERVAL:1m}
+        initial-delay: ${OCC_INGESTION_RAIL_INITIAL_DELAY:30s}
+        stale-after: ${OCC_INGESTION_RAIL_STALE_AFTER:5m}
+      roadworks:
+        enabled: ${OCC_INGESTION_ROADWORKS_ENABLED:false}
+        interval: ${OCC_INGESTION_ROADWORKS_INTERVAL:24h}
+        initial-delay: ${OCC_INGESTION_ROADWORKS_INITIAL_DELAY:30s}
+        stale-after: ${OCC_INGESTION_ROADWORKS_STALE_AFTER:48h}
     monitored-services: ${OCC_INGESTION_MONITORED_SERVICES:190,972}
     stale-after-seconds: ${OCC_INGESTION_STALE_AFTER_SECONDS:180}
     retention: ${OCC_INGESTION_RETENTION:12h}
@@ -73,6 +99,8 @@ occ:
     traffic-feed:
       default-page-size: ${OCC_INGESTION_TRAFFIC_POLL_PAGE_SIZE:100}
       max-page-size: ${OCC_INGESTION_TRAFFIC_POLL_MAX_PAGE_SIZE:250}
+    demo-captain:
+      user-id: ${OCC_DEMO_CAPTAIN_USER_ID:}
     demo:
       scenario: ${OCC_INGESTION_DEMO_SCENARIO:multi-route-bunching-v2}
       seed: ${OCC_INGESTION_DEMO_SEED:190}

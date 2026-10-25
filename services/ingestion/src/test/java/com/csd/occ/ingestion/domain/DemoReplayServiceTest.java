@@ -22,6 +22,39 @@ class DemoReplayServiceTest {
     private static final Instant NOW = Instant.parse("2026-09-26T05:00:00Z");
 
     @Test
+    void snapshotsOneAuthenticatedCaptainAndStableUniqueBusIdentitiesOnEveryRun() {
+        var runs = mock(DemoRunRepository.class);
+        var assignments = mock(DemoVehicleAssignmentRepository.class);
+        var topology = mock(ReferenceTopologyPort.class);
+        when(topology.activeVersion()).thenReturn(Optional.of(
+                new ReferenceTopologyPort.ReferenceTopologyVersion(UUID.randomUUID(), "a".repeat(64))));
+        when(runs.save(org.mockito.ArgumentMatchers.any())).thenAnswer(invocation -> invocation.getArgument(0));
+        UUID captain = UUID.randomUUID();
+        var service = new DemoReplayService(runs, assignments, mock(PollRunRepository.class),
+                mock(RawObservationRepository.class), mock(BusArrivalObservationRepository.class),
+                mock(TrafficIncidentObservationRepository.class), topology, Clock.fixed(NOW, ZoneOffset.UTC),
+                mock(DemoModeService.class), new DemoReplayConfiguration("multi-route-bunching-v2", 190,
+                Duration.ofSeconds(90), Optional.of(captain)), mock(DemoHazardReplayService.class));
+        var first = service.start();
+        var second = service.start();
+        org.assertj.core.api.Assertions.assertThat(first.id()).isNotEqualTo(second.id());
+        @SuppressWarnings("unchecked")
+        var capture = org.mockito.ArgumentCaptor.forClass(Iterable.class);
+        verify(assignments, times(2)).saveAll(capture.capture());
+        for (var batch : capture.getAllValues()) {
+            @SuppressWarnings("unchecked")
+            List<DemoVehicleAssignment> buses = StreamSupport.stream(batch.spliterator(), false).toList();
+            org.assertj.core.api.Assertions.assertThat(buses).extracting(DemoVehicleAssignment::busId)
+                    .containsExactly("demo-190-a", "demo-190-b", "demo-972-a", "demo-972-b", "demo-972-c");
+            org.assertj.core.api.Assertions.assertThat(buses.stream().filter(bus -> bus.captainUserId().isPresent()).toList())
+                    .hasSize(1).first().satisfies(bus -> {
+                        org.assertj.core.api.Assertions.assertThat(bus.busId()).isEqualTo("demo-190-b");
+                        org.assertj.core.api.Assertions.assertThat(bus.captainUserId()).contains(captain);
+                    });
+        }
+    }
+
+    @Test
     void replayEmitsThreeScopedSnapshotsWithNormalThenBunchedHeadways() {
         DemoRunRepository runs = mock(DemoRunRepository.class);
         DemoVehicleAssignmentRepository assignments = mock(DemoVehicleAssignmentRepository.class);
@@ -47,7 +80,7 @@ class DemoReplayServiceTest {
         }).when(arrivals).saveAll(org.mockito.ArgumentMatchers.any());
         DemoReplayService service = new DemoReplayService(runs, assignments, pollRuns, rawObservations, arrivals,
                 incidents, topology, Clock.fixed(NOW, ZoneOffset.UTC), mode,
-                new DemoReplayConfiguration("route190-bunching-v1", 190, Duration.ofSeconds(90)));
+                new DemoReplayConfiguration("route190-bunching-v1", 190, Duration.ofSeconds(90)), mock(DemoHazardReplayService.class));
 
         for (int step = 0; step < DemoReplayScenario.STEP_COUNT; step++) service.replayNext();
 

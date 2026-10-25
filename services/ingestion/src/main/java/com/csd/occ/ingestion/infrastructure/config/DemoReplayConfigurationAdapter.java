@@ -7,7 +7,7 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class DemoReplayConfigurationAdapter {
     @Bean
-    public DemoReplayConfiguration demoReplayConfiguration(DemoProperties properties) {
-        return new DemoReplayConfiguration(properties.scenario(), properties.seed(), properties.bunchingThreshold());
+    public DemoReplayConfiguration demoReplayConfiguration(DemoProperties properties, DemoCaptainProperties captain) {
+        return new DemoReplayConfiguration(properties.scenario(), properties.seed(), properties.bunchingThreshold(), captain.subject());
     }
 }

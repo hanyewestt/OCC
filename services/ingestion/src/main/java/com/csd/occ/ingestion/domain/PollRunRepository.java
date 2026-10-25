@@ -12,6 +12,13 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
 public interface PollRunRepository extends JpaRepository<PollRun, UUID> {
+    @Query("""
+        select p from PollRun p where p.source in (:source, :demoSource) and p.completedAt is not null
+        and (p.completedAt > :afterAt or (p.completedAt = :afterAt and p.id > :afterId))
+        order by p.completedAt, p.id
+        """)
+    List<PollRun> findHazardPolls(String source, String demoSource, Instant afterAt, UUID afterId, Pageable pageable);
+    List<PollRun> findBySourceInAndCompletedAtIsNotNullOrderByCompletedAtAscIdAsc(List<String> sources, Pageable pageable);
     long deleteByDemoRunId(UUID demoRunId);
     Optional<PollRun> findByIdempotencyKey(String idempotencyKey);
     Page<PollRun> findByClassification(String classification, Pageable pageable);
