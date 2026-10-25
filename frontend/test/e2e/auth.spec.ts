@@ -155,7 +155,7 @@ async function mockDashboard(context: BrowserContext, options: { arrivalFailure?
   }
   let decision: { recommendationId: string; action: string; actorSubject: string; overrideInstructions: { busReference: string; instruction: string }[]; controllerRationale: string | null; decidedAt: string } | null = null
   await context.route('**/api/v1/arrivals?*', route => options.arrivalFailure ? route.fulfill({ status: 503 }) : route.fulfill({ json: {
-    items: [{ observationId: 'arrival-1', serviceId: '190', stopCode: 'B01', estimatedArrivalAt: '2026-10-22T01:05:00Z', fetchedAt: '2026-10-22T01:00:00Z', loadCategory: 'SEA' }], page: 0, totalItems: 1, totalPages: 1,
+    items: [{ observationId: 'arrival-1', serviceId: '190', stopCode: 'B01', operator: 'SMRT', directionId: 1, destinationCode: 'C01', estimatedArrivalAt: '2026-10-22T01:05:00Z', fetchedAt: '2026-10-22T01:00:00Z', loadCategory: 'SEA' }], page: 0, totalItems: 1, totalPages: 1,
   } }))
   await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: { mode: 'DEMO', demoRunId: 'run-1', items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ json: { id: 'run-1', status: 'REPLAY_COMPLETE', alerts: [alert] } }))
@@ -185,35 +185,132 @@ function arrivalEvidence(classification: string, directionId: number) {
   })) } })
 }
 
-test('controller keeps live positions on the route strip and shows incidents separately', async ({ page, context }) => {
+test('controller shows one selectable live route strip and keeps the overview detection count', async ({ page, context }) => {
   await mockDashboard(context)
   await login(page)
-  await expect(page.getByRole('heading', { name: 'Live route strip', exact: true })).toBeVisible()
-  await expect(page.getByText('Simulation incident data is shown separately; the strip keeps live position estimates.', { exact: true })).toBeVisible()
-  const service190Direction1 = page.getByRole('group', { name: 'Service 190, direction 1, approximate bus positions and headways' })
+  await expect(page.getByRole('heading', { name: 'Approximate Live Route Strip', exact: true })).toBeVisible()
+  await expect(page.getByText('Simulation alerts · route positions remain live.', { exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: /Simulation detections/ })).toContainText('1')
+  await expect(page.getByRole('heading', { name: 'Service 190 · Towards Stop C01', exact: true })).toBeVisible()
+  const service190Direction1 = page.getByRole('group', { name: /Service 190, Towards Stop C01, SMRT, direction 1/ })
   await expect(service190Direction1.getByText('B01', { exact: true })).toBeVisible()
   await expect(service190Direction1.locator('tspan').filter({ hasText: /^Stop B01$/ })).toBeVisible()
   await expect(service190Direction1.getByRole('img', { name: /Estimated bus 1, approximate position/ })).toBeVisible()
-  await expect(page.getByRole('group', { name: /Service 972, direction 1, approximate bus positions/ })
-    .getByRole('img', { name: /Estimated bus 1, approximate position/ })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Bunching incidents', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Show historical (1)', exact: true })).toBeVisible()
+  await expect(page.getByRole('group', { name: /Service 972/ })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Bunching incidents', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /historical/ })).toHaveCount(0)
   await expect(page.getByRole('button', { name: /bunching detected at stop/ })).toHaveCount(0)
+  const header = page.locator('header').first()
+  await expect(header).toHaveCSS('position', 'sticky')
+  await expect(header).toHaveCSS('z-index', '10')
+  await expect(page.getByRole('status').filter({ hasText: /^Simulation$/ })).toHaveClass(/text-amber-700/)
   await page.locator('html').evaluate(element => element.classList.add('dark'))
   expect(await page.locator('html').evaluate(element => getComputedStyle(element).getPropertyValue('--background').trim())).toMatch(/^oklch\((?:0\.145|14\.5%) 0 0\)$/)
   await page.screenshot({ path: 'node_modules/.cache/controller-route-strip.png', fullPage: true })
   await page.locator('section[aria-labelledby="route-strip-title"]').screenshot({ path: 'node_modules/.cache/route-strip-services-190-972.png' })
-  await page.getByRole('button', { name: 'Show historical (1)', exact: true }).click()
-  await expect(page.getByText('Teck Whye Secondary School', { exact: true })).toBeVisible()
+  await page.getByLabel('Route', { exact: true }).selectOption('972:SMRT:1')
+  const service972Direction1 = page.getByRole('group', { name: /Service 972, Destination unavailable, SMRT, direction 1/ })
+  await expect(service972Direction1).toBeVisible()
+  await expect(page.locator('svg[role="group"]')).toHaveCount(1)
+  await expect(page.getByRole('group', { name: /Service 190/ })).toHaveCount(0)
+  await service972Direction1.getByRole('button', { name: /Stop G01/ }).click()
+  await expect(page.getByText('Next arrivals at Stop G01')).toBeVisible()
+  await page.getByLabel('Route', { exact: true }).selectOption('190:SMRT:1')
+  await expect(page.getByRole('group', { name: /Service 190, Towards Stop C01/ })).toBeVisible()
+  await expect(page.getByText('Next arrivals at Stop G01')).toHaveCount(0)
 })
 
 test('controller route strip shows inferred live bus positions with uncertainty', async ({ page, context }) => {
   await mockAuth(context, 'CONTROLLER')
   await login(page)
-  await expect(page.getByRole('heading', { name: 'Live route strip', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Approximate Live Route Strip', exact: true })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: /^Live$/ })).toHaveClass(/text-emerald-700/)
+  await expect(page.getByRole('group', { name: /Service 972/ })).toHaveCount(0)
   await expect(page.getByRole('img', { name: /Estimated bus 1, approximate position.*plus or minus 70 metres/ })).toBeVisible()
   await expect(page.getByRole('img', { name: 'Estimated buses 1 and 2: ~2m 34s estimate. Approximate time from position gap divided by estimated speed.', exact: true })).toBeVisible()
   await expect(page.getByText(/Last updated .* · Refreshes every 30 seconds/)).toBeVisible()
+})
+
+test('route destination uses all service pages and reports conflicts instead of trusting page zero', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const pageRequests: string[] = []
+  await context.route('**/api/v1/arrivals?*', route => {
+    const params = new URL(route.request().url()).searchParams
+    const serviceId = params.get('serviceId')
+    if (!serviceId) return route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } })
+    const pageNumber = Number(params.get('page'))
+    pageRequests.push(`${serviceId}:${pageNumber}`)
+    if (serviceId === '190') {
+      const destinationCode = pageNumber === 0 ? 'C01' : 'B01'
+      return route.fulfill({ json: { items: [{ observationId: `arrival-${pageNumber}`, serviceId, stopCode: 'A01', operator: 'SMRT', directionId: 1,
+        destinationCode, estimatedArrivalAt: '2026-10-25T07:01:00Z', fetchedAt: '2026-10-25T07:00:00Z', loadCategory: null }], page: pageNumber, totalItems: 2, totalPages: 2 } })
+    }
+    return route.fulfill({ json: { items: [], page: pageNumber, totalItems: 0, totalPages: 0 } })
+  })
+  await login(page)
+  await expect(page.getByRole('heading', { name: 'Service 190 · Multiple destinations', exact: true })).toBeVisible()
+  expect(pageRequests).toContain('190:1')
+  await expect(page.getByRole('option', { name: /Service 190 · Multiple destinations/ })).toBeAttached()
+})
+
+test('incomplete route arrival pages never produce a guessed destination', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  await context.route('**/api/v1/arrivals?*', route => {
+    const params = new URL(route.request().url()).searchParams
+    const serviceId = params.get('serviceId')
+    if (!serviceId) return route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } })
+    if (serviceId === '190' && params.get('page') === '1') return route.fulfill({ status: 503 })
+    return route.fulfill({ json: { items: serviceId === '190' ? [{ observationId: 'partial', serviceId, stopCode: 'A01', operator: 'SMRT', directionId: 1,
+      destinationCode: 'C01', estimatedArrivalAt: '2026-10-25T07:01:00Z', fetchedAt: '2026-10-25T07:00:00Z', loadCategory: null }] : [],
+    page: 0, totalItems: 2, totalPages: serviceId === '190' ? 2 : 0 } })
+  })
+  await login(page)
+  await expect(page.getByRole('heading', { name: 'Service 190 · Destination unavailable', exact: true })).toBeVisible()
+  await expect(page.getByText('Route arrivals are incomplete; destinations and same-stop gaps may be unavailable.', { exact: true })).toBeVisible()
+})
+
+test('unknown destination names use the bus stop reference and reuse its lookup', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  let stopLookups = 0
+  await context.route('**/api/v1/arrivals?*', route => {
+    const params = new URL(route.request().url()).searchParams
+    const serviceId = params.get('serviceId')
+    if (!serviceId) return route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } })
+    const directionId = 1
+    const destinationCode = 'Z99'
+    return route.fulfill({ json: { items: [{ observationId: `${serviceId}-${directionId}`, serviceId, stopCode: 'A01', operator: 'SMRT', directionId,
+      destinationCode, estimatedArrivalAt: '2026-10-25T07:01:00Z', fetchedAt: '2026-10-25T07:00:00Z', loadCategory: null }], page: 0, totalItems: 1, totalPages: 1 } })
+  })
+  await context.route('**/api/v1/bus-stops/Z99', route => {
+    stopLookups++
+    return route.fulfill({ json: { description: 'Reference Destination', roadName: 'Reference Road' } })
+  })
+  await login(page)
+  await expect(page.getByRole('heading', { name: 'Service 190 · Towards Reference Destination', exact: true })).toBeVisible()
+  await page.getByLabel('Route', { exact: true }).selectOption('972:SMRT:1')
+  await expect(page.getByRole('heading', { name: 'Service 972 · Towards Reference Destination', exact: true })).toBeVisible()
+  await page.getByLabel('Route', { exact: true }).selectOption('190:SMRT:1')
+  await expect(page.getByRole('heading', { name: 'Service 190 · Towards Reference Destination', exact: true })).toBeVisible()
+  expect(stopLookups).toBe(1)
+})
+
+test('route selection resets to the first route when its route identity disappears', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  let secondRouteAvailable = true
+  await context.route('**/api/v1/bus-routes/972', route => secondRouteAvailable
+    ? route.fulfill({ json: { serviceId: '972', operators: [{ operator: 'SMRT', category: null, directions: [
+      { directionId: 1, stops: [{ stopCode: 'G01', roadName: null, description: 'Stop G01', latitude: 1.38, longitude: 103.75, stopSequence: 1, distanceKm: 0 }] },
+    ] }] } }) : route.fulfill({ status: 503 }))
+  await login(page)
+  const selector = page.getByLabel('Route', { exact: true })
+  await selector.selectOption('972:SMRT:1')
+  secondRouteAvailable = false
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(selector).toHaveValue('190:SMRT:1')
+  secondRouteAvailable = true
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByRole('option', { name: /Service 972/ })).toBeAttached()
+  await expect(selector).toHaveValue('190:SMRT:1')
 })
 
 test('bunching predictions preserve slots and reject unrelated or malformed evidence', () => {
@@ -371,7 +468,13 @@ test('controller narrow layout keeps navigation and tables within the viewport',
   await page.setViewportSize({ width: 375, height: 812 })
   await login(page)
   await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible()
+  const header = page.locator('header').first()
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+  await expect.poll(async () => (await header.boundingBox())?.y).toBe(0)
+  const headerZIndex = Number(await header.evaluate(element => getComputedStyle(element).zIndex))
   await page.getByRole('button', { name: 'Expand sidebar' }).click()
+  const navigationOverlay = page.getByRole('button', { name: 'Close navigation' })
+  expect(Number(await navigationOverlay.evaluate(element => getComputedStyle(element).zIndex))).toBeGreaterThan(headerZIndex)
   await expect(page.getByRole('button', { name: 'Collapse sidebar' })).toHaveAttribute('aria-expanded', 'true')
   await page.getByRole('link', { name: 'Disruptions', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Expand sidebar' })).toBeVisible()

@@ -238,10 +238,28 @@ export function routeStopDistances(route: RouteDirection, routeLengthM: number):
 }
 
 export function arrivalDirectionMatches(arrival: Arrival, route: RouteDirection, routes: RouteDirection[]) {
+  if (arrival.serviceId !== route.serviceId || arrival.operator !== route.operator) return false
   if (arrival.directionId !== null && arrival.directionId !== undefined) return arrival.directionId === route.directionId
-  const directions = new Set(routes.filter(candidate => candidate.serviceId === arrival.serviceId &&
+  const directions = new Set(routes.filter(candidate => candidate.serviceId === arrival.serviceId && candidate.operator === arrival.operator &&
     candidate.stops.some(stop => stop.stopCode === arrival.stopCode)).map(candidate => candidate.directionId))
   return directions.size === 1 && directions.has(route.directionId)
+}
+
+export type RouteDestination =
+  | { status: 'unavailable' }
+  | { status: 'multiple' }
+  | { status: 'resolved'; stopCode: string; stopName: string | null }
+
+export function routeDestination(route: RouteDirection, routes: RouteDirection[], arrivals: Arrival[]): RouteDestination {
+  const codes = new Set(arrivals.flatMap(arrival => {
+    const code = arrival.destinationCode?.trim()
+    return code && arrivalDirectionMatches(arrival, route, routes) ? [code] : []
+  }))
+  if (codes.size > 1) return { status: 'multiple' }
+  const stopCode = codes.values().next().value
+  if (!stopCode) return { status: 'unavailable' }
+  const stopName = route.stops.find(stop => stop.stopCode === stopCode)?.description?.trim() || null
+  return { status: 'resolved', stopCode, stopName }
 }
 
 export function oldestStopDataAgeSeconds(arrivals: Arrival[], routes: RouteDirection[], nowMs: number): number | null {
