@@ -102,15 +102,31 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
   const diagnosisItems = !loading && !diagnosisError && diagnosisScopeMatches ? diagnoses.items : []
   const visible = recommendationItems.filter(item => item.serviceId.includes(filter.trim()))
   const requestedId = searchParams.get('recommendation')
-  const selected = recommendationItems.find(item => item.recommendationId === requestedId) ?? visible[0] ?? recommendationItems[0]
   const scopeIdentity = `${mode}:${demoRunId ?? 'none'}`
+  const { error: recommendationLoadError, hasMore: recommendationHasMore, isLoading: recommendationIsLoading,
+    isLoadingMore: recommendationIsLoadingMore, loadNext: loadNextRecommendation } = recommendations
+  const editingInScope = editingRecommendation?.scopeIdentity === scopeIdentity ? editingRecommendation : null
+  const editingItem = editingInScope && recommendationItems.find(item => item.recommendationId === editingInScope.recommendation.recommendationId)
+  const editingItemIsLoaded = !!editingItem
+  const editNeedsRevalidation = !!editingInScope && !editingItem && (recommendations.isLoading || recommendations.isLoadingMore ||
+    recommendationHasMore || recommendationLoadError !== null)
+  const selected = editNeedsRevalidation ? editingInScope.recommendation
+    : recommendationItems.find(item => item.recommendationId === requestedId) ?? visible[0] ?? recommendationItems[0]
   const selectedIdentity = selected ? `${scopeIdentity}:${JSON.stringify(selected)}` : null
-  const editorUnavailable = editingRecommendation !== null && !recommendations.isLoading && recommendations.error !== null
+  const editorUnavailable = !!editingInScope && !editingItem && recommendationLoadError !== null
   const editorStale = editingRecommendation !== null && (editingRecommendation.scopeIdentity !== scopeIdentity ||
-    !recommendations.isLoading && !editorUnavailable && selectedIdentity !== editingRecommendation.identity)
-  const detailRecommendation = selected ?? (editingRecommendation && recommendations.isLoading && editingRecommendation.scopeIdentity === scopeIdentity
-    ? editingRecommendation.recommendation : undefined)
+    !editNeedsRevalidation && selectedIdentity !== editingRecommendation.identity)
+  const detailRecommendation = selected
   const detailIdentity = detailRecommendation ? `${scopeIdentity}:${JSON.stringify(detailRecommendation)}` : null
+  const selectionIsCurrent = !!selected && recommendationItems.some(item => item.recommendationId === selected.recommendationId &&
+    JSON.stringify(item) === JSON.stringify(selected))
+
+  useEffect(() => {
+    if (!editingInScope || editingItemIsLoaded || recommendationIsLoading || recommendationIsLoadingMore ||
+      recommendationLoadError !== null || !recommendationHasMore) return
+    loadNextRecommendation()
+  }, [editingInScope, editingItemIsLoaded, loadNextRecommendation, recommendationHasMore, recommendationIsLoading,
+    recommendationIsLoadingMore, recommendationLoadError])
 
   useEffect(() => {
     if (selected && selected.recommendationId !== requestedId) {
@@ -146,9 +162,8 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
     </section>
     <DataMessage error={recommendationError} loading={loading || recommendations.isLoading && !recommendationPage} empty={!recommendationItems.length && !detailRecommendation}>No recommendations are awaiting a decision.</DataMessage>
     {message && <p role="status" className="text-sm">{message}</p>}
-    {editorStale && <p role="status" className="text-sm">{editorUnavailable
-      ? 'Unable to confirm this recommendation is current. The editor was closed; refresh before making a decision.'
-      : 'This recommendation is no longer current. The editor was closed; review the latest data before making a decision.'}</p>}
+    {editorStale && <p role="status" className="text-sm">This recommendation is no longer current. The editor was closed; review the latest data before making a decision.</p>}
+    {editorUnavailable && !editorStale && <p role="status" className="text-sm">Unable to confirm this recommendation is current. Your draft is preserved; retry the check before deciding.</p>}
     {!!recommendationItems.length || !!detailRecommendation ? <div className="grid items-start gap-4 lg:grid-cols-[minmax(16rem,0.36fr)_minmax(0,1fr)]">
       <Card className="gap-0 py-0">
         <div className="space-y-3 border-b p-4">
@@ -172,13 +187,15 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
       </Card>
 
       {detailRecommendation && detailIdentity && <RecommendationDetail key={detailIdentity} selected={detailRecommendation} identity={detailIdentity}
-        scopeIdentity={scopeIdentity} token={token} onSaved={onSaved} onMessage={setMessage} onEditorChange={setEditingRecommendation} />}
+        scopeIdentity={scopeIdentity} token={token} isCurrent={selectionIsCurrent} validationFailed={editorUnavailable} retryCurrentCheck={recommendations.reload}
+        onSaved={onSaved} onMessage={setMessage} onEditorChange={setEditingRecommendation} />}
     </div> : null}
   </section>
 }
 
-function RecommendationDetail({ selected, identity, scopeIdentity, token, onSaved, onMessage, onEditorChange }: {
+function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurrent, validationFailed, retryCurrentCheck, onSaved, onMessage, onEditorChange }: {
   selected: PendingRecommendation; identity: string; scopeIdentity: string; token: string
+  isCurrent: boolean; validationFailed: boolean; retryCurrentCheck: () => void
   onSaved: () => void; onMessage: (message: string) => void; onEditorChange: (value: EditingRecommendation | null) => void
 }) {
   const [pending, setPending] = useState(false)
@@ -234,7 +251,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, onSave
   }
 
   async function decide(action: Decision['action']) {
-    if (submitting.current) return
+    if (submitting.current || !isCurrent) return
     const overrideInstructions = action === 'REJECTED' ? instructions.map(item => ({
       busReference: item.busReference.trim(), instruction: item.instruction.trim(),
     })) : []
@@ -273,7 +290,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, onSave
   }
 
   async function approveAndSendToObu() {
-    if (submitting.current) return
+    if (submitting.current || !isCurrent) return
     submitting.current = true; setPending(true); setMessage('')
     const controller = new AbortController()
     mutationRef.current?.abort(); mutationRef.current = controller
@@ -306,6 +323,11 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, onSave
                 <DialogTitle>Enter controller recommendation</DialogTitle>
                 <DialogDescription>Replace the AI proposal with instructions for each affected bus. Enter a rationale to save.</DialogDescription>
               </DialogHeader>
+              {!isCurrent && <div role="alert" className="rounded-lg border p-3 text-sm">
+                <p>{validationFailed ? 'Unable to confirm this recommendation is current. Your draft is preserved; decisions are paused.'
+                  : 'Checking that this recommendation is still pending. Decisions are paused.'}</p>
+                {validationFailed && <Button type="button" variant="outline" className="mt-3" onClick={retryCurrentCheck}>Retry recommendation check</Button>}
+              </div>}
               {message && <p role="alert" className="rounded-lg border p-3 text-sm">{message}</p>}
               <form className="space-y-4" noValidate onSubmit={event => { event.preventDefault(); void decide('REJECTED') }}>
                 {instructions.map((item, index) => <div key={index} className="grid gap-3 rounded-lg border p-4 sm:grid-cols-[minmax(10rem,0.35fr)_1fr_auto]">
@@ -318,7 +340,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, onSave
                 <DialogFooter>
                   <DialogClose asChild><Button type="button" variant="outline" disabled={pending}>Close</Button></DialogClose>
                   <Button type="button" variant="outline" disabled={pending} onClick={requestClose}>Cancel</Button>
-                  <Button type="submit" disabled={pending}>{pending ? 'Saving…' : 'Reject AI suggestion & save instructions'}</Button>
+                  <Button type="submit" disabled={pending || !isCurrent}>{pending ? 'Saving…' : 'Reject AI suggestion & save instructions'}</Button>
                 </DialogFooter>
               </form>
             </DialogContent>
@@ -341,8 +363,8 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, onSave
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
-          <Button disabled={pending} onClick={() => void decide('APPROVED')}>{pending ? 'Saving…' : 'Approve recommendation'}</Button>
-          {['HOLD', 'DWELL_ADJUSTMENT'].includes(selected.mitigationType) && <Button variant="outline" disabled={pending} onClick={() => void approveAndSendToObu()}>Approve and send to bus</Button>}
+          <Button disabled={pending || !isCurrent} onClick={() => void decide('APPROVED')}>{pending ? 'Saving…' : 'Approve recommendation'}</Button>
+          {['HOLD', 'DWELL_ADJUSTMENT'].includes(selected.mitigationType) && <Button variant="outline" disabled={pending || !isCurrent} onClick={() => void approveAndSendToObu()}>Approve and send to bus</Button>}
         </div>
 
         <div className="grid gap-4 rounded-lg bg-muted/50 p-4 sm:grid-cols-[1fr_auto]">

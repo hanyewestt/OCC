@@ -755,6 +755,104 @@ test('recommendation editor retains its draft during an unrelated refresh', asyn
   await expect(rationale).toHaveValue('Keep the current draft while route data refreshes.')
 })
 
+test('recommendation editor retains a later-page draft while refresh checks all pending pages', async ({ page, context }) => {
+  await page.clock.install()
+  await mockDashboard(context)
+  await context.route('**/frontend-config', route => route.fulfill({ json: {
+    projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
+    controllerRefreshIntervalSeconds: 1, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20, captainRefreshIntervalSeconds: 5, publicNoticeRefreshIntervalSeconds: 30,
+  } }))
+  const makeRecommendation = (recommendationId: string, serviceId: string, likelyCause: string) => ({
+    recommendationId, classification: 'SIMULATION', status: 'RECOMMENDED', serviceId, directionId: 1, monitoredStopCode: 'B01',
+    detectedAt: '2026-10-22T01:00:00Z', createdAt: '2026-10-22T01:01:00Z', expectedHeadwaySeconds: 180, observedHeadwaySeconds: 60,
+    mitigationType: 'HOLD', targetBusReference: 'SAMPLE-BUS', affectedBusReferences: ['SAMPLE-BUS'], controlStopCode: 'B01', adjustmentSeconds: 120,
+    explanation: { rationale: 'Restore spacing between buses.', likelyCause, diagnosisConfidence: 0.86, tradeOffs: ['Adds waiting time.'], limitations: ['Simulation only.'] },
+    expectedImpact: { headwayBeforeSeconds: 60, headwayAfterSeconds: 180, queueBeforePassengers: 20, queueAfterPassengers: 12, passengerMinutesBefore: 40, passengerMinutesAfter: 28 },
+  })
+  const firstPage = Array.from({ length: 100 }, (_, index) => makeRecommendation(`page-zero-${index}`, String(index + 1), `Page zero proposal ${index + 1}`))
+  const laterPage = makeRecommendation('recommendation-later-page', '999', 'Selected later-page proposal')
+  let pageZeroRequests = 0
+  let laterPageRequests = 0
+  await context.route('**/api/v1/planning/recommendations/pending?*', route => {
+    const url = new URL(route.request().url())
+    const requestedPage = Number(url.searchParams.get('page'))
+    if (requestedPage === 0) {
+      pageZeroRequests += 1
+      return route.fulfill({ json: { mode: 'DEMO', demoRunId: 'run-1', items: firstPage, page: 0, totalItems: 101, totalPages: 2 } })
+    }
+    laterPageRequests += 1
+    return route.fulfill({ json: { mode: 'DEMO', demoRunId: 'run-1', items: [laterPage], page: 1, totalItems: 101, totalPages: 2 } })
+  })
+
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  const list = page.getByRole('listbox', { name: 'Recommendations awaiting a decision', exact: true })
+  const loadSecondPage = page.getByRole('button', { name: 'Load more recommendations', exact: true })
+  await expect(loadSecondPage).toBeVisible()
+  const firstLaterPageResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/v1/planning/recommendations/pending' && url.searchParams.get('page') === '1'
+  })
+  await loadSecondPage.click()
+  await firstLaterPageResponse
+  const laterProposal = list.getByRole('option').filter({ hasText: 'Selected later-page proposal' })
+  await expect(laterProposal).toBeVisible()
+  await laterProposal.click()
+  await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
+  const rationale = editor.getByLabel('Controller rationale')
+  await rationale.fill('Keep this later-page draft during its revalidation.')
+
+  const previousPageZeroRequests = pageZeroRequests
+  const refreshedPageZero = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/v1/planning/recommendations/pending' && url.searchParams.get('page') === '0' && pageZeroRequests > previousPageZeroRequests
+  })
+  await page.clock.fastForward(1000)
+  await refreshedPageZero
+  await expect(editor).toBeVisible()
+  await expect(rationale).toHaveValue('Keep this later-page draft during its revalidation.')
+  await expect.poll(() => laterPageRequests).toBeGreaterThan(1)
+  await expect(editor).toBeVisible()
+  await expect(rationale).toHaveValue('Keep this later-page draft during its revalidation.')
+})
+
+test('recommendation editor keeps its draft and blocks decisions when refresh fails', async ({ page, context }) => {
+  await page.clock.install()
+  await mockDashboard(context)
+  await context.route('**/frontend-config', route => route.fulfill({ json: {
+    projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
+    controllerRefreshIntervalSeconds: 1, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20, captainRefreshIntervalSeconds: 5, publicNoticeRefreshIntervalSeconds: 30,
+  } }))
+  let failRefresh = false
+  await context.route('**/api/v1/planning/recommendations/pending?*', route => failRefresh
+    ? route.fulfill({ status: 503 })
+    : route.fallback())
+
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
+  const rationale = editor.getByLabel('Controller rationale')
+  await rationale.fill('Keep this draft until a refresh can confirm it.')
+
+  const failedRefresh = page.waitForResponse(response =>
+    new URL(response.url()).pathname === '/api/v1/planning/recommendations/pending' && response.status() === 503)
+  failRefresh = true
+  await page.clock.fastForward(1000)
+  await failedRefresh
+  await expect(editor).toBeVisible()
+  await expect(rationale).toHaveValue('Keep this draft until a refresh can confirm it.')
+  await expect(editor.getByRole('alert')).toContainText('Unable to confirm this recommendation is current')
+  await expect(editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true })).toBeDisabled()
+  await expect(page.locator('button').filter({ hasText: /^Approve recommendation$/ })).toBeDisabled()
+
+  failRefresh = false
+  await editor.getByRole('button', { name: 'Retry recommendation check', exact: true }).click()
+  await expect(rationale).toHaveValue('Keep this draft until a refresh can confirm it.')
+  await expect(editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true })).toBeEnabled()
+})
+
 test('recommendation editor remains during a poll and closes if its recommendation is removed', async ({ page, context }) => {
   await page.clock.install()
   await mockDashboard(context)
