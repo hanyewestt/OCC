@@ -2,11 +2,11 @@ import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { Arrival, BunchingAlert, DemoRun, PageResult } from '@/lib/api'
 import { bunchingArrivals } from '@/lib/bunching'
+import { formatSgtDateTime } from '@/lib/time'
 import type { Planning, Resource } from './ControllerPage'
 
 export function timestamp(value: string | null | undefined) {
-  if (!value || Number.isNaN(Date.parse(value))) return '—'
-  return new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return formatSgtDateTime(value)
 }
 
 export function DataMessage({ error, loading, empty, children }: {
@@ -39,7 +39,7 @@ export function ControllerDisruptions({ alerts, run, loading }: {
   const error = run.error || (!simulation ? alerts.error : '')
   const items = loading || error ? [] : simulation ? simulation.alerts : alerts.data?.items ?? []
   return <div className="space-y-10">
-    <section aria-labelledby="bunching-title" className="space-y-4"><div><h2 id="bunching-title" className="font-medium">Bunching detections</h2><p className="mt-1 text-xs text-muted-foreground">{simulation ? 'Simulation events from the current run; these are not live incidents.' : 'Currently open live detections · observation only.'}</p></div>
+    <section aria-labelledby="bunching-title" className="space-y-4"><div><h2 id="bunching-title" className="font-medium">Bunching detections</h2><p className="mt-1 text-xs text-muted-foreground">{simulation ? 'Simulation events from the current run.' : 'Live detections.'}</p></div>
       <DataMessage error={error} loading={loading} empty={!items.length}>No bunching detections.</DataMessage>
       {!!items.length && <div className="rounded-lg border"><Table><TableCaption className="mb-3">Bus 1, 2 and 3 are arrival predictions recorded at detection time, shown in your local time zone.</TableCaption><TableHeader><TableRow><TableHead>Service</TableHead><TableHead>Bus stop</TableHead><TableHead>Direction</TableHead><TableHead>Bus 1 arrival</TableHead><TableHead>Bus 2 arrival</TableHead><TableHead>Bus 3 arrival</TableHead><TableHead>Event</TableHead><TableHead>Detected</TableHead><TableHead>Source</TableHead></TableRow></TableHeader><TableBody>{items.map(alert => <TableRow key={alert.eventId}><TableCell className="font-medium">{alert.serviceId}</TableCell><TableCell><p className="font-medium">{alert.stopName || 'Stop name unavailable'}</p><p className="mt-1 text-xs text-muted-foreground">{alert.stopRoadName ? `${alert.stopRoadName} · ` : ''}{alert.stopCode}</p></TableCell><TableCell>{alert.directionId ? `Direction ${alert.directionId}` : 'Unavailable'}</TableCell>{bunchingArrivals(alert).map((value, index) => <TableCell key={index}>{value === 'No prediction' || value === 'Unavailable' ? <span className="text-muted-foreground">{value}</span> : timestamp(value)}</TableCell>)}<TableCell>{alert.action}</TableCell><TableCell>{timestamp(alert.detectedAt)}</TableCell><TableCell>{alert.classification}</TableCell></TableRow>)}</TableBody></Table></div>}
       {!simulation && !loading && alerts.data && alerts.data.totalItems > items.length && <p className="text-xs text-muted-foreground">Showing {items.length} of {alerts.data.totalItems} detections.</p>}

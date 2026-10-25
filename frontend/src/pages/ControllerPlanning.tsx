@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ApiError, apiRequest, type ControllerBusInstruction, type Decision, type PendingRecommendation, type PlanningDiagnosisPage } from '@/lib/api'
 import { signOut } from '@/lib/auth'
+import { dataClassificationLabel, diagnosisStatusLabel } from '@/lib/presentation'
 import type { Planning, Resource } from './ControllerPage'
 import { DataMessage, timestamp } from './ControllerViews'
 
@@ -66,7 +67,7 @@ export function ControllerPlanning({ planning, diagnoses, loading, token, onSave
       {!loading && !diagnoses.error && diagnoses.data?.items?.map(item => <Card key={item.requestId}>
         <CardContent className="space-y-2 text-sm">
           <p className="font-medium">Service {item.serviceId} · Direction {item.directionId} · Stop {item.stopCode}</p>
-          <p className="text-xs text-muted-foreground">{item.classification === 'SIMULATION' ? 'Simulation' : 'Live · observation only'} · {item.status.replaceAll('_', ' ')} · {timestamp(item.createdAt)}</p>
+          <p className="text-xs text-muted-foreground">{dataClassificationLabel(item.classification)} · {diagnosisStatusLabel(item.status)} · {timestamp(item.createdAt)}</p>
           {item.likelyCause && <p>{item.likelyCause}</p>}
           {item.failureCode && <p role="alert">Diagnosis unavailable: {item.failureCode.replaceAll('_', ' ')}.</p>}
           {!!item.limitations.length && <ul className="list-disc space-y-1 pl-5 text-muted-foreground">{item.limitations.map(value => <li key={value}>{value}</li>)}</ul>}

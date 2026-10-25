@@ -80,8 +80,8 @@ test('simulation board uses explicit run scope and labels demonstration notices'
     return route.fulfill({ json: { items: [{ ...notice, classification: 'SIMULATION' }], page: 0, totalItems: 1, totalPages: 1 } })
   })
   await page.goto(`/notices?classification=SIMULATION&demoRunId=${runId}`)
-  await expect(page.getByRole('status').filter({ hasText: 'SIMULATION · Demonstration notices' })).toBeVisible()
-  await expect(page.getByText('SIMULATION', { exact: true })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: 'Simulation · Demonstration notices' })).toBeVisible()
+  await expect(page.getByText('Simulation', { exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: notice.title, exact: true })).toBeVisible()
 })
 

@@ -6,6 +6,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ApiError, apiRequest, type Advisory, type AdvisoryCandidate, type CaptainInstruction, type Hazard, type ManagedNotice, type NoticeSuggestion, type PageResult, type PlanningHazardRequest } from '@/lib/api'
 import { signOut } from '@/lib/auth'
+import { dataClassificationLabel, diagnosisStatusLabel } from '@/lib/presentation'
+import { formatSgtDateTime, sgtDateTimeInputToUtc } from '@/lib/time'
 
 type Edit = { advisory: Advisory; type: AdvisoryCandidate['type']; stopSequence: string; speed: string; minutes: string; count: string; rationale: string; replacement: string }
 type Draft = { id: string; previousId?: string; disruptionId: string; title: string; message: string; services: string; locations: string; from: string; until: string }
@@ -168,16 +170,16 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
         <span className="font-medium">Feed freshness</span>
         {!hazards?.feeds?.length ? <span>Feed status unavailable.</span> : hazards.feeds.map(feed =>
           <span key={feed.kind}>{feed.kind.replace('_', ' ')} · {feed.status.toLowerCase()}
-            {feed.lastSuccessAt ? ` · last success ${new Date(feed.lastSuccessAt).toLocaleString()}` : ''}</span>)}
+            {feed.lastSuccessAt ? ` · last success ${formatSgtDateTime(feed.lastSuccessAt)}` : ''}</span>)}
       </div>
       <div className="max-w-xs space-y-2"><Label htmlFor="hazard-kind">Hazard type</Label><select id="hazard-kind" value={kind} onChange={e => setKind(e.target.value)} className="h-9 w-full rounded-md border bg-background px-3 text-sm">
         <option value="">All types</option>{['TRAFFIC_INCIDENT', 'FLOOD', 'RAIL_DISRUPTION', 'ROADWORKS'].map(value => <option key={value}>{value}</option>)}
       </select></div>
       {hazards === null ? <p role="status" className="text-sm text-muted-foreground">Hazard data unavailable or loading.</p> : hazards.items.length === 0 ? <p className="text-sm text-muted-foreground">No current additional hazards.</p> :
         hazards.items.filter(h => !kind || h.kind === kind).map(h => <Card key={h.disruptionId}><CardContent className="space-y-3">
-          <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{h.facts.title}</h3><p className="text-xs text-muted-foreground">{h.status} · {h.classification}</p></div>
+          <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{h.facts.title}</h3><p className="text-xs text-muted-foreground">{h.status} · {dataClassificationLabel(h.classification)}</p></div>
           <p className="text-sm">{h.facts.description}</p>{h.facts.instruction && <p className="text-sm font-medium">{h.facts.instruction}</p>}
-          <p className="text-xs text-muted-foreground">Updated {new Date(h.updatedAt).toLocaleString()} · Candidate exposure uses simulated bus progress.</p>
+          <p className="text-xs text-muted-foreground">Updated {formatSgtDateTime(h.updatedAt)} · Candidate exposure uses simulated bus progress.</p>
           {h.exposures.length > 0 ? <p className="text-sm">Candidate stops: {h.exposures.map(e => `${e.serviceId} · ${e.stopName} (${e.basis})`).join('; ')}</p> : <p className="text-sm text-muted-foreground">No resolved upcoming bus exposure.</p>}
           <ul className="space-y-1 text-xs text-muted-foreground">{h.limitations.map(value => <li key={value}>{value}</li>)}</ul>
         </CardContent></Card>)}
@@ -189,11 +191,11 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
       {hazardRequests === null ? <p role="status" className="text-sm text-muted-foreground">Hazard processing status unavailable or loading.</p> :
         hazardRequests.items.length === 0 ? <p className="text-sm text-muted-foreground">No pending or failed hazard processing.</p> :
           hazardRequests.items.map(request => {
-            const status = request.status === 'FAILED_RETRYABLE' ? 'Retrying' : request.status === 'FAILED_TERMINAL' ? 'Failed' : request.status.toLowerCase()
+            const status = diagnosisStatusLabel(request.status)
             const source = hazards?.items.find(hazard => hazard.disruptionId === request.disruptionId)
             return <Card key={request.requestId}><CardContent className="space-y-1">
               <p className="font-medium">{source?.facts.title ?? `${request.eventType.replaceAll('_', ' ')} · ${request.disruptionId}`}</p>
-              <p className="text-xs text-muted-foreground">{status}{request.failureCode ? ` · ${request.failureCode}` : ''} · {new Date(request.createdAt).toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground">{status}{request.failureCode ? ` · ${request.failureCode}` : ''} · {formatSgtDateTime(request.createdAt)}</p>
               {request.status === 'FAILED_TERMINAL' && <p className="text-sm">No advisory was issued. Review the feed and bus exposure before retrying.</p>}
             </CardContent></Card>
           })}
@@ -202,7 +204,7 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
     </div>}
     {view === 'planning' && <>
       {advisories === null ? <p role="status" className="text-sm text-muted-foreground">Advisories unavailable or loading.</p> : advisories.items.filter(a => a.status === 'PENDING').length === 0 ? <p className="text-sm text-muted-foreground">No pending captain advisories.</p> : advisories.items.filter(a => a.status === 'PENDING').map(a =>
-        <Card key={a.id}><CardContent className="space-y-4"><p className="text-xs text-muted-foreground">SIMULATION · {a.busId} · Hazard: {a.hazardClassification}</p>
+        <Card key={a.id}><CardContent className="space-y-4"><p className="text-xs text-muted-foreground">Simulation · {a.busId} · Hazard: {dataClassificationLabel(a.hazardClassification)}</p>
           <h3 className="text-lg font-semibold">{a.preview}</h3><p className="text-sm text-muted-foreground">{a.candidate.rationale}</p>
           <div className="flex flex-wrap gap-2"><Button disabled={pending} onClick={() => void submit(`/api/v1/planning/advisories/${a.id}/decisions`, {})}>Approve and send</Button>
             <Button variant="outline" disabled={pending} onClick={() => setEdit({ advisory: a, type: a.candidate.type, stopSequence: String(a.candidate.parameters.stopSequence ?? ''), speed: String(a.candidate.parameters.speedReductionKmh ?? ''), minutes: a.candidate.parameters.durationSeconds ? String(a.candidate.parameters.durationSeconds / 60) : '', count: String(a.candidate.parameters.subsequentStopCount ?? 0), rationale: '', replacement: '' })}>Edit instruction</Button></div>
@@ -232,7 +234,7 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
     {(view === 'planning' || view === 'audit') && <>
       <h3 className="font-semibold">Issued instructions</h3>
       {instructions === null ? <p className="text-sm text-muted-foreground">Instruction history unavailable or loading.</p> : instructions.items.length === 0 ? <p className="text-sm text-muted-foreground">No issued instructions in this run.</p> : instructions.items.map(i => <Card key={i.id}><CardContent className="flex flex-wrap items-center justify-between gap-4">
-        <div className="space-y-1"><p className="font-medium">{i.message}</p><p className="text-xs text-muted-foreground">{i.busId} · {i.status}{i.acknowledgedAt ? ` · Acknowledged ${new Date(i.acknowledgedAt).toLocaleString()}` : ''}</p></div>
+        <div className="space-y-1"><p className="font-medium">{i.message}</p><p className="text-xs text-muted-foreground">{i.busId} · {i.status}{i.acknowledgedAt ? ` · Acknowledged ${formatSgtDateTime(i.acknowledgedAt)}` : ''}</p></div>
         {['ISSUED', 'ACKNOWLEDGED'].includes(i.status) && <Button variant="outline" disabled={pending} onClick={() => void submit(`/api/v1/planning/instructions/${i.id}/cancellations`)}>Cancel instruction</Button>}
       </CardContent></Card>)}
       <PageNavigation label="instructions" page={pages.instructions} totalPages={instructions?.totalPages ?? 0}
@@ -242,24 +244,24 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
         event.preventDefault()
         const body = { id: draft.id, disruptionId: draft.disruptionId, title: draft.title, message: draft.message,
           services: draft.services.split(',').map(s => s.trim()).filter(Boolean), locations: draft.locations.split(',').map(s => s.trim()).filter(Boolean),
-          effectiveFrom: new Date(draft.from).toISOString(), effectiveUntil: new Date(draft.until).toISOString() }
+          effectiveFrom: sgtDateTimeInputToUtc(draft.from), effectiveUntil: sgtDateTimeInputToUtc(draft.until) }
         void submit(draft.previousId ? `/api/v1/planning/notices/${draft.previousId}/replacements` : '/api/v1/planning/notices', body).then(saved => { if (saved) updateDraft(null) })
       }}>
         <h4 className="font-semibold">{draft.previousId ? 'Publish a correction' : 'New notice draft'}</h4>
         <div className="space-y-2"><Label htmlFor="notice-source">Source hazard</Label><select id="notice-source" required className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={draft.disruptionId} disabled={!!draft.previousId} onChange={e => {
           const source = hazards?.items.find(h => h.disruptionId === e.target.value)
           updateDraft({ ...draft, disruptionId: e.target.value, title: source?.facts.title ?? '', message: [source?.facts.description, source?.facts.instruction].filter(Boolean).join('\n') })
-        }}><option value="">Select a hazard</option>{hazards?.items.map(h => <option key={h.disruptionId} value={h.disruptionId}>{h.facts.title} · {h.classification}</option>)}</select></div>
+        }}><option value="">Select a hazard</option>{hazards?.items.map(h => <option key={h.disruptionId} value={h.disruptionId}>{h.facts.title} · {dataClassificationLabel(h.classification)}</option>)}</select></div>
         <Button type="button" variant="outline" disabled={pending || !draft.disruptionId || hazards?.items.find(h => h.disruptionId === draft.disruptionId)?.status === 'CLEARED'} onClick={() => void suggestNotice()}>Suggest passenger wording</Button>
         <div className="space-y-2"><Label htmlFor="notice-title">Title</Label><Input id="notice-title" required maxLength={160} value={draft.title} onChange={e => updateDraft({ ...draft, title: e.target.value })} /></div>
         <div className="space-y-2"><Label htmlFor="notice-message">Passenger message</Label><textarea id="notice-message" required maxLength={2000} rows={4} className="w-full rounded-md border bg-background p-3 text-sm" value={draft.message} onChange={e => updateDraft({ ...draft, message: e.target.value })} /></div>
         <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="notice-services">Services (comma separated)</Label><Input id="notice-services" value={draft.services} onChange={e => updateDraft({ ...draft, services: e.target.value })} /></div><div className="space-y-2"><Label htmlFor="notice-locations">Locations (comma separated)</Label><Input id="notice-locations" value={draft.locations} onChange={e => updateDraft({ ...draft, locations: e.target.value })} /></div></div>
-        <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="notice-from">Starts (local time)</Label><Input id="notice-from" required type="datetime-local" value={draft.from} onChange={e => updateDraft({ ...draft, from: e.target.value })} /></div><div className="space-y-2"><Label htmlFor="notice-until">Expires (local time)</Label><Input id="notice-until" required type="datetime-local" value={draft.until} onChange={e => updateDraft({ ...draft, until: e.target.value })} /></div></div>
+        <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="notice-from">Starts (SGT)</Label><Input id="notice-from" required type="datetime-local" value={draft.from} onChange={e => updateDraft({ ...draft, from: e.target.value })} /></div><div className="space-y-2"><Label htmlFor="notice-until">Expires (SGT)</Label><Input id="notice-until" required type="datetime-local" value={draft.until} onChange={e => updateDraft({ ...draft, until: e.target.value })} /></div></div>
         <div className="space-y-2 rounded-lg border p-4"><p className="text-xs text-muted-foreground">Passenger preview</p><h4 className="font-semibold">{draft.title || 'Notice title'}</h4><p className="whitespace-pre-wrap text-sm">{draft.message || 'Notice message'}</p></div>
         <div className="flex gap-2"><Button disabled={pending}>{draft.previousId ? 'Publish correction' : 'Save draft'}</Button><Button type="button" variant="outline" onClick={() => updateDraft(null)}>Cancel draft</Button></div>
       </form></CardContent></Card>}
       {notices === null ? <p className="text-sm text-muted-foreground">Notices unavailable or loading.</p> : notices.items.length === 0 ? <p className="text-sm text-muted-foreground">No notices.</p> : notices.items.map(n => <Card key={n.id}><CardContent className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-medium">{n.title}</h4><p className="text-xs text-muted-foreground">{n.classification} · {n.status}</p></div><p className="whitespace-pre-wrap text-sm">{n.message}</p>
+        <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-medium">{n.title}</h4><p className="text-xs text-muted-foreground">{dataClassificationLabel(n.classification)} · {n.status}</p></div><p className="whitespace-pre-wrap text-sm">{n.message}</p>
         <div className="flex flex-wrap gap-2">{n.status === 'DRAFT' && <Button disabled={pending} onClick={() => void submit(`/api/v1/planning/notices/${n.id}/publications`)}>Publish notice</Button>}
           {n.status === 'PUBLISHED' && <><Button variant="outline" disabled={pending} onClick={() => void submit(`/api/v1/planning/notices/${n.id}/withdrawals`)}>Withdraw notice</Button>
             <Button variant="outline" disabled={pending} onClick={() => updateDraft({ id: crypto.randomUUID(), previousId: n.id, disruptionId: n.disruptionId, title: n.title, message: n.message, services: n.services.join(', '), locations: n.locations.join(', '), from: '', until: '' })}>Correct notice</Button></>}
