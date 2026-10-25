@@ -195,6 +195,7 @@ test('controller shows one selectable live route strip and keeps the overview de
   await expect(page.getByText('Simulation alerts · route positions remain live.', { exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: /Simulation detections/ })).toContainText('1')
   await expect(page.getByRole('heading', { name: 'Service 190 · Towards Stop C01', exact: true })).toBeVisible()
+  await expect(page.getByLabel('Route', { exact: true }).locator('option:checked')).toHaveText('Service 190 · Towards Stop C01 · SMRT')
   const service190Direction1 = page.getByRole('group', { name: /Service 190, Towards Stop C01, SMRT, direction 1/ })
   await expect(service190Direction1.getByText('B01', { exact: true })).toBeVisible()
   await expect(service190Direction1.locator('tspan').filter({ hasText: /^Stop B01$/ })).toBeVisible()
