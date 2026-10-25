@@ -9,6 +9,7 @@ import com.csd.occ.disruption.bunching.domain.PlanningEventSubmissionPort;
 import com.csd.occ.disruption.bunching.infrastructure.scheduling.BunchingRetentionService;
 import com.csd.occ.disruption.hazard.domain.HazardPollPort;
 import com.csd.occ.disruption.hazard.domain.HazardReadService;
+import com.csd.occ.disruption.hazard.domain.HazardCheckpoint;
 import com.csd.occ.disruption.hazard.domain.HazardReassessmentService;
 import com.csd.occ.disruption.hazard.domain.HazardStateRepository;
 import com.csd.occ.disruption.hazard.domain.HazardSyncService;
@@ -78,7 +79,8 @@ class HazardLifecycleIT {
         clock.set(NOW);
         jdbc.update("UPDATE disruption.consumer_state SET mode='LIVE', demo_run_id=NULL WHERE id=1");
         jdbc.execute("TRUNCATE disruption.planning_outbox, disruption.event_evidence, disruption.disruption_event, "
-                + "disruption.hazard_state, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption");
+                + "disruption.hazard_state, disruption.hazard_feed_health, disruption.traffic_incident_state, "
+                + "disruption.disruption_processing_state, disruption.disruption");
         jdbc.update("UPDATE disruption.hazard_checkpoint SET completed_at=NULL, poll_run_id=NULL");
     }
 
@@ -102,10 +104,14 @@ class HazardLifecycleIT {
         assertThat(codec.fingerprint(payload, eventId)).isEqualTo(jdbc.queryForObject(
                 "SELECT payload_fingerprint FROM disruption.planning_outbox", String.class));
         assertThat(synchronization.cursor("FLOOD").completedAt()).isEqualTo(clock.instant());
-        var healthy = synchronization.cursor("FLOOD").health(clock.instant());
+        var healthy = hazardReads.list(null, 0, 20).feeds().stream()
+                .filter(feed -> feed.kind().equals("FLOOD") && feed.classification().equals("OBSERVATION_ONLY"))
+                .findFirst().orElseThrow();
         assertThat(healthy.status()).isEqualTo("HEALTHY");
         clock.set(clock.instant().plus(FRESHNESS));
-        assertThat(synchronization.cursor("FLOOD").health(clock.instant()).status()).isEqualTo("STALE");
+        assertThat(hazardReads.list(null, 0, 20).feeds()).filteredOn(feed -> feed.kind().equals("FLOOD")
+                && feed.classification().equals("OBSERVATION_ONLY")).singleElement()
+                .extracting(HazardCheckpoint.FeedHealth::status).isEqualTo("STALE");
         assertThat(hazards.findAll().getFirst().status()).isEqualTo("ACTIVE");
     }
 
@@ -132,6 +138,47 @@ class HazardLifecycleIT {
         process("FLOOD", poll("FLOOD", clock.instant(), "SUCCESS", true, null, List.of(first, second)));
         assertThat(state("flood-1", "status")).isEqualTo("CLEARED");
         assertThat(count("disruption_event")).isEqualTo(3);
+    }
+
+    @Test
+    void delayedAuthoritativeResolutionsClearAndQueueOnceDespiteStalePolls() {
+        for (String kind : List.of("FLOOD", "RAIL_DISRUPTION")) {
+            String key = kind + "-active";
+            process(kind, poll(kind, NOW, "SUCCESS", true, null,
+                    List.of(fact(kind, key, "OBSERVED", null, NOW.plus(Duration.ofDays(1)), List.of()))));
+            Instant resolutionAt = NOW.plusSeconds(1);
+            var resolution = poll(kind, resolutionAt, "SUCCESS", true, null,
+                    List.of(fact(kind, "FLOOD".equals(kind) ? "cancel" : key,
+                            "FLOOD".equals(kind) ? "CANCEL" : "RECOVERED", null, null, List.of(key)),
+                            fact(kind, "stale-new-" + kind, "OBSERVED", null, null, List.of())));
+            clock.set(NOW.plus(FRESHNESS).plusSeconds(60));
+            process(kind, resolution);
+            process(kind, resolution);
+            process(kind, poll(kind, clock.instant(), "SUCCESS", true, null, List.of()));
+            assertThat(state(key, "status")).isEqualTo("CLEARED");
+            assertThat(state(key, "inactive_reason")).isEqualTo(
+                    "FLOOD".equals(kind) ? "SOURCE_CANCELLED" : "SOURCE_RECOVERED");
+            clock.set(NOW);
+        }
+        assertThat(count("hazard_state")).isEqualTo(2);
+        assertThat(count("planning_outbox")).isEqualTo(4);
+        assertThat(jdbc.queryForList("SELECT payload_json FROM disruption.planning_outbox WHERE event_id IN "
+                + "(SELECT id FROM disruption.disruption_event WHERE action='CLEARED')", String.class))
+                .hasSize(2).allSatisfy(payload -> assertThat(payload).contains(
+                        "\"action\":\"CLEARED\"", "\"method\":\"SOURCE_OBSERVATION\""));
+    }
+
+    @Test
+    void demoSuccessDoesNotMaskLiveFailure() {
+        process("FLOOD", poll("FLOOD", NOW, "FAILED", false, null, List.of()));
+        clock.set(NOW.plusSeconds(1));
+        process("FLOOD", poll("FLOOD", clock.instant(), "SUCCESS", true, UUID.randomUUID(), List.of()));
+        var feeds = hazardReads.list(null, 0, 20).feeds().stream().filter(feed -> feed.kind().equals("FLOOD")).toList();
+        assertThat(feeds).hasSize(2);
+        assertThat(feeds).filteredOn(feed -> feed.classification().equals("OBSERVATION_ONLY")).singleElement()
+                .satisfies(feed -> { assertThat(feed.status()).isEqualTo("FAILED"); assertThat(feed.lastSuccessAt()).isNull(); });
+        assertThat(feeds).filteredOn(feed -> feed.classification().equals("SIMULATION")).singleElement()
+                .satisfies(feed -> { assertThat(feed.status()).isEqualTo("HEALTHY"); assertThat(feed.lastSuccessAt()).isEqualTo(clock.instant()); });
     }
 
     @Test

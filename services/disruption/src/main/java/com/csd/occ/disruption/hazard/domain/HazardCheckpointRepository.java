@@ -7,7 +7,6 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 
 public interface HazardCheckpointRepository extends JpaRepository<HazardCheckpoint, String> {
-    java.util.List<HazardCheckpoint> findAllByOrderByKindAsc();
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select c from HazardCheckpoint c where c.kind = :kind")
     Optional<HazardCheckpoint> findForUpdate(String kind);
 }
