@@ -22,12 +22,23 @@ class ArrivalControllerTest {
 
     @Test
     void currentArrivalsReturnAPaginatedEnvelope() throws Exception {
-        when(queries.currentArrivals("44009", "190", PageRequest.of(0, 50)))
+        when(queries.currentArrivals("44009", "190", null, "arrival", "asc", PageRequest.of(0, 50)))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 50), 0));
 
         mvc.perform(get("/api/v1/arrivals").param("stopCode", "44009").param("serviceId", "190"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.items").isArray())
                 .andExpect(jsonPath("$.page").value(0)).andExpect(jsonPath("$.size").value(50));
+    }
+
+    @Test
+    void currentArrivalsRejectUnsupportedSortOptions() throws Exception {
+        when(queries.currentArrivals(null, null, null, "arrival", "asc", PageRequest.of(0, 50)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 50), 0));
+
+        mvc.perform(get("/api/v1/arrivals").param("sortBy", "database-column"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/arrivals").param("sortDirection", "sideways"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
