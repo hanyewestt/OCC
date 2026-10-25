@@ -23,15 +23,25 @@ for (const viewport of [{ name: 'mobile', width: 375, height: 812 }, { name: 'de
       expect(query.get('classification')).toBe('OBSERVATION_ONLY')
       expect(query.has('demoRunId')).toBe(false)
       expect(route.request().headers().authorization).toBeUndefined()
-      return route.fulfill({ json: { items: [notice], page: 0, totalItems: 1, totalPages: 1 } })
+      const items = Array.from({ length: 5 }, (_, index) => ({ ...notice, id: `notice-synthetic-${index + 1}`,
+        title: index === 0 ? notice.title : `Service advisory ${index + 1}`, message: index === 0 ? notice.message : `Service advisory message ${index + 1}.` }))
+      return route.fulfill({ json: { items, page: 0, totalItems: items.length, totalPages: 1 } })
     })
 
     await page.goto('/notices')
     await expect(page.getByRole('heading', { name: 'Service advisories', exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: notice.title, exact: true })).toBeVisible()
     await expect(page.getByText(notice.message, { exact: true })).toBeVisible()
-    await expect(page.getByText('Services: 190, 972', { exact: true })).toBeVisible()
+    await expect(page.getByText('Services: 190, 972', { exact: true }).first()).toBeVisible()
     await expect(page.getByRole('link', { name: 'Staff sign in', exact: true })).toBeVisible()
+    const noticeRegion = page.getByRole('region', { name: 'Public service advisories', exact: true })
+    const regionBounds = await noticeRegion.boundingBox()
+    expect(regionBounds).not.toBeNull()
+    const visibleNotices = await noticeRegion.locator('[data-slot="card"]').evaluateAll((elements, bounds) => elements.filter(element => {
+      const rect = element.getBoundingClientRect()
+      return rect.top >= bounds.top && rect.bottom <= bounds.top + bounds.height
+    }).length, { top: regionBounds!.y, height: regionBounds!.height })
+    expect(visibleNotices).toBeLessThanOrEqual(4)
     await expect(page.getByRole('navigation', { name: 'Controller navigation' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: /Publish|Withdraw|Draft notice/ })).toHaveCount(0)
     await expect(page.getByText('SIMULATION', { exact: true })).toHaveCount(0)
@@ -97,7 +107,7 @@ test('simulation board rejects missing run identity before requesting notices', 
   expect(requests).toBe(0)
 })
 
-test('public board returns to a valid page when refresh shrinks the result set', async ({ page, context }) => {
+test('public board scrolls through notices and refresh returns to the latest first page', async ({ page, context }) => {
   await publicConfig(context)
   const laterNotice = { ...notice, id: 'notice-synthetic-2', title: 'Later page notice' }
   let shrunk = false
@@ -114,8 +124,9 @@ test('public board returns to a valid page when refresh shrinks the result set',
   })
 
   await page.goto('/notices')
-  await page.getByRole('button', { name: 'Next', exact: true }).click()
+  await page.getByRole('button', { name: 'Load more service advisories', exact: true }).click()
   await expect(page.getByRole('heading', { name: laterNotice.title, exact: true })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Notice pages', exact: true })).toHaveCount(0)
   shrunk = true
   await page.getByRole('button', { name: 'Refresh', exact: true }).click()
 

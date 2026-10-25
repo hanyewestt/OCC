@@ -2,27 +2,38 @@ import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { PagedCollectionControls } from '@/components/PagedCollectionControls'
 import { apiRequest, type PageResult, type PublicNotice } from '@/lib/api'
 import { dataClassificationLabel } from '@/lib/presentation'
 import { formatSgtDateTime, formatSgtTime } from '@/lib/time'
+import { usePagedCollection } from '@/lib/paged-collection'
+
+type PublicNoticePage = PageResult<PublicNotice> & { receivedAt: string }
 
 export function NoticeBoardPage() {
   const [params] = useSearchParams()
   const classification = params.get('classification') ?? 'OBSERVATION_ONLY'
   const runId = params.get('demoRunId')
-  const [page, setPage] = useState(0)
-  const [refresh, setRefresh] = useState(0)
-  const [notices, setNotices] = useState<PageResult<PublicNotice> | null>(null)
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [lastUpdated, setLastUpdated] = useState<string | null>(null)
+  const [configRetry, setConfigRetry] = useState(0)
+  const [configReady, setConfigReady] = useState(false)
+  const [configError, setConfigError] = useState('')
   const [refreshIntervalSeconds, setRefreshIntervalSeconds] = useState<number | null>(null)
+  const collectionKey = `${classification}:${runId ?? ''}:${configReady}`
+  const collection = usePagedCollection<PublicNotice, PublicNoticePage>(collectionKey, async (page, signal) => {
+    if (!configReady || classification !== 'OBSERVATION_ONLY' && classification !== 'SIMULATION' || classification === 'SIMULATION' && !runId) {
+      return { items: [], page, totalItems: 0, totalPages: 0, receivedAt: new Date().toISOString() }
+    }
+    const query = new URLSearchParams({ classification, page: String(page), size: '20' })
+    if (runId) query.set('demoRunId', runId)
+    const result = await apiRequest<PageResult<PublicNotice>>(`/api/v1/planning/public/notices?${query}`, undefined, signal)
+    if (!result) throw new Error('Service advisories response was empty.')
+    return { ...result, receivedAt: new Date().toISOString() }
+  }, notice => notice.id)
 
   useEffect(() => {
     const controller = new AbortController()
-    let timer: number | undefined
     async function load() {
-      let pageChanged = false
       try {
         // Public timing is independent of sign-in configuration and Supabase availability.
         const configResponse = await fetch('/frontend-config', { signal: controller.signal, cache: 'no-store', redirect: 'error' })
@@ -30,35 +41,26 @@ export function NoticeBoardPage() {
         const config = await configResponse.json() as { publicNoticeRefreshIntervalSeconds?: number }
         const interval = config.publicNoticeRefreshIntervalSeconds
         if (!Number.isInteger(interval) || interval! < 1) throw new Error('Notice board refresh settings are unavailable.')
-        setRefreshIntervalSeconds(interval!)
         if (classification !== 'OBSERVATION_ONLY' && classification !== 'SIMULATION') throw new Error('Invalid notice view.')
         if (classification === 'SIMULATION' && !runId) throw new Error('The simulation view needs a demo run ID.')
-        const query = new URLSearchParams({ classification, page: String(page), size: '20' })
-        if (runId) query.set('demoRunId', runId)
-        async function poll() {
-          try {
-            const data = await apiRequest<PageResult<PublicNotice>>(`/api/v1/planning/public/notices?${query}`, undefined, controller.signal)
-            if (!controller.signal.aborted && data && page > Math.max(0, data.totalPages - 1)) {
-              pageChanged = true
-              setLoading(true)
-              setPage(Math.max(0, data.totalPages - 1))
-              return
-            }
-            if (!controller.signal.aborted) { setNotices(data); setError(''); setLastUpdated(new Date().toISOString()) }
-          } catch (failure) {
-            if (!controller.signal.aborted) { setNotices(null); setError(failure instanceof Error ? failure.message : 'Notices are unavailable.') }
-          } finally {
-            if (!controller.signal.aborted && !pageChanged) { setLoading(false); timer = window.setTimeout(() => void poll(), interval! * 1000) }
-          }
-        }
-        await poll()
+        if (!controller.signal.aborted) { setRefreshIntervalSeconds(interval!); setConfigReady(true); setConfigError('') }
       } catch (failure) {
-        if (!controller.signal.aborted) { setLoading(false); setNotices(null); setError(failure instanceof Error ? failure.message : 'Notices are unavailable.') }
+        if (!controller.signal.aborted) { setConfigReady(false); setConfigError(failure instanceof Error ? failure.message : 'Notices are unavailable.') }
       }
     }
     void load()
-    return () => { controller.abort(); window.clearTimeout(timer) }
-  }, [classification, runId, page, refresh])
+    return () => controller.abort()
+  }, [classification, runId, configRetry])
+
+  useEffect(() => {
+    if (!configReady || refreshIntervalSeconds === null) return
+    const timer = window.setInterval(collection.reload, refreshIntervalSeconds * 1000)
+    return () => window.clearInterval(timer)
+  }, [collection.reload, configReady, refreshIntervalSeconds])
+  const lastUpdated = collection.latestPage?.receivedAt ?? null
+  const loading = !configReady && !configError || collection.isLoading
+  const error = configError || (collection.error instanceof Error ? collection.error.message : collection.error !== null ? 'Service advisories are unavailable.' : '')
+  const retry = () => configError ? setConfigRetry(value => value + 1) : collection.reload()
 
   return <main className="min-h-svh bg-background text-foreground">
     <header className="border-b"><div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-5 md:px-8">
@@ -69,13 +71,14 @@ export function NoticeBoardPage() {
       <div className="flex flex-wrap items-start justify-between gap-4"><div className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Service advisories</h1>
         <p className="text-sm text-muted-foreground">Approved notices about affected services and stops.</p>
-      </div><Button variant="outline" disabled={loading} onClick={() => { setLoading(true); setRefresh(value => value + 1) }}>Refresh</Button></div>
+      </div><Button variant="outline" disabled={loading} onClick={retry}>Refresh</Button></div>
       {classification === 'SIMULATION' && <p role="status" className="rounded-lg border bg-muted p-3 text-sm font-medium">Simulation · Demonstration notices</p>}
       {lastUpdated && <p className="text-xs text-muted-foreground">Last updated {formatSgtTime(lastUpdated)} · Refreshes every {refreshIntervalSeconds} seconds</p>}
       {loading && <p role="status" className="text-sm text-muted-foreground">Loading notices…</p>}
-      {error && <div role="alert" className="space-y-3 rounded-xl border p-5"><p>{error}</p><Button variant="outline" onClick={() => { setLoading(true); setRefresh(value => value + 1) }}>Try again</Button></div>}
-      {!loading && !error && notices?.items.length === 0 && <Card><CardContent className="text-sm text-muted-foreground">No current service advisories.</CardContent></Card>}
-      <div className="grid gap-4 md:grid-cols-2">{!loading && !error && notices?.items.map(notice => <Card key={notice.id}>
+      {error && <div role="alert" className="space-y-3 rounded-xl border p-5"><p>{error}</p><Button variant="outline" onClick={retry}>Try again</Button></div>}
+      {!loading && !error && collection.latestPage && !collection.items.length && <Card><CardContent className="text-sm text-muted-foreground">No current service advisories.</CardContent></Card>}
+      {!!collection.items.length && <ScrollArea role="region" aria-label="Public service advisories" tabIndex={0} className="max-h-[34rem]"
+        viewportProps={{ onScroll: collection.onScroll }}><div className="grid gap-4 p-1 md:grid-cols-2">{collection.items.map(notice => <Card key={notice.id} className="min-h-56">
         <CardContent className="space-y-4">
           <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground">{dataClassificationLabel(notice.classification)}</p>
             <h2 className="text-lg font-semibold">{notice.title}</h2></div>
@@ -84,12 +87,10 @@ export function NoticeBoardPage() {
           {notice.locations.length > 0 && <p className="text-sm"><span className="text-muted-foreground">Locations: </span>{notice.locations.join(', ')}</p>}
           <p className="text-xs text-muted-foreground">Until <time dateTime={notice.effectiveUntil}>{formatSgtDateTime(notice.effectiveUntil)}</time></p>
         </CardContent>
-      </Card>)}</div>
-      {!loading && !error && notices && notices.totalPages > 1 && <nav aria-label="Notice pages" className="flex items-center gap-3">
-        <Button variant="outline" disabled={page === 0} onClick={() => { setLoading(true); setPage(value => value - 1) }}>Previous</Button>
-        <p className="text-sm text-muted-foreground">Page {page + 1} of {notices.totalPages}</p>
-        <Button variant="outline" disabled={page + 1 >= notices.totalPages} onClick={() => { setLoading(true); setPage(value => value + 1) }}>Next</Button>
-      </nav>}
+      </Card>)}</div></ScrollArea>}
+      {collection.latestPage && collection.latestPage.totalItems > collection.items.length && <p className="text-xs text-muted-foreground">Showing {collection.items.length} of {collection.latestPage.totalItems} notices.</p>}
+      <PagedCollectionControls label="service advisories" hasItems={!!collection.items.length} hasMore={collection.hasMore}
+        isLoadingMore={collection.isLoadingMore} error={collection.error} reload={collection.reload} loadNext={collection.loadNext} />
     </div>
   </main>
 }
