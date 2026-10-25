@@ -53,7 +53,7 @@ class HazardReadServiceTest {
                 new BigDecimal("103.75"), NOW.minusSeconds(60), NOW.minusSeconds(30)));
         var service = new HazardReadService(hazards, selection, mock(HazardTransitPort.class),
                 Clock.fixed(NOW, ZoneOffset.UTC), disruptions, traffic, events, evidence,
-                mock(PlanningEventSubmissionPort.class), checkpoints);
+                mock(PlanningEventSubmissionPort.class), checkpoints, mock(HazardFeedHealthRepository.class));
 
         var result = service.find(disruptionId);
 
@@ -94,7 +94,8 @@ class HazardReadServiceTest {
                 "CLEARED", "SOURCE_CANCELLED", "OBSERVATION_ONLY", null, sourceObservationId, null,
                 UUID.randomUUID(), null, NOW, facts, null));
         var service = new HazardReadService(hazards, selection, mock(HazardTransitPort.class),
-                Clock.fixed(NOW, ZoneOffset.UTC), disruptions, traffic, trafficEvents, trafficEvidence, eventCodec, checkpoints);
+                Clock.fixed(NOW, ZoneOffset.UTC), disruptions, traffic, trafficEvents, trafficEvidence, eventCodec, checkpoints,
+                mock(HazardFeedHealthRepository.class));
 
         var result = service.find(disruptionId);
 

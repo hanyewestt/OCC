@@ -11,11 +11,6 @@ public class HazardCheckpoint {
     @Id private String kind;
     private Instant completedAt;
     private UUID pollRunId;
-    private Instant lastAttemptAt;
-    private Instant lastSuccessAt;
-    private String lastOutcome;
-    private boolean lastComplete;
-    private long staleAfterSeconds;
     protected HazardCheckpoint() {}
     public String kind() { return kind; }
     public Instant completedAt() { return completedAt; }
@@ -30,16 +25,8 @@ public class HazardCheckpoint {
                 : Long.compareUnsigned(left.getLeastSignificantBits(), right.getLeastSignificantBits());
     }
     public void advance(HazardPollPort.Poll poll, java.time.Duration staleAfter) {
-        completedAt = poll.completedAt(); pollRunId = poll.pollRunId(); lastAttemptAt = poll.completedAt();
-        lastOutcome = poll.outcome(); lastComplete = poll.complete();
-        staleAfterSeconds = staleAfter.toSeconds();
-        if (poll.complete() && "SUCCESS".equals(poll.outcome())) lastSuccessAt = poll.completedAt();
+        completedAt = poll.completedAt(); pollRunId = poll.pollRunId();
     }
-    public FeedHealth health(Instant now) {
-        String status = lastAttemptAt == null ? "UNKNOWN" : "SUCCESS".equals(lastOutcome) && lastComplete
-                ? "HEALTHY" : "PARTIAL".equals(lastOutcome) || "SUCCESS".equals(lastOutcome) ? "DEGRADED" : "FAILED";
-        if (lastSuccessAt != null && !now.isBefore(lastSuccessAt.plusSeconds(staleAfterSeconds))) status = "STALE";
-        return new FeedHealth(kind, status, lastAttemptAt, lastSuccessAt);
-    }
-    public record FeedHealth(String kind, String status, Instant lastAttemptAt, Instant lastSuccessAt) {}
+    public record FeedHealth(String kind, String source, String scope, String classification, UUID demoRunId,
+                             String status, Instant lastAttemptAt, Instant lastSuccessAt) {}
 }

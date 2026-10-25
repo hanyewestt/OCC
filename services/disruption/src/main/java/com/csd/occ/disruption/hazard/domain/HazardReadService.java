@@ -21,6 +21,7 @@ public class HazardReadService {
     private final com.csd.occ.disruption.traffic.domain.TrafficIncidentEvidencePort trafficEvidence;
     private final com.csd.occ.disruption.bunching.domain.PlanningEventSubmissionPort eventCodec;
     private final HazardCheckpointRepository checkpoints;
+    private final HazardFeedHealthRepository feedHealth;
     private final HazardExposurePolicy exposure = new HazardExposurePolicy();
     public HazardReadService(HazardStateRepository hazards, ConsumerSelectionService selection,
             HazardTransitPort transit, Clock clock, com.csd.occ.disruption.bunching.domain.DisruptionRepository disruptions,
@@ -28,11 +29,11 @@ public class HazardReadService {
             com.csd.occ.disruption.traffic.domain.TrafficIncidentEventRepository trafficEvents,
             com.csd.occ.disruption.traffic.domain.TrafficIncidentEvidencePort trafficEvidence,
             com.csd.occ.disruption.bunching.domain.PlanningEventSubmissionPort eventCodec,
-            HazardCheckpointRepository checkpoints) {
+            HazardCheckpointRepository checkpoints, HazardFeedHealthRepository feedHealth) {
         this.hazards = hazards; this.selection = selection; this.transit = transit; this.clock = clock;
         this.disruptions = disruptions; this.traffic = traffic; this.checkpoints = checkpoints;
         this.trafficEvents = trafficEvents; this.trafficEvidence = trafficEvidence;
-        this.eventCodec = eventCodec;
+        this.eventCodec = eventCodec; this.feedHealth = feedHealth;
     }
     public Page list(String kind, int page, int size) {
         if (page < 0 || size < 1 || size > 100) throw new IllegalArgumentException("Invalid hazard pagination");
@@ -43,7 +44,8 @@ public class HazardReadService {
         var stations = new java.util.HashMap<String, java.util.Optional<HazardTransitPort.Station>>();
         var items = found.stream().map(id -> view(snapshot(id), routes, fleets, stations)).toList();
         return new Page(items, page, size, found.getTotalElements(),
-                checkpoints.findAllByOrderByKindAsc().stream().map(checkpoint -> checkpoint.health(clock.instant())).toList());
+                feedHealth.findAllByOrderByKindAscSourceAscScopeAscClassificationAsc().stream()
+                        .map(health -> health.health(clock.instant())).toList());
     }
     public View find(UUID disruptionId) {
         return view(snapshot(disruptionId), new java.util.HashMap<>(), new java.util.HashMap<>(), new java.util.HashMap<>());

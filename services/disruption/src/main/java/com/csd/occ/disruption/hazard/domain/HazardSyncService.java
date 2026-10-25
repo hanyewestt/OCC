@@ -14,14 +14,15 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class HazardSyncService {
     private final HazardCheckpointRepository checkpoints;
+    private final HazardFeedHealthRepository feedHealth;
     private final HazardStateRepository hazards;
     private final DisruptionRepository disruptions;
     private final DiagnosisOutboxRepository outbox;
     private final PlanningEventSubmissionPort codec;
     private final Clock clock;
-    public HazardSyncService(HazardCheckpointRepository checkpoints, HazardStateRepository hazards,
+    public HazardSyncService(HazardCheckpointRepository checkpoints, HazardFeedHealthRepository feedHealth, HazardStateRepository hazards,
             DisruptionRepository disruptions, DiagnosisOutboxRepository outbox, PlanningEventSubmissionPort codec, Clock clock) {
-        this.checkpoints = checkpoints; this.hazards = hazards; this.disruptions = disruptions;
+        this.checkpoints = checkpoints; this.feedHealth = feedHealth; this.hazards = hazards; this.disruptions = disruptions;
         this.outbox = outbox; this.codec = codec; this.clock = clock;
     }
     @Transactional(readOnly = true)
@@ -42,7 +43,8 @@ public class HazardSyncService {
         HazardCheckpoint cursor = checkpoints.findForUpdate(kind).orElseThrow();
         if (!cursor.isBefore(poll)) return;
         Instant now = clock.instant();
-        if (poll.complete() && "SUCCESS".equals(poll.outcome()) && !poll.completedAt().isBefore(now.minus(staleAfter))) {
+        boolean fresh = !poll.completedAt().isBefore(now.minus(staleAfter));
+        if (poll.complete() && "SUCCESS".equals(poll.outcome())) {
             var retained = stateRetention == null
                     ? hazards.findScope(poll.source(), poll.scope(), poll.classification(), poll.demoRunId())
                     : hazards.findRetainedScope(poll.source(), poll.scope(), poll.classification(), poll.demoRunId(),
@@ -70,6 +72,7 @@ public class HazardSyncService {
                             .forEach(h -> clear(poll, h, "SOURCE_RECOVERED", now, observation));
                     continue;
                 }
+                if (!fresh) continue;
                 var existing = scoped.stream().filter(h -> h.sourceEventKey().equals(facts.sourceEventKey())).findFirst();
                 if (cancellations.contains(facts.sourceEventKey())) continue;
                 if (existing.isPresent() && "CLEARED".equals(existing.get().status())
@@ -87,14 +90,14 @@ public class HazardSyncService {
                     }
                 }
             }
-            if (kind.equals("ROADWORKS")) for (var state : scoped) {
+            if (fresh && kind.equals("ROADWORKS")) for (var state : scoped) {
                 if (!"CLEARED".equals(state.status()) && !present.contains(state.sourceEventKey())) {
                     state.markAbsent(poll.completedAt());
                     if (state.absenceCount() >= absenceLimit && !poll.completedAt().isBefore(state.firstAbsentAt().plus(absencePeriod)))
                         clear(poll, state, "NO_LONGER_REPORTED", now, null);
                 }
             }
-            for (var state : scoped) {
+            if (fresh) for (var state : scoped) {
                 if (!"CLEARED".equals(state.status()) && state.facts().effectiveUntil() != null && !now.isBefore(state.facts().effectiveUntil()))
                     clear(poll, state, "SOURCE_EXPIRED", now, null);
                 else if ("SCHEDULED".equals(state.status()) && !now.isBefore(state.facts().effectiveFrom())) {
@@ -102,6 +105,10 @@ public class HazardSyncService {
                 }
             }
         }
+        var health = feedHealth.findAll().stream().filter(value -> value.matches(poll)).findFirst()
+                .orElseGet(() -> new HazardFeedHealth(poll, staleAfter));
+        health.advance(poll, staleAfter);
+        feedHealth.save(health);
         cursor.advance(poll, staleAfter);
     }
 
