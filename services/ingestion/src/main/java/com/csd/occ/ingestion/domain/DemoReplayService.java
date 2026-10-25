@@ -24,15 +24,18 @@ public class DemoReplayService {
     private final Clock clock;
     private final DemoModeService mode;
     private final DemoReplayConfiguration settings;
+    private final DemoHazardReplayService hazards;
     private final ObjectMapper json = new ObjectMapper();
 
     public DemoReplayService(DemoRunRepository runs, DemoVehicleAssignmentRepository assignments,
             PollRunRepository pollRuns, RawObservationRepository rawObservations,
             BusArrivalObservationRepository arrivals, TrafficIncidentObservationRepository incidents,
-            ReferenceTopologyPort topology, Clock clock, DemoModeService mode, DemoReplayConfiguration settings) {
+            ReferenceTopologyPort topology, Clock clock, DemoModeService mode, DemoReplayConfiguration settings,
+            DemoHazardReplayService hazards) {
         this.runs = runs; this.assignments = assignments; this.pollRuns = pollRuns; this.rawObservations = rawObservations;
         this.arrivals = arrivals; this.incidents = incidents; this.topology = topology; this.clock = clock;
         this.mode = mode; this.settings = settings;
+        this.hazards = hazards;
     }
 
     @Transactional
@@ -94,13 +97,15 @@ public class DemoReplayService {
                 arrival(raw.getId(), pollId, reference, run.id(), "demo-972-c", "972", 3,
                         firstEta.plus(headway.multipliedBy(2)), now)));
         if (step >= 1) incidents.save(new TrafficIncidentObservation(raw.getId(), pollId, run.id(), hash("Vehicle Breakdown|1.3802550|103.7550750|DEMO"), now));
+        hazards.emit(run, step, now);
         run.advance(); if (run.currentStep() >= DemoReplayScenario.STEP_COUNT) run.complete(now);
     }
 
     private DemoVehicleAssignment assignment(UUID runId, String tripId, String serviceId,
             String registration, String seed, int captainNumber) {
         return new DemoVehicleAssignment(new DemoVehicleAssignmentId(runId, tripId), serviceId, 1,
-                registration, "DEMO-OPERATOR", "DD", "DEMO-CAPTAIN-" + seed + "-0" + captainNumber);
+                registration, "DEMO-OPERATOR", "DD", "DEMO-CAPTAIN-" + seed + "-0" + captainNumber,
+                "demo-190-b".equals(tripId) ? settings.captainUserId().orElse(null) : null);
     }
 
     private BusArrivalObservation arrival(UUID rawId, UUID pollId, UUID reference, UUID runId,

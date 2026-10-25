@@ -12,6 +12,8 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.repository.query.Param;
 
 public interface BusArrivalObservationRepository extends JpaRepository<BusArrivalObservation, UUID> {
+    Optional<BusArrivalObservation> findFirstByDemoRunIdAndTripIdAndClassificationOrderByFetchedAtDescIdDesc(
+            UUID demoRunId, String tripId, String classification);
     long deleteByDemoRunId(UUID demoRunId);
     List<BusArrivalObservation> findByPollRunId(UUID pollRunId);
     List<BusArrivalObservation> findByRawObservationIdIn(List<UUID> rawObservationIds);
@@ -21,7 +23,8 @@ public interface BusArrivalObservationRepository extends JpaRepository<BusArriva
     @Query("""
             select new com.csd.occ.ingestion.domain.DemoSimulationArrivalDetails(
                 assignment.vehicleRegistrationNumber, assignment.operator,
-                assignment.vehicleType, assignment.captainCode, arrival.estimatedArrivalAt)
+                assignment.vehicleType, assignment.captainCode, arrival.estimatedArrivalAt,
+                coalesce(assignment.busId, assignment.id.tripId))
             from BusArrivalObservation arrival, DemoVehicleAssignment assignment
             where arrival.id = :observationId
               and arrival.classification = 'SIMULATION'
@@ -76,6 +79,7 @@ public interface BusArrivalObservationRepository extends JpaRepository<BusArriva
                   select poll.id from ingestion.poll_run poll
                   join ingestion.demo_run run on run.id = poll.demo_run_id
                   where run.status in ('PREPARING', 'RUNNING', 'REPLAY_COMPLETE') and poll.outcome = 'SUCCESS'
+                    and poll.source = 'DEMO'
                   order by poll.started_at desc
                   limit 1)
             """, nativeQuery = true)

@@ -4,6 +4,52 @@ Polls DataMall bus arrivals and traffic incidents and records observations for a
 
 ## Demo replay
 
+## Additional hazards
+
+Flood, rail and approved roadworks use independent `OCC_INGESTION_FLOOD_*`,
+`OCC_INGESTION_RAIL_*` and `OCC_INGESTION_ROADWORKS_*` enablement, interval,
+initial-delay and stale-after settings. All default disabled. Shared bounded
+concurrency uses Spring's `OCC_INGESTION_SCHEDULER_POOL_SIZE` (8 workers), so a
+slow feed does not serialize all independent polls. Shared bounded
+pagination uses `OCC_INGESTION_HAZARD_PAGE_SIZE` (500) and
+`OCC_INGESTION_HAZARD_MAX_PAGES` (10); date-only/local provider timestamps use
+`OCC_INGESTION_HAZARD_SOURCE_TIMEZONE` (Asia/Singapore). Flood coverage is a
+broadcast radius, not flooded-road geometry; approved work does not imply closure.
+The normalized store extends the existing traffic table without copying records.
+Legacy traffic reads filter traffic kinds. `/internal/v1/hazard-polls` exposes
+completed additional-feed polls to the Disruption peer, including incomplete polls.
+Original page bodies are stored as JSON strings in a JSON array, preserving even
+malformed provider text without logging credentials. The checksum covers the JSON
+array encoded with the application mapper: decode/re-encode the page strings
+before verification because PostgreSQL JSONB normalizes outer whitespace.
+Retention covers all kinds.
+The metrics `occ.ingestion.hazard.latest_poll_outcome` and
+`occ.ingestion.hazard.latest_poll_success_age_seconds` use the bounded `feed`
+label (`FLOOD`, `RAIL_DISRUPTION`, `ROADWORKS`); outcome values are 1 for
+success, 0.5 for partial, 0 for failed and -1 before the first completed poll.
+No bus, account, incident or run identifiers are metric labels.
+
+An optional `OCC_INGESTION_STATION_REFERENCE_LOCATION` imports a separately
+versioned station JSON document on startup, bounded by
+`OCC_INGESTION_STATION_REFERENCE_MAX_BYTES`. Blank skips import. The document is
+`{"stations":[{"code":"NE1","name":"HarbourFront","latitude":1.265,"longitude":103.821}]}`.
+Use provider reference data and make the configured file/resource available in
+the container. Station coordinates may both be null; unresolved stations stay
+unresolved. Each imported station retains the source document checksum.
+
+### Demo identity
+
+Set `OCC_DEMO_CAPTAIN_USER_ID` to the stable Supabase UUID of `captain1@occ.com`
+to bind `demo-190-b` to that account when preparing a new run. Blank leaves buses
+unassigned and does not prevent replay. Assignments are immutable for a run;
+configuration changes apply to the next run. Scenario bus IDs equal the existing
+stable trip IDs; always pair them with the run ID. Email and captain codes never
+authorize access. `/internal/v1/ingestion/demo-fleet?demoRunId=<uuid>&page=0&size=20`
+accepts Planning/Disruption peer capabilities and returns current assignments and
+simulation progress. Closed/preparing runs expose no current buses. Speed context
+is a synthetic fixture (30 km/h, permitted 5 km/h reduction for 300 seconds),
+not vehicle telemetry. Unresolved route occurrences have null progress.
+
 The React frontend currently provides login and role-access checks only. Replay remains available through the protected APIs below for ADMIN and CONTROLLER accounts. Its persisted runtime state starts disabled, so the replay scheduler does no work and bunching remains live until a run starts. The mode can be toggled while ingestion is running; no restart is needed:
 
 ```http

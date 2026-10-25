@@ -181,6 +181,26 @@ class IngestionStartupIT {
     }
 
     @Test
+    void additionalHazardMetricsExposeOnlyBoundedFeedAndOutcomeLabels() {
+        jdbc.update("""
+                INSERT INTO ingestion.poll_run (id, source, scope_key, idempotency_key, started_at, completed_at, outcome)
+                VALUES (?, 'FLOOD_DATAMALL', 'FLOOD', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'PARTIAL')
+                """, UUID.randomUUID(), UUID.randomUUID().toString());
+
+        assertThat(meterRegistry.get("occ.ingestion.hazard.latest_poll_outcome").tag("feed", "FLOOD").gauge().value())
+                .isEqualTo(0.5);
+        assertThat(meterRegistry.get("occ.ingestion.hazard.latest_poll_outcome").tag("feed", "RAIL_DISRUPTION").gauge().value())
+                .isEqualTo(-1.0);
+        assertThat(meterRegistry.get("occ.ingestion.hazard.latest_poll_success_age_seconds").tag("feed", "FLOOD").gauge().value())
+                .isEqualTo(0.0);
+        assertThat(meterRegistry.getMeters().stream()
+                .filter(meter -> meter.getId().getName().equals("occ.ingestion.hazard.latest_poll_outcome"))
+                .flatMap(meter -> meter.getId().getTags().stream())
+                .map(io.micrometer.core.instrument.Tag::getKey).distinct())
+                .containsExactly("feed");
+    }
+
+    @Test
     void referenceTopologyQueriesReturnRoutesAndStopsFromTheActiveVersion() {
         ReferenceTopologyPort.ReferenceTopologyVersion version = topology.replaceIfChanged(
                 new BusReferencePort.BusReferenceData(
@@ -241,7 +261,9 @@ class IngestionStartupIT {
         assertThat(arrivals.findCurrent("44251", "190", PageRequest.of(0, 50)).getContent()).isEmpty();
         assertThat(arrivals.findHistory("44251", "190", null, null, PageRequest.of(0, 50)).getContent()).isEmpty();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM ingestion.traffic_incident_observation "
-                + "WHERE demo_run_id=? AND classification='SIMULATION'", Integer.class, started.id())).isEqualTo(2);
+                + "WHERE demo_run_id=? AND classification='SIMULATION' AND hazard_kind='TRAFFIC_INCIDENT'", Integer.class, started.id())).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ingestion.traffic_incident_observation "
+                + "WHERE demo_run_id=? AND hazard_kind <> 'TRAFFIC_INCIDENT'", Integer.class, started.id())).isEqualTo(9);
         var trafficPolls = trafficIncidentPollFeed.page(null, null, 250).polls().stream()
                 .filter(poll -> started.id().equals(poll.demoRunId())).toList();
         assertThat(trafficPolls).hasSize(DemoReplayScenario.STEP_COUNT).allMatch(poll -> poll.complete()
@@ -349,7 +371,8 @@ class IngestionStartupIT {
                 context.getBean(com.csd.occ.ingestion.domain.DemoRunRepository.class),
                 context.getBean(com.csd.occ.ingestion.domain.TrafficIncidentObservationRepository.class),
                 context.getBean(com.csd.occ.ingestion.domain.DemoVehicleAssignmentRepository.class), bunching,
-                context.getBean(com.csd.occ.ingestion.domain.PollTargetRepository.class));
+                context.getBean(com.csd.occ.ingestion.domain.PollTargetRepository.class),
+                context.getBean(com.csd.occ.ingestion.domain.HazardObservationRepository.class));
         var transaction = new org.springframework.transaction.support.TransactionTemplate(context.getBean(org.springframework.transaction.PlatformTransactionManager.class));
         Long firstPurgeCount = transaction.execute(status -> pruning.purgeExpiredObservations());
         assertThat(firstPurgeCount).isGreaterThan(0);
