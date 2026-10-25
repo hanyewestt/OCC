@@ -98,7 +98,7 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
   const diagnosisError = modeError ? 'Simulation state is unavailable.' : diagnoses.error !== null && !diagnoses.items.length
     ? 'Unable to load diagnoses.' : diagnosisPage && !diagnosisScopeMatches && !loading
       ? 'Data selection changed. Refresh to load the active mode.' : ''
-  const recommendationItems = !loading && !recommendationError && recommendationScopeMatches ? recommendations.items : []
+  const recommendationItems = !recommendationError && recommendationScopeMatches ? recommendations.items : []
   const diagnosisItems = !loading && !diagnosisError && diagnosisScopeMatches ? diagnoses.items : []
   const visible = recommendationItems.filter(item => item.serviceId.includes(filter.trim()))
   const requestedId = searchParams.get('recommendation')
