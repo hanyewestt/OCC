@@ -77,11 +77,11 @@ function EvidenceDetailList({ items }: { items: DiagnosisEvidenceDetail[] }) {
 
 type EditingRecommendation = { identity: string; scopeIdentity: string; recommendation: PendingRecommendation }
 
-export function ControllerPlanning({ recommendations, diagnoses, loading, modeError, mode, demoRunId, token, onSaved }: {
+export function ControllerPlanning({ recommendations, diagnoses, loading, modeError, mode, demoRunId, token, onRefresh, onSaved }: {
   recommendations: PagedCollection<PendingRecommendation, Planning['recommendations']>
   diagnoses: PagedCollection<PlanningDiagnosisPage['items'][number], PlanningDiagnosisPage>
   loading: boolean; modeError: string; mode: 'LIVE' | 'DEMO'; demoRunId: string | null; token: string
-  onSaved: () => void
+  onRefresh: () => void; onSaved: () => void
 }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [filter, setFilter] = useState('')
@@ -108,12 +108,12 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
   const editingInScope = editingRecommendation?.scopeIdentity === scopeIdentity ? editingRecommendation : null
   const editingItem = editingInScope && recommendationItems.find(item => item.recommendationId === editingInScope.recommendation.recommendationId)
   const editingItemIsLoaded = !!editingItem
-  const editNeedsRevalidation = !!editingInScope && !editingItem && (recommendations.isLoading || recommendations.isLoadingMore ||
+  const editNeedsRevalidation = !!editingInScope && !editingItem && (!!modeError || recommendations.isLoading || recommendations.isLoadingMore ||
     recommendationHasMore || recommendationLoadError !== null)
   const selected = editNeedsRevalidation ? editingInScope.recommendation
     : recommendationItems.find(item => item.recommendationId === requestedId) ?? visible[0] ?? recommendationItems[0]
   const selectedIdentity = selected ? `${scopeIdentity}:${JSON.stringify(selected)}` : null
-  const editorUnavailable = !!editingInScope && !editingItem && recommendationLoadError !== null
+  const editorUnavailable = !!editingInScope && !editingItem && (!!modeError || recommendationLoadError !== null)
   const editorStale = editingRecommendation !== null && (editingRecommendation.scopeIdentity !== scopeIdentity ||
     !editNeedsRevalidation && selectedIdentity !== editingRecommendation.identity)
   const detailRecommendation = selected
@@ -122,10 +122,10 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
     JSON.stringify(item) === JSON.stringify(selected))
 
   useEffect(() => {
-    if (!editingInScope || editingItemIsLoaded || recommendationIsLoading || recommendationIsLoadingMore ||
+    if (!editingInScope || editingItemIsLoaded || modeError || recommendationIsLoading || recommendationIsLoadingMore ||
       recommendationLoadError !== null || !recommendationHasMore) return
     loadNextRecommendation()
-  }, [editingInScope, editingItemIsLoaded, loadNextRecommendation, recommendationHasMore, recommendationIsLoading,
+  }, [editingInScope, editingItemIsLoaded, loadNextRecommendation, modeError, recommendationHasMore, recommendationIsLoading,
     recommendationIsLoadingMore, recommendationLoadError])
 
   useEffect(() => {
@@ -187,7 +187,8 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
       </Card>
 
       {detailRecommendation && detailIdentity && <RecommendationDetail key={detailIdentity} selected={detailRecommendation} identity={detailIdentity}
-        scopeIdentity={scopeIdentity} token={token} isCurrent={selectionIsCurrent} validationFailed={editorUnavailable} retryCurrentCheck={recommendations.reload}
+        scopeIdentity={scopeIdentity} token={token} isCurrent={selectionIsCurrent} validationFailed={editorUnavailable}
+        retryCurrentCheck={modeError ? onRefresh : recommendations.reload}
         onSaved={onSaved} onMessage={setMessage} onEditorChange={setEditingRecommendation} />}
     </div> : null}
   </section>

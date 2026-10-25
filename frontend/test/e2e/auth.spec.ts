@@ -930,6 +930,49 @@ test('recommendation editor closes when the active simulation run changes', asyn
   expect(decisionRequests).toBe(0)
 })
 
+test('recommendation editor keeps its draft while simulation state is unavailable', async ({ page, context }) => {
+  await page.clock.install()
+  await mockDashboard(context)
+  await context.route('**/frontend-config', route => route.fulfill({ json: {
+    projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
+    controllerRefreshIntervalSeconds: 1, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20, captainRefreshIntervalSeconds: 5, publicNoticeRefreshIntervalSeconds: 30,
+  } }))
+  let failNextCheck = false
+  let successfulChecks = 0
+  await context.route('**/api/v1/demo-runs/active', route => {
+    if (failNextCheck) {
+      failNextCheck = false
+      return route.fulfill({ status: 503 })
+    }
+    successfulChecks += 1
+    return route.fulfill({ json: { id: 'run-1', status: 'REPLAY_COMPLETE', alerts: [] } })
+  })
+
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
+  const rationale = editor.getByLabel('Controller rationale')
+  await rationale.fill('Keep this simulation draft until the run is verified.')
+
+  const checksBeforeRefresh = successfulChecks
+  const failedRunCheck = page.waitForResponse(response =>
+    new URL(response.url()).pathname === '/api/v1/demo-runs/active' && response.status() === 503)
+  failNextCheck = true
+  await page.clock.fastForward(1000)
+  await failedRunCheck
+  await expect(editor).toBeVisible()
+  await expect(rationale).toHaveValue('Keep this simulation draft until the run is verified.')
+  await expect(editor.getByRole('alert')).toContainText('Unable to confirm')
+  await expect(editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true })).toBeDisabled()
+
+  await editor.getByRole('button', { name: 'Retry recommendation check', exact: true }).click()
+  await expect.poll(() => successfulChecks).toBeGreaterThan(checksBeforeRefresh)
+  await expect(editor).toBeVisible()
+  await expect(rationale).toHaveValue('Keep this simulation draft until the run is verified.')
+  await expect(editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true })).toBeEnabled()
+})
+
 test('controller distinguishes failed arrivals from empty arrivals and can retry', async ({ page, context }) => {
   const options = { arrivalFailure: true }
   await mockDashboard(context, options)
