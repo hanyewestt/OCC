@@ -58,8 +58,46 @@ class TrafficIncidentLifecycleIT {
     void resetRows() {
         reset(feed, evidenceCodec);
         org.mockito.Mockito.when(evidenceCodec.encode(any(), any(), any())).thenReturn("{}");
-        jdbc.execute("TRUNCATE disruption.planning_outbox, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption");
+        jdbc.execute("TRUNCATE disruption.hazard_state, disruption.planning_outbox, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption");
         jdbc.update("UPDATE disruption.traffic_poll_checkpoint SET completed_at = NULL, poll_run_id = NULL WHERE id = 1");
+    }
+
+    @Test
+    void retirementNeedsBothAbsenceCountAndElapsedTimeAndReappearanceResetsTheWindow() {
+        UUID demoRun = UUID.randomUUID();
+        String key = "e".repeat(64);
+        Instant start = Instant.now().minusSeconds(180).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        Duration minimumPeriod = Duration.ofMinutes(2);
+        var original = fact(UUID.randomUUID(), key, "Road obstruction", "Reported obstruction", start, demoRun);
+        synchronization.process(poll(UUID.randomUUID(), start, "SUCCESS", true, "SIMULATION", demoRun,
+                List.of(original)), Duration.ofMinutes(5), 2, minimumPeriod);
+        synchronization.process(poll(UUID.randomUUID(), start.plusSeconds(1), "SUCCESS", true, "SIMULATION", demoRun,
+                List.of()), Duration.ofMinutes(5), 2, minimumPeriod);
+        synchronization.process(poll(UUID.randomUUID(), start.plusSeconds(2), "PARTIAL", false, "SIMULATION", demoRun,
+                List.of()), Duration.ofMinutes(5), 2, minimumPeriod);
+        synchronization.process(poll(UUID.randomUUID(), start.plusSeconds(3), "FAILED", false, "SIMULATION", demoRun,
+                List.of()), Duration.ofMinutes(5), 2, minimumPeriod);
+        assertThat(jdbc.queryForObject("SELECT absence_count FROM disruption.traffic_incident_state", Integer.class)).isEqualTo(1);
+        synchronization.process(poll(UUID.randomUUID(), start.plusSeconds(4), "SUCCESS", true, "SIMULATION", demoRun,
+                List.of(original)), Duration.ofMinutes(5), 2, minimumPeriod);
+        assertThat(jdbc.queryForObject("SELECT absence_count FROM disruption.traffic_incident_state", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT first_absent_at FROM disruption.traffic_incident_state", Instant.class)).isNull();
+        for (int offset : List.of(5, 6, 124)) {
+            synchronization.process(poll(UUID.randomUUID(), start.plusSeconds(offset), "SUCCESS", true, "SIMULATION", demoRun,
+                    List.of()), Duration.ofMinutes(5), 2, minimumPeriod);
+            assertThat(jdbc.queryForObject("SELECT status FROM disruption.traffic_incident_state", String.class)).isEqualTo("ACTIVE");
+        }
+        synchronization.process(poll(UUID.randomUUID(), start.plusSeconds(125), "SUCCESS", true, "SIMULATION", demoRun,
+                List.of()), Duration.ofMinutes(5), 2, minimumPeriod);
+        assertThat(jdbc.queryForObject("SELECT status FROM disruption.traffic_incident_state", String.class)).isEqualTo("CLEARED");
+        assertThat(jdbc.queryForObject("SELECT inactive_reason FROM disruption.traffic_incident_state", String.class)).isEqualTo("NO_LONGER_REPORTED");
+        synchronization.process(poll(UUID.randomUUID(), start.plusSeconds(126), "SUCCESS", true, "SIMULATION", demoRun,
+                List.of(fact(UUID.randomUUID(), key, "Road obstruction", "Reported obstruction", start.plusSeconds(126), demoRun))),
+                Duration.ofMinutes(5), 2, minimumPeriod);
+        assertThat(jdbc.queryForObject("SELECT status FROM disruption.traffic_incident_state", String.class)).isEqualTo("ACTIVE");
+        assertThat(jdbc.queryForObject("SELECT absence_count FROM disruption.traffic_incident_state", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT first_absent_at FROM disruption.traffic_incident_state", Instant.class)).isNull();
+        assertThat(jdbc.queryForObject("SELECT inactive_reason FROM disruption.traffic_incident_state", String.class)).isNull();
     }
 
     @Test

@@ -68,3 +68,29 @@ its observation IDs and classification; live events have no demo run ID. The exp
 headway baseline uses `OCC_DISRUPTION_EXPECTED_HEADWAY` in both modes. Candidates
 older than `OCC_DISRUPTION_STALE_AFTER` or predating a return to Live are discarded.
 Unknown-direction detections remain observational alerts and are not sent for diagnosis.
+
+### Multi-hazard lifecycle and candidate exposure
+
+The disruption service consumes the independent flood, rail and approved
+roadworks polls only when `OCC_DISRUPTION_HAZARD_ENABLED=true`. Keep the feed
+disabled until Ingestion and Disruption have both been deployed with the new
+contracts. `OCC_DISRUPTION_HAZARD_POLL_INTERVAL` controls consumption;
+`OCC_DISRUPTION_HAZARD_STALE_AFTER` reports feed freshness without clearing an
+incident. Feed status is included in `GET /api/v1/disruption/hazards`.
+
+Roadworks are retired by absence only after both
+`OCC_DISRUPTION_HAZARD_ABSENCE_LIMIT` complete snapshots and
+`OCC_DISRUPTION_HAZARD_ABSENCE_PERIOD` have elapsed. Incomplete/failed polls do
+not count. Traffic uses its own `OCC_DISRUPTION_TRAFFIC_CLEAR_AFTER_SUCCESSFUL_ABSENCES`
+and `OCC_DISRUPTION_TRAFFIC_MINIMUM_ABSENCE_PERIOD` rules. Flood cancellation,
+rail recovery and documented source expiry have their own lifecycle handling.
+Absence is reported as “No longer reported,” never as verified clearance.
+
+Candidate stop proximity uses `OCC_DISRUPTION_HAZARD_ASSOCIATION_RADIUS_KM` and
+the separately imported station references from Ingestion. Associations are
+evidence for controller review only; they do not confirm road impact, safety,
+closure or available capacity. In simulation mode, downstream stop occurrences
+are compared with the assigned synthetic fleet progress. The controller API
+remains available at `GET /api/v1/disruption/hazards` and
+`GET /api/v1/disruption/hazards/{id}`; Planning reads the latter through a
+directed peer capability.
