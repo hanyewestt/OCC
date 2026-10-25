@@ -68,7 +68,6 @@ export function ControllerPlanning({ planning, diagnoses, loading, token, onSave
           <p className="font-medium">Service {item.serviceId} · Direction {item.directionId} · Stop {item.stopCode}</p>
           <p className="text-xs text-muted-foreground">{item.classification === 'SIMULATION' ? 'Simulation' : 'Live · observation only'} · {item.status.replaceAll('_', ' ')} · {timestamp(item.createdAt)}</p>
           {item.likelyCause && <p>{item.likelyCause}</p>}
-          {item.confidence !== null && <p>Evidence-support score: {Math.round(item.confidence * 100)}%</p>}
           {item.failureCode && <p role="alert">Diagnosis unavailable: {item.failureCode.replaceAll('_', ' ')}.</p>}
           {!!item.limitations.length && <ul className="list-disc space-y-1 pl-5 text-muted-foreground">{item.limitations.map(value => <li key={value}>{value}</li>)}</ul>}
         </CardContent>
@@ -156,6 +155,22 @@ function RecommendationDetail({ selected, token, onSaved, onMessage }: {
     }
   }
 
+  async function approveAndSendToObu() {
+    if (submitting.current) return
+    submitting.current = true; setPending(true); setMessage('')
+    const controller = new AbortController()
+    mutationRef.current?.abort(); mutationRef.current = controller
+    try {
+      await apiRequest(`/api/v1/planning/recommendations/${encodeURIComponent(selected.recommendationId)}/obu-decisions`, token, controller.signal, { method: 'POST' })
+      if (!controller.signal.aborted) { setMessage('Validated instruction issued to the assigned captain.'); onSaved() }
+    } catch (error) {
+      if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : 'Unable to issue the instruction.')
+    } finally {
+      submitting.current = false
+      if (!controller.signal.aborted) setPending(false)
+    }
+  }
+
   return <Card><CardContent className="space-y-5 px-5">
         {message && <p role="status" className="text-sm">{message}</p>}
         <div className="flex flex-wrap items-start justify-between gap-4 border-b pb-4">
@@ -166,10 +181,11 @@ function RecommendationDetail({ selected, token, onSaved, onMessage }: {
         <div className="flex flex-wrap justify-end gap-2 border-b pb-4">
           <Button variant="outline" disabled={pending} onClick={() => setReplacing(true)}>Enter controller recommendation</Button>
           <Button disabled={pending} onClick={() => void decide('APPROVED')}>{pending ? 'Saving…' : 'Approve recommendation'}</Button>
+          {['HOLD', 'DWELL_ADJUSTMENT'].includes(selected.mitigationType) && <Button variant="outline" disabled={pending} onClick={() => void approveAndSendToObu()}>Approve and send to bus</Button>}
         </div>
 
         <div className="grid gap-4 rounded-lg bg-muted/50 p-4 sm:grid-cols-[1fr_auto]">
-          <div><p className="text-xs text-muted-foreground">Diagnosis</p><p className="mt-1 font-medium">{selected.explanation.likelyCause}</p><p className="mt-1 text-sm text-muted-foreground">Confidence {Math.round(selected.explanation.diagnosisConfidence * 100)}%</p></div>
+          <div><p className="text-xs text-muted-foreground">Diagnosis</p><p className="mt-1 font-medium">{selected.explanation.likelyCause}</p></div>
           <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-1"><div><dt className="text-xs text-muted-foreground">Observed gap</dt><dd className="mt-1 font-medium tabular-nums">{seconds(selected.observedHeadwaySeconds)}</dd></div><div><dt className="text-xs text-muted-foreground">Target gap</dt><dd className="mt-1 font-medium tabular-nums">{seconds(selected.expectedHeadwaySeconds)}</dd></div></dl>
         </div>
 

@@ -4,7 +4,7 @@ for (const [code, title] of [['401', 'Sign-in required'], ['403', 'Access denied
   test(`${code} uses the shared error page and leads back to sign-in`, async ({ page }) => {
     await page.route('**/frontend-config', route => route.fulfill({ json: {
       projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
-      controllerRefreshIntervalSeconds: 30, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20,
+      controllerRefreshIntervalSeconds: 30, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20, captainRefreshIntervalSeconds: 5, publicNoticeRefreshIntervalSeconds: 30,
     } }))
     await page.goto(`/${code}`)
     await expect(page.getByText(code, { exact: true })).toBeVisible()

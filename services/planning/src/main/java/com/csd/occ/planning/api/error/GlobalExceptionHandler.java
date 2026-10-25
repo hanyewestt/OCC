@@ -19,6 +19,18 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(com.csd.occ.planning.advisory.domain.AdvisoryConflictException.class)
+    ProblemDetail advisoryConflict(com.csd.occ.planning.advisory.domain.AdvisoryConflictException exception, HttpServletRequest request) {
+        return problem(HttpStatus.CONFLICT, "Advisory conflict", exception.getMessage(), "urn:occ:problem:advisory-conflict", request);
+    }
+    @ExceptionHandler(com.csd.occ.planning.advisory.domain.AdvisoryNotFoundException.class)
+    ProblemDetail advisoryNotFound(HttpServletRequest request) {
+        return problem(HttpStatus.NOT_FOUND, "Advisory not found", "The requested advisory is not available.", "urn:occ:problem:advisory-not-found", request);
+    }
+    @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
+    ProblemDetail concurrentAdvisoryConflict(HttpServletRequest request) {
+        return problem(HttpStatus.CONFLICT, "Concurrent update conflict", "Another decision changed this resource. Refresh before retrying.", "urn:occ:problem:concurrent-update", request);
+    }
     @ExceptionHandler(com.csd.occ.planning.diagnosis.domain.PlanningScopePort.UnavailableException.class)
     ProblemDetail handleScopeUnavailable(HttpServletRequest request) {
         return problem(HttpStatus.SERVICE_UNAVAILABLE, "Data selection unavailable",

@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { classify, clockText, deltaText, gapFlex, initialScenario, sampleGaps,
   scenarios, SAMPLE_REFRESH_MS, SAMPLE_TARGET_SECONDS, type GapState, type Scenario } from '@/lib/obu-pacing'
 import { groupStops, sampleUpcomingStops, skipLabel } from '@/lib/skip-stops'
+import { CaptainInstructions } from './CaptainInstructions'
 
 const states: Record<GapState, { symbol: string; label: string; color: string }> = {
   close: { symbol: '▲', label: 'TOO CLOSE', color: 'text-red-700 dark:text-red-400' },
@@ -74,7 +75,7 @@ function UpcomingStops() {
   </section>
 }
 
-export function CaptainPage({ email }: { email: string }) {
+export function CaptainPage({ email, token, refreshIntervalSeconds }: { email: string; token: string; refreshIntervalSeconds: number }) {
   const { search } = useLocation()
   const [sample, setSample] = useState(() => ({ scenario: initialScenario(search), tick: 0 }))
   const [theme, setTheme] = useState(initialTheme)
@@ -102,6 +103,7 @@ export function CaptainPage({ email }: { email: string }) {
       </div>
     </header>
 
+    <CaptainInstructions key={token} token={token} refreshIntervalSeconds={refreshIntervalSeconds} />
     <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
       <div><p className="text-xl font-bold">Service 190 · Direction 1</p>
         <p className="text-sm text-muted-foreground">DEMO-190-B</p></div>

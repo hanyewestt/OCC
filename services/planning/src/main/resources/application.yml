@@ -50,6 +50,12 @@ management:
 
 occ:
   planning:
+    advisory:
+      max-speed-reduction-kmh: ${OCC_PLANNING_ADVISORY_MAX_SPEED_REDUCTION_KMH:10}
+      max-duration-seconds: ${OCC_PLANNING_ADVISORY_MAX_DURATION_SECONDS:900}
+      max-subsequent-stops: ${OCC_PLANNING_ADVISORY_MAX_SUBSEQUENT_STOPS:10}
+      acknowledgement-window: ${OCC_PLANNING_ADVISORY_ACKNOWLEDGEMENT_WINDOW:5m}
+      retention: ${OCC_INGESTION_RETENTION:12h}
     gemini:
       base-url: ${OCC_PLANNING_GEMINI_BASE_URL:}
   security:
