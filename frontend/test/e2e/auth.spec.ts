@@ -60,7 +60,10 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
   await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: { mode: 'LIVE', demoRunId: null, items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/planning/recommendations/decisions?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: { mode: 'LIVE', demoRunId: null, items: [], page: 0, totalItems: 0, totalPages: 0 } }))
-  for (const endpoint of ['disruption/hazards', 'planning/advisories', 'planning/instructions', 'planning/notices', 'planning/diagnoses/hazard-requests', 'planning/captain/instructions']) {
+  await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: {
+    items: [], page: 0, size: 100, totalElements: 0, feeds: [],
+  } }))
+  for (const endpoint of ['planning/advisories', 'planning/instructions', 'planning/notices', 'planning/diagnoses/hazard-requests', 'planning/captain/instructions']) {
     await context.route(`**/api/v1/${endpoint}?*`, route => route.fulfill({ json: { items: [], page: 0, size: 100, totalItems: 0, totalPages: 0 } }))
   }
   await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ status: 204 }))
@@ -107,7 +110,7 @@ test.describe('SGT notice scheduling', () => {
       disruptionId: 'notice-hazard', kind: 'FLOOD', status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
       updatedAt: '2026-10-25T04:00:00Z', facts: { title: 'Flood report', description: 'Water reported near Example Stop.', instruction: null, effectiveUntil: null },
       exposures: [], limitations: [],
-    }], page: 0, totalItems: 1, totalPages: 1 } }))
+    }], page: 0, size: 100, totalElements: 1, feeds: [] } }))
     const posted: { effectiveFrom: string; effectiveUntil: string }[] = []
     await context.route('**/api/v1/planning/notices**', route => {
       if (route.request().method() === 'POST') posted.push(route.request().postDataJSON())
@@ -716,6 +719,42 @@ test('recommendation editor keeps edits on API failure and cannot close or submi
   await expect(page.getByText('AI recommendation replaced with controller instructions.')).toBeVisible()
 })
 
+test('recommendation editor retains its draft during an unrelated refresh', async ({ page, context }) => {
+  await page.clock.install()
+  await mockDashboard(context)
+  await context.route('**/frontend-config', route => route.fulfill({ json: {
+    projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
+    controllerRefreshIntervalSeconds: 1, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20, captainRefreshIntervalSeconds: 5, publicNoticeRefreshIntervalSeconds: 30,
+  } }))
+  let holdRouteRefresh = false
+  let releaseRoute!: () => void
+  let signalRouteRefresh!: () => void
+  const routeRefreshStarted = new Promise<void>(resolve => { signalRouteRefresh = resolve })
+  await context.route('**/api/v1/bus-routes/190', async route => {
+    if (!holdRouteRefresh) return route.fallback()
+    signalRouteRefresh()
+    await new Promise<void>(resolve => { releaseRoute = resolve })
+    return route.fallback()
+  })
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
+  const rationale = editor.getByLabel('Controller rationale')
+  await rationale.fill('Keep the current draft while route data refreshes.')
+
+  holdRouteRefresh = true
+  const recommendationRefresh = page.waitForResponse(response =>
+    new URL(response.url()).pathname === '/api/v1/planning/recommendations/pending')
+  await page.clock.fastForward(1000)
+  await Promise.all([routeRefreshStarted, recommendationRefresh])
+  await expect(editor).toBeVisible()
+  await expect(rationale).toHaveValue('Keep the current draft while route data refreshes.')
+  releaseRoute()
+  await expect(editor).toBeVisible()
+  await expect(rationale).toHaveValue('Keep the current draft while route data refreshes.')
+})
+
 test('recommendation editor remains during a poll and closes if its recommendation is removed', async ({ page, context }) => {
   await page.clock.install()
   await mockDashboard(context)
@@ -1146,7 +1185,7 @@ test('controller can apply a passenger notice suggestion without saving or publi
     disruptionId, kind: 'FLOOD', status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
     updatedAt: '2026-10-25T04:00:00Z', facts: { title: 'Flood report', description: 'Water reported near Example Stop.', instruction: 'Use caution.', effectiveUntil: null },
     exposures: [], limitations: [],
-  }], page: 0, totalItems: 1, totalPages: 1 } }))
+  }], page: 0, size: 100, totalElements: 1, feeds: [] } }))
   let suggestions = 0
   let drafts = 0
   await context.route(`**/api/v1/planning/notices/${disruptionId}/suggestions`, route => {
@@ -1187,7 +1226,7 @@ test('late notice suggestions cannot overwrite the selected hazard draft', async
     disruptionId: id, kind: 'FLOOD', status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
     updatedAt: '2026-10-25T04:00:00Z', facts: { title: `Hazard ${index ? 'B' : 'A'}`, description: `Message for hazard ${index ? 'B' : 'A'}.`, instruction: null, effectiveUntil: null },
     exposures: [], limitations: [],
-  })), page: 0, totalItems: 2, totalPages: 1 } }))
+  })), page: 0, size: 100, totalElements: 2, feeds: [] } }))
   let releaseSuggestion: (() => void) | undefined
   let markStarted: (() => void) | undefined
   const started = new Promise<void>(resolve => { markStarted = resolve })
@@ -1232,7 +1271,7 @@ test('controller reviews the server preview before issuing an edited instruction
     updatedAt: issued.issuedAt, facts: { title: 'Reported incident', description: 'A reported incident near Example Stop.', instruction: null, effectiveUntil: null },
     exposures: [{ busId: advisory.busId, serviceId: '190', stopCode: 'B01', stopName: 'Example Stop', stopSequence: 2, basis: 'POINT_PROXIMITY' }],
     limitations: ['Road relevance has not been verified.'],
-  }], page: 0, totalItems: 1, totalPages: 1 } }))
+  }], page: 0, size: 100, totalElements: 1, feeds: [] } }))
   await context.route('**/api/v1/planning/advisories?*', route => route.fulfill({
     json: { items: [{ ...advisory, status: sent ? 'APPROVED' : 'PENDING' }], page: 0, totalItems: 1, totalPages: 1 },
   }))
@@ -1302,7 +1341,7 @@ test('controller pending queue filters on the server and can page through all pe
     const item = { disruptionId: `hazard-${requestedPage}`, kind: 'FLOOD', status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
       updatedAt: '2026-10-25T04:00:00Z', facts: { title: `Hazard page ${requestedPage + 1}`, description: 'Reported water near the stop.', instruction: null, effectiveUntil: null },
       exposures: [], limitations: [] }
-    return route.fulfill({ json: { items: [item], page: requestedPage, size: 100, totalItems: 101, totalPages: 2 } })
+    return route.fulfill({ json: { items: [item], page: requestedPage, size: 100, totalElements: 101, feeds: [] } })
   })
   await context.route('**/api/v1/planning/diagnoses/hazard-requests?*', route => {
     const page = Number(new URL(route.request().url()).searchParams.get('page'))
@@ -1383,7 +1422,7 @@ test('controller sees terminal hazard processing failure without presenting an a
     updatedAt: '2026-10-25T04:00:00Z', facts: { title: 'Flood report', description: 'Water reported near Example Stop.', instruction: null, effectiveUntil: null },
     exposures: [{ busId: 'demo-190-b', serviceId: '190', stopCode: 'B01', stopName: 'Example Stop', stopSequence: 2, basis: 'STOP_SEQUENCE' }],
     limitations: [],
-  }], page: 0, totalItems: 1, totalPages: 1 } }))
+  }], page: 0, size: 100, totalElements: 1, feeds: [] } }))
   await context.route('**/api/v1/planning/diagnoses/hazard-requests?*', route => route.fulfill({ json: {
     mode: 'DEMO', demoRunId: 'run-205', items: [{ requestId: 'request-205', eventId: 'event-205', disruptionId,
       eventType: 'HAZARD', status: 'FAILED_TERMINAL', failureCode: 'HAZARD_CONTEXT_OR_MODEL_UNAVAILABLE',

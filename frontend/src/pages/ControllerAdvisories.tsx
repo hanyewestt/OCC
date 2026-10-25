@@ -14,6 +14,7 @@ import { usePagedCollection } from '@/lib/paged-collection'
 
 type Edit = { advisory: Advisory; type: AdvisoryCandidate['type']; stopSequence: string; speed: string; minutes: string; count: string; rationale: string; replacement: string }
 type Draft = { id: string; previousId?: string; disruptionId: string; title: string; message: string; services: string; locations: string; from: string; until: string }
+type HazardPageResponse = Omit<PageResult<Hazard>, 'totalItems' | 'totalPages'> & { size: number; totalElements: number }
 
 export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
   token: string; refreshIntervalSeconds: number; view: 'hazards' | 'planning' | 'audit'
@@ -32,9 +33,9 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
   const hazards = usePagedCollection<Hazard, PageResult<Hazard>>(collectionKey, async (page, signal) => {
     const params = new URLSearchParams({ page: String(page), size: '100' })
     try {
-      const result = await apiRequest<PageResult<Hazard>>(`/api/v1/disruption/hazards?${params}`, token, signal)
+      const result = await apiRequest<HazardPageResponse>(`/api/v1/disruption/hazards?${params}`, token, signal)
       if (!result) throw new Error('Hazard response was empty.')
-      return result
+      return { ...result, totalItems: result.totalElements, totalPages: Math.ceil(result.totalElements / result.size) }
     } catch (failure) {
       if (failure instanceof ApiError && failure.status === 401 && !signal.aborted) void signOut(failure.message)
       throw failure
