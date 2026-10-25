@@ -168,6 +168,7 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
     } finally { if (!controller.signal.aborted) setPending(false) }
   }
   const pendingAdvisories = advisories.items.filter(advisory => advisory.status === 'PENDING')
+  const filteredHazards = hazards.items.filter(hazard => !kind || hazard.kind === kind)
   return <section aria-label="Multi-hazard advisories" className="space-y-5 border-t pt-6">
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">{view === 'hazards' ? 'Multi-hazard conditions' : view === 'audit' ? 'Instruction and notice history' : 'Captain and public advisories'}</h2>
       <Button asChild variant="outline"><Link to="/notices" target="_blank" rel="noreferrer">Public notice board</Link></Button></div>
@@ -184,10 +185,10 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
       </select></div>
       {hazards.isLoading && !hazards.latestPage && <p role="status" className="text-sm text-muted-foreground">Loading hazards…</p>}
       {hazards.error !== null && !hazards.items.length && <p role="alert" className="text-sm text-destructive">Hazards are unavailable.</p>}
-      {!hazards.isLoading && hazards.error === null && hazards.latestPage && !hazards.items.length && <p className="text-sm text-muted-foreground">No current additional hazards.</p>}
-      {!!hazards.items.length && <ScrollArea role="region" aria-label="Hazard conditions" tabIndex={0} className="max-h-[32rem] rounded-lg border"
+      {!hazards.isLoading && hazards.error === null && hazards.latestPage && !filteredHazards.length && <p className="text-sm text-muted-foreground">{kind ? 'No hazards found for the selected type.' : 'No hazards found.'}</p>}
+      {!!filteredHazards.length && <ScrollArea role="region" aria-label="Hazard conditions" tabIndex={0} className="h-[32rem] rounded-lg border"
         viewportProps={{ onScroll: hazards.onScroll }}>
-        <div className="space-y-3 p-1">{hazards.items.filter(h => !kind || h.kind === kind).map(h => <Card key={h.disruptionId} className="min-h-28"><CardContent className="space-y-3">
+        <div className="space-y-3 p-1">{filteredHazards.map(h => <Card key={h.disruptionId} className="min-h-28"><CardContent className="space-y-3">
           <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{h.facts.title}</h3><p className="text-xs text-muted-foreground">{h.status} · {dataClassificationLabel(h.classification)}</p></div>
           <p className="text-sm">{h.facts.description}</p>{h.facts.instruction && <p className="text-sm font-medium">{h.facts.instruction}</p>}
           <p className="text-xs text-muted-foreground">Updated {formatSgtDateTime(h.updatedAt)} · Exposure uses simulated progress.</p>
