@@ -44,6 +44,15 @@ alerts are grouped when their saved gaps differ by no more than the configured
 `OCC_ROUTE_INCIDENT_GAP_TOLERANCE` (20 seconds by default).
 Change the tolerance in the root `.env` when local grouping should be more or
 less strict.
+
+`GET /frontend-config` also returns the public `OCC_CAPTAIN_DATA_REFRESH_INTERVAL`
+and `OCC_PUBLIC_NOTICE_REFRESH_INTERVAL` settings. These values control the
+captain's assigned-instruction refresh and the anonymous public notice board;
+they contain no service credentials. Nginx serves the public board at
+`/notices` without loading or requiring Supabase configuration. Its only API
+access is the anonymous published-notice read. Captain instruction reads and
+acknowledgements continue through the authenticated Gateway routes and are
+restricted to the CAPTAIN role.
 The SDK persists browser sessions and refreshes tokens; Gateway verifies them
 before the UI renders role content. Sign-out uses local scope and propagates
 across tabs. See [authentication](../../docs/AUTHENTICATION.md) and

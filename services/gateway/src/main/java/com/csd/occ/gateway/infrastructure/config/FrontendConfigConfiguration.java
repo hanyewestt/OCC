@@ -10,6 +10,7 @@ public class FrontendConfigConfiguration {
     FrontendConfig frontendConfig(FrontendProperties properties) {
         return new FrontendConfig(properties.projectUrl().toString(), properties.publishableKey(),
                 properties.controllerRefreshInterval().toSeconds(), properties.ingestionPollInterval().toSeconds(),
-                properties.routeIncidentGapTolerance().toSeconds());
+                properties.routeIncidentGapTolerance().toSeconds(), properties.captainRefreshInterval().toSeconds(),
+                properties.publicNoticeRefreshInterval().toSeconds());
     }
 }

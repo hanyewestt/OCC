@@ -66,6 +66,7 @@
     location = /controller/planning { try_files /index.html =404; }
     location = /controller/audit { try_files /index.html =404; }
     location = /captain { try_files /index.html =404; }
+    location = /notices { try_files /index.html =404; }
     location = /401 { try_files /index.html =404; }
     location = /403 { try_files /index.html =404; }
     location = /404 { try_files /index.html =404; }

@@ -4,6 +4,8 @@ export type PublicConfig = {
   controllerRefreshIntervalSeconds: number
   ingestionPollIntervalSeconds: number
   routeIncidentGapToleranceSeconds: number
+  captainRefreshIntervalSeconds: number
+  publicNoticeRefreshIntervalSeconds: number
 }
 
 let configRequest: Promise<PublicConfig> | undefined
@@ -31,7 +33,9 @@ async function readConfig(): Promise<PublicConfig> {
   }
   if (!Number.isInteger(config.controllerRefreshIntervalSeconds) || config.controllerRefreshIntervalSeconds! < 1 ||
     !Number.isInteger(config.ingestionPollIntervalSeconds) || config.ingestionPollIntervalSeconds! < 1 ||
-    !Number.isInteger(config.routeIncidentGapToleranceSeconds) || config.routeIncidentGapToleranceSeconds! < 1) {
+    !Number.isInteger(config.routeIncidentGapToleranceSeconds) || config.routeIncidentGapToleranceSeconds! < 1 ||
+    !Number.isInteger(config.captainRefreshIntervalSeconds) || config.captainRefreshIntervalSeconds! < 1 ||
+    !Number.isInteger(config.publicNoticeRefreshIntervalSeconds) || config.publicNoticeRefreshIntervalSeconds! < 1) {
     throw new Error('Controller refresh settings are unavailable.')
   }
   return {
@@ -39,5 +43,7 @@ async function readConfig(): Promise<PublicConfig> {
     controllerRefreshIntervalSeconds: config.controllerRefreshIntervalSeconds!,
     ingestionPollIntervalSeconds: config.ingestionPollIntervalSeconds!,
     routeIncidentGapToleranceSeconds: config.routeIncidentGapToleranceSeconds!,
+    captainRefreshIntervalSeconds: config.captainRefreshIntervalSeconds!,
+    publicNoticeRefreshIntervalSeconds: config.publicNoticeRefreshIntervalSeconds!,
   }
 }

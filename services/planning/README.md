@@ -123,9 +123,39 @@ inventory and gives a safe example for every setting. Planning-specific values:
 | `OCC_PLANNING_DIAGNOSIS_RETENTION_INTERVAL`, `OCC_PLANNING_DIAGNOSIS_RETENTION_INITIAL_DELAY` | Schedule cleanup of short-lived diagnosis request/delivery state; retained AI evidence follows its separate policy. |
 | `OCC_PLANNING_DIAGNOSIS_WORKER_ENABLED`, `OCC_PLANNING_DIAGNOSIS_WORKER_INTERVAL`, `OCC_PLANNING_DIAGNOSIS_WORKER_BATCH_SIZE`, `OCC_PLANNING_DIAGNOSIS_LEASE_DURATION`, `OCC_PLANNING_DIAGNOSIS_MAX_ATTEMPTS` | Control Planning's durable diagnosis worker. |
 | `OCC_PLANNING_DIAGNOSIS_DELIVERY_MAX_ATTEMPTS`, `OCC_PLANNING_DIAGNOSIS_RETRY_INITIAL_DELAY`, `OCC_PLANNING_DIAGNOSIS_RETRY_MAX_DELAY` | Bound and schedule retries when Planning submits a recommendation record. Zero delivery attempts means retry indefinitely with capped backoff. |
-| `OCC_PLANNING_DIAGNOSIS_EVIDENCE_LOOKBACK`, `OCC_PLANNING_DIAGNOSIS_EVIDENCE_RADIUS_KM`, `OCC_PLANNING_DIAGNOSIS_CONFIDENCE_THRESHOLD` | Configure the evidence window and descriptive diagnosis confidence threshold. |
+| `OCC_PLANNING_DIAGNOSIS_EVIDENCE_LOOKBACK`, `OCC_PLANNING_DIAGNOSIS_EVIDENCE_RADIUS_KM` | Configure the evidence window and spatial association bound. |
+| `OCC_PLANNING_DIAGNOSIS_CONFIDENCE_THRESHOLD` | Deprecated compatibility no-op; it does not affect eligibility, recommendation generation or approval. |
 | `OCC_PLANNING_DIAGNOSIS_REQUEST_TIMEOUT`, `OCC_DISRUPTION_INTERNAL_URL`, `OCC_INGESTION_INTERNAL_URL` | Configure internal evidence-service destinations and request timeouts. Compose uses service DNS and internal ports. |
+| `OCC_PLANNING_ADVISORY_MAX_SPEED_REDUCTION_KMH`, `OCC_PLANNING_ADVISORY_MAX_DURATION_SECONDS`, `OCC_PLANNING_ADVISORY_MAX_SUBSEQUENT_STOPS` | Bound controller-reviewed synthetic instructions; scenario-specific allowed values impose tighter limits. |
+| `OCC_PLANNING_ADVISORY_ACKNOWLEDGEMENT_WINDOW` | Expire instructions that the captain does not acknowledge. Timed speed advice starts only after server-recorded acknowledgement. |
 | `OCC_PLANNING_SWAGGER_ENABLED` | Enable or disable Swagger UI and generated API docs. |
+
+### Captain instructions and public notices
+
+`/api/v1/planning/advisories` exposes the controller review queue. Controllers
+preview the exact OBU message, then issue an approved instruction through the
+same Planning transaction that persists the decision. Existing typed HOLD and
+DWELL recommendations keep their operational validation and have a dedicated
+approve-and-issue action. Captains read only instructions assigned to their
+verified JWT subject from `/api/v1/planning/captain/instructions`; an
+acknowledgement stores the verified subject and server time. It records receipt,
+not physical execution. Instruction and public notice lifecycle records are
+retained using the existing diagnosis retention schedule.
+Issue and acknowledgement counters use only the bounded instruction-type label;
+they do not expose bus, captain or instruction identifiers as metric labels.
+
+Public notice drafts and publication history are controller-only at
+`/api/v1/planning/notices`. Anonymous reads use
+`/api/v1/planning/public/notices`; the default `OBSERVATION_ONLY` scope excludes
+simulation notices. A simulation board requires an explicit `demoRunId` and is
+labelled as demonstration content. Published notices are immutable; corrections
+publish a replacement and withdraw the previous notice in one transaction.
+Controllers can request source-fact or configured Gemini wording suggestions at
+`POST /api/v1/planning/notices/{disruptionId}/suggestions`. Suggestions only
+populate editable text and affected services/locations; they are never saved or
+published by that request. AI receives no bus, captain, account, or run IDs,
+must preserve a source restriction, and can select only supplied services and
+locations. Cleared sources are rejected.
 
 JWT settings are shared with Gateway: `SUPABASE_PROJECT_URL`,
 `SUPABASE_JWKS_URL`, `SUPABASE_JWT_AUDIENCE`, `SUPABASE_JWT_CLOCK_SKEW`, and

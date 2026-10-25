@@ -2,6 +2,7 @@ import { test, expect, type BrowserContext, type Page } from '@playwright/test'
 import { classify, clockText, deltaText, initialScenario } from '../../src/lib/obu-pacing'
 import { bunchingArrivals } from '../../src/lib/bunching'
 import { groupStops, skipLabel, type UpcomingStop } from '../../src/lib/skip-stops'
+import type { Advisory, CaptainInstruction } from '../../src/lib/api'
 
 // Synthetic Supabase and Gateway responses. These tests do not prove provider
 // behavior or backend authorization; Gateway tests and the opt-in live smoke do.
@@ -58,10 +59,13 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
   await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: { mode: 'LIVE', demoRunId: null, items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/planning/recommendations/decisions?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: { mode: 'LIVE', demoRunId: null, items: [], page: 0, totalItems: 0, totalPages: 0 } }))
+  for (const endpoint of ['disruption/hazards', 'planning/advisories', 'planning/instructions', 'planning/notices', 'planning/captain/instructions']) {
+    await context.route(`**/api/v1/${endpoint}?*`, route => route.fulfill({ json: { items: [], page: 0, size: 100, totalItems: 0, totalPages: 0 } }))
+  }
   await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ status: 204 }))
   await context.route('**/frontend-config', route => route.fulfill({ json: {
     projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
-    controllerRefreshIntervalSeconds: 30, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20,
+    controllerRefreshIntervalSeconds: 30, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20, captainRefreshIntervalSeconds: 5, publicNoticeRefreshIntervalSeconds: 30,
   } }))
   await context.route('https://example.supabase.co/auth/v1/**', async route => {
     const url = new URL(route.request().url())
@@ -91,6 +95,17 @@ async function login(page: Page) {
   await page.getByLabel('Email').fill('user@example.test')
   await page.getByLabel('Password', { exact: true }).fill('synthetic-password')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+}
+
+function syntheticInstruction(now: Date): CaptainInstruction {
+  return {
+    id: '00000000-0000-4000-8000-000000000101', demoRunId: '00000000-0000-4000-8000-000000000102',
+    busId: 'demo-190-b', type: 'REDUCE_SPEED',
+    parameters: { stopCode: null, stopName: null, stopSequence: null, subsequentStopCount: null, speedReductionKmh: 5, durationSeconds: 300 },
+    message: 'Reduce speed by 5 km/h for 5 min.', busClassification: 'SIMULATION', hazardClassification: 'OBSERVATION_ONLY',
+    status: 'ISSUED', issuedAt: now.toISOString(), acknowledgementDeadline: new Date(now.getTime() + 300_000).toISOString(),
+    acknowledgedAt: null, applicableUntil: null, inactiveReason: null,
+  }
 }
 
 // Dashboard journeys use synthetic API fixtures and never write real decisions.
@@ -260,7 +275,7 @@ test('controller sidebar, summary links and deep links work through all four scr
   await expect(page.getByRole('button', { name: 'Expand sidebar' })).toHaveAttribute('aria-expanded', 'false')
   await page.getByRole('link', { name: /Simulation detections/ }).click()
   await expect(page).toHaveURL(/\/controller\/disruptions$/)
-  await expect(page.getByRole('heading', { name: 'Traffic disruptions' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Multi-hazard conditions' })).toBeVisible()
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Disruptions', exact: true })).toBeVisible()
   await page.getByRole('navigation', { name: 'Controller navigation' }).getByRole('link', { name: 'Planning & mitigation' }).click()
@@ -517,7 +532,189 @@ test('pacing treats threshold boundaries and missing measurements consistently',
   expect(initialScenario('?scenario=invalid')).toBe('bunched')
 })
 
-test('captain pacing updates samples and switches scenarios without operational API calls', async ({ page, context }) => {
+test('captain retries failed acknowledgement and keeps the persisted receipt after refresh', async ({ page, context }) => {
+  await mockAuth(context, 'CAPTAIN')
+  const now = new Date()
+  await page.clock.install({ time: now })
+  let instruction = syntheticInstruction(now)
+  let acknowledgementCalls = 0
+  let releaseFirstResponse!: () => void
+  const firstResponse = new Promise<void>(resolve => { releaseFirstResponse = resolve })
+  await context.route('**/api/v1/planning/captain/instructions?*', route => route.fulfill({
+    json: { items: [instruction], page: 0, totalItems: 1, totalPages: 1 },
+  }))
+  await context.route(`**/api/v1/planning/captain/instructions/${instruction.id}/acknowledgements`, async route => {
+    expect(route.request().method()).toBe('POST')
+    expect(route.request().headers().authorization).toMatch(/^Bearer /)
+    expect(route.request().postData()).toBeNull()
+    acknowledgementCalls++
+    if (acknowledgementCalls === 1) {
+      await firstResponse
+      return route.fulfill({ status: 503, json: { detail: 'Acknowledgement was not saved. Try again.' } })
+    }
+    instruction = { ...instruction, status: 'ACKNOWLEDGED', acknowledgedAt: now.toISOString(),
+      applicableUntil: new Date(now.getTime() + 300_000).toISOString() }
+    return route.fulfill({ json: instruction })
+  })
+
+  await login(page)
+  const display = page.getByRole('region', { name: 'Controller instructions', exact: true })
+  await expect(display.getByText(instruction.message, { exact: true })).toBeVisible()
+  await expect(display.getByText('SIMULATION · demo-190-b · Hazard: live', { exact: true })).toBeVisible()
+  await expect(display.getByText(/sec remaining/)).toHaveCount(0)
+  await display.getByRole('button', { name: 'Acknowledge', exact: true }).click()
+  await expect(display.getByRole('button', { name: 'Saving…', exact: true })).toBeDisabled()
+  await expect.poll(() => acknowledgementCalls).toBe(1)
+  releaseFirstResponse()
+  await expect(display.getByRole('alert')).toContainText('Acknowledgement was not saved. Try again.')
+  await expect(display.getByText(/^Acknowledged /)).toHaveCount(0)
+  await display.getByRole('button', { name: 'Acknowledge', exact: true }).click()
+  await expect(display.getByText(/^Acknowledged /)).toBeVisible()
+  await expect(display.getByText(/sec remaining · advisory window/)).toBeVisible()
+  await expect(display.getByRole('button', { name: 'Acknowledge', exact: true })).toHaveCount(0)
+  await expect(display.getByRole('alert')).toHaveCount(0)
+  const before = Number((await display.getByText(/sec remaining · advisory window/).innerText()).split(' ')[0])
+  await page.clock.fastForward(10_000)
+  await expect.poll(async () => Number((await display.getByText(/sec remaining · advisory window/).innerText()).split(' ')[0]))
+    .toBeLessThan(before)
+  const receipt = await display.getByText(/^Acknowledged /).innerText()
+  await page.reload()
+  await expect(display.getByText(receipt, { exact: true })).toBeVisible()
+  await expect(display.getByRole('button', { name: 'Acknowledge', exact: true })).toHaveCount(0)
+  expect(acknowledgementCalls).toBe(2)
+})
+
+test('controller approval sends a concise synthetic instruction and refreshes issued history', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const issued = syntheticInstruction(new Date())
+  const advisory: Advisory = {
+    id: issued.id, disruptionId: '00000000-0000-4000-8000-000000000103', demoRunId: issued.demoRunId,
+    busId: issued.busId, status: 'PENDING', candidate: { type: issued.type, parameters: issued.parameters, rationale: 'Permitted synthetic pacing adjustment.' },
+    finalCandidate: null, preview: issued.message, hazardClassification: issued.hazardClassification,
+    limitations: ['Simulation only.'], createdAt: issued.issuedAt,
+  }
+  let sent = false
+  await context.route('**/api/v1/planning/advisories?*', route => route.fulfill({
+    json: { items: [{ ...advisory, status: sent ? 'APPROVED' : 'PENDING' }], page: 0, totalItems: 1, totalPages: 1 },
+  }))
+  await context.route('**/api/v1/planning/instructions?*', route => route.fulfill({
+    json: { items: sent ? [issued] : [], page: 0, totalItems: sent ? 1 : 0, totalPages: sent ? 1 : 0 },
+  }))
+  await context.route(`**/api/v1/planning/advisories/${advisory.id}/decisions`, route => {
+    expect(route.request().headers().authorization).toMatch(/^Bearer /)
+    expect(route.request().postDataJSON()).toEqual({})
+    sent = true
+    return route.fulfill({ json: issued })
+  })
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  const advisories = page.getByRole('region', { name: 'Multi-hazard advisories', exact: true })
+  await expect(advisories.getByRole('heading', { name: issued.message, exact: true })).toBeVisible()
+  await advisories.getByRole('button', { name: 'Approve and send', exact: true }).click()
+  await expect(advisories.getByText('No pending captain advisories.', { exact: true })).toBeVisible()
+  await expect(advisories.getByText(issued.message, { exact: true })).toBeVisible()
+  await expect(advisories.getByText('demo-190-b · ISSUED', { exact: true })).toBeVisible()
+  expect(sent).toBe(true)
+})
+
+test('controller can apply a passenger notice suggestion without saving or publishing it', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const disruptionId = '00000000-0000-4000-8000-000000000104'
+  await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: { items: [{
+    disruptionId, kind: 'FLOOD', status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
+    updatedAt: '2026-10-25T04:00:00Z', facts: { title: 'Flood report', description: 'Water reported near Example Stop.', instruction: 'Use caution.', effectiveUntil: null },
+    exposures: [], limitations: [],
+  }], page: 0, totalItems: 1, totalPages: 1 } }))
+  let suggestions = 0
+  let drafts = 0
+  await context.route(`**/api/v1/planning/notices/${disruptionId}/suggestions`, route => {
+    expect(route.request().method()).toBe('POST')
+    expect(route.request().headers().authorization).toMatch(/^Bearer /)
+    suggestions++
+    return route.fulfill({ json: { title: 'Caution near Example Stop', message: 'Water reported near Example Stop. Use caution.',
+      services: ['190'], locations: ['Example Stop'], generator: 'SOURCE_FACTS' } })
+  })
+  await context.route('**/api/v1/planning/notices', route => {
+    if (route.request().method() === 'POST') drafts++
+    return route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } })
+  })
+
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  const advisories = page.getByRole('region', { name: 'Multi-hazard advisories', exact: true })
+  await advisories.getByRole('button', { name: 'Draft notice', exact: true }).click()
+  const suggest = advisories.getByRole('button', { name: 'Suggest passenger wording', exact: true })
+  await expect(suggest).toBeDisabled()
+  await advisories.getByLabel('Source hazard', { exact: true }).selectOption(disruptionId)
+  await expect(suggest).toBeEnabled()
+  await suggest.click()
+  await expect(advisories.getByLabel('Title', { exact: true })).toHaveValue('Caution near Example Stop')
+  await expect(advisories.getByLabel('Passenger message', { exact: true })).toHaveValue('Water reported near Example Stop. Use caution.')
+  await expect(advisories.getByLabel('Services (comma separated)', { exact: true })).toHaveValue('190')
+  await expect(advisories.getByLabel('Locations (comma separated)', { exact: true })).toHaveValue('Example Stop')
+  await expect(advisories.getByRole('heading', { name: 'New notice draft', exact: true })).toBeVisible()
+  expect(suggestions).toBe(1)
+  expect(drafts).toBe(0)
+})
+
+test('controller reviews the server preview before issuing an edited instruction', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const issued = syntheticInstruction(new Date())
+  const advisory: Advisory = {
+    id: issued.id, disruptionId: '00000000-0000-4000-8000-000000000103', demoRunId: issued.demoRunId,
+    busId: issued.busId, status: 'PENDING', candidate: { type: 'BE_CAUTIOUS',
+      parameters: { stopCode: 'B01', stopName: 'Example Stop', stopSequence: 2, subsequentStopCount: null, speedReductionKmh: null, durationSeconds: null },
+      rationale: 'Reported disruption near the next stop.' },
+    finalCandidate: null, preview: 'Disruption near Example Stop. Be cautious.', hazardClassification: 'OBSERVATION_ONLY',
+    limitations: ['Simulation only.'], createdAt: issued.issuedAt,
+  }
+  let sent = false
+  let previews = 0
+  let previewBody: unknown
+  await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: { items: [{
+    disruptionId: advisory.disruptionId, kind: 'TRAFFIC_INCIDENT', status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
+    updatedAt: issued.issuedAt, facts: { title: 'Reported incident', description: 'A reported incident near Example Stop.', instruction: null, effectiveUntil: null },
+    exposures: [{ busId: advisory.busId, serviceId: '190', stopCode: 'B01', stopName: 'Example Stop', stopSequence: 2, basis: 'POINT_PROXIMITY' }],
+    limitations: ['Road relevance has not been verified.'],
+  }], page: 0, totalItems: 1, totalPages: 1 } }))
+  await context.route('**/api/v1/planning/advisories?*', route => route.fulfill({
+    json: { items: [{ ...advisory, status: sent ? 'APPROVED' : 'PENDING' }], page: 0, totalItems: 1, totalPages: 1 },
+  }))
+  await context.route('**/api/v1/planning/instructions?*', route => route.fulfill({
+    json: { items: sent ? [issued] : [], page: 0, totalItems: sent ? 1 : 0, totalPages: sent ? 1 : 0 },
+  }))
+  await context.route(`**/api/v1/planning/advisories/${advisory.id}/preview`, route => {
+    previews++
+    previewBody = route.request().postDataJSON()
+    expect(previewBody).toEqual({ override: { type: issued.type, parameters: issued.parameters,
+      rationale: 'Permitted synthetic pacing adjustment.' }, rationale: 'Permitted synthetic pacing adjustment.', replaceInstructionId: null })
+    return route.fulfill({ json: { message: issued.message } })
+  })
+  await context.route(`**/api/v1/planning/advisories/${advisory.id}/decisions`, route => {
+    expect(route.request().postDataJSON()).toEqual(previewBody)
+    sent = true
+    return route.fulfill({ json: issued })
+  })
+
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  const advisories = page.getByRole('region', { name: 'Multi-hazard advisories', exact: true })
+  await advisories.getByRole('button', { name: 'Edit instruction', exact: true }).click()
+  await advisories.getByLabel('Instruction', { exact: true }).selectOption('REDUCE_SPEED')
+  await advisories.getByLabel('Reduction (km/h)', { exact: true }).fill('5')
+  await advisories.getByLabel('Duration (min)', { exact: true }).fill('5')
+  await advisories.getByLabel('Reason for replacement', { exact: true }).fill('Permitted synthetic pacing adjustment.')
+  await advisories.getByRole('button', { name: 'Preview instruction', exact: true }).click()
+  await expect(advisories.getByLabel('OBU preview', { exact: true })).toHaveText(issued.message)
+  expect(previews).toBe(1)
+  expect(sent).toBe(false)
+  await advisories.getByRole('button', { name: 'Approve edited instruction', exact: true }).click()
+  await expect(advisories.getByText('No pending captain advisories.', { exact: true })).toBeVisible()
+  await expect(advisories.getByText(issued.message, { exact: true })).toBeVisible()
+  expect(sent).toBe(true)
+})
+
+test('captain pacing updates samples and switches scenarios while only polling assigned instructions', async ({ page, context }) => {
   await mockAuth(context, 'CAPTAIN')
   await page.clock.install()
   const operationalRequests: string[] = []
@@ -529,6 +726,7 @@ test('captain pacing updates samples and switches scenarios without operational 
   const ahead = page.getByRole('region', { name: 'Gap to bus ahead', exact: true })
   const behind = page.getByRole('region', { name: 'Gap to bus behind', exact: true })
   await expect(page.getByText('SAMPLE DATA', { exact: true })).toBeVisible()
+  await expect(page.getByText('No current instructions for your assigned bus.', { exact: true })).toBeVisible()
   await expect(ahead.getByText('1:35', { exact: true })).toBeVisible()
   await expect(ahead).toHaveAttribute('data-state', 'close')
   await expect(behind).toHaveAttribute('data-state', 'far')
@@ -543,7 +741,9 @@ test('captain pacing updates samples and switches scenarios without operational 
   await page.getByRole('button', { name: 'No bus behind', exact: true }).click()
   await expect(behind.getByText('--:--', { exact: true })).toBeVisible()
   await expect(behind).toHaveAttribute('data-state', 'unknown')
-  expect(operationalRequests).toEqual([])
+  expect(operationalRequests.length).toBeGreaterThan(0)
+  expect(operationalRequests.every(path => path === '/api/v1/planning/captain/instructions')).toBe(true)
+  expect(operationalRequests).not.toContain('/api/v1/pacing-snapshots/latest')
 })
 
 test('consecutive skipped stops form one group in route order', () => {

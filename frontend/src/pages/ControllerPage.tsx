@@ -8,6 +8,7 @@ import { ControllerSidebar, controllerPages } from '@/components/ControllerSideb
 import { ControllerOverview, ControllerDisruptions, ControllerAudit } from '@/pages/ControllerViews'
 import { ControllerRouteStrip } from '@/pages/ControllerRouteStrip'
 import { ControllerPlanning } from '@/pages/ControllerPlanning'
+import { ControllerAdvisories } from '@/pages/ControllerAdvisories'
 
 export type Resource<T> = { data: T | null; error: string }
 export type Planning = { recommendations: PageResult<PendingRecommendation> & { mode: string; demoRunId: string | null }; decisions: PageResult<Decision> }
@@ -86,15 +87,11 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const [switching, setSwitching] = useState(false)
   const [modeError, setModeError] = useState('')
   const modeRequestRef = useRef<AbortController | null>(null)
-  const liveRefreshInFlightRef = useRef(false)
   const switchingRef = useRef(false)
   const requestKey = `${token}:${refresh}:${arrivalPage}`
   const loading = loaded !== requestKey || switching
   const requestLiveData = useCallback(async (signal: AbortSignal): Promise<LiveData | null> => {
-    if (liveRefreshInFlightRef.current) return null
-    liveRefreshInFlightRef.current = true
-    try { return await loadLiveData(token, arrivalPage, signal) }
-    finally { liveRefreshInFlightRef.current = false }
+    return loadLiveData(token, arrivalPage, signal)
   }, [token, arrivalPage])
   const fetchStopArrivals = useCallback(async (route: RouteDirection, stopCode: string, signal: AbortSignal): Promise<Arrival[]> => {
     const params = new URLSearchParams({ stopCode, serviceId: route.serviceId, page: '0', size: '50' })
@@ -239,6 +236,9 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         {pathname.endsWith('/disruptions') && <ControllerDisruptions alerts={alerts} run={run} loading={loading} />}
         {pathname.endsWith('/planning') && <ControllerPlanning planning={planning} diagnoses={diagnoses} loading={loading} token={token} onSaved={() => setRefresh(value => value + 1)} />}
         {pathname.endsWith('/audit') && <ControllerAudit planning={planning} loading={loading} />}
+        {pathname !== '/controller' && <ControllerAdvisories key={`${token}:${pathname}`} token={token}
+          refreshIntervalSeconds={controllerRefreshIntervalSeconds}
+          view={pathname.endsWith('/disruptions') ? 'hazards' : pathname.endsWith('/planning') ? 'planning' : 'audit'} />}
       </div>
     </div>
   </div>
