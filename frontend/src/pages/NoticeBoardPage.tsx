@@ -3,6 +3,8 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { apiRequest, type PageResult, type PublicNotice } from '@/lib/api'
+import { dataClassificationLabel } from '@/lib/presentation'
+import { formatSgtDateTime, formatSgtTime } from '@/lib/time'
 
 export function NoticeBoardPage() {
   const [params] = useSearchParams()
@@ -14,6 +16,7 @@ export function NoticeBoardPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<string | null>(null)
+  const [refreshIntervalSeconds, setRefreshIntervalSeconds] = useState<number | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -27,6 +30,7 @@ export function NoticeBoardPage() {
         const config = await configResponse.json() as { publicNoticeRefreshIntervalSeconds?: number }
         const interval = config.publicNoticeRefreshIntervalSeconds
         if (!Number.isInteger(interval) || interval! < 1) throw new Error('Notice board refresh settings are unavailable.')
+        setRefreshIntervalSeconds(interval!)
         if (classification !== 'OBSERVATION_ONLY' && classification !== 'SIMULATION') throw new Error('Invalid notice view.')
         if (classification === 'SIMULATION' && !runId) throw new Error('The simulation view needs a demo run ID.')
         const query = new URLSearchParams({ classification, page: String(page), size: '20' })
@@ -66,19 +70,19 @@ export function NoticeBoardPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Service advisories</h1>
         <p className="text-sm text-muted-foreground">Approved notices about affected services and stops.</p>
       </div><Button variant="outline" disabled={loading} onClick={() => { setLoading(true); setRefresh(value => value + 1) }}>Refresh</Button></div>
-      {classification === 'SIMULATION' && <p role="status" className="rounded-lg border bg-muted p-3 text-sm font-medium">SIMULATION · Demonstration notices</p>}
-      {lastUpdated && <p className="text-xs text-muted-foreground">Last updated {new Date(lastUpdated).toLocaleTimeString()}</p>}
+      {classification === 'SIMULATION' && <p role="status" className="rounded-lg border bg-muted p-3 text-sm font-medium">Simulation · Demonstration notices</p>}
+      {lastUpdated && <p className="text-xs text-muted-foreground">Last updated {formatSgtTime(lastUpdated)} · Refreshes every {refreshIntervalSeconds} seconds</p>}
       {loading && <p role="status" className="text-sm text-muted-foreground">Loading notices…</p>}
       {error && <div role="alert" className="space-y-3 rounded-xl border p-5"><p>{error}</p><Button variant="outline" onClick={() => { setLoading(true); setRefresh(value => value + 1) }}>Try again</Button></div>}
       {!loading && !error && notices?.items.length === 0 && <Card><CardContent className="text-sm text-muted-foreground">No current service advisories.</CardContent></Card>}
       <div className="grid gap-4 md:grid-cols-2">{!loading && !error && notices?.items.map(notice => <Card key={notice.id}>
         <CardContent className="space-y-4">
-          <div className="space-y-1">{notice.classification === 'SIMULATION' && <p className="text-xs font-medium text-muted-foreground">SIMULATION</p>}
+          <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground">{dataClassificationLabel(notice.classification)}</p>
             <h2 className="text-lg font-semibold">{notice.title}</h2></div>
           <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{notice.message}</p>
           {notice.services.length > 0 && <p className="text-sm"><span className="text-muted-foreground">Services: </span>{notice.services.join(', ')}</p>}
           {notice.locations.length > 0 && <p className="text-sm"><span className="text-muted-foreground">Locations: </span>{notice.locations.join(', ')}</p>}
-          <p className="text-xs text-muted-foreground">Until <time dateTime={notice.effectiveUntil}>{new Date(notice.effectiveUntil).toLocaleString()}</time></p>
+          <p className="text-xs text-muted-foreground">Until <time dateTime={notice.effectiveUntil}>{formatSgtDateTime(notice.effectiveUntil)}</time></p>
         </CardContent>
       </Card>)}</div>
       {!loading && !error && notices && notices.totalPages > 1 && <nav aria-label="Notice pages" className="flex items-center gap-3">

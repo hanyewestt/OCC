@@ -3,6 +3,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { ApiError, apiRequest, type CaptainInstruction, type PageResult } from '@/lib/api'
 import { signOut } from '@/lib/auth'
+import { dataClassificationLabel } from '@/lib/presentation'
+import { formatSgtDateTime } from '@/lib/time'
 
 export function CaptainInstructions({ token, refreshIntervalSeconds }: { token: string; refreshIntervalSeconds: number }) {
   const [items, setItems] = useState<CaptainInstruction[] | null>(null)
@@ -71,10 +73,10 @@ export function CaptainInstructions({ token, refreshIntervalSeconds }: { token: 
     {items === null && !error && <p role="status" className="text-sm text-muted-foreground">Loading instructions…</p>}
     {items?.length === 0 && <p className="text-sm text-muted-foreground">No current instructions for your assigned bus.</p>}
     {items?.map(item => <Card key={item.id}><CardContent className="space-y-4">
-      <p className="text-xs font-medium text-muted-foreground">SIMULATION · {item.busId} · Hazard: {item.hazardClassification === 'SIMULATION' ? 'synthetic' : 'live'}</p>
+      <p className="text-xs font-medium text-muted-foreground">Simulation · {item.busId} · Hazard: {dataClassificationLabel(item.hazardClassification)}</p>
       <p className="text-2xl font-semibold leading-snug">{item.message}</p>
       {item.acknowledgedAt ? <div role="status" className="space-y-1 text-sm">
-        <p>Acknowledged {new Date(item.acknowledgedAt).toLocaleTimeString()}</p>
+        <p>Acknowledged {formatSgtDateTime(item.acknowledgedAt)}</p>
         {item.applicableUntil && <p>{serverNow === null ? 'OCC checks the advisory window.'
           : `${Math.max(0, Math.floor((Date.parse(item.applicableUntil) - serverNow) / 1000))} sec remaining · advisory window`}</p>}
       </div> : <Button size="lg" disabled={pending !== null || serverNow !== null && serverNow >= Date.parse(item.acknowledgementDeadline)}

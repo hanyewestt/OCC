@@ -104,8 +104,10 @@ coverage, test reports and saved sessions. Never put secrets in `public/`.
 - Handle expired sessions (`401`), forbidden actions (`403`), validation and
   conflicts with useful feedback. Backend services enforce permissions;
   hiding a button is only a UI convenience.
-- Format UTC timestamps for display. Label simulation versus observation-only
-  data. Add a query library only if repeated fetching, polling or caching becomes
+- Keep UTC timestamps in API requests and storage; display instants in SGT with
+  a 24-hour clock and an explicit `SGT` suffix. Label `OBSERVATION_ONLY` data as
+  Live and simulation data as Simulation without changing their API values.
+  Add a query library only if repeated fetching, polling or caching becomes
   difficult to manage with the existing code.
 
 [React state](https://react.dev/learn/choosing-the-state-structure),

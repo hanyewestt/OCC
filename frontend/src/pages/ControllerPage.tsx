@@ -9,6 +9,7 @@ import { ControllerOverview, ControllerDisruptions, ControllerAudit } from '@/pa
 import { ControllerRouteStrip } from '@/pages/ControllerRouteStrip'
 import { ControllerPlanning } from '@/pages/ControllerPlanning'
 import { ControllerAdvisories } from '@/pages/ControllerAdvisories'
+import { formatSgtTime } from '@/lib/time'
 
 export type Resource<T> = { data: T | null; error: string }
 export type Planning = { recommendations: PageResult<PendingRecommendation> & { mode: string; demoRunId: string | null }; decisions: PageResult<Decision> }
@@ -215,7 +216,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       <div className="mx-auto max-w-7xl space-y-7 p-5 md:p-8">
         <div className="flex flex-wrap items-start justify-between gap-4"><div className="space-y-1"><h1 className="text-2xl font-semibold tracking-tight">{current.title}</h1><p className="text-sm text-muted-foreground">{pathname === '/controller' ? 'Arrivals, disruptions and decisions at a glance.' : pathname.endsWith('/disruptions') ? 'Bunching detections and traffic disruptions.' : pathname.endsWith('/planning') ? 'Review recommendations before recording a decision.' : 'Saved controller decisions and AI audit availability.'}</p></div>
           <Button variant="outline" disabled={loading} onClick={() => setRefresh(value => value + 1)}>{loading ? 'Refreshing…' : 'Refresh'}</Button></div>
-        <p className="text-xs text-muted-foreground">Updates every {controllerRefreshIntervalSeconds} seconds · Last updated {lastUpdated ? new Date(lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}. {simulation && 'Simulation detections are separate from live arrivals.'}</p>
+        <p className="text-xs text-muted-foreground">Last updated {formatSgtTime(lastUpdated)} · Refreshes every {controllerRefreshIntervalSeconds} seconds</p>
         {run.error && !loading && <p role="alert" className="text-sm text-destructive">{run.error} Simulation state could not be verified.</p>}
         {modeError && <p role="alert" className="text-sm text-destructive">{modeError}</p>}
         {pathname === '/controller' && <>
@@ -228,8 +229,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           </div>
           <ControllerRouteStrip alerts={alerts} run={run} stops={routeStops} positions={routePositions}
             arrivals={routeArrivals} pollIntervalSeconds={pollIntervalSeconds}
-            incidentGapToleranceSeconds={routeIncidentGapToleranceSeconds} lastUpdated={lastUpdated}
-            controllerRefreshIntervalSeconds={controllerRefreshIntervalSeconds} loading={loading}
+            incidentGapToleranceSeconds={routeIncidentGapToleranceSeconds} lastUpdated={lastUpdated} loading={loading}
             fetchStopArrivals={fetchStopArrivals} />
           <ControllerOverview arrivals={arrivals} loading={loading} page={arrivalPage} onPage={setArrivalPage} />
         </>}

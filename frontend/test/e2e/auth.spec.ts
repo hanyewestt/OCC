@@ -2,6 +2,7 @@ import { test, expect, type BrowserContext, type Page } from '@playwright/test'
 import { classify, clockText, deltaText, initialScenario } from '../../src/lib/obu-pacing'
 import { bunchingArrivals } from '../../src/lib/bunching'
 import { groupStops, skipLabel, type UpcomingStop } from '../../src/lib/skip-stops'
+import { formatSgtDateTime } from '../../src/lib/time'
 import type { Advisory, CaptainInstruction } from '../../src/lib/api'
 
 // Synthetic Supabase and Gateway responses. These tests do not prove provider
@@ -96,6 +97,39 @@ async function login(page: Page) {
   await page.getByLabel('Password', { exact: true }).fill('synthetic-password')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
 }
+
+test.describe('SGT notice scheduling', () => {
+  test.use({ timezoneId: 'America/New_York' })
+
+  test('serializes notice wall-clock inputs as Singapore time', async ({ page, context }) => {
+    await mockAuth(context, 'CONTROLLER')
+    await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: { items: [{
+      disruptionId: 'notice-hazard', kind: 'FLOOD', status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
+      updatedAt: '2026-10-25T04:00:00Z', facts: { title: 'Flood report', description: 'Water reported near Example Stop.', instruction: null, effectiveUntil: null },
+      exposures: [], limitations: [],
+    }], page: 0, totalItems: 1, totalPages: 1 } }))
+    const posted: { effectiveFrom: string; effectiveUntil: string }[] = []
+    await context.route('**/api/v1/planning/notices**', route => {
+      if (route.request().method() === 'POST') posted.push(route.request().postDataJSON())
+      return route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } })
+    })
+
+    await login(page)
+    expect(await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone)).toBe('America/New_York')
+    await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+    const advisories = page.getByRole('region', { name: 'Multi-hazard advisories', exact: true })
+    await advisories.getByRole('button', { name: 'Draft notice', exact: true }).click()
+    await advisories.getByLabel('Source hazard', { exact: true }).selectOption('notice-hazard')
+    await advisories.getByLabel('Title', { exact: true }).fill('Caution near Example Stop')
+    await advisories.getByLabel('Passenger message', { exact: true }).fill('Water reported near Example Stop.')
+    await advisories.getByLabel('Starts (SGT)', { exact: true }).fill('2026-10-25T14:55')
+    await advisories.getByLabel('Expires (SGT)', { exact: true }).fill('2026-10-25T15:55')
+    await advisories.getByRole('button', { name: 'Save draft', exact: true }).click()
+
+    await expect.poll(() => posted.at(-1)?.effectiveFrom).toBe('2026-10-25T06:55:00.000Z')
+    expect(posted.at(-1)?.effectiveUntil).toBe('2026-10-25T07:55:00.000Z')
+  })
+})
 
 function syntheticInstruction(now: Date): CaptainInstruction {
   return {
@@ -209,7 +243,7 @@ for (const simulation of [true, false]) {
     await expect(page.getByRole('cell', { name: `Direction ${simulation ? 1 : 2}`, exact: true })).toBeVisible()
     for (const slot of [1, 2, 3]) {
       await expect(page.getByRole('columnheader', { name: `Bus ${slot} arrival`, exact: true })).toBeVisible()
-      const formatted = await page.evaluate(value => new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }), `2026-10-22T01:0${slot}:00Z`)
+      const formatted = formatSgtDateTime(`2026-10-22T01:0${slot}:00Z`)
       await expect(page.getByRole('cell', { name: formatted, exact: true })).toBeVisible()
     }
     await page.screenshot({ path: `node_modules/.cache/bunching-${simulation ? 'simulation' : 'live'}.png`, fullPage: true })
@@ -560,7 +594,7 @@ test('captain retries failed acknowledgement and keeps the persisted receipt aft
   await login(page)
   const display = page.getByRole('region', { name: 'Controller instructions', exact: true })
   await expect(display.getByText(instruction.message, { exact: true })).toBeVisible()
-  await expect(display.getByText('SIMULATION · demo-190-b · Hazard: live', { exact: true })).toBeVisible()
+  await expect(display.getByText('Simulation · demo-190-b · Hazard: Live', { exact: true })).toBeVisible()
   await expect(display.getByText(/sec remaining/)).toHaveCount(0)
   await display.getByRole('button', { name: 'Acknowledge', exact: true }).click()
   await expect(display.getByRole('button', { name: 'Saving…', exact: true })).toBeDisabled()
@@ -820,7 +854,7 @@ test('controller sees terminal hazard processing failure without presenting an a
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   const advisories = page.getByRole('region', { name: 'Multi-hazard advisories', exact: true })
   await expect(advisories.getByText('Flood report', { exact: true })).toBeVisible()
-  await expect(advisories.getByText(/Failed · HAZARD_CONTEXT_OR_MODEL_UNAVAILABLE/)).toBeVisible()
+  await expect(advisories.getByText(/Diagnosis failed · HAZARD_CONTEXT_OR_MODEL_UNAVAILABLE/)).toBeVisible()
   await expect(advisories.getByText('No advisory was issued. Review the feed and bus exposure before retrying.', { exact: true })).toBeVisible()
   await expect(advisories.getByText('No pending captain advisories.', { exact: true })).toBeVisible()
   await expect(advisories.getByRole('button', { name: 'Approve and send', exact: true })).toHaveCount(0)

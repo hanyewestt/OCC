@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import type { Arrival, BunchingAlert, DemoRun, PageResult, RouteDirection, RoutePositionDirection, RoutePositions } from '@/lib/api'
+import { formatSgtTime } from '@/lib/time'
 import {
   arrivalDirectionMatches, estimateRouteHeadways, etaFallbacksForRoute, formatGap, gapSeverity, groupRouteIncidents,
   linkIncidentToPosition, oldestStopDataAgeSeconds, projectCoordinateToRoute, routeKey, routeStopDistances, ROUTE_STRIP_GAP_SEVERITY,
@@ -19,7 +20,6 @@ type Props = {
   pollIntervalSeconds: number
   incidentGapToleranceSeconds: number
   lastUpdated: string
-  controllerRefreshIntervalSeconds: number
   loading: boolean
   fetchStopArrivals: (route: RouteDirection, stopCode: string, signal: AbortSignal) => Promise<Arrival[]>
 }
@@ -61,8 +61,7 @@ function pairKey(frontOrder: number, followingOrder: number) {
 }
 
 function clockTime(value: string) {
-  const parsed = Date.parse(value)
-  return Number.isFinite(parsed) ? new Date(parsed).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'
+  return formatSgtTime(value)
 }
 
 function formatDistance(meters: number | null) {
@@ -338,7 +337,7 @@ function RouteRow({ route, snapshot, arrivals, routes, incidents, showPositions,
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h4 className="text-sm font-medium">Next arrivals at {selectedStop?.description || `Stop ${selectedStopCode}`}</h4>
         <span className="text-xs text-muted-foreground">Stop {selectedStopCode} · Service {route.serviceId}, direction {route.directionId}
-          {selectedFeedFetchedAt ? ` · Feed updated ${new Date(selectedFeedFetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : ''}</span>
+          {selectedFeedFetchedAt != null ? ` · Feed updated ${formatSgtTime(new Date(selectedFeedFetchedAt).toISOString())}` : ''}</span>
       </div>
       <p className="mt-1 text-xs text-muted-foreground">Purple dots use the location reported with each arrival prediction, projected onto this straight route line. They do not identify a physical bus.</p>
       {selectedStopLoading ? <p className="mt-2 text-sm text-muted-foreground">Loading latest arrivals…</p> : selectedStopError ?
@@ -407,7 +406,7 @@ function IncidentPanel({ incidents, loading, error, showHistorical, onToggleHist
 }
 
 export function ControllerRouteStrip({ alerts, run, stops, positions, arrivals, pollIntervalSeconds, incidentGapToleranceSeconds, lastUpdated,
-  controllerRefreshIntervalSeconds, loading, fetchStopArrivals }: Props) {
+  loading, fetchStopArrivals }: Props) {
   const [showHistorical, setShowHistorical] = useState(false)
   const simulationRun = run.data && run.data.status !== 'CLOSED' ? run.data : null
   const events = simulationRun ? simulationRun.alerts : alerts.data?.items ?? noAlerts
@@ -444,7 +443,6 @@ export function ControllerRouteStrip({ alerts, run, stops, positions, arrivals, 
       <p className="mt-1 text-xs text-muted-foreground">Stops are evenly spaced for readability; bus positions are approximate along the ordered route. Numbers are order estimates, not vehicle identities.</p>
       {simulationRun && <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">Simulation incident data is shown separately; the strip keeps live position estimates.</p>}
       <p className="mt-1 text-xs text-muted-foreground">Gaps use same-poll arrival times when available; otherwise time is estimated from position and speed, or shown as distance only.</p>
-      <p className="mt-1 text-xs text-muted-foreground">Last updated {lastUpdated ? clockTime(lastUpdated) : 'not yet updated'} · Refreshes every {controllerRefreshIntervalSeconds} seconds.</p>
       {positions.error && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">{positions.error} Showing the last available estimates.</p>}
       {arrivals.error && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">Some current arrivals could not be loaded for ETA headway fallback.</p>}
       {stale && <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">At least one stop’s latest arrival data is older than 2 poll cycles; treat affected positions and headways as stale.</p>}
