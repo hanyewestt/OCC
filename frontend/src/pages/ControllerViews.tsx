@@ -2,10 +2,14 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { PagedCollectionControls } from '@/components/PagedCollectionControls'
 import type { Arrival, BunchingAlert, DemoRun, PageResult } from '@/lib/api'
 import { bunchingArrivals } from '@/lib/bunching'
+import { dataClassificationLabel } from '@/lib/presentation'
 import { formatSgtDateTime } from '@/lib/time'
-import type { Planning, Resource } from './ControllerPage'
+import type { Decision } from '@/lib/api'
+import type { PagedCollection } from '@/lib/paged-collection'
+import type { Resource } from './ControllerPage'
 
 export function timestamp(value: string | null | undefined) {
   return formatSgtDateTime(value)
@@ -85,27 +89,46 @@ export function ControllerOverview({ collection, search, onSearch, sortBy, sortD
   </section>
 }
 
-export function ControllerDisruptions({ alerts, run, loading }: {
-  alerts: Resource<PageResult<BunchingAlert>>; run: Resource<DemoRun>; loading: boolean
+export function ControllerDisruptions({ liveAlerts, run, loading }: {
+  liveAlerts: PagedCollection<BunchingAlert, PageResult<BunchingAlert>>; run: Resource<DemoRun>; loading: boolean
 }) {
   const simulation = run.data && run.data.status !== 'CLOSED' ? run.data : null
-  const error = run.error || (!simulation ? alerts.error : '')
-  const items = loading || error ? [] : simulation ? simulation.alerts : alerts.data?.items ?? []
+  const error = run.error || (!simulation && liveAlerts.error !== null && !liveAlerts.items.length ? 'Unable to load this data.' : '')
+  const items = loading || error || !simulation && liveAlerts.isLoading && !liveAlerts.latestPage
+    ? [] : simulation ? simulation.alerts : liveAlerts.items
   return <div className="space-y-10">
-    <section aria-labelledby="bunching-title" className="space-y-4"><div><h2 id="bunching-title" className="font-medium">Bunching detections</h2><p className="mt-1 text-xs text-muted-foreground">{simulation ? 'Simulation events from the current run.' : 'Live detections.'}</p></div>
-      <DataMessage error={error} loading={loading} empty={!items.length}>No bunching detections.</DataMessage>
-      {!!items.length && <div className="rounded-lg border"><Table><TableCaption className="mb-3">Bus 1, 2 and 3 are arrival predictions recorded at detection time, shown in your local time zone.</TableCaption><TableHeader><TableRow><TableHead>Service</TableHead><TableHead>Bus stop</TableHead><TableHead>Direction</TableHead><TableHead>Bus 1 arrival</TableHead><TableHead>Bus 2 arrival</TableHead><TableHead>Bus 3 arrival</TableHead><TableHead>Event</TableHead><TableHead>Detected</TableHead><TableHead>Source</TableHead></TableRow></TableHeader><TableBody>{items.map(alert => <TableRow key={alert.eventId}><TableCell className="font-medium">{alert.serviceId}</TableCell><TableCell><p className="font-medium">{alert.stopName || 'Stop name unavailable'}</p><p className="mt-1 text-xs text-muted-foreground">{alert.stopRoadName ? `${alert.stopRoadName} · ` : ''}{alert.stopCode}</p></TableCell><TableCell>{alert.directionId ? `Direction ${alert.directionId}` : 'Unavailable'}</TableCell>{bunchingArrivals(alert).map((value, index) => <TableCell key={index}>{value === 'No prediction' || value === 'Unavailable' ? <span className="text-muted-foreground">{value}</span> : timestamp(value)}</TableCell>)}<TableCell>{alert.action}</TableCell><TableCell>{timestamp(alert.detectedAt)}</TableCell><TableCell>{alert.classification}</TableCell></TableRow>)}</TableBody></Table></div>}
-      {!simulation && !loading && alerts.data && alerts.data.totalItems > items.length && <p className="text-xs text-muted-foreground">Showing {items.length} of {alerts.data.totalItems} detections.</p>}
+    <section aria-labelledby="bunching-title" className="space-y-4"><div><h2 id="bunching-title" className="font-medium">Bunching detections</h2></div>
+      <DataMessage error={error} loading={loading || !simulation && liveAlerts.isLoading && !liveAlerts.latestPage} empty={!items.length}>No bunching detections.</DataMessage>
+      {!!items.length && <Table containerProps={{ role: 'region', 'aria-label': 'Bunching detections', tabIndex: 0,
+        onScroll: simulation ? undefined : liveAlerts.onScroll, className: 'max-h-[26rem] overflow-auto rounded-lg border' }} className="min-w-[60rem]">
+        <TableCaption className="sr-only">Bunching detections</TableCaption>
+        <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background"><TableRow><TableHead>Service</TableHead><TableHead>Bus stop</TableHead><TableHead>Direction</TableHead><TableHead>Bus 1 arrival</TableHead><TableHead>Bus 2 arrival</TableHead><TableHead>Bus 3 arrival</TableHead><TableHead>Event</TableHead><TableHead>Detected</TableHead><TableHead>Source</TableHead></TableRow></TableHeader>
+        <TableBody>{items.map(alert => <TableRow key={alert.eventId}><TableCell className="font-medium">{alert.serviceId}</TableCell><TableCell><p className="font-medium">{alert.stopName || 'Stop name unavailable'}</p><p className="mt-1 text-xs text-muted-foreground">{alert.stopRoadName ? `${alert.stopRoadName} · ` : ''}{alert.stopCode}</p></TableCell><TableCell>{alert.directionId ? `Direction ${alert.directionId}` : 'Unavailable'}</TableCell>{bunchingArrivals(alert).map((value, index) => <TableCell key={index}>{value === 'No prediction' || value === 'Unavailable' ? <span className="text-muted-foreground">{value}</span> : timestamp(value)}</TableCell>)}<TableCell>{alert.action}</TableCell><TableCell>{timestamp(alert.detectedAt)}</TableCell><TableCell>{dataClassificationLabel(alert.classification)}</TableCell></TableRow>)}</TableBody>
+      </Table>}
+      {!simulation && !loading && liveAlerts.latestPage && liveAlerts.latestPage.totalItems > items.length && <p className="text-xs text-muted-foreground">Showing {items.length} of {liveAlerts.latestPage.totalItems} detections.</p>}
+      {!simulation && <PagedCollectionControls label="bunching detections" hasItems={!!liveAlerts.items.length} hasMore={liveAlerts.hasMore}
+        isLoadingMore={liveAlerts.isLoadingMore} error={liveAlerts.error} reload={liveAlerts.reload} loadNext={liveAlerts.loadNext} />}
     </section>
   </div>
 }
 
-export function ControllerAudit({ planning, loading }: { planning: Resource<Planning>; loading: boolean }) {
-  const decisions = !loading && !planning.error ? planning.data?.decisions.items ?? [] : []
+export function ControllerAudit({ decisions, loading }: {
+  decisions: PagedCollection<Decision, PageResult<Decision>>; loading: boolean
+}) {
+  const items = !loading ? decisions.items : []
+  const error = decisions.error !== null && !decisions.items.length ? 'Unable to load this data.' : ''
   return <div className="space-y-10">
-    <section aria-labelledby="decisions-title" className="space-y-4"><div><h2 id="decisions-title" className="font-medium">Controller decisions</h2><p className="mt-1 text-xs text-muted-foreground">Persisted approvals and controller-authored replacement instructions, newest first.</p></div>
-      <DataMessage error={planning.error} loading={loading} empty={!decisions.length}>No controller decisions have been saved.</DataMessage>
-      {!!decisions.length && <div className="rounded-lg border"><Table><TableHeader><TableRow><TableHead>Decision</TableHead><TableHead>Recorded</TableHead><TableHead>Controller</TableHead><TableHead>Replacement instructions</TableHead><TableHead>Rationale</TableHead><TableHead>Recommendation ID</TableHead></TableRow></TableHeader><TableBody>{decisions.map(decision => <TableRow key={decision.recommendationId}><TableCell className="font-medium">{decision.action}</TableCell><TableCell>{timestamp(decision.decidedAt)}</TableCell><TableCell className="text-muted-foreground">{decision.actorSubject}</TableCell><TableCell>{decision.overrideInstructions.length ? <ul className="space-y-2">{decision.overrideInstructions.map((instruction, index) => <li key={`${instruction.busReference}-${index}`}><span className="font-medium">{instruction.busReference}</span><span className="block text-xs text-muted-foreground">{instruction.instruction}</span></li>)}</ul> : '—'}</TableCell><TableCell className="max-w-72 text-muted-foreground">{decision.controllerRationale ?? '—'}</TableCell><TableCell className="text-xs text-muted-foreground">{decision.recommendationId}</TableCell></TableRow>)}</TableBody></Table></div>}
+    <section aria-labelledby="decisions-title" className="space-y-4"><h2 id="decisions-title" className="font-medium">Controller decisions</h2>
+      <DataMessage error={error} loading={loading || decisions.isLoading && !decisions.latestPage} empty={!items.length}>No controller decisions have been saved.</DataMessage>
+      {!!items.length && <Table containerProps={{ role: 'region', 'aria-label': 'Controller decisions', tabIndex: 0,
+        onScroll: decisions.onScroll, className: 'max-h-[26rem] overflow-auto rounded-lg border' }} className="min-w-[48rem]">
+        <TableCaption className="sr-only">Controller decisions</TableCaption>
+        <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background"><TableRow><TableHead>Decision</TableHead><TableHead>Recorded</TableHead><TableHead>Controller</TableHead><TableHead>Replacement instructions</TableHead><TableHead>Rationale</TableHead><TableHead>Recommendation ID</TableHead></TableRow></TableHeader>
+        <TableBody>{items.map(decision => <TableRow key={decision.recommendationId}><TableCell className="font-medium">{decision.action}</TableCell><TableCell>{timestamp(decision.decidedAt)}</TableCell><TableCell className="text-muted-foreground">{decision.actorSubject}</TableCell><TableCell>{decision.overrideInstructions.length ? <ul className="space-y-2">{decision.overrideInstructions.map((instruction, index) => <li key={`${instruction.busReference}-${index}`}><span className="font-medium">{instruction.busReference}</span><span className="block text-xs text-muted-foreground">{instruction.instruction}</span></li>)}</ul> : '—'}</TableCell><TableCell className="max-w-72 text-muted-foreground">{decision.controllerRationale ?? '—'}</TableCell><TableCell className="text-xs text-muted-foreground">{decision.recommendationId}</TableCell></TableRow>)}</TableBody>
+      </Table>}
+      {decisions.latestPage && decisions.latestPage.totalItems > items.length && <p className="text-xs text-muted-foreground">Showing {items.length} of {decisions.latestPage.totalItems} decisions.</p>}
+      <PagedCollectionControls label="decisions" hasItems={!!decisions.items.length} hasMore={decisions.hasMore}
+        isLoadingMore={decisions.isLoadingMore} error={decisions.error} reload={decisions.reload} loadNext={decisions.loadNext} />
     </section>
     <section aria-labelledby="ai-audit-title" className="space-y-2 border-t pt-6"><h2 id="ai-audit-title" className="font-medium">AI audit logs</h2><p className="text-sm text-muted-foreground">Not connected yet. AI audit records will appear here when available.</p></section>
   </div>

@@ -68,19 +68,16 @@ async function loadRouteArrivals(token: string, signal: AbortSignal): Promise<Re
 }
 
 type LiveData = {
-  alerts: Resource<PageResult<BunchingAlert>>
   routeArrivals: Resource<Arrival[]>
   positions: Resource<RoutePositions[]>
 }
 
 async function loadLiveData(token: string, signal: AbortSignal): Promise<LiveData> {
-  const [alerts, routeArrivals, positions] = await Promise.all([
-    readResource(apiRequest<PageResult<BunchingAlert>>('/api/v1/live-bunching-alerts?size=200', token, signal)
-      .then(async value => value ? { ...value, items: await enrichBunchingStops(value.items, token, signal) } : null), signal),
+  const [routeArrivals, positions] = await Promise.all([
     loadRouteArrivals(token, signal),
     loadRoutePositions(token, signal),
   ])
-  return { alerts, routeArrivals, positions }
+  return { routeArrivals, positions }
 }
 
 export function ControllerPage({ email, token, controllerRefreshIntervalSeconds, ingestionPollIntervalSeconds,
@@ -94,13 +91,10 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const [arrivalStopName, setArrivalStopName] = useState('')
   const [arrivalSortBy, setArrivalSortBy] = useState<'arrival' | 'stopName'>('arrival')
   const [arrivalSortDirection, setArrivalSortDirection] = useState<'asc' | 'desc'>('asc')
-  const [alerts, setAlerts] = useState<Resource<PageResult<BunchingAlert>>>(empty)
   const [routeArrivals, setRouteArrivals] = useState<Resource<Arrival[]>>(empty)
   const [routeStops, setRouteStops] = useState<Resource<RouteDirection[]>>(empty)
   const [routePositions, setRoutePositions] = useState<Resource<RoutePositions[]>>(empty)
   const [run, setRun] = useState<Resource<DemoRun>>(empty)
-  const [planning, setPlanning] = useState<Resource<Planning>>(empty)
-  const [diagnoses, setDiagnoses] = useState<Resource<PlanningDiagnosisPage>>(empty)
   const [loaded, setLoaded] = useState('')
   const [lastUpdated, setLastUpdated] = useState('')
   const [switching, setSwitching] = useState(false)
@@ -109,6 +103,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const switchingRef = useRef(false)
   const requestKey = `${token}:${refresh}`
   const loading = loaded !== requestKey || switching
+  const simulation = run.data && run.data.status !== 'CLOSED' ? run.data : null
   const arrivalCollectionKey = `${token}:${arrivalStopName}:${arrivalSortBy}:${arrivalSortDirection}`
   const arrivalCollection = usePagedCollection<Arrival, PageResult<Arrival>>(arrivalCollectionKey, async (page, signal) => {
     const params = new URLSearchParams({ page: String(page), size: '50', sortBy: arrivalSortBy, sortDirection: arrivalSortDirection })
@@ -123,6 +118,52 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     }
   }, arrival => arrival.observationId)
   const reloadArrivals = arrivalCollection.reload
+  const scopeKey = `${token}:${refresh}:${simulation?.id ?? 'LIVE'}`
+  const alertCollection = usePagedCollection<BunchingAlert, PageResult<BunchingAlert>>(scopeKey, async (page, signal) => {
+    const params = new URLSearchParams({ page: String(page), size: '200' })
+    try {
+      const result = await apiRequest<PageResult<BunchingAlert>>(`/api/v1/live-bunching-alerts?${params}`, token, signal)
+      if (!result) throw new Error('Bunching response was empty.')
+      return { ...result, items: await enrichBunchingStops(result.items, token, signal) }
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401 && !signal.aborted) void signOut(error.message)
+      throw error
+    }
+  }, alert => alert.eventId)
+  const reloadAlerts = alertCollection.reload
+  const recommendationCollection = usePagedCollection<PendingRecommendation, Planning['recommendations']>(scopeKey, async (page, signal) => {
+    const params = new URLSearchParams({ page: String(page), size: '100' })
+    try {
+      const result = await apiRequest<Planning['recommendations']>(`/api/v1/planning/recommendations/pending?${params}`, token, signal)
+      if (!result) throw new Error('Recommendation response was empty.')
+      return result
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401 && !signal.aborted) void signOut(error.message)
+      throw error
+    }
+  }, recommendation => recommendation.recommendationId)
+  const decisionCollection = usePagedCollection<Decision, PageResult<Decision>>(`${token}:${refresh}`, async (page, signal) => {
+    const params = new URLSearchParams({ page: String(page), size: '100' })
+    try {
+      const result = await apiRequest<PageResult<Decision>>(`/api/v1/planning/recommendations/decisions?${params}`, token, signal)
+      if (!result) throw new Error('Decision response was empty.')
+      return result
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401 && !signal.aborted) void signOut(error.message)
+      throw error
+    }
+  }, decision => decision.recommendationId)
+  const diagnosisCollection = usePagedCollection<PlanningDiagnosisPage['items'][number], PlanningDiagnosisPage>(scopeKey, async (page, signal) => {
+    const params = new URLSearchParams({ page: String(page), size: '100' })
+    try {
+      const result = await apiRequest<PlanningDiagnosisPage>(`/api/v1/planning/diagnoses?${params}`, token, signal)
+      if (!result) throw new Error('Diagnosis response was empty.')
+      return result
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401 && !signal.aborted) void signOut(error.message)
+      throw error
+    }
+  }, diagnosis => diagnosis.requestId)
   const requestLiveData = useCallback(async (signal: AbortSignal): Promise<LiveData | null> => {
     return loadLiveData(token, signal)
   }, [token])
@@ -158,41 +199,22 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     const signal = controller.signal
     const runPromise = readResource(apiRequest<DemoRun>('/api/v1/demo-runs/active', token, signal).then(async value =>
       value ? { ...value, alerts: await enrichBunchingStops(value.alerts, token, signal) } : null), signal)
-    const planningPromise = readResource((async () => {
-      const [recommendations, decisions] = await Promise.all([
-        apiRequest<Planning['recommendations']>('/api/v1/planning/recommendations/pending?size=100', token, signal),
-        apiRequest<PageResult<Decision>>('/api/v1/planning/recommendations/decisions?size=100', token, signal),
-      ])
-      return {
-        recommendations: recommendations ?? { mode: 'UNKNOWN', demoRunId: null, items: [], page: 0, totalItems: 0, totalPages: 0 },
-        decisions: decisions ?? { items: [], page: 0, totalItems: 0, totalPages: 0 },
-      }
-    })(), signal)
     const routePromise = Promise.all(['190', '972'].map(serviceId =>
       readResource(apiRequest<BusRoute>(`/api/v1/bus-routes/${serviceId}`, token, signal), signal)))
       .then(results => ({
         data: routeDirections(results.flatMap(result => result.data ? [result.data] : [])),
         error: results.some(result => result.error) ? 'Unable to load all route references.' : '',
       }))
-    void Promise.all([requestLiveData(signal), runPromise, planningPromise, routePromise,
-      readResource(apiRequest<PlanningDiagnosisPage>('/api/v1/planning/diagnoses?size=100', token, signal), signal)])
-      .then(([live, nextRun, nextPlanning, nextRouteStops, nextDiagnoses]) => {
+    void Promise.all([requestLiveData(signal), runPromise, routePromise])
+      .then(([live, nextRun, nextRouteStops]) => {
       if (signal.aborted) return
-      if (live) { setAlerts(live.alerts); setRouteArrivals(live.routeArrivals); setRoutePositions(live.positions) }
-      const activeRunId = nextRun.data && nextRun.data.status !== 'CLOSED' ? nextRun.data.id : null
-      const scopeMatches = !nextRun.error && nextDiagnoses.data?.mode === (activeRunId ? 'DEMO' : 'LIVE')
-        && (nextDiagnoses.data?.demoRunId ?? null) === activeRunId
-      setDiagnoses(scopeMatches ? nextDiagnoses : { data: null, error: nextDiagnoses.error || 'Data selection changed. Refresh to load the active mode.' })
-      const pendingScope = nextPlanning.data?.recommendations
-      const pendingMatches = !nextRun.error && pendingScope?.mode === (activeRunId ? 'DEMO' : 'LIVE')
-        && (pendingScope.demoRunId ?? null) === activeRunId
-      setRun(nextRun); setPlanning(pendingMatches ? nextPlanning : { data: null, error: 'Data selection changed. Refresh before making a decision.' }); setRouteStops(nextRouteStops); setLastUpdated(new Date().toISOString())
+      if (live) { setRouteArrivals(live.routeArrivals); setRoutePositions(live.positions) }
+      setRun(nextRun); setRouteStops(nextRouteStops); setLastUpdated(new Date().toISOString())
       setLoaded(requestKey)
     })
     return () => controller.abort()
   }, [token, refresh, requestKey, requestLiveData])
 
-  const simulation = run.data && run.data.status !== 'CLOSED' ? run.data : null
   const pollIntervalSeconds = routePositions.data?.length
     ? Math.min(...routePositions.data.map(value => value.refreshIntervalSeconds)) : ingestionPollIntervalSeconds
   useEffect(() => {
@@ -202,7 +224,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       const live = await requestLiveData(controller.signal)
       if (!live || controller.signal.aborted) return
       reloadArrivals()
-      setAlerts(live.alerts); setRouteArrivals(live.routeArrivals)
+      reloadAlerts(); setRouteArrivals(live.routeArrivals)
       setRoutePositions(previous => {
         const byService = new Map((previous.data ?? []).map(snapshot => [snapshot.serviceId, snapshot]))
         for (const snapshot of live.positions.data ?? []) byService.set(snapshot.serviceId, snapshot)
@@ -214,7 +236,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       void refreshAll()
     }, controllerRefreshIntervalSeconds * 1000)
     return () => { window.clearInterval(timer); controller.abort() }
-  }, [pathname, requestLiveData, controllerRefreshIntervalSeconds, reloadArrivals])
+  }, [pathname, requestLiveData, controllerRefreshIntervalSeconds, reloadArrivals, reloadAlerts])
 
   useEffect(() => {
     if (pathname !== '/controller/planning') return
@@ -224,7 +246,15 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     return () => window.clearInterval(timer)
   }, [pathname, controllerRefreshIntervalSeconds])
 
-  const pending = planning.data?.recommendations.totalItems
+  const modeValue = simulation ? 'DEMO' : 'LIVE'
+  const recommendationPage = recommendationCollection.latestPage
+  const recommendationMatches = !run.error && recommendationPage?.mode === modeValue &&
+    (recommendationPage.demoRunId ?? null) === (simulation?.id ?? null)
+  const pending = recommendationMatches ? recommendationPage.totalItems : undefined
+  const alertResource: Resource<PageResult<BunchingAlert>> = {
+    data: alertCollection.latestPage ? { ...alertCollection.latestPage, items: alertCollection.items } : null,
+    error: alertCollection.error !== null && !alertCollection.items.length ? 'Unable to load bunching detections.' : '',
+  }
   const mode = loading ? 'Checking mode…' : run.error ? 'Mode unavailable' : simulation ? 'Simulation' : 'Live'
 
   async function switchMode() {
@@ -261,7 +291,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         </div>
       </header>
       <div className="mx-auto max-w-7xl space-y-7 p-5 md:p-8">
-        <div className="flex flex-wrap items-start justify-between gap-4"><div className="space-y-1"><h1 className="text-2xl font-semibold tracking-tight">{current.title}</h1><p className="text-sm text-muted-foreground">{pathname === '/controller' ? 'Arrivals, disruptions and decisions at a glance.' : pathname.endsWith('/disruptions') ? 'Bunching detections and traffic disruptions.' : pathname.endsWith('/planning') ? 'Review recommendations before recording a decision.' : 'Saved controller decisions and AI audit availability.'}</p></div>
+        <div className="flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-2xl font-semibold tracking-tight">{current.title}</h1></div>
           <Button variant="outline" disabled={loading} onClick={() => {
             reloadArrivals()
             setRefresh(value => value + 1)
@@ -274,13 +304,16 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
             {[
               { title: 'Current arrivals', value: arrivalCollection.latestPage?.totalItems,
                 error: arrivalCollection.error && !arrivalCollection.items.length ? 'Unable to load this data.' : '', note: 'Live arrival records', to: '#arrivals' },
-              { title: simulation ? 'Simulation detections' : 'Bunching detections', value: simulation ? simulation.alerts.length : alerts.data?.totalItems, error: run.error || (!simulation && alerts.error), note: 'View disruptions →', to: '/controller/disruptions' },
-              { title: 'Awaiting decision', value: planning.data ? pending : undefined, error: planning.error, note: 'Open decision queue →', to: '/controller/planning' },
+              { title: simulation ? 'Simulation detections' : 'Bunching detections', value: simulation ? simulation.alerts.length : alertCollection.latestPage?.totalItems,
+                error: run.error || (!simulation && alertCollection.error !== null && !alertCollection.items.length), note: 'View disruptions →', to: '/controller/disruptions' },
+              { title: 'Awaiting decision', value: pending,
+                error: run.error || recommendationCollection.error !== null || !!recommendationPage && !recommendationMatches,
+                note: 'Open decision queue →', to: '/controller/planning' },
             ].map(item => <Link key={item.title} to={item.to} className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"><Card className="h-full hover:bg-muted/30"><CardContent className="space-y-3 p-1 px-5"><p className="text-sm text-muted-foreground">{item.title}</p><p className="text-3xl font-semibold tabular-nums">{loading || item.error ? '—' : item.value ?? '—'}</p><p className="text-xs text-muted-foreground">{item.error ? 'Unavailable · refresh to retry' : item.note}</p></CardContent></Card></Link>)}
           </div>
-          <ControllerRouteStrip alerts={alerts} run={run} stops={routeStops} positions={routePositions}
+          <ControllerRouteStrip alerts={alertResource} run={run} stops={routeStops} positions={routePositions}
             arrivals={routeArrivals} pollIntervalSeconds={pollIntervalSeconds}
-            incidentGapToleranceSeconds={routeIncidentGapToleranceSeconds} lastUpdated={lastUpdated} loading={loading}
+            incidentGapToleranceSeconds={routeIncidentGapToleranceSeconds} lastUpdated={lastUpdated} loading={loading || alertCollection.isLoading}
             fetchStopArrivals={fetchStopArrivals} fetchStopName={fetchStopName} />
           <ControllerOverview collection={arrivalCollection} search={arrivalStopName} onSearch={setArrivalStopName}
             sortBy={arrivalSortBy} sortDirection={arrivalSortDirection} onSort={column => {
@@ -288,10 +321,11 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
               setArrivalSortBy(column)
             }} />
         </>}
-        {pathname.endsWith('/disruptions') && <ControllerDisruptions alerts={alerts} run={run} loading={loading} />}
-        {pathname.endsWith('/planning') && <ControllerPlanning planning={planning} diagnoses={diagnoses} loading={loading} token={token} onSaved={() => setRefresh(value => value + 1)} />}
-        {pathname.endsWith('/audit') && <ControllerAudit planning={planning} loading={loading} />}
-        {pathname !== '/controller' && <ControllerAdvisories key={`${token}:${pathname}`} token={token}
+        {pathname.endsWith('/disruptions') && <ControllerDisruptions liveAlerts={alertCollection} run={run} loading={loading} />}
+        {pathname.endsWith('/planning') && <ControllerPlanning recommendations={recommendationCollection} diagnoses={diagnosisCollection}
+          loading={loading} modeError={run.error} mode={modeValue} demoRunId={simulation?.id ?? null} token={token} onSaved={() => setRefresh(value => value + 1)} />}
+        {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} loading={loading} />}
+        {pathname !== '/controller' && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
           refreshIntervalSeconds={controllerRefreshIntervalSeconds}
           view={pathname.endsWith('/disruptions') ? 'hazards' : pathname.endsWith('/planning') ? 'planning' : 'audit'} />}
       </div>

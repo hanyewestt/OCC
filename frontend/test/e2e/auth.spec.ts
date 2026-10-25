@@ -797,6 +797,13 @@ test('captain retries failed acknowledgement and keeps the persisted receipt aft
 
   await login(page)
   const display = page.getByRole('region', { name: 'Controller instructions', exact: true })
+  const stops = page.getByRole('region', { name: 'Upcoming stops in route order', exact: true })
+  const stopBounds = await stops.boundingBox()
+  const visibleStops = await stops.locator('li').evaluateAll((elements, bounds) => elements.filter(element => {
+    const rect = element.getBoundingClientRect()
+    return rect.top >= bounds.top && rect.bottom <= bounds.top + bounds.height
+  }).length, { top: stopBounds!.y, height: stopBounds!.height })
+  expect(visibleStops).toBeLessThanOrEqual(10)
   await expect(display.getByText(instruction.message, { exact: true })).toBeVisible()
   await expect(display.getByText('Simulation · demo-190-b · Hazard: Live', { exact: true })).toBeVisible()
   await expect(display.getByText(/sec remaining/)).toHaveCount(0)
@@ -820,6 +827,42 @@ test('captain retries failed acknowledgement and keeps the persisted receipt aft
   await expect(display.getByText(receipt, { exact: true })).toBeVisible()
   await expect(display.getByRole('button', { name: 'Acknowledge', exact: true })).toHaveCount(0)
   expect(acknowledgementCalls).toBe(2)
+})
+
+test('captain instruction cards scroll and load later server pages without losing acknowledgement state', async ({ page, context }) => {
+  await mockAuth(context, 'CAPTAIN')
+  const now = new Date()
+  const instructions = Array.from({ length: 6 }, (_, index) => ({
+    ...syntheticInstruction(now), id: `captain-instruction-${index}`, message: `Instruction ${index + 1}`,
+  }))
+  const requestedPages: number[] = []
+  await context.route('**/api/v1/planning/captain/instructions?*', route => {
+    const query = new URL(route.request().url()).searchParams
+    const pageNumber = Number(query.get('page'))
+    requestedPages.push(pageNumber)
+    return route.fulfill({ json: { items: pageNumber === 0 ? instructions.slice(0, 5) : instructions.slice(5),
+      page: pageNumber, totalItems: instructions.length, totalPages: 2, serverTime: now.toISOString() } })
+  })
+  await context.route('**/api/v1/planning/captain/instructions/captain-instruction-5/acknowledgements', route => route.fulfill({
+    json: { ...instructions[5], status: 'ACKNOWLEDGED', acknowledgedAt: now.toISOString(), applicableUntil: new Date(now.getTime() + 300_000).toISOString() },
+  }))
+  await login(page)
+  const display = page.getByRole('region', { name: 'Controller instructions', exact: true })
+  const viewport = display.getByRole('region', { name: 'Captain instructions', exact: true })
+  await expect(viewport.getByText('Instruction 1', { exact: true })).toBeVisible()
+  const bounds = await viewport.boundingBox()
+  const visibleCards = await viewport.locator('[data-slot="card"]').evaluateAll((elements, viewportBounds) => elements.filter(element => {
+    const rect = element.getBoundingClientRect()
+    return rect.top >= viewportBounds.top && rect.bottom <= viewportBounds.top + viewportBounds.height
+  }).length, { top: bounds!.y, height: bounds!.height })
+  expect(visibleCards).toBeLessThanOrEqual(4)
+  await display.getByRole('button', { name: 'Load more captain instructions', exact: true }).click()
+  await expect(viewport.getByText('Instruction 6', { exact: true })).toBeVisible()
+  await viewport.getByRole('button', { name: 'Acknowledge', exact: true }).last().click()
+  await expect(viewport.getByText(/^Acknowledged /)).toHaveCount(1)
+  await expect(viewport.getByText('Instruction 6', { exact: true })).toBeVisible()
+  await expect(viewport.locator('[data-slot="card"]')).toHaveCount(6)
+  expect(requestedPages).toContain(1)
 })
 
 test('controller approval sends a concise synthetic instruction and refreshes issued history', async ({ page, context }) => {
@@ -996,19 +1039,34 @@ test('controller pending queue filters on the server and can page through all pe
     finalCandidate: null, preview, hazardClassification: 'SIMULATION', limitations: [], createdAt: '2026-10-25T04:00:00Z',
   })
   const pending = [proposal('pending-new-1', 'Newest pending advisory'), proposal('pending-new-2', 'Next pending advisory')]
+  const instructions = [
+    { id: 'instruction-0', busId: 'demo-190-b', message: 'Instruction page 1', status: 'ISSUED', hazardClassification: 'SIMULATION', issuedAt: '2026-10-25T04:00:00Z' },
+    { id: 'instruction-1', busId: 'demo-190-b', message: 'Instruction page 2', status: 'ISSUED', hazardClassification: 'SIMULATION', issuedAt: '2026-10-25T04:01:00Z' },
+  ]
+  const notices = [
+    { id: 'notice-0', title: 'Managed notice page 1', message: 'First notice', classification: 'SIMULATION', status: 'DRAFT', services: [], locations: [] },
+    { id: 'notice-1', title: 'Managed notice page 2', message: 'Second notice', classification: 'SIMULATION', status: 'DRAFT', services: [], locations: [] },
+  ]
   const requested: URL[] = []
-  await context.route('**/api/v1/planning/instructions?*', route => route.fulfill({
-    json: { items: [], page: 0, size: 100, totalItems: 101, totalPages: 2 },
-  }))
-  await context.route('**/api/v1/planning/notices?*', route => route.fulfill({
-    json: { items: [], page: 0, size: 100, totalItems: 101, totalPages: 2 },
-  }))
+  await context.route('**/api/v1/planning/instructions?*', route => {
+    const page = Number(new URL(route.request().url()).searchParams.get('page'))
+    return route.fulfill({ json: { items: [instructions[page]], page, size: 100, totalItems: 101, totalPages: 2 } })
+  })
+  await context.route('**/api/v1/planning/notices?*', route => {
+    const page = Number(new URL(route.request().url()).searchParams.get('page'))
+    return route.fulfill({ json: { items: [notices[page]], page, size: 100, totalItems: 101, totalPages: 2 } })
+  })
   await context.route('**/api/v1/disruption/hazards?*', route => {
     const requestedPage = Number(new URL(route.request().url()).searchParams.get('page'))
     const item = { disruptionId: `hazard-${requestedPage}`, kind: 'FLOOD', status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
       updatedAt: '2026-10-25T04:00:00Z', facts: { title: `Hazard page ${requestedPage + 1}`, description: 'Reported water near the stop.', instruction: null, effectiveUntil: null },
       exposures: [], limitations: [] }
     return route.fulfill({ json: { items: [item], page: requestedPage, size: 100, totalItems: 101, totalPages: 2 } })
+  })
+  await context.route('**/api/v1/planning/diagnoses/hazard-requests?*', route => {
+    const page = Number(new URL(route.request().url()).searchParams.get('page'))
+    return route.fulfill({ json: { items: [{ requestId: `request-${page}`, eventType: 'HAZARD', status: 'COMPLETED', failureCode: null,
+      disruptionId: `hazard-${page}`, createdAt: '2026-10-25T04:00:00Z' }], page, size: 100, totalItems: 101, totalPages: 2 } })
   })
   await context.route('**/api/v1/planning/advisories?*', route => {
     const url = new URL(route.request().url())
@@ -1025,15 +1083,55 @@ test('controller pending queue filters on the server and can page through all pe
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   const advisories = page.getByRole('region', { name: 'Multi-hazard advisories', exact: true })
   await expect(advisories.getByRole('heading', { name: pending[0].preview, exact: true })).toBeVisible()
-  await expect(page.getByRole('navigation', { name: 'instructions pages', exact: true })).toBeVisible()
-  await expect(page.getByRole('navigation', { name: 'notices pages', exact: true })).toBeVisible()
-  await advisories.getByRole('button', { name: 'Next pending advisories', exact: true }).click()
+  await expect(advisories.getByRole('region', { name: 'Pending captain advisories', exact: true })).toBeVisible()
+  await advisories.getByRole('button', { name: 'Load more pending advisories', exact: true }).click()
   await expect(advisories.getByRole('heading', { name: pending[1].preview, exact: true })).toBeVisible()
+  await advisories.getByRole('button', { name: 'Load more instructions', exact: true }).click()
+  await expect(advisories.getByText(instructions[1].message, { exact: true })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: /pages/ })).toHaveCount(0)
   expect(requested.every(url => url.searchParams.get('pendingOnly') === 'true')).toBe(true)
   expect(requested.map(url => url.searchParams.get('page'))).toContain('1')
 
   await page.goto('/controller/disruptions')
-  await expect(page.getByRole('navigation', { name: 'hazards pages', exact: true })).toBeVisible()
+  const hazards = page.getByRole('region', { name: 'Hazard conditions', exact: true })
+  await page.getByRole('button', { name: 'Load more hazards', exact: true }).click()
+  await expect(hazards.getByRole('heading', { name: 'Hazard page 2', exact: true })).toBeVisible()
+  const processing = page.getByRole('region', { name: 'Hazard processing', exact: true })
+  await page.getByRole('button', { name: 'Load more hazard processing', exact: true }).click()
+  await expect(processing.getByText('Hazard page 2', { exact: true })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: /pages/ })).toHaveCount(0)
+
+  await page.goto('/controller/audit')
+  const managed = page.getByRole('region', { name: 'Managed notices', exact: true })
+  await page.getByRole('button', { name: 'Load more managed notices', exact: true }).click()
+  await expect(managed.getByRole('heading', { name: notices[1].title, exact: true })).toBeVisible()
+})
+
+test('controller can withdraw a published notice from managed notice history', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  let status = 'PUBLISHED'
+  await context.route('**/api/v1/planning/notices?*', route => route.fulfill({ json: {
+    items: [{ id: 'published-notice', title: 'Temporary service advisory', message: 'Use caution near Example Stop.',
+      classification: 'OBSERVATION_ONLY', status, services: ['190'], locations: ['Example Stop'],
+      effectiveFrom: '2026-10-25T04:00:00Z', effectiveUntil: '2026-10-25T08:00:00Z' }],
+    page: 0, size: 100, totalItems: 1, totalPages: 1,
+  } }))
+  let withdrawalRequests = 0
+  await context.route('**/api/v1/planning/notices/published-notice/withdrawals', route => {
+    expect(route.request().method()).toBe('POST')
+    withdrawalRequests++
+    status = 'WITHDRAWN'
+    return route.fulfill({ status: 204 })
+  })
+
+  await login(page)
+  await page.goto('/controller/audit')
+  const history = page.getByRole('region', { name: 'Managed notices', exact: true })
+  await expect(history.getByRole('heading', { name: 'Temporary service advisory', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Withdraw notice', exact: true }).click()
+  await expect.poll(() => withdrawalRequests).toBe(1)
+  await expect(history.getByText(/WITHDRAWN/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Withdraw notice', exact: true })).toHaveCount(0)
 })
 
 test('controller sees terminal hazard processing failure without presenting an advisory for issuance', async ({ page, context }) => {

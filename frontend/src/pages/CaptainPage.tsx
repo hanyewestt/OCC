@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { signOut } from '@/lib/auth'
 import { cn } from '@/lib/utils'
 import { classify, clockText, deltaText, gapFlex, initialScenario, sampleGaps,
@@ -49,9 +50,10 @@ function UpcomingStops() {
   return <section aria-labelledby="upcoming-stops-heading" className="space-y-4 rounded-xl border bg-card p-4 sm:p-6">
     <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
       <h2 id="upcoming-stops-heading" className="text-xl font-bold">Upcoming stops</h2>
-      <p className="text-sm text-muted-foreground">Sample skip-stop instructions. No live instructions.</p>
+      <p className="text-sm text-muted-foreground">Sample stops · no live instructions.</p>
       <p className="text-lg font-semibold sm:ml-auto">{skipped === 0 ? 'No stops to skip' : `${skipLabel(skipped)} on this trip`}</p>
     </div>
+    <ScrollArea role="region" aria-label="Upcoming stops in route order" tabIndex={0} className="max-h-[26rem]">
     <ol aria-label="Upcoming stops in route order" className="space-y-2">
       {segments.map(segment => segment.kind === 'stop'
         ? <li key={segment.stop.stopCode} className="flex items-center gap-3 px-4 py-2 text-lg">
@@ -71,7 +73,7 @@ function UpcomingStops() {
             </li>)}
           </ol>
         </li>)}
-    </ol>
+    </ol></ScrollArea>
   </section>
 }
 
@@ -141,7 +143,7 @@ export function CaptainPage({ email, token, refreshIntervalSeconds }: { email: s
     </div>
     <UpcomingStops />
     <footer className="space-y-1 border-t pt-4 text-sm text-muted-foreground">
-      <p>Built-in samples update every 10 seconds. No live bus data.</p>
+      <p>Sample data · updates every 10 seconds · no live bus feed.</p>
       <p className="break-all">Signed in as {email} · Role: Captain</p>
     </footer>
   </section>

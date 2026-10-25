@@ -1,53 +1,45 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { PagedCollectionControls } from '@/components/PagedCollectionControls'
 import { ApiError, apiRequest, type CaptainInstruction, type PageResult } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { dataClassificationLabel } from '@/lib/presentation'
 import { formatSgtDateTime } from '@/lib/time'
+import { usePagedCollection } from '@/lib/paged-collection'
+
+type CaptainInstructionPage = PageResult<CaptainInstruction> & { receivedAt: number }
 
 export function CaptainInstructions({ token, refreshIntervalSeconds }: { token: string; refreshIntervalSeconds: number }) {
-  const [items, setItems] = useState<CaptainInstruction[] | null>(null)
-  const [error, setError] = useState('')
   const [actionError, setActionError] = useState('')
   const [pending, setPending] = useState<string | null>(null)
-  const [refresh, setRefresh] = useState(0)
-  const [serverClock, setServerClock] = useState<{ epochMs: number; sampledAt: number } | null>(null)
   const [monotonicNow, setMonotonicNow] = useState(() => performance.now())
-  const serverNow = serverClock ? serverClock.epochMs + Math.max(0, monotonicNow - serverClock.sampledAt) : null
-  const polling = useRef<AbortController | null>(null)
   const action = useRef<AbortController | null>(null)
-  useEffect(() => {
-    const controller = new AbortController()
-    polling.current = controller
-    let timer: number | undefined
-    async function load() {
-      try {
-        const result = await apiRequest<PageResult<CaptainInstruction>>('/api/v1/planning/captain/instructions?size=100', token, controller.signal)
-        if (!controller.signal.aborted) {
-          setItems(result?.items ?? [])
-          const epochMs = result?.serverTime ? Date.parse(result.serverTime) : Number.NaN
-          if (Number.isFinite(epochMs)) setServerClock({ epochMs, sampledAt: performance.now() })
-          setError('')
-        }
-      } catch (failure) {
-        if (!controller.signal.aborted) {
-          setItems(null); setError(failure instanceof Error ? failure.message : 'Instructions are unavailable.')
-          if (failure instanceof ApiError && failure.status === 401) void signOut(failure.message)
-        }
-      } finally {
-        if (!controller.signal.aborted) timer = window.setTimeout(() => void load(), refreshIntervalSeconds * 1000)
-      }
+  const collection = usePagedCollection<CaptainInstruction, CaptainInstructionPage>(token, async (page, signal) => {
+    const params = new URLSearchParams({ page: String(page), size: '100' })
+    try {
+      const result = await apiRequest<PageResult<CaptainInstruction>>(`/api/v1/planning/captain/instructions?${params}`, token, signal)
+      if (!result) throw new Error('Instruction response was empty.')
+      return { ...result, receivedAt: performance.now() }
+    } catch (failure) {
+      if (failure instanceof ApiError && failure.status === 401 && !signal.aborted) void signOut(failure.message)
+      throw failure
     }
-    void load()
-    return () => { controller.abort(); window.clearTimeout(timer) }
-  }, [token, refreshIntervalSeconds, refresh])
+  }, item => item.id)
+
+  const serverNow = collection.latestPage?.serverTime
+    ? Date.parse(collection.latestPage.serverTime) + Math.max(0, monotonicNow - collection.latestPage.receivedAt) : null
+  useEffect(() => {
+    if (pending !== null) return
+    const timer = window.setInterval(collection.reload, refreshIntervalSeconds * 1000)
+    return () => window.clearInterval(timer)
+  }, [collection.reload, pending, refreshIntervalSeconds])
   useEffect(() => {
     const timer = window.setInterval(() => setMonotonicNow(performance.now()), 1000)
     return () => { window.clearInterval(timer); action.current?.abort() }
   }, [])
   async function acknowledge(id: string) {
-    polling.current?.abort()
     action.current?.abort()
     const controller = new AbortController()
     action.current = controller
@@ -55,7 +47,7 @@ export function CaptainInstructions({ token, refreshIntervalSeconds }: { token: 
     try {
       const saved = await apiRequest<CaptainInstruction>(`/api/v1/planning/captain/instructions/${encodeURIComponent(id)}/acknowledgements`, token, controller.signal, { method: 'POST' })
       if (!controller.signal.aborted && saved) {
-        setItems(previous => previous?.map(item => item.id === id ? saved : item) ?? [saved]); setActionError('')
+        collection.updateItem(saved); setActionError('')
       }
     } catch (failure) {
       if (!controller.signal.aborted) {
@@ -63,24 +55,28 @@ export function CaptainInstructions({ token, refreshIntervalSeconds }: { token: 
         if (failure instanceof ApiError && failure.status === 401) void signOut(failure.message)
       }
     } finally {
-      if (!controller.signal.aborted) { setPending(null); setRefresh(value => value + 1) }
+      if (!controller.signal.aborted) setPending(null)
     }
   }
   return <section aria-labelledby="captain-instructions-heading" className="space-y-4">
     <h2 id="captain-instructions-heading" className="text-xl font-semibold">Controller instructions</h2>
-    {error && <p role="alert" className="rounded-lg border p-3 text-sm">{error}</p>}
     {actionError && <p role="alert" className="rounded-lg border p-3 text-sm">{actionError}</p>}
-    {items === null && !error && <p role="status" className="text-sm text-muted-foreground">Loading instructions…</p>}
-    {items?.length === 0 && <p className="text-sm text-muted-foreground">No current instructions for your assigned bus.</p>}
-    {items?.map(item => <Card key={item.id}><CardContent className="space-y-4">
-      <p className="text-xs font-medium text-muted-foreground">Simulation · {item.busId} · Hazard: {dataClassificationLabel(item.hazardClassification)}</p>
-      <p className="text-2xl font-semibold leading-snug">{item.message}</p>
-      {item.acknowledgedAt ? <div role="status" className="space-y-1 text-sm">
-        <p>Acknowledged {formatSgtDateTime(item.acknowledgedAt)}</p>
-        {item.applicableUntil && <p>{serverNow === null ? 'OCC checks the advisory window.'
-          : `${Math.max(0, Math.floor((Date.parse(item.applicableUntil) - serverNow) / 1000))} sec remaining · advisory window`}</p>}
-      </div> : <Button size="lg" disabled={pending !== null || serverNow !== null && serverNow >= Date.parse(item.acknowledgementDeadline)}
-        onClick={() => void acknowledge(item.id)}>{pending === item.id ? 'Saving…' : 'Acknowledge'}</Button>}
-    </CardContent></Card>)}
+    {collection.isLoading && !collection.latestPage && <p role="status" className="text-sm text-muted-foreground">Loading instructions…</p>}
+    {collection.error !== null && !collection.items.length && <p role="alert" className="rounded-lg border p-3 text-sm">Instructions are unavailable.</p>}
+    {!collection.isLoading && collection.error === null && collection.latestPage && !collection.items.length && <p className="text-sm text-muted-foreground">No current instructions for your assigned bus.</p>}
+    {!!collection.items.length && <ScrollArea role="region" aria-label="Captain instructions" tabIndex={0} className="max-h-[28rem]"
+      viewportProps={{ onScroll: collection.onScroll }}><div className="space-y-3">{collection.items.map(item => <Card key={item.id} className="min-h-28"><CardContent className="space-y-4">
+        <p className="text-xs font-medium text-muted-foreground">Simulation · {item.busId} · Hazard: {dataClassificationLabel(item.hazardClassification)}</p>
+        <p className="text-2xl font-semibold leading-snug">{item.message}</p>
+        {item.acknowledgedAt ? <div role="status" className="space-y-1 text-sm">
+          <p>Acknowledged {formatSgtDateTime(item.acknowledgedAt)}</p>
+          {item.applicableUntil && <p>{serverNow === null ? 'OCC checks the advisory window.'
+            : `${Math.max(0, Math.floor((Date.parse(item.applicableUntil) - serverNow) / 1000))} sec remaining · advisory window`}</p>}
+        </div> : <Button size="lg" disabled={pending !== null || serverNow !== null && serverNow >= Date.parse(item.acknowledgementDeadline)}
+          onClick={() => void acknowledge(item.id)}>{pending === item.id ? 'Saving…' : 'Acknowledge'}</Button>}
+      </CardContent></Card>)}</div></ScrollArea>}
+    {collection.latestPage && collection.latestPage.totalItems > collection.items.length && <p className="text-xs text-muted-foreground">Showing {collection.items.length} of {collection.latestPage.totalItems} instructions.</p>}
+    <PagedCollectionControls label="captain instructions" hasItems={!!collection.items.length} hasMore={collection.hasMore}
+      isLoadingMore={collection.isLoadingMore} error={collection.error} reload={collection.reload} loadNext={collection.loadNext} />
   </section>
 }

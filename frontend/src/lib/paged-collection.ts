@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type UIEventHandler } from 'react'
 
-type PagedResult<T> = { items: T[]; page: number; totalItems: number; totalPages: number }
+export type PagedResult<T> = { items: T[]; page: number; totalItems: number; totalPages: number }
 type CollectionState<T, P> = {
   collectionKey: string
   items: T[]
@@ -10,6 +10,13 @@ type CollectionState<T, P> = {
   isLoading: boolean
   isLoadingMore: boolean
   error: unknown
+}
+
+export type PagedCollection<T, P extends PagedResult<T>> = CollectionState<T, P> & {
+  reload: () => void
+  loadNext: () => void
+  updateItem: (item: T) => void
+  onScroll: UIEventHandler<HTMLDivElement>
 }
 
 function emptyState<T, P>(collectionKey: string, isLoading: boolean): CollectionState<T, P> {
@@ -71,6 +78,14 @@ export function usePagedCollection<T, P extends PagedResult<T>>(
     void fetchPage(0, requestGeneration, collectionKey, controller)
   }, [collectionKey, fetchPage, publish])
 
+  const updateItem = useCallback((item: T) => {
+    const current = stateRef.current
+    if (current.collectionKey !== collectionKey) return
+    const id = itemIdRef.current(item)
+    const items = current.items.map(existing => itemIdRef.current(existing) === id ? item : existing)
+    if (items.some((value, index) => value !== current.items[index])) publish({ ...current, items })
+  }, [collectionKey, publish])
+
   const loadNext = useCallback(() => {
     const current = stateRef.current
     if (current.collectionKey !== collectionKey || !current.hasMore ||
@@ -107,5 +122,5 @@ export function usePagedCollection<T, P extends PagedResult<T>>(
   }, [collectionKey, fetchPage])
 
   const current = state.collectionKey === collectionKey ? state : emptyState<T, P>(collectionKey, true)
-  return { ...current, reload, loadNext, onScroll }
+  return { ...current, reload, loadNext, updateItem, onScroll }
 }
