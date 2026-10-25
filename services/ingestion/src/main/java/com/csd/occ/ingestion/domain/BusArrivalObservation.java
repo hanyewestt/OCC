@@ -28,6 +28,7 @@ public class BusArrivalObservation {
     private Short directionId;
     private Short visitOrder;
     private Short visitNumber;
+    private Integer routeStopSequence;
     private Instant estimatedArrivalAt;
     private BigDecimal latitude;
     private BigDecimal longitude;
@@ -66,6 +67,8 @@ public class BusArrivalObservation {
     public void setVisitOrder(Integer visitOrder) { this.visitOrder = visitOrder == null ? null : visitOrder.shortValue(); }
     public Integer getVisitNumber() { return visitNumber == null ? null : visitNumber.intValue(); }
     public void setVisitNumber(Integer visitNumber) { this.visitNumber = visitNumber == null ? null : visitNumber.shortValue(); }
+    public Integer getRouteStopSequence() { return routeStopSequence; }
+    public void setRouteStopSequence(Integer routeStopSequence) { this.routeStopSequence = routeStopSequence; }
     public Instant getEstimatedArrivalAt() { return estimatedArrivalAt; }
     public void setEstimatedArrivalAt(Instant estimatedArrivalAt) { this.estimatedArrivalAt = estimatedArrivalAt; }
     public BigDecimal getLatitude() { return latitude; }

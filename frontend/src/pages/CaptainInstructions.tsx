@@ -10,7 +10,9 @@ export function CaptainInstructions({ token, refreshIntervalSeconds }: { token: 
   const [actionError, setActionError] = useState('')
   const [pending, setPending] = useState<string | null>(null)
   const [refresh, setRefresh] = useState(0)
-  const [now, setNow] = useState(Date.now)
+  const [serverClock, setServerClock] = useState<{ epochMs: number; sampledAt: number } | null>(null)
+  const [monotonicNow, setMonotonicNow] = useState(() => performance.now())
+  const serverNow = serverClock ? serverClock.epochMs + Math.max(0, monotonicNow - serverClock.sampledAt) : null
   const polling = useRef<AbortController | null>(null)
   const action = useRef<AbortController | null>(null)
   useEffect(() => {
@@ -20,7 +22,12 @@ export function CaptainInstructions({ token, refreshIntervalSeconds }: { token: 
     async function load() {
       try {
         const result = await apiRequest<PageResult<CaptainInstruction>>('/api/v1/planning/captain/instructions?size=100', token, controller.signal)
-        if (!controller.signal.aborted) { setItems(result?.items ?? []); setError('') }
+        if (!controller.signal.aborted) {
+          setItems(result?.items ?? [])
+          const epochMs = result?.serverTime ? Date.parse(result.serverTime) : Number.NaN
+          if (Number.isFinite(epochMs)) setServerClock({ epochMs, sampledAt: performance.now() })
+          setError('')
+        }
       } catch (failure) {
         if (!controller.signal.aborted) {
           setItems(null); setError(failure instanceof Error ? failure.message : 'Instructions are unavailable.')
@@ -34,7 +41,7 @@ export function CaptainInstructions({ token, refreshIntervalSeconds }: { token: 
     return () => { controller.abort(); window.clearTimeout(timer) }
   }, [token, refreshIntervalSeconds, refresh])
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    const timer = window.setInterval(() => setMonotonicNow(performance.now()), 1000)
     return () => { window.clearInterval(timer); action.current?.abort() }
   }, [])
   async function acknowledge(id: string) {
@@ -68,8 +75,9 @@ export function CaptainInstructions({ token, refreshIntervalSeconds }: { token: 
       <p className="text-2xl font-semibold leading-snug">{item.message}</p>
       {item.acknowledgedAt ? <div role="status" className="space-y-1 text-sm">
         <p>Acknowledged {new Date(item.acknowledgedAt).toLocaleTimeString()}</p>
-        {item.applicableUntil && <p>{Math.max(0, Math.ceil((Date.parse(item.applicableUntil) - now) / 1000))} sec remaining · advisory window</p>}
-      </div> : <Button size="lg" disabled={pending !== null || now >= Date.parse(item.acknowledgementDeadline)}
+        {item.applicableUntil && <p>{serverNow === null ? 'OCC checks the advisory window.'
+          : `${Math.max(0, Math.floor((Date.parse(item.applicableUntil) - serverNow) / 1000))} sec remaining · advisory window`}</p>}
+      </div> : <Button size="lg" disabled={pending !== null || serverNow !== null && serverNow >= Date.parse(item.acknowledgementDeadline)}
         onClick={() => void acknowledge(item.id)}>{pending === item.id ? 'Saving…' : 'Acknowledge'}</Button>}
     </CardContent></Card>)}
   </section>

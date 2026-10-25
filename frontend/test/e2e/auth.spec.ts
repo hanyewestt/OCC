@@ -59,7 +59,7 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
   await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: { mode: 'LIVE', demoRunId: null, items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/planning/recommendations/decisions?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: { mode: 'LIVE', demoRunId: null, items: [], page: 0, totalItems: 0, totalPages: 0 } }))
-  for (const endpoint of ['disruption/hazards', 'planning/advisories', 'planning/instructions', 'planning/notices', 'planning/captain/instructions']) {
+  for (const endpoint of ['disruption/hazards', 'planning/advisories', 'planning/instructions', 'planning/notices', 'planning/diagnoses/hazard-requests', 'planning/captain/instructions']) {
     await context.route(`**/api/v1/${endpoint}?*`, route => route.fulfill({ json: { items: [], page: 0, size: 100, totalItems: 0, totalPages: 0 } }))
   }
   await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ status: 204 }))
@@ -541,7 +541,7 @@ test('captain retries failed acknowledgement and keeps the persisted receipt aft
   let releaseFirstResponse!: () => void
   const firstResponse = new Promise<void>(resolve => { releaseFirstResponse = resolve })
   await context.route('**/api/v1/planning/captain/instructions?*', route => route.fulfill({
-    json: { items: [instruction], page: 0, totalItems: 1, totalPages: 1 },
+    json: { items: [instruction], page: 0, totalItems: 1, totalPages: 1, serverTime: now.toISOString() },
   }))
   await context.route(`**/api/v1/planning/captain/instructions/${instruction.id}/acknowledgements`, async route => {
     expect(route.request().method()).toBe('POST')
@@ -657,6 +657,40 @@ test('controller can apply a passenger notice suggestion without saving or publi
   expect(drafts).toBe(0)
 })
 
+test('late notice suggestions cannot overwrite the selected hazard draft', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const hazardA = '00000000-0000-4000-8000-000000000201'
+  const hazardB = '00000000-0000-4000-8000-000000000202'
+  await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: { items: [hazardA, hazardB].map((id, index) => ({
+    disruptionId: id, kind: 'FLOOD', status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
+    updatedAt: '2026-10-25T04:00:00Z', facts: { title: `Hazard ${index ? 'B' : 'A'}`, description: `Message for hazard ${index ? 'B' : 'A'}.`, instruction: null, effectiveUntil: null },
+    exposures: [], limitations: [],
+  })), page: 0, totalItems: 2, totalPages: 1 } }))
+  let releaseSuggestion: (() => void) | undefined
+  let markStarted: (() => void) | undefined
+  const started = new Promise<void>(resolve => { markStarted = resolve })
+  const waiting = new Promise<void>(resolve => { releaseSuggestion = resolve })
+  await context.route(`**/api/v1/planning/notices/${hazardA}/suggestions`, async route => {
+    markStarted?.()
+    await waiting
+    return route.fulfill({ json: { title: 'Suggested for A', message: 'Suggested message for A.', services: ['190'], locations: ['Stop A'], generator: 'SOURCE_FACTS' } })
+  })
+
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  const advisories = page.getByRole('region', { name: 'Multi-hazard advisories', exact: true })
+  await advisories.getByRole('button', { name: 'Draft notice', exact: true }).click()
+  const source = advisories.getByLabel('Source hazard', { exact: true })
+  await source.selectOption(hazardA)
+  await advisories.getByRole('button', { name: 'Suggest passenger wording', exact: true }).click()
+  await started
+  await source.selectOption(hazardB)
+  releaseSuggestion?.()
+
+  await expect(advisories.getByLabel('Title', { exact: true })).toHaveValue('Hazard B')
+  await expect(advisories.getByLabel('Passenger message', { exact: true })).toHaveValue('Message for hazard B.')
+})
+
 test('controller reviews the server preview before issuing an edited instruction', async ({ page, context }) => {
   await mockAuth(context, 'CONTROLLER')
   const issued = syntheticInstruction(new Date())
@@ -712,6 +746,84 @@ test('controller reviews the server preview before issuing an edited instruction
   await expect(advisories.getByText('No pending captain advisories.', { exact: true })).toBeVisible()
   await expect(advisories.getByText(issued.message, { exact: true })).toBeVisible()
   expect(sent).toBe(true)
+})
+
+test('controller pending queue filters on the server and can page through all pending proposals', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const proposal = (id: string, preview: string): Advisory => ({
+    id, disruptionId: '00000000-0000-4000-8000-000000000203', demoRunId: '00000000-0000-4000-8000-000000000204',
+    busId: 'demo-190-b', status: 'PENDING', candidate: { type: 'BE_CAUTIOUS',
+      parameters: { stopCode: 'B01', stopName: 'Example Stop', stopSequence: 2, subsequentStopCount: null, speedReductionKmh: null, durationSeconds: null },
+      rationale: 'Reported disruption near the next stop.' },
+    finalCandidate: null, preview, hazardClassification: 'SIMULATION', limitations: [], createdAt: '2026-10-25T04:00:00Z',
+  })
+  const pending = [proposal('pending-new-1', 'Newest pending advisory'), proposal('pending-new-2', 'Next pending advisory')]
+  const requested: URL[] = []
+  await context.route('**/api/v1/planning/instructions?*', route => route.fulfill({
+    json: { items: [], page: 0, size: 100, totalItems: 101, totalPages: 2 },
+  }))
+  await context.route('**/api/v1/planning/notices?*', route => route.fulfill({
+    json: { items: [], page: 0, size: 100, totalItems: 101, totalPages: 2 },
+  }))
+  await context.route('**/api/v1/disruption/hazards?*', route => {
+    const requestedPage = Number(new URL(route.request().url()).searchParams.get('page'))
+    const item = { disruptionId: `hazard-${requestedPage}`, kind: 'FLOOD', status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
+      updatedAt: '2026-10-25T04:00:00Z', facts: { title: `Hazard page ${requestedPage + 1}`, description: 'Reported water near the stop.', instruction: null, effectiveUntil: null },
+      exposures: [], limitations: [] }
+    return route.fulfill({ json: { items: [item], page: requestedPage, size: 100, totalItems: 101, totalPages: 2 } })
+  })
+  await context.route('**/api/v1/planning/advisories?*', route => {
+    const url = new URL(route.request().url())
+    requested.push(url)
+    if (url.searchParams.get('pendingOnly') !== 'true') {
+      const oldApproved = Array.from({ length: 100 }, (_, index) => ({ ...pending[0], id: `approved-${index}`, status: 'APPROVED' }))
+      return route.fulfill({ json: { items: oldApproved, page: 0, size: 100, totalItems: 101, totalPages: 2 } })
+    }
+    const requestedPage = Number(url.searchParams.get('page'))
+    return route.fulfill({ json: { items: [pending[requestedPage]], page: requestedPage, size: 100, totalItems: 101, totalPages: 2 } })
+  })
+
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  const advisories = page.getByRole('region', { name: 'Multi-hazard advisories', exact: true })
+  await expect(advisories.getByRole('heading', { name: pending[0].preview, exact: true })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'instructions pages', exact: true })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'notices pages', exact: true })).toBeVisible()
+  await advisories.getByRole('button', { name: 'Next pending advisories', exact: true }).click()
+  await expect(advisories.getByRole('heading', { name: pending[1].preview, exact: true })).toBeVisible()
+  expect(requested.every(url => url.searchParams.get('pendingOnly') === 'true')).toBe(true)
+  expect(requested.map(url => url.searchParams.get('page'))).toContain('1')
+
+  await page.goto('/controller/disruptions')
+  await expect(page.getByRole('navigation', { name: 'hazards pages', exact: true })).toBeVisible()
+})
+
+test('controller sees terminal hazard processing failure without presenting an advisory for issuance', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const disruptionId = '00000000-0000-4000-8000-000000000205'
+  await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: { items: [{
+    disruptionId, kind: 'FLOOD', status: 'ACTIVE', classification: 'SIMULATION', demoRunId: 'run-205',
+    updatedAt: '2026-10-25T04:00:00Z', facts: { title: 'Flood report', description: 'Water reported near Example Stop.', instruction: null, effectiveUntil: null },
+    exposures: [{ busId: 'demo-190-b', serviceId: '190', stopCode: 'B01', stopName: 'Example Stop', stopSequence: 2, basis: 'STOP_SEQUENCE' }],
+    limitations: [],
+  }], page: 0, totalItems: 1, totalPages: 1 } }))
+  await context.route('**/api/v1/planning/diagnoses/hazard-requests?*', route => route.fulfill({ json: {
+    mode: 'DEMO', demoRunId: 'run-205', items: [{ requestId: 'request-205', eventId: 'event-205', disruptionId,
+      eventType: 'HAZARD', status: 'FAILED_TERMINAL', failureCode: 'HAZARD_CONTEXT_OR_MODEL_UNAVAILABLE',
+      createdAt: '2026-10-25T04:00:00Z' }], page: 0, size: 100, totalItems: 1, totalPages: 1,
+  } }))
+  await context.route('**/api/v1/planning/advisories?*', route => route.fulfill({ json: {
+    items: [], page: 0, size: 100, totalItems: 0, totalPages: 0,
+  } }))
+
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  const advisories = page.getByRole('region', { name: 'Multi-hazard advisories', exact: true })
+  await expect(advisories.getByText('Flood report', { exact: true })).toBeVisible()
+  await expect(advisories.getByText(/Failed · HAZARD_CONTEXT_OR_MODEL_UNAVAILABLE/)).toBeVisible()
+  await expect(advisories.getByText('No advisory was issued. Review the feed and bus exposure before retrying.', { exact: true })).toBeVisible()
+  await expect(advisories.getByText('No pending captain advisories.', { exact: true })).toBeVisible()
+  await expect(advisories.getByRole('button', { name: 'Approve and send', exact: true })).toHaveCount(0)
 })
 
 test('captain pacing updates samples and switches scenarios while only polling assigned instructions', async ({ page, context }) => {
@@ -786,6 +898,39 @@ test('captain pacing supports narrow screens, scenario links and persistent day 
   await expect(display).toHaveAttribute('data-theme', 'day')
   await expect(page.getByRole('button', { name: 'Night mode', exact: true })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})
+
+test('captain acknowledgement timing follows the server clock when the device clock is ahead', async ({ page, context }) => {
+  await mockAuth(context, 'CAPTAIN')
+  await page.addInitScript(() => {
+    const deviceNow = Date.now
+    Date.now = () => deviceNow() + 600_000
+  })
+  let current: CaptainInstruction | null = null
+  let serverTime = ''
+  let acknowledged = false
+  await context.route('**/api/v1/planning/captain/instructions?*', route => {
+    const now = new Date()
+    current = syntheticInstruction(now)
+    serverTime = new Date(Math.floor(now.getTime() / 1000) * 1000).toISOString()
+    const saved = acknowledged ? { ...current, status: 'ACKNOWLEDGED', acknowledgedAt: now.toISOString(),
+      applicableUntil: new Date(now.getTime() + 300_000).toISOString() } : current
+    return route.fulfill({ json: { items: [saved], page: 0, size: 100, totalItems: 1, totalPages: 1, serverTime } })
+  })
+  await context.route('**/api/v1/planning/captain/instructions/*/acknowledgements', route => {
+    acknowledged = true
+    const now = new Date()
+    const saved = { ...current!, status: 'ACKNOWLEDGED', acknowledgedAt: now.toISOString(),
+      applicableUntil: new Date(now.getTime() + 300_000).toISOString() }
+    return route.fulfill({ json: saved })
+  })
+
+  await login(page)
+  const acknowledge = page.getByRole('button', { name: 'Acknowledge', exact: true })
+  await expect(acknowledge).toBeEnabled()
+  await acknowledge.click()
+  await expect(page.getByRole('status').filter({ hasText: /sec remaining · advisory window/ })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: /301 sec remaining/ })).toHaveCount(0)
 })
 
 // These journeys use synthetic evidence and never contact Gemini.

@@ -77,6 +77,36 @@ class DataMallHazardAdapterTest {
     }
 
     @Test
+    void preservesRailMessageAndSourceTimeWhenThereAreNoAffectedSegments() {
+        when(client.get("/TrainServiceAlerts")).thenReturn(ResponseEntity.ok("""
+            {"value":{"Status":2,"AffectedSegments":[],"Message":[
+            {"Content":"Train service delayed","CreatedDate":"2026-10-25 10:00:00"}]}}
+            """));
+
+        var fact = adapter(500).fetch(HazardKind.RAIL_DISRUPTION).facts().getFirst();
+
+        assertThat(fact.sourceEventKey()).isEqualTo("network");
+        assertThat(fact.description()).isEqualTo("Train service delayed");
+        assertThat(fact.reportedAt()).isEqualTo(Instant.parse("2026-10-25T02:00:00Z"));
+        assertThat(fact.sourceAction()).isEqualTo("OBSERVED");
+    }
+
+    @Test
+    void preservesRailRecoveryMessageAndTimeWhenThereAreNoAffectedSegments() {
+        when(client.get("/TrainServiceAlerts")).thenReturn(ResponseEntity.ok("""
+            {"value":{"Status":1,"AffectedSegments":[],"Message":[
+            {"Content":"Normal train service resumed","CreatedDate":"2026-10-25 10:01:00"}]}}
+            """));
+
+        var fact = adapter(500).fetch(HazardKind.RAIL_DISRUPTION).facts().getFirst();
+
+        assertThat(fact.sourceEventKey()).isEqualTo("network");
+        assertThat(fact.description()).isEqualTo("Normal train service resumed");
+        assertThat(fact.reportedAt()).isEqualTo(Instant.parse("2026-10-25T02:01:00Z"));
+        assertThat(fact.sourceAction()).isEqualTo("RECOVERED");
+    }
+
+    @Test
     void malformedJsonIsRetainedButCannotBecomeACompleteEmptySnapshot() {
         when(client.get("/PubFloodAlerts")).thenReturn(ResponseEntity.ok("malformed"));
         var result = adapter(500).fetch(HazardKind.FLOOD);

@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import com.csd.occ.planning.advisory.domain.*;
 import com.csd.occ.planning.diagnosis.domain.PlanningScope;
 import com.csd.occ.planning.diagnosis.domain.PlanningScopePort;
+import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -62,7 +63,10 @@ class AdvisoryPersistenceIT {
     @Autowired InstructionService instructions;
     @Autowired PublicNoticeService notices;
     @Autowired AdvisoryReconciliationService reconciliation;
+    @Autowired InstructionRunReconciliationService instructionRuns;
+    @Autowired AdvisoryRetentionService retention;
     @Autowired AdvisoryProposalRepository proposals;
+    @Autowired AdvisoryModelEvidenceRepository modelEvidence;
     @Autowired IssuedInstructionRepository issued;
     @Autowired PublicNoticeRepository publications;
     @MockitoBean AdvisoryContextPort context;
@@ -76,7 +80,7 @@ class AdvisoryPersistenceIT {
 
     @BeforeEach
     void resetRowsAndExternalContext() {
-        jdbc.execute("TRUNCATE planning.issued_instruction, planning.advisory_proposal, planning.public_notice");
+        jdbc.execute("TRUNCATE planning.issued_instruction, planning.advisory_proposal, planning.advisory_model_evidence, planning.public_notice");
         sources.clear();
         run = UUID.randomUUID(); captain = UUID.randomUUID();
         bus = new AdvisoryContextPort.Bus("demo-190-b", "demo-190-b", "SBS5898U", "190", 1, captain, "ASSIGNED",
@@ -111,6 +115,19 @@ class AdvisoryPersistenceIT {
     }
 
     @Test
+    void pendingProposalPageExcludesOlderApprovedRecordsBeforePagination() {
+        var approved = proposal(InstructionType.REDUCE_SPEED);
+        approved.decide(approved.candidate(), "controller", null, null, NOW);
+        proposals.saveAndFlush(approved);
+        var pending = proposal(InstructionType.SLOW_DOWN_NEAR_STOPS);
+
+        var page = instructions.proposals(0, 1, true);
+
+        assertThat(page.getTotalElements()).isEqualTo(1);
+        assertThat(page.getContent()).extracting(AdvisoryProposal::id).containsExactly(pending.id());
+    }
+
+    @Test
     void failedInstructionInsertRollsBackDecisionAndIdenticalRetryIssuesOnce() {
         var proposal = proposal(InstructionType.REDUCE_SPEED);
         jdbc.execute("ALTER TABLE planning.issued_instruction ADD CONSTRAINT test_reject_instruction CHECK(false) NOT VALID");
@@ -123,6 +140,7 @@ class AdvisoryPersistenceIT {
         var unchanged = proposals.findById(proposal.id()).orElseThrow();
         assertThat(unchanged.status()).isEqualTo("PENDING");
         assertThat(unchanged.finalCandidate()).isNull();
+        assertThat(modelEvidence.findById(proposal.id()).orElseThrow().finalCandidate()).isNull();
         assertThat(issued.count()).isZero();
         var first = instructions.decide(proposal.id(), null, null, "controller", null);
         var repeated = instructions.decide(proposal.id(), null, null, "controller", null);
@@ -228,6 +246,34 @@ class AdvisoryPersistenceIT {
         assertThat(publications.findById(notice.id()).orElseThrow().withdrawnAt()).isEqualTo(NOW);
     }
 
+    @Test
+    void closedRunRetiresAcknowledgedStopInstructionButKeepsModelAndDecisionEvidence() {
+        var proposal = proposal(InstructionType.SLOW_DOWN_NEAR_STOPS);
+        var issuedInstruction = instructions.decide(proposal.id(), null, null, "controller", null);
+        instructions.acknowledge(issuedInstruction.id(), captain.toString());
+        jdbc.update("UPDATE planning.issued_instruction SET issued_at=?, acknowledgement_deadline=?, acknowledged_at=? WHERE id=?",
+                Timestamp.from(NOW.minus(Duration.ofHours(13))),
+                Timestamp.from(NOW.minus(Duration.ofHours(13)).plus(Duration.ofMinutes(5))),
+                Timestamp.from(NOW.minus(Duration.ofHours(13)).plus(Duration.ofMinutes(1))), issuedInstruction.id());
+        jdbc.update("UPDATE planning.advisory_proposal SET created_at=? WHERE id=?",
+                Timestamp.from(NOW.minus(Duration.ofHours(13))), proposal.id());
+        when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "CLOSED", List.of(), 0));
+
+        instructionRuns.reconcileClosedRuns();
+        assertThat(issued.findById(issuedInstruction.id()).orElseThrow().status()).isEqualTo("CANCELLED");
+        retention.purge(Duration.ofHours(12));
+
+        assertThat(issued.existsById(issuedInstruction.id())).isFalse();
+        assertThat(proposals.existsById(proposal.id())).isFalse();
+        var evidence = modelEvidence.findById(proposal.id()).orElseThrow();
+        assertThat(evidence.modelInput()).isEqualTo("captured input");
+        assertThat(evidence.modelOutput()).isEqualTo("captured output");
+        assertThat(evidence.candidate()).isEqualTo(proposal.candidate());
+        assertThat(evidence.finalCandidate()).isEqualTo(proposal.candidate());
+        assertThat(evidence.controllerSubject()).isEqualTo("controller");
+        assertThat(evidence.decidedAt()).isEqualTo(NOW);
+    }
+
     private boolean decideAfter(CountDownLatch start, UUID id) throws InterruptedException {
         start.await();
         try { instructions.decide(id, null, null, "controller", null); return true; }
@@ -239,8 +285,10 @@ class AdvisoryPersistenceIT {
                 : new InstructionParameters("44251", "School", 10, 0, null, null);
         var candidate = new AdvisoryCandidate(type, parameters, "Synthetic scenario evidence");
         String preview = new InstructionPolicy().message(candidate, bus, hazard.exposures(), null, context.limits());
-        return proposals.saveAndFlush(new AdvisoryProposal(UUID.randomUUID(), run, hazard, bus,
+        var proposal = proposals.saveAndFlush(new AdvisoryProposal(UUID.randomUUID(), run, hazard, bus,
                 new AdvisoryDraftPort.Result(candidate, "synthetic-model", "captured input", "captured output"), preview, NOW));
+        modelEvidence.saveAndFlush(new AdvisoryModelEvidence(proposal));
+        return proposal;
     }
     private PublicNotice draft(AdvisoryContextPort.Hazard source, UUID id, String message) {
         return notices.draft(id, source.disruptionId(), "Reported disruption", message, List.of("190"), List.of("School"),

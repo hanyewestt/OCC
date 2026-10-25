@@ -96,3 +96,29 @@ test('simulation board rejects missing run identity before requesting notices', 
   await expect(page.getByRole('alert')).toContainText('The simulation view needs a demo run ID.')
   expect(requests).toBe(0)
 })
+
+test('public board returns to a valid page when refresh shrinks the result set', async ({ page, context }) => {
+  await publicConfig(context)
+  const laterNotice = { ...notice, id: 'notice-synthetic-2', title: 'Later page notice' }
+  let shrunk = false
+  const requestedPages: number[] = []
+  await context.route('**/api/v1/planning/public/notices?*', route => {
+    const requestedPage = Number(new URL(route.request().url()).searchParams.get('page'))
+    requestedPages.push(requestedPage)
+    if (requestedPage === 1 && shrunk) {
+      return route.fulfill({ json: { items: [], page: 1, totalItems: 1, totalPages: 1 } })
+    }
+    return requestedPage === 1
+      ? route.fulfill({ json: { items: [laterNotice], page: 1, totalItems: 21, totalPages: 2 } })
+      : route.fulfill({ json: { items: [notice], page: 0, totalItems: 21, totalPages: 2 } })
+  })
+
+  await page.goto('/notices')
+  await page.getByRole('button', { name: 'Next', exact: true }).click()
+  await expect(page.getByRole('heading', { name: laterNotice.title, exact: true })).toBeVisible()
+  shrunk = true
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+
+  await expect(page.getByRole('heading', { name: notice.title, exact: true })).toBeVisible()
+  expect(requestedPages.slice(-2)).toEqual([1, 0])
+})

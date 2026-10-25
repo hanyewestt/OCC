@@ -4,13 +4,11 @@ import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
 import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.annotations.SQLRestriction;
 import org.hibernate.type.SqlTypes;
 
-/** Maps additional kinds into the existing canonical observation table; never copies traffic rows. */
+/** Persists additional hazard kinds separately from legacy traffic observations. */
 @Entity
-@Table(name = "traffic_incident_observation", schema = "ingestion")
-@SQLRestriction("hazard_kind <> 'TRAFFIC_INCIDENT'")
+@Table(name = "hazard_observation", schema = "ingestion")
 public class HazardObservation {
     @Id private UUID id;
     private UUID rawObservationId;

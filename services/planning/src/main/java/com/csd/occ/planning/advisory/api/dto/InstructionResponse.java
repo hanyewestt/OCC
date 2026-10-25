@@ -14,5 +14,6 @@ public record InstructionResponse(UUID id, UUID proposalId, UUID disruptionId, U
                 value.type(), value.parameters(), value.message(), "SIMULATION", value.hazardClassification(), value.status(),
                 value.issuedAt(), value.acknowledgementDeadline(), value.acknowledgedAt(), value.applicableUntil(), value.inactiveReason());
     }
-    public record PageResponse(List<InstructionResponse> items, int page, int size, long totalItems, int totalPages) {}
+    public record PageResponse(List<InstructionResponse> items, int page, int size, long totalItems, int totalPages,
+                               Instant serverTime) {}
 }

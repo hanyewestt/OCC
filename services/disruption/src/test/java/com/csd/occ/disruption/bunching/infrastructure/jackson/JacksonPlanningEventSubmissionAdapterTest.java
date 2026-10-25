@@ -44,7 +44,7 @@ class JacksonPlanningEventSubmissionAdapterTest {
         UUID observationId = UUID.randomUUID();
         Instant now = Instant.parse("2026-10-15T06:00:00Z");
         TrafficIncidentPlanningSnapshot snapshot = new TrafficIncidentPlanningSnapshot(eventId, disruptionId,
-                "UPDATED", "OBSERVATION_ONLY", null, observationId, UUID.randomUUID(), "LTA", "a".repeat(64),
+                "UPDATED", "OBSERVATION_ONLY", null, observationId, 3, UUID.randomUUID(), "LTA", "a".repeat(64),
                 "Road Obstruction", "Westbound lane blocked", new BigDecimal("1.38"), new BigDecimal("103.75"),
                 now.minusSeconds(10), now.minusSeconds(5), now);
         PlanningEventSubmissionPort adapter = new JacksonPlanningEventSubmissionAdapter(
@@ -55,6 +55,7 @@ class JacksonPlanningEventSubmissionAdapterTest {
         assertThat(encoded.payloadJson()).contains("\"eventType\":\"TRAFFIC_INCIDENT\"")
                 .contains("\"action\":\"UPDATED\"")
                 .contains("\"sourceObservationId\":\"" + observationId + "\"")
+                .contains("\"sourceRevision\":3")
                 .doesNotContain("eventSnapshot");
         assertThat(adapter.fingerprint(encoded.payloadJson(), eventId)).isEqualTo(encoded.payloadFingerprint());
     }

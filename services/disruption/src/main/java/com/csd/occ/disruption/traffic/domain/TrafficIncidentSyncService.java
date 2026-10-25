@@ -100,7 +100,7 @@ public class TrafficIncidentSyncService {
             disruptions.recordTransition(disruptionId, KIND, poll.classification(), poll.demoRunId(), ACTIVE,
                     at, at, null);
             states.save(state);
-            recordEvent(poll, state.disruptionId(), "OPENED", TrafficIncidentSnapshot.of(fact, poll.pollRunId()));
+            recordEvent(poll, state.disruptionId(), "OPENED", TrafficIncidentSnapshot.of(state));
             return;
         }
 
@@ -110,7 +110,7 @@ public class TrafficIncidentSyncService {
                     at, at, null);
             state.reopen(disruptionId, poll, fact, hash, at);
             states.save(state);
-            recordEvent(poll, disruptionId, "OPENED", TrafficIncidentSnapshot.of(fact, poll.pollRunId()));
+            recordEvent(poll, disruptionId, "OPENED", TrafficIncidentSnapshot.of(state));
             return;
         }
 
@@ -127,7 +127,7 @@ public class TrafficIncidentSyncService {
         disruptions.recordTransition(state.disruptionId(), KIND, poll.classification(), poll.demoRunId(), ACTIVE,
                 state.openedAt(), at, null);
         states.save(state);
-        recordEvent(poll, state.disruptionId(), "UPDATED", TrafficIncidentSnapshot.of(fact, poll.pollRunId()));
+        recordEvent(poll, state.disruptionId(), "UPDATED", TrafficIncidentSnapshot.of(state));
     }
 
     private void clear(TrafficIncidentPollPort.TrafficIncidentPoll poll, TrafficIncidentState state) {

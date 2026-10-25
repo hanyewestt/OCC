@@ -56,6 +56,19 @@ public class JacksonPlanningEventSubmissionAdapter implements PlanningEventSubmi
     }
 
     @Override
+    public com.csd.occ.disruption.hazard.domain.HazardEventSnapshot decodeHazard(String payloadJson) {
+        try {
+            PlanningEventSubmission submission = json.readValue(payloadJson, PlanningEventSubmission.class);
+            validate(submission, submission.eventId());
+            if (!"HAZARD".equals(submission.eventType()))
+                throw new IllegalArgumentException("Stored event is not a hazard snapshot");
+            return submission.hazardSnapshot();
+        } catch (JacksonException malformed) {
+            throw new IllegalArgumentException("Stored hazard event evidence is invalid", malformed);
+        }
+    }
+
+    @Override
     public EncodedPlanningEventSubmission encodeTraffic(TrafficIncidentPlanningSnapshot facts) {
         List<String> evidenceIds = List.of(facts.sourceObservationId().toString());
         PlanningEventSubmission submission = new PlanningEventSubmission(PlanningEventSubmission.SCHEMA_VERSION,

@@ -104,27 +104,30 @@ public class DataMallHazardAdapter implements HazardFeedPort {
         if (!List.of("1", "2").contains(status)) throw new IllegalArgumentException("Unknown rail status");
         var segments = node.path("AffectedSegments");
         if (!segments.isArray()) throw new IllegalArgumentException("Rail segments missing");
+        List<String> messages = new ArrayList<>();
+        Instant reported = null;
+        for (JsonNode message : node.path("Message")) {
+            messages.add(text(message, "Content"));
+            String at = text(message, "CreatedDate");
+            if (!at.isBlank()) {
+                Instant parsed = LocalDateTime.parse(at, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                        .atZone(settings.sourceTimezone()).toInstant();
+                if (reported == null || parsed.isAfter(reported)) reported = parsed;
+            }
+        }
+        String description = String.join(" ", messages);
         // Normal status is authoritative for the full rail scope, including empty segments.
-        if (status.equals("1")) put(facts, new Fact(HazardKind.RAIL_DISRUPTION, "network", "RECOVERED", null,
-                null, null, "Normal train service", "", null, null, List.of(), null, null, status, null, List.of()), errors);
+        if (status.equals("1")) put(facts, new Fact(HazardKind.RAIL_DISRUPTION, "network", "RECOVERED", reported,
+                null, null, "Normal train service", description, null, null, List.of(), null, null, status, null, List.of()), errors);
+        else if (segments.isEmpty()) put(facts, new Fact(HazardKind.RAIL_DISRUPTION, "network", "OBSERVED", reported,
+                null, null, "Train service disruption", description, null, null, List.of(), null, null, status, null, List.of()), errors);
         for (JsonNode segment : segments) {
             String line = required(segment, "Line");
             String direction = text(segment, "Direction");
             List<HazardLocation> locations = words(text(segment, "Stations")).stream().map(code ->
                     new HazardLocation("STATION", code, code, null, null, null, "STATION_REFERENCE", "PROVIDER_SUPPLIED")).toList();
-            List<String> messages = new ArrayList<>();
-            Instant reported = null;
-            for (JsonNode message : node.path("Message")) {
-                messages.add(text(message, "Content"));
-                String at = text(message, "CreatedDate");
-                if (!at.isBlank()) {
-                    Instant parsed = LocalDateTime.parse(at, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
-                            .atZone(settings.sourceTimezone()).toInstant();
-                    if (reported == null || parsed.isAfter(reported)) reported = parsed;
-                }
-            }
             put(facts, new Fact(HazardKind.RAIL_DISRUPTION, line + "|" + direction, status.equals("1") ? "RECOVERED" : "OBSERVED",
-                    reported, null, null, "Rail service " + line, String.join(" ", messages), null, null, List.of(),
+                    reported, null, null, "Rail service " + line, description, null, null, List.of(),
                     line, direction, status, null, locations), errors);
         }
     }

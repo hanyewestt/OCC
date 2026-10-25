@@ -92,6 +92,24 @@ class RootCauseDiagnosisProcessorTest {
     }
 
     @Test
+    void serverDerivedMissingEvidenceIsNotCrowdedOutByModelLimitations() {
+        context = new RootCauseContext("SIMULATION", demoRunId, null, context.arrivals(), List.of(), List.of("bus-progress"));
+        when(contextEvidence.findContext(event)).thenReturn(context);
+        List<String> modelLimitations = java.util.stream.IntStream.range(0, 20)
+                .mapToObj(index -> "Model limitation " + index).toList();
+        when(model.diagnose(any(EvidenceSnapshot.class), anyList(), eq(1))).thenReturn(
+                new RootCauseModelPort.ModelCallResult(
+                        new ModelOutput("UNKNOWN", null, null, event.evidenceIds(), modelLimitations), invocation(1)));
+
+        processor.process(requestId);
+
+        var diagnosis = ArgumentCaptor.forClass(RootCauseDiagnosis.class);
+        verify(completion).complete(eq(requestId), diagnosis.capture(), anyList(), anyString(),
+                eq("persisted-recommendation-payload"), any(UUID.class));
+        assertThat(diagnosis.getValue().limitations()).contains("Missing evidence field: bus-progress");
+    }
+
+    @Test
     void deprecatedConfidenceThresholdCannotAlterEvidenceOrRecommendationDelivery() {
         var incident = new IncidentEvidence("incident-evidence-1", UUID.randomUUID(), "Vehicle Breakdown",
                 "Provider-reported breakdown", BigDecimal.ONE, BigDecimal.ONE, NOW.minusSeconds(180),

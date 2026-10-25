@@ -17,13 +17,22 @@ public class HazardReadService {
     private final Clock clock;
     private final com.csd.occ.disruption.bunching.domain.DisruptionRepository disruptions;
     private final com.csd.occ.disruption.traffic.domain.TrafficIncidentStateRepository traffic;
+    private final com.csd.occ.disruption.traffic.domain.TrafficIncidentEventRepository trafficEvents;
+    private final com.csd.occ.disruption.traffic.domain.TrafficIncidentEvidencePort trafficEvidence;
+    private final com.csd.occ.disruption.bunching.domain.PlanningEventSubmissionPort eventCodec;
     private final HazardCheckpointRepository checkpoints;
     private final HazardExposurePolicy exposure = new HazardExposurePolicy();
     public HazardReadService(HazardStateRepository hazards, ConsumerSelectionService selection,
             HazardTransitPort transit, Clock clock, com.csd.occ.disruption.bunching.domain.DisruptionRepository disruptions,
-            com.csd.occ.disruption.traffic.domain.TrafficIncidentStateRepository traffic, HazardCheckpointRepository checkpoints) {
+            com.csd.occ.disruption.traffic.domain.TrafficIncidentStateRepository traffic,
+            com.csd.occ.disruption.traffic.domain.TrafficIncidentEventRepository trafficEvents,
+            com.csd.occ.disruption.traffic.domain.TrafficIncidentEvidencePort trafficEvidence,
+            com.csd.occ.disruption.bunching.domain.PlanningEventSubmissionPort eventCodec,
+            HazardCheckpointRepository checkpoints) {
         this.hazards = hazards; this.selection = selection; this.transit = transit; this.clock = clock;
         this.disruptions = disruptions; this.traffic = traffic; this.checkpoints = checkpoints;
+        this.trafficEvents = trafficEvents; this.trafficEvidence = trafficEvidence;
+        this.eventCodec = eventCodec;
     }
     public Page list(String kind, int page, int size) {
         if (page < 0 || size < 1 || size > 100) throw new IllegalArgumentException("Invalid hazard pagination");
@@ -44,15 +53,35 @@ public class HazardReadService {
         if (hazard.isPresent()) {
             var h = hazard.get();
             return new Snapshot(h.disruptionId(), h.kind(), h.status(), h.inactiveReason(), h.classification(), h.demoRunId(),
-                    h.sourceObservationId(), h.updatedAt(), h.facts());
+                    h.sourceObservationId(), null, h.updatedAt(), h.facts());
         }
         var foundTraffic = traffic.findByDisruptionId(id);
         if (foundTraffic.isEmpty()) {
             var d = disruptions.findById(id).orElseThrow(() -> new IllegalArgumentException("Hazard not found"));
+            if ("TRAFFIC_INCIDENT".equals(d.kind())) {
+                var evidence = trafficEvents.findLatestEvidenceByDisruptionId(id)
+                        .orElseThrow(() -> new IllegalArgumentException("Traffic incident evidence not found"));
+                var incident = trafficEvidence.decode(evidence);
+                var location = new HazardPollPort.Location("POINT", incident.sourceIncidentKey(), incident.message(),
+                        incident.latitude(), incident.longitude(), null, "INCIDENT_POINT", "PROVIDER_SUPPLIED");
+                var facts = new HazardPollPort.Fact("TRAFFIC_INCIDENT", incident.sourceIncidentKey(), "OBSERVED",
+                        incident.observedAt(), null, null, incident.incidentType(), incident.message(), null, null,
+                        List.of(), null, null, null, null, List.of(location));
+                return new Snapshot(id, d.kind(), d.status(), "CLEARED".equals(d.status()) ? "NO_LONGER_REPORTED" : null,
+                        d.classification(), d.demoRunId(), incident.sourceObservationId(), incident.sourceRevision(),
+                        d.updatedAt(), facts);
+            }
+            if (List.of("FLOOD", "RAIL_DISRUPTION", "ROADWORKS").contains(d.kind())) {
+                var evidence = hazards.findLatestHazardEventEvidence(id)
+                        .orElseThrow(() -> new IllegalArgumentException("Hazard event evidence not found"));
+                var event = eventCodec.decodeHazard(evidence);
+                return new Snapshot(id, d.kind(), d.status(), event.inactiveReason(), d.classification(), d.demoRunId(),
+                        event.sourceObservationId(), event.sourceRevision(), d.updatedAt(), event.facts());
+            }
             if (!"BUNCHING".equals(d.kind())) throw new IllegalArgumentException("Unsupported disruption kind");
             var facts = new HazardPollPort.Fact("BUNCHING", id.toString(), "OBSERVED", null, null, null,
                     "Bus bunching", "Validated synthetic bunching context", null, null, List.of(), null, null, null, null, List.of());
-            return new Snapshot(id, d.kind(), d.status(), null, d.classification(), d.demoRunId(), null, d.updatedAt(), facts);
+            return new Snapshot(id, d.kind(), d.status(), null, d.classification(), d.demoRunId(), null, null, d.updatedAt(), facts);
         }
         var t = foundTraffic.get();
         var location = new HazardPollPort.Location("POINT", t.sourceIncidentKey(), t.message(), t.latitude(), t.longitude(),
@@ -60,7 +89,7 @@ public class HazardReadService {
         var facts = new HazardPollPort.Fact("TRAFFIC_INCIDENT", t.sourceIncidentKey(), "OBSERVED", t.observedAt(), null,
                 null, t.incidentType(), t.message(), null, null, List.of(), null, null, null, null, List.of(location));
         return new Snapshot(t.disruptionId(), "TRAFFIC_INCIDENT", t.isActive() ? "ACTIVE" : "CLEARED", t.inactiveReason(),
-                t.classification(), t.demoRunId(), t.sourceObservationId(), t.updatedAt(), facts);
+                t.classification(), t.demoRunId(), t.sourceObservationId(), t.sourceRevision(), t.updatedAt(), facts);
     }
     private View view(Snapshot state, java.util.Map<String, HazardTransitPort.Route> routes,
             java.util.Map<UUID, HazardTransitPort.Fleet> fleets,
@@ -95,12 +124,12 @@ public class HazardReadService {
         } catch (RuntimeException unavailable) { limitations.add("Transit reference or simulation context unavailable; exposure is incomplete."); }
         limitations.add("Candidate associations do not establish causation, road closure, safe speed or available capacity.");
         return new View(state.disruptionId(), state.kind(), status, state.inactiveReason(), state.classification(),
-                state.demoRunId(), state.sourceObservationId(), state.updatedAt(), state.facts(), matches, limitations);
+                state.demoRunId(), state.sourceObservationId(), state.sourceRevision(), state.updatedAt(), state.facts(), matches, limitations);
     }
     public record Page(List<View> items, int page, int size, long totalElements, List<HazardCheckpoint.FeedHealth> feeds) {}
     private record Snapshot(UUID disruptionId, String kind, String status, String inactiveReason, String classification,
-                       UUID demoRunId, UUID sourceObservationId, Instant updatedAt, HazardPollPort.Fact facts) {}
+                       UUID demoRunId, UUID sourceObservationId, Long sourceRevision, Instant updatedAt, HazardPollPort.Fact facts) {}
     public record View(UUID disruptionId, String kind, String status, String inactiveReason, String classification,
-                       UUID demoRunId, UUID sourceObservationId, Instant updatedAt, HazardPollPort.Fact facts,
+                       UUID demoRunId, UUID sourceObservationId, Long sourceRevision, Instant updatedAt, HazardPollPort.Fact facts,
                        List<HazardExposurePolicy.Exposure> exposures, List<String> limitations) {}
 }

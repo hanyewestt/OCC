@@ -39,8 +39,9 @@ public class IssuedInstruction {
     public void acknowledge(String subject, Instant now) {
         if (acknowledgedAt != null) return;
         if (!"ISSUED".equals(status) || !now.isBefore(acknowledgementDeadline)) throw new AdvisoryConflictException("Instruction is no longer acknowledgeable");
-        acknowledgedAt = now; acknowledgementSubject = subject; status = "ACKNOWLEDGED";
-        if (type == InstructionType.REDUCE_SPEED) applicableUntil = now.plusSeconds(parameters.durationSeconds());
+        acknowledgedAt = now.truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        acknowledgementSubject = subject; status = "ACKNOWLEDGED";
+        if (type == InstructionType.REDUCE_SPEED) applicableUntil = acknowledgedAt.plusSeconds(parameters.durationSeconds());
     }
     public void expire(String reason) { status = "EXPIRED"; inactiveReason = reason; }
     public void cancel(String reason) { status = "CANCELLED"; inactiveReason = reason; }

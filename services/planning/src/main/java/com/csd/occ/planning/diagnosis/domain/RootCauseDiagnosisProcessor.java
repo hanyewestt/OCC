@@ -182,12 +182,13 @@ public class RootCauseDiagnosisProcessor {
     }
 
     private List<String> limitations(ModelOutput output, RootCauseContext context, BunchingEvidenceSupportPolicy.AssociatedEvidence association) {
-        List<String> values = new ArrayList<>(output.limitations());
+        List<String> values = context.missingFields().stream().map(field -> "Missing evidence field: " + field)
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
         values.addAll(association.limitations());
         if ("OBSERVATION_ONLY".equals(context.classification()))
             values.add("Live diagnosis only: validated vehicle assignments, control stops and crowd-safety inputs are unavailable; no operational instruction is issued.");
         if ("UNKNOWN".equals(output.causeCode())) values.add("No contextual evidence supported a specific cause.");
-        context.missingFields().stream().map(field -> "Missing evidence field: " + field).forEach(values::add);
+        values.addAll(output.limitations());
         return values.stream().filter(value -> value != null && !value.isBlank()).distinct().limit(20).toList();
     }
 

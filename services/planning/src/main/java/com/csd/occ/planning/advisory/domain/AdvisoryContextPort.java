@@ -13,10 +13,28 @@ public interface AdvisoryContextPort {
     record Limits(int maxSpeedReductionKmh, int maxDurationSeconds, int maxSubsequentStops,
                   Duration acknowledgementWindow, Duration retention) {}
     record Hazard(UUID disruptionId, String kind, String status, String inactiveReason, String classification,
-                  UUID demoRunId, UUID sourceObservationId, Instant updatedAt, HazardEventFacts.Fact facts,
-                  List<Exposure> exposures, List<String> limitations) {}
+                  UUID demoRunId, UUID sourceObservationId, Long sourceRevision, Instant updatedAt,
+                  HazardEventFacts.Fact facts, List<Exposure> exposures, List<String> limitations) {
+        public Hazard(UUID disruptionId, String kind, String status, String inactiveReason, String classification,
+                UUID demoRunId, UUID sourceObservationId, Instant updatedAt, HazardEventFacts.Fact facts,
+                List<Exposure> exposures, List<String> limitations) {
+            this(disruptionId, kind, status, inactiveReason, classification, demoRunId, sourceObservationId, null,
+                    updatedAt, facts, exposures, limitations);
+        }
+
+        public boolean hasSameEvidenceAs(Hazard latest) {
+            return sourceRevision != null
+                    ? sourceRevision.equals(latest.sourceRevision)
+                    : java.util.Objects.equals(sourceObservationId, latest.sourceObservationId);
+        }
+    }
     record Exposure(String busId, String serviceId, int directionId, String stopCode, String stopName,
-                    int stopSequence, String basis, String limitation) {}
+                    int busProgressSequence, int stopSequence, String basis, String limitation) {
+        public Exposure(String busId, String serviceId, int directionId, String stopCode, String stopName,
+                int stopSequence, String basis, String limitation) {
+            this(busId, serviceId, directionId, stopCode, stopName, stopSequence, stopSequence, basis, limitation);
+        }
+    }
     record Fleet(UUID demoRunId, String status, List<Bus> items, long totalElements) {}
     record Bus(String busId, String tripId, String registrationNumber, String serviceId, int directionId,
                UUID captainUserId, String assignmentStatus, Progress progress) {}

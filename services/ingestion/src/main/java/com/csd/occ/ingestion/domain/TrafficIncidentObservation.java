@@ -10,7 +10,6 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 @Entity
 @Table(name = "traffic_incident_observation", schema = "ingestion")
-@org.hibernate.annotations.SQLRestriction("hazard_kind = 'TRAFFIC_INCIDENT'")
 public class TrafficIncidentObservation {
     protected TrafficIncidentObservation() {}
     @Id private UUID id;

@@ -15,8 +15,13 @@ pagination uses `OCC_INGESTION_HAZARD_PAGE_SIZE` (500) and
 `OCC_INGESTION_HAZARD_MAX_PAGES` (10); date-only/local provider timestamps use
 `OCC_INGESTION_HAZARD_SOURCE_TIMEZONE` (Asia/Singapore). Flood coverage is a
 broadcast radius, not flooded-road geometry; approved work does not imply closure.
-The normalized store extends the existing traffic table without copying records.
-Legacy traffic reads filter traffic kinds. `/internal/v1/hazard-polls` exposes
+Migration V022 stores flood, rail and roadworks observations in a separate
+`ingestion.hazard_observation` table and moves existing rows out of the traffic
+table. The legacy traffic table and its coordinate constraints are restored so a
+rollback to the preceding application can read traffic observations safely. Keep
+the migrated database when rolling back; the preceding application ignores the
+additional-hazard table, and a roll-forward resumes reading it.
+`/internal/v1/hazard-polls` exposes
 completed additional-feed polls to the Disruption peer, including incomplete polls.
 Original page bodies are stored as JSON strings in a JSON array, preserving even
 malformed provider text without logging credentials. The checksum covers the JSON

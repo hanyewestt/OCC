@@ -36,6 +36,8 @@ public class HazardAdvisoryProcessor {
             var submitted = submission.hazardSnapshot();
             UUID disruptionId = submitted == null ? submission.trafficSnapshot().disruptionId() : submitted.disruptionId();
             UUID sourceObservationId = submitted == null ? submission.trafficSnapshot().sourceObservationId() : submitted.sourceObservationId();
+            Long sourceRevision = submitted == null ? submission.trafficSnapshot().sourceRevision() : submitted.sourceRevision();
+            String targetBusId = submitted == null ? null : submitted.targetBusId();
             String action = submitted == null ? submission.trafficSnapshot().action() : submitted.action();
             if (action.equals("CLEARED")) {
                 // A delayed clear must not withdraw instructions for a subsequently reopened episode.
@@ -44,16 +46,22 @@ public class HazardAdvisoryProcessor {
                 proposals.record(requestId, List.of()); return true;
             }
             var scope = scopes.current();
+            if (submitted != null && submitted.targetRunId() != null
+                    && !submitted.targetRunId().equals(scope.demoRunId())) {
+                proposals.record(requestId, List.of());
+                return true;
+            }
             if (scope.demoRunId() == null) {
                 proposals.record(requestId, List.of()); return true;
             }
             var hazard = context.hazard(disruptionId);
-            if (!hazard.status().equals("ACTIVE") || !sourceObservationId.equals(hazard.sourceObservationId())) {
+            if (!hazard.status().equals("ACTIVE") || !matchesEvidence(hazard, sourceObservationId, sourceRevision)) {
                 proposals.record(requestId, List.of()); return true;
             }
             var fleet = context.fleet(scope.demoRunId());
             List<AdvisoryProposal> result = new ArrayList<>();
             if (List.of("RUNNING", "REPLAY_COMPLETE").contains(fleet.status())) for (var bus : fleet.items()) {
+                if (targetBusId != null && !targetBusId.equals(bus.busId())) continue;
                 if (bus.progress() == null || hazard.exposures().stream().noneMatch(e -> e.busId().equals(bus.busId()))) continue;
                 var draft = drafts.propose(hazard, bus);
                 String preview = policy.message(draft.candidate(), bus, hazard.exposures(), hazard.facts().instruction(), context.limits());
@@ -67,5 +75,12 @@ public class HazardAdvisoryProcessor {
                     request.attemptCount() < settings.maxAttempts(), clock.instant().plus(settings.retryInitialDelay()), List.of(), null);
         }
         return true;
+    }
+
+    private static boolean matchesEvidence(AdvisoryContextPort.Hazard current, UUID sourceObservationId,
+            Long sourceRevision) {
+        return sourceRevision != null
+                ? sourceRevision.equals(current.sourceRevision())
+                : sourceObservationId.equals(current.sourceObservationId());
     }
 }

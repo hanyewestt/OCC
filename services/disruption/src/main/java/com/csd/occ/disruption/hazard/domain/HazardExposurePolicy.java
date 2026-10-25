@@ -12,7 +12,7 @@ public final class HazardExposurePolicy {
                 .flatMap(direction -> direction.stops().stream()).filter(stop -> stop.stopSequence() >= bus.progress().stopSequence())
                 .flatMap(stop -> locations.stream().filter(location -> matches(location, stop, radiusKm))
                         .map(location -> new Exposure(bus.busId(), bus.serviceId(), bus.directionId(), stop.stopCode(),
-                                stop.description(), stop.stopSequence(), location.geometryRole(),
+                                stop.description(), bus.progress().stopSequence(), stop.stopSequence(), location.geometryRole(),
                                 "Candidate association; road path, direction relevance and operational impact are not verified.")))
                 .distinct().toList();
     }
@@ -32,5 +32,5 @@ public final class HazardExposurePolicy {
         return distance <= limit;
     }
     public record Exposure(String busId, String serviceId, int directionId, String stopCode, String stopName,
-                           int stopSequence, String basis, String limitation) {}
+                           int busProgressSequence, int stopSequence, String basis, String limitation) {}
 }

@@ -9,6 +9,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import java.time.Clock;
 import java.util.UUID;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -19,13 +20,17 @@ public class AdvisoryController {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AdvisoryController.class);
     private final InstructionService instructions;
     private final MeterRegistry metrics;
-    public AdvisoryController(InstructionService instructions, MeterRegistry metrics) { this.instructions = instructions; this.metrics = metrics; }
+    private final Clock clock;
+    public AdvisoryController(InstructionService instructions, MeterRegistry metrics, Clock clock) {
+        this.instructions = instructions; this.metrics = metrics; this.clock = clock;
+    }
     @GetMapping("/advisories")
     @Operation(operationId = "listAdvisories", summary = "Review structured proposals for the active simulation",
-            description = "Controller/admin only. Ordered oldest first. page defaults 0; size defaults 20, range 1–100.")
+            description = "Controller/admin only. Ordered oldest first. pendingOnly filters to actionable proposals before pagination. page defaults 0; size defaults 20, range 1–100.")
     public AdvisoryResponse.PageResponse list(@RequestParam(defaultValue = "0") @Min(0) int page,
-            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
-        var result = instructions.proposals(page, size);
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
+            @RequestParam(defaultValue = "false") boolean pendingOnly) {
+        var result = instructions.proposals(page, size, pendingOnly);
         return new AdvisoryResponse.PageResponse(result.map(AdvisoryResponse::from).toList(), page, size, result.getTotalElements(), result.getTotalPages());
     }
     @PostMapping("/advisories/{id}/preview")
@@ -52,7 +57,8 @@ public class AdvisoryController {
     @Operation(operationId = "listInstructionHistory", summary = "Read issuance and acknowledgement history", description = "Controller/admin only; active run, newest first.")
     public InstructionResponse.PageResponse history(@RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "20") int size) {
         var result = instructions.history(page, size);
-        return new InstructionResponse.PageResponse(result.map(InstructionResponse::from).toList(), page, size, result.getTotalElements(), result.getTotalPages());
+        return new InstructionResponse.PageResponse(result.map(InstructionResponse::from).toList(), page, size,
+                result.getTotalElements(), result.getTotalPages(), clock.instant());
     }
     @PostMapping("/instructions/{id}/cancellations")
     @Operation(operationId = "cancelInstruction", summary = "Cancel an instruction", description = "Controller/admin only; repeated cancellations are safe.")
@@ -66,7 +72,7 @@ public class AdvisoryController {
             @RequestParam(defaultValue = "0") @Min(0) int page, @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
         var found = instructions.captain(jwt.getSubject());
         return new InstructionResponse.PageResponse(found.stream().skip((long) page * size).limit(size).map(InstructionResponse::from).toList(),
-                page, size, found.size(), (found.size() + size - 1) / size);
+                page, size, found.size(), (found.size() + size - 1) / size, clock.instant());
     }
     @PostMapping("/captain/instructions/{id}/acknowledgements")
     @Operation(operationId = "acknowledgeCaptainInstruction", summary = "Acknowledge an assigned instruction",

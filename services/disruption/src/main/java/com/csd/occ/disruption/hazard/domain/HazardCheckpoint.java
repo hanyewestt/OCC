@@ -22,7 +22,12 @@ public class HazardCheckpoint {
     public UUID pollRunId() { return pollRunId; }
     public boolean isBefore(HazardPollPort.Poll poll) {
         return completedAt == null || poll.completedAt().isAfter(completedAt)
-                || poll.completedAt().equals(completedAt) && poll.pollRunId().compareTo(pollRunId) > 0;
+                || poll.completedAt().equals(completedAt) && compareUuid(poll.pollRunId(), pollRunId) > 0;
+    }
+    private static int compareUuid(UUID left, UUID right) {
+        int mostSignificant = Long.compareUnsigned(left.getMostSignificantBits(), right.getMostSignificantBits());
+        return mostSignificant != 0 ? mostSignificant
+                : Long.compareUnsigned(left.getLeastSignificantBits(), right.getLeastSignificantBits());
     }
     public void advance(HazardPollPort.Poll poll, java.time.Duration staleAfter) {
         completedAt = poll.completedAt(); pollRunId = poll.pollRunId(); lastAttemptAt = poll.completedAt();

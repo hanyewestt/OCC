@@ -44,10 +44,13 @@ public class DemoFleetService {
                         .filter(direction -> direction.directionId() == assignment.directionId())
                         .flatMap(direction -> direction.stops().stream())
                         .filter(stop -> stop.stopCode().equals(arrival.getStopCode())).distinct().toList();
-            if (candidates.size() != 1) return Optional.empty();
-            var stop = candidates.getFirst();
-            return Optional.of(new DemoFleetSnapshot.Progress(stop.stopCode(), stop.stopSequence(),
-                    arrival.getFetchedAt(), 30, List.of(5), List.of(300)));
+            return candidates.stream()
+                    .filter(candidate -> arrival.getRouteStopSequence() == null
+                            ? candidates.size() == 1
+                            : candidate.stopSequence() == arrival.getRouteStopSequence())
+                    .findFirst()
+                    .map(stop -> new DemoFleetSnapshot.Progress(stop.stopCode(), stop.stopSequence(),
+                            arrival.getFetchedAt(), 30, List.of(5), List.of(300)));
         });
         // Speed values are labelled scenario assumptions, never measured vehicle telemetry.
     }

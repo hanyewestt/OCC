@@ -2,11 +2,17 @@ package com.csd.occ.disruption.hazard.integration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.when;
 
+import com.csd.occ.disruption.bunching.domain.ConsumerSelectionService;
 import com.csd.occ.disruption.bunching.domain.PlanningEventSubmissionPort;
+import com.csd.occ.disruption.bunching.infrastructure.scheduling.BunchingRetentionService;
 import com.csd.occ.disruption.hazard.domain.HazardPollPort;
-import com.csd.occ.disruption.hazard.domain.HazardSyncService;
+import com.csd.occ.disruption.hazard.domain.HazardReadService;
+import com.csd.occ.disruption.hazard.domain.HazardReassessmentService;
 import com.csd.occ.disruption.hazard.domain.HazardStateRepository;
+import com.csd.occ.disruption.hazard.domain.HazardSyncService;
+import com.csd.occ.disruption.hazard.domain.HazardTransitPort;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -22,18 +28,20 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE, properties = {
         "OCC_DISRUPTION_INTERNAL_PORT=8002", "OCC_DISRUPTION_CONSUMER_ENABLED=false",
-        "OCC_DISRUPTION_PLANNING_WORKER_ENABLED=false", "OCC_DISRUPTION_HAZARD_ENABLED=false"
+        "OCC_DISRUPTION_PLANNING_WORKER_ENABLED=false", "OCC_DISRUPTION_HAZARD_ENABLED=false",
+        "OCC_DISRUPTION_HAZARD_STATE_RETENTION=30d"
 })
 @ActiveProfiles("test")
 @Import(HazardLifecycleIT.Time.class)
@@ -59,10 +67,16 @@ class HazardLifecycleIT {
     @Autowired JdbcTemplate jdbc;
     @Autowired TestClock clock;
     @Autowired HazardStateRepository hazards;
+    @Autowired BunchingRetentionService retention;
+    @Autowired HazardReadService hazardReads;
+    @Autowired HazardReassessmentService reassessment;
+    @Autowired ConsumerSelectionService selections;
+    @MockitoBean HazardTransitPort transit;
 
     @BeforeEach
     void resetRows() {
         clock.set(NOW);
+        jdbc.update("UPDATE disruption.consumer_state SET mode='LIVE', demo_run_id=NULL WHERE id=1");
         jdbc.execute("TRUNCATE disruption.planning_outbox, disruption.event_evidence, disruption.disruption_event, "
                 + "disruption.hazard_state, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption");
         jdbc.update("UPDATE disruption.hazard_checkpoint SET completed_at=NULL, poll_run_id=NULL");
@@ -109,6 +123,11 @@ class HazardLifecycleIT {
         assertThat(state("flood-2", "status")).isEqualTo("ACTIVE");
         assertThat(count("hazard_state")).isEqualTo(2);
         assertThat(count("disruption_event")).isEqualTo(3);
+        String resolution = jdbc.queryForObject("SELECT evidence::text FROM disruption.disruption_event WHERE action='CLEARED'",
+                String.class);
+        assertThat(resolution).contains("\"resolutionEvidence\": {",
+                "\"method\": \"SOURCE_OBSERVATION\"",
+                "\"sourceEventKey\": \"cancel-1\"", "\"sourceAction\": \"CANCEL\"");
         clock.set(NOW.plusSeconds(2));
         process("FLOOD", poll("FLOOD", clock.instant(), "SUCCESS", true, null, List.of(first, second)));
         assertThat(state("flood-1", "status")).isEqualTo("CLEARED");
@@ -224,6 +243,71 @@ class HazardLifecycleIT {
         assertThat(jdbc.queryForObject("SELECT status FROM disruption.hazard_state WHERE classification='SIMULATION'", String.class))
                 .isEqualTo("ACTIVE");
         assertThat(count("hazard_state")).isEqualTo(2);
+    }
+
+    @Test
+    void clearedOperationalStateIsPurgedOnlyAfterReplayWindowAndHistoryRemainsReadable() {
+        process("FLOOD", poll("FLOOD", NOW, "SUCCESS", true, null,
+                List.of(fact("FLOOD", "retained-source", "OBSERVED", null, null, List.of()))));
+        var disruptionId = jdbc.queryForObject("SELECT disruption_id FROM disruption.hazard_state", UUID.class);
+        clock.set(NOW.plusSeconds(1));
+        process("FLOOD", poll("FLOOD", clock.instant(), "SUCCESS", true, null,
+                List.of(fact("FLOOD", "cancel-retained", "CANCEL", null, null, List.of("retained-source")))));
+        jdbc.update("UPDATE disruption.planning_outbox SET status='DELIVERED', delivered_at=created_at, lease_until=NULL");
+
+        clock.set(NOW.plus(Duration.ofDays(31)));
+        assertThat(retention.purgeExpiredOperationalState()).isPositive();
+
+        assertThat(count("hazard_state")).isZero();
+        assertThat(count("disruption_event")).isEqualTo(2);
+        var historical = hazardReads.find(disruptionId);
+        assertThat(historical.status()).isEqualTo("CLEARED");
+        assertThat(historical.inactiveReason()).isEqualTo("SOURCE_CANCELLED");
+        assertThat(historical.facts().sourceEventKey()).isEqualTo("retained-source");
+    }
+
+    @Test
+    void exposedDemoBusProgressCreatesDurableReassessmentOnlyOncePerEvidenceAndProgress() {
+        var runId = UUID.randomUUID();
+        process("FLOOD", poll("FLOOD", NOW, "SUCCESS", true, null,
+                List.of(fact("FLOOD", "reassessed-source", "OBSERVED", null, null, List.of()))));
+
+        selections.select("DEMO", runId);
+        when(transit.associationRadiusKm()).thenReturn(1.0);
+        when(transit.route("190")).thenReturn(new HazardTransitPort.Route("190", List.of(
+                new HazardTransitPort.Operator("Operator", List.of(new HazardTransitPort.Direction(1, List.of(
+                        new HazardTransitPort.Stop("44251", "Demo Road", "Demo Road", null, null, 10))))))));
+        when(transit.fleet(org.mockito.ArgumentMatchers.eq(runId), org.mockito.ArgumentMatchers.anyInt()))
+                .thenAnswer(invocation -> fleet(runId, 5));
+
+        assertThat(reassessment.enqueueExposedBuses()).isEqualTo(1);
+        assertThat(reassessment.enqueueExposedBuses()).isZero();
+        assertThat(count("disruption_event")).isEqualTo(2);
+        assertThat(count("planning_outbox")).isEqualTo(2);
+
+        when(transit.fleet(org.mockito.ArgumentMatchers.eq(runId), org.mockito.ArgumentMatchers.anyInt()))
+                .thenAnswer(invocation -> fleet(runId, 6));
+        assertThat(reassessment.enqueueExposedBuses()).isEqualTo(1);
+        assertThat(count("disruption_event")).isEqualTo(3);
+        assertThat(count("planning_outbox")).isEqualTo(3);
+
+        var reassessmentEvents = jdbc.query("""
+                SELECT id::text, evidence->'hazardSnapshot'->>'targetBusId' AS bus_id
+                FROM disruption.disruption_event WHERE action='REASSESSED' ORDER BY id
+                """, (rs, row) -> rs.getString("id") + ":" + rs.getString("bus_id"));
+        assertThat(reassessmentEvents).hasSize(2);
+        assertThat(reassessmentEvents).allSatisfy(event -> assertThat(event).contains("demo-190-b"));
+        assertThat(reassessmentEvents).doesNotHaveDuplicates();
+        assertThat(jdbc.queryForList("SELECT payload_json FROM disruption.planning_outbox WHERE event_id IN "
+                + "(SELECT id FROM disruption.disruption_event WHERE action='REASSESSED')", String.class))
+                .allSatisfy(payload -> assertThat(payload).contains("\"action\":\"REASSESSED\"",
+                        "\"targetBusId\":\"demo-190-b\"", "\"targetRunId\":\"" + runId + "\""));
+    }
+
+    private HazardTransitPort.Fleet fleet(UUID runId, int progressSequence) {
+        return new HazardTransitPort.Fleet(runId, "ACTIVE", List.of(new HazardTransitPort.Bus("demo-190-b", "trip-1",
+                "SYNTHETIC", "190", 1, null, "ASSIGNED", new HazardTransitPort.Progress("44251",
+                progressSequence, NOW, 40, List.of(), List.of()))), 1, 0, 100);
     }
 
     private void process(String kind, HazardPollPort.Poll poll) {
