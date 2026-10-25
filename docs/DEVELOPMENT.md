@@ -235,25 +235,56 @@ Nginx explicitly allows each route; unknown controller paths still return 404.
 All four share Gateway's controller access verification. API permissions remain
 enforced by the backend.
 
-Dashboard data loads on entry and manual Refresh. Arrivals are paginated live
-records (50 per page); live bunching displays up to 200 open detections and
-reports truncation. An active demo switches the detection view to simulation
-events, while arrivals stay explicitly live. Detection rows show the reference
-stop name (with code retained), direction and Bus 1/2/3 prediction slots from
-the saved detection evidence. They never substitute current arrivals for missing
-historical predictions. Missing slots show No prediction; invalid evidence shows
-Unavailable, and failed stop enrichment does not hide detections.
-The Planning page retrieves the
-current demo's recommendation and reads/writes its existing decision endpoint.
-The audit page retrieves that same saved decision, including after reload.
-There is no full mitigation queue or historical audit listing endpoint yet;
-these views explicitly cover only the current simulation. Traffic disruptions
-and AI audit logs are labelled placeholders. Use Start simulation / Return to
-live in the dashboard header to call the existing demo-run start/close APIs.
-The dashboard refreshes after a mode change. These controls switch the shared
-backend detection mode, not just the current browser's view; arrivals remain live.
-No new runtime settings, services or migrations are
-needed for this dashboard.
+Dashboard data loads on entry and manual Refresh. Its **Approximate Live Route
+Strip** shows one selected service and destination stop name at a time; the
+selector changes the route without hiding the route legend or estimated-position
+warnings. Approximate position markers are derived from recent arrivals and are
+not physical vehicle tracking. The Overview keeps the bunching detection count;
+the grouped **Bunching incidents** collection is on Disruptions.
+
+Current bus arrivals stay Live in both modes. The table shows stop name and code,
+searches stop names across the backend result set, and sorts by stop name or
+arrival time in either direction. Ten compact rows are visible at a time, with
+scrolling loading later pages. Other compact operational lists follow the same
+10-row limit; larger diagnosis, processing, recommendation, advisory, instruction
+and notice cards show at most four cards before scrolling. Short lists size to
+their content. Visible times use a 24-hour clock in SGT, and refresh text uses
+`Last updated … SGT · Refreshes every … seconds`.
+
+Planning & mitigation scopes diagnoses and recommendations to the selected
+Live or Simulation mode. Diagnosis rows use contextual processing states and a
+short possible-contributor summary. The **Evidence and limitations** disclosure
+contains bounded source facts and explains what the data does not establish.
+Controllers enter replacement instructions in a modal; dirty drafts require
+explicit discard confirmation, while errors keep the draft available to retry.
+The API still validates recommendation freshness and records the controller's
+decision. The audit page retrieves the saved decision, including after reload.
+There is no historical audit listing endpoint yet; the audit view covers the
+current simulation. Traffic disruptions and AI audit logs are labelled
+placeholders.
+
+Use Start simulation / Return to live in the dashboard header to call the
+existing demo-run start/close APIs. The dashboard refreshes after a mode change.
+These controls switch the shared backend detection mode, not just the current
+browser's view; arrivals remain live. Browser journeys use synthetic Supabase
+and API responses and do not create real approval records. To verify the real
+local flow:
+
+1. Start the stack with `docker compose --env-file .env up -d --build --wait`.
+2. Sign in to `/controller`, start a fresh simulation, then open
+   `/controller/planning` and wait for the current diagnosis and recommendation.
+3. Inspect the diagnosis summary and its **Evidence and limitations** disclosure.
+   Choose an eligible recommendation assigned to the captain configured by
+   `OCC_DEMO_CAPTAIN_USER_ID`, preview the OBU instruction, and approve and send it.
+4. In a separate browser session, sign in as that captain and open `/captain`.
+   Confirm the instruction appears, acknowledge it, and verify its receipt status.
+5. On the controller page, draft and publish a notice, verify it on `/notices`,
+   then withdraw it from notice history.
+
+This demonstrates the synthetic local workflow only; it does not prove external
+provider behavior. To avoid live-feed requests during this check, set
+`OCC_INGESTION_BUS_ARRIVAL_ENABLED=false` and
+`OCC_INGESTION_TRAFFIC_INCIDENT_ENABLED=false` in the shell before Compose starts.
 
 The controller browser tests use synthetic Supabase and operational API
 responses, including decisions, conflicts, API errors, mobile navigation and

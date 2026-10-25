@@ -202,7 +202,7 @@ With the service running in Compose, browse the interactive API at `http://local
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/v1/arrivals?stopCode=&serviceId=&stopName=&sortBy=&sortDirection=&page=&size=` | Latest complete per-stop arrival snapshot |
+| `GET /api/v1/arrivals?stopCode=&serviceId=&stopName=&sortBy=&sortDirection=&page=&size=` | Latest complete per-stop arrival snapshot; stop-name search and stop-name/arrival-time sorting apply across the matching result set before pagination |
 | `GET /api/v1/arrivals/history?stopCode=&serviceId=&from=&to=&page=&size=` | Retained normalized observation history |
 | `GET /api/v1/feed-status` | Poll freshness and failures by stop |
 | `GET /api/v1/poll-runs?page=&size=` | Poll audit runs |
@@ -212,6 +212,12 @@ With the service running in Compose, browse the interactive API at `http://local
 | `GET /api/v1/bus-stops?page=&size=` | Bus stops in the active reference topology |
 | `GET /api/v1/bus-stops/{stopCode}` | One bus stop by stop code |
 | `GET /api/v1/route-positions?service=190` | Recent, direction-scoped position estimates for a bus service |
+
+For current arrivals, `stopName` searches across the matching result set before
+pagination. `sortBy` accepts `arrival` (the default) or `stopName`, and
+`sortDirection` accepts `asc` (the default) or `desc`; invalid values return
+HTTP 400. This lets the controller search or sort the complete current set while
+still loading bounded pages.
 
 Route positions are temporary order-based estimates, not vehicle identities. The
 service filters out missing/zero coordinates and readings older than
