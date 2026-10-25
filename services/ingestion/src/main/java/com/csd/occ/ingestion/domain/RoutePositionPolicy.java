@@ -15,6 +15,7 @@ public final class RoutePositionPolicy {
     private static final double MIN_UNCERTAINTY_METERS = 50;
     private static final double ETA_COST_SCALE_SECONDS = 120;
     private static final double MAX_ETA_COST = 8;
+    private static final int MAX_EVIDENCE_OBSERVATIONS = 64;
     private RoutePositionPolicy() {
     }
 
@@ -48,7 +49,7 @@ public final class RoutePositionPolicy {
                     .sorted(Comparator.comparingInt(RoutePositionReading::visitOrder)
                             .thenComparing(RoutePositionReading::estimatedArrivalAt,
                                     Comparator.nullsLast(Comparator.naturalOrder())))
-                    .limit(3).toList();
+                    .toList();
             return new Snapshot(entry.getKey(), ordered.getFirst().pollCycleId(), ordered.getFirst().fetchedAt(), null, ordered);
         }).sorted(Comparator.comparing(Snapshot::fetchedAt))
                 .toList();
@@ -86,7 +87,7 @@ public final class RoutePositionPolicy {
                     .sorted(Comparator.comparingDouble((Track track) -> track.projectedDistance(snapshot.fetchedAt())).reversed()
                             .thenComparingInt(track -> track.last().visitOrder()))
                     .toList();
-            Assignment assignment = assign(snapshot, eligible, clusterToleranceMeters, speedCapMetersPerSecond);
+            Assignment assignment = assign(snapshot, eligible, clusterToleranceMeters, speedCapMetersPerSecond, routeLengthMeters);
             for (int candidateIndex = 0; candidateIndex < snapshot.readings().size(); candidateIndex++) {
                 int trackIndex = assignment.trackByCandidate().get(candidateIndex);
                 RoutePositionReading candidate = snapshot.readings().get(candidateIndex);
@@ -109,14 +110,19 @@ public final class RoutePositionPolicy {
         List<Track> latestCycleTracks = active.stream()
                 .filter(track -> track.lastPollCycleId().equals(latestPollCycleId))
                 .toList();
-        int visibleTrackCount = cycleCandidateCeiling > 0
-                ? Math.min(cycleCandidateCeiling, latestCycleTracks.size()) : latestCycleTracks.size();
-        List<Track> selected = latestCycleTracks.stream()
-                .sorted(Comparator.comparingInt(Track::supportingStopCount).reversed()
-                        .thenComparing(Comparator.comparingInt(Track::observationCount).reversed())
-                        .thenComparingDouble((Track track) -> track.projectedDistance(now)).reversed()
-                        .thenComparing(track -> track.last().estimatedArrivalAt(), Comparator.nullsLast(Comparator.naturalOrder())))
-                .limit(visibleTrackCount)
+        List<Track> wellSupported = latestCycleTracks.stream()
+                .filter(track -> track.supportingStopCount() >= 2)
+                .toList();
+        List<Track> selectedTracks = !wellSupported.isEmpty()
+                ? wellSupported
+                : latestCycleTracks.stream()
+                        .sorted(Comparator.comparingInt(Track::supportingStopCount).reversed()
+                                .thenComparing(Comparator.comparingInt(Track::observationCount).reversed())
+                                .thenComparingDouble((Track track) -> track.projectedDistance(now)).reversed()
+                                .thenComparing(track -> track.last().estimatedArrivalAt(), Comparator.nullsLast(Comparator.naturalOrder())))
+                        .limit(cycleCandidateCeiling > 0 ? cycleCandidateCeiling : latestCycleTracks.size())
+                        .toList();
+        List<Track> selected = selectedTracks.stream()
                 .sorted(Comparator.comparingDouble((Track track) -> track.projectedDistance(now)).reversed()
                         .thenComparing(track -> track.last().estimatedArrivalAt(), Comparator.nullsLast(Comparator.naturalOrder())))
                 .toList();
@@ -137,15 +143,15 @@ public final class RoutePositionPolicy {
     }
 
     private static Assignment assign(Snapshot snapshot, List<Track> tracks, double positionToleranceMeters,
-            double speedCapMetersPerSecond) {
-        Search best = new Search(snapshot, tracks, positionToleranceMeters, speedCapMetersPerSecond);
+            double speedCapMetersPerSecond, double routeLengthMeters) {
+        Search best = new Search(snapshot, tracks, positionToleranceMeters, speedCapMetersPerSecond, routeLengthMeters);
         best.visit(0, new ArrayList<>(), new boolean[tracks.size()], 0, 0);
         return best.best();
     }
 
     private static double transitionCost(RoutePositionReading previous, RoutePositionReading current,
             double positionToleranceMeters, double speedCapMetersPerSecond, Double learnedSpeed,
-            boolean sameFetchBatch) {
+            boolean sameFetchBatch, double routeLengthMeters) {
         double seconds = Duration.between(previous.fetchedAt(), current.fetchedAt()).toMillis() / 1000.0;
         if (seconds < 0 && !sameFetchBatch || seconds == 0 && previous.stopCode().equals(current.stopCode()))
             return Double.POSITIVE_INFINITY;
@@ -160,6 +166,10 @@ public final class RoutePositionPolicy {
                 ? Math.abs(stopDistanceDelta) + positionToleranceMeters * 2
                 : speedCapMetersPerSecond * seconds + positionToleranceMeters * 2;
         if (!sameFetchBatch && positionError > maximumMovement) return Double.POSITIVE_INFINITY;
+        if (sameFetchBatch && positionError > Math.max(maximumMovement * 2, 2500.0)
+                && current.distanceAlongRouteM() <= routeLengthMeters && previous.distanceAlongRouteM() <= routeLengthMeters) {
+            return Double.POSITIVE_INFINITY;
+        }
         double plausibleSpeed = learnedSpeed != null && learnedSpeed >= 2
                 ? learnedSpeed : Math.max(1, speedCapMetersPerSecond / 2);
         double expectedEtaDelta = stopDistanceDelta / plausibleSpeed;
@@ -167,10 +177,9 @@ public final class RoutePositionPolicy {
                 expectedEtaDelta : Duration.between(previous.estimatedArrivalAt(), current.estimatedArrivalAt()).toMillis() / 1000.0;
         double etaError = Math.abs(actualEtaDelta - expectedEtaDelta);
         double etaCost = Math.min(MAX_ETA_COST, etaError / ETA_COST_SCALE_SECONDS);
-        double positionCost = sameFetchBatch
-                ? Math.min(positionError / Math.max(positionToleranceMeters, 1), MAX_ETA_COST)
-                : positionError / Math.max(positionToleranceMeters, 1);
-        return positionCost + etaCost;
+        double positionCost = positionError / Math.max(positionToleranceMeters, 1);
+        double orderCost = current.visitOrder() == previous.visitOrder() ? 0 : 0.5;
+        return positionCost + etaCost + orderCost;
     }
 
     private static double clamp(double distance, double routeLength) {
@@ -187,13 +196,16 @@ public final class RoutePositionPolicy {
         private final List<Track> tracks;
         private final double positionToleranceMeters;
         private final double speedCapMetersPerSecond;
+        private final double routeLengthMeters;
         private Assignment best = new Assignment(List.of(), -1, Double.POSITIVE_INFINITY);
 
-        private Search(Snapshot snapshot, List<Track> tracks, double positionToleranceMeters, double speedCapMetersPerSecond) {
+        private Search(Snapshot snapshot, List<Track> tracks, double positionToleranceMeters,
+                double speedCapMetersPerSecond, double routeLengthMeters) {
             this.snapshot = snapshot;
             this.tracks = tracks;
             this.positionToleranceMeters = positionToleranceMeters;
             this.speedCapMetersPerSecond = speedCapMetersPerSecond;
+            this.routeLengthMeters = routeLengthMeters;
         }
 
         private Assignment best() { return best; }
@@ -214,7 +226,8 @@ public final class RoutePositionPolicy {
                 double edgeCost = transitionCost(track.last(), candidate, positionToleranceMeters,
                         speedCapMetersPerSecond, track.speedMps(),
                         track.lastPollCycleId().equals(snapshot.pollCycleId())
-                                && !track.last().stopCode().equals(candidate.stopCode()));
+                                && !track.last().stopCode().equals(candidate.stopCode()),
+                        routeLengthMeters);
                 if (!Double.isFinite(edgeCost)) continue;
                 used[trackIndex] = true;
                 current.add(trackIndex);
@@ -278,7 +291,7 @@ public final class RoutePositionPolicy {
             lastPollCycleId = pollCycleId;
             observationIds.add(reading.observationId());
             stopCodes.add(reading.stopCode());
-            if (observationIds.size() > 12) observationIds.removeFirst();
+            if (observationIds.size() > MAX_EVIDENCE_OBSERVATIONS) observationIds.removeFirst();
         }
 
         private RoutePositionReading last() { return last; }

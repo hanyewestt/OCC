@@ -194,6 +194,108 @@ class RoutePositionPolicyTest {
         assertThat(estimate(List.of(legacyReading))).isEmpty();
     }
 
+    @Test
+    void showsFourBusesWhenFourthTrackIsDiscoveredAcrossPollCycles() {
+        UUID cycle1 = UUID.randomUUID();
+        UUID cycle2 = UUID.randomUUID();
+        UUID snap1 = UUID.randomUUID();
+        UUID snap2 = UUID.randomUUID();
+        UUID snap3 = UUID.randomUUID();
+        UUID snap4 = UUID.randomUUID();
+        UUID snap5 = UUID.randomUUID();
+        List<RoutePositionReading> readings = List.of(
+                // Cycle 1, stop 05039 (seq 7): 3 buses (A, B, C)
+                reading(snap1, "05039", 7, 1, 7_000, 1_000, 120, 65, cycle1),
+                reading(snap1, "05039", 7, 2, 4_000, 1_000, 360, 65, cycle1),
+                reading(snap1, "05039", 7, 3, 1_000, 1_000, 600, 65, cycle1),
+                // Cycle 1, stop 05019 (seq 8): same 3 buses, shifted slightly
+                reading(snap2, "05019", 8, 1, 7_200, 1_500, 105, 64, cycle1),
+                reading(snap2, "05019", 8, 2, 4_200, 1_500, 345, 64, cycle1),
+                reading(snap2, "05019", 8, 3, 1_200, 1_500, 585, 64, cycle1),
+                // Cycle 2, stop 05059 (seq 6): new bus D observed upstream
+                reading(snap5, "05059", 6, 1, 200, 500, 960, 5, cycle2),
+                // Cycle 2, stop 05039 (seq 7): buses B, C moved forward + new bus D at 200 m
+                reading(snap3, "05039", 7, 1, 4_500, 1_000, 300, 5, cycle2),
+                reading(snap3, "05039", 7, 2, 1_500, 1_000, 540, 5, cycle2),
+                reading(snap3, "05039", 7, 3, 200, 1_000, 900, 5, cycle2),
+                // Cycle 2, stop 05019 (seq 8): bus A still visible here + B, C
+                reading(snap4, "05019", 8, 1, 7_600, 1_500, 60, 4, cycle2),
+                reading(snap4, "05019", 8, 2, 4_700, 1_500, 285, 4, cycle2),
+                reading(snap4, "05019", 8, 3, 1_700, 1_500, 525, 4, cycle2));
+
+        List<RoutePositionBus> buses = RoutePositionPolicy.estimate(readings, 10_000, NOW, POLL, 2, 150, 16.7);
+
+        assertThat(buses).hasSize(4);
+        assertThat(buses.stream().filter(bus -> bus.supportingStopCount() >= 2).count())
+                .as("well-supported buses seen at multiple stops").isGreaterThanOrEqualTo(4);
+    }
+
+    @Test
+    void suppressedBusCountReflectsOnlySingleStopStraysBeyondTheCeiling() {
+        UUID cycle1 = UUID.randomUUID();
+        UUID cycle2 = UUID.randomUUID();
+        UUID snap1 = UUID.randomUUID();
+        UUID snap2 = UUID.randomUUID();
+        UUID snap3 = UUID.randomUUID();
+        List<RoutePositionReading> readings = List.of(
+                // Cycle 1, stop 05039: 3 buses
+                reading(snap1, "05039", 7, 1, 7_000, 1_000, 120, 65, cycle1),
+                reading(snap1, "05039", 7, 2, 4_000, 1_000, 360, 65, cycle1),
+                reading(snap1, "05039", 7, 3, 1_000, 1_000, 600, 65, cycle1),
+                // Cycle 2, stop 05039: B, C still visible + new D
+                reading(snap2, "05039", 7, 1, 4_500, 1_000, 300, 5, cycle2),
+                reading(snap2, "05039", 7, 2, 1_500, 1_000, 540, 5, cycle2),
+                reading(snap2, "05039", 7, 3, 200, 1_000, 900, 5, cycle2),
+                // Cycle 2, stop 05019: A still visible + B, C
+                reading(snap3, "05019", 8, 1, 7_600, 1_500, 60, 4, cycle2),
+                reading(snap3, "05019", 8, 2, 4_700, 1_500, 285, 4, cycle2),
+                reading(snap3, "05019", 8, 3, 1_700, 1_500, 525, 4, cycle2));
+
+        RoutePositionPolicy.RoutePositionEstimate estimate = RoutePositionPolicy.estimateWithConfidence(
+                readings, 10_000, NOW, POLL, 2, 150, 16.7);
+
+        assertThat(estimate.buses()).hasSizeGreaterThanOrEqualTo(3);
+        // The suppressed count should not include well-supported tracks
+        assertThat(estimate.suppressedBusCount()).isLessThanOrEqualTo(1);
+    }
+
+    @Test
+    void retainsEvidenceObservationsAcrossManySupportingStopsWithoutPrematureTruncation() {
+        UUID batchId = UUID.randomUUID();
+        java.util.List<RoutePositionReading> readings = new java.util.ArrayList<>();
+        for (int i = 1; i <= 20; i++) {
+            String stopCode = String.format("STOP%02d", i);
+            readings.add(reading(batchId, stopCode, i, 1, 5_000, 500.0 * i, 120 + 30 * i));
+        }
+
+        List<RoutePositionBus> buses = estimate(readings);
+        assertThat(buses).singleElement();
+        assertThat(buses.get(0).supportingStopCount()).isEqualTo(20);
+        assertThat(buses.get(0).evidenceObservationIds()).hasSize(20);
+    }
+
+    @Test
+    void preventsDistinctBusesWithShiftedVisitOrdersFromMergingInSameCycle() {
+        UUID cycle = UUID.randomUUID();
+        UUID snap1 = UUID.randomUUID();
+        UUID snap2 = UUID.randomUUID();
+        List<RoutePositionReading> readings = List.of(
+                reading(snap1, "40239", 14, 1, 6_663, 12_000, 360, 5, cycle),
+                reading(snap1, "40239", 14, 2, 1_782, 12_000, 960, 5, cycle),
+                reading(snap2, "40219", 16, 1, 12_487, 12_700, 30, 4, cycle),
+                reading(snap2, "40219", 16, 2, 6_663, 12_700, 420, 4, cycle),
+                reading(snap2, "40219", 16, 3, 1_782, 12_700, 1020, 4, cycle));
+
+        List<RoutePositionBus> buses = RoutePositionPolicy.estimate(readings, 20_000, NOW, POLL, 2, 150, 16.7);
+
+        assertThat(buses).extracting(RoutePositionBus::distanceAlongRouteM)
+                .contains(6_663.0, 1_782.0);
+        assertThat(buses.stream().filter(b -> Math.abs(b.distanceAlongRouteM() - 6_663.0) < 1.0).findFirst().orElseThrow()
+                .supportingStopCount()).isEqualTo(2);
+        assertThat(buses.stream().filter(b -> Math.abs(b.distanceAlongRouteM() - 1_782.0) < 1.0).findFirst().orElseThrow()
+                .supportingStopCount()).isEqualTo(2);
+    }
+
     private List<RoutePositionBus> estimate(List<RoutePositionReading> readings) {
         return RoutePositionPolicy.estimate(readings, 10_000, NOW, POLL, 2, 150, 16.7);
     }
