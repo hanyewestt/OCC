@@ -58,14 +58,14 @@ try {
     Write-Host "OCC local project: $resolvedProject; action: $Action"
 
     function Build-Frontend {
-        if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+        if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
             throw 'Node.js 22.12+ and npm are required to build the frontend.'
         }
         Push-Location (Join-Path $repoRoot 'frontend')
         try {
-            & npm ci
+            & npm.cmd ci
             if ($LASTEXITCODE -ne 0) { throw 'Frontend dependency installation failed.' }
-            & npm run build
+            & npm.cmd run build
             if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
         }
         finally { Pop-Location }
