@@ -8,6 +8,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface TrafficIncidentStateRepository extends JpaRepository<TrafficIncidentState, UUID> {
+    Optional<TrafficIncidentState> findByDisruptionId(UUID disruptionId);
     Page<TrafficIncidentState> findByStatusOrderByUpdatedAtDesc(String status, Pageable pageable);
     Optional<TrafficIncidentState> findByClassificationAndDemoRunIdAndSourceAndSourceIncidentKey(
             String classification, UUID demoRunId, String source, String sourceIncidentKey);

@@ -79,7 +79,7 @@ class BunchingDiagnosisDispatcherIT {
 
     @BeforeEach
     void clearOutbox() {
-        jdbc.execute("TRUNCATE disruption.planning_outbox, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption");
+        jdbc.execute("TRUNCATE disruption.hazard_state, disruption.planning_outbox, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption");
     }
 
     @Test

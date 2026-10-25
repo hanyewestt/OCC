@@ -49,6 +49,13 @@ public class JacksonPlanningEventSubmissionAdapter implements PlanningEventSubmi
     }
 
     @Override
+    public EncodedPlanningEventSubmission encodeHazard(com.csd.occ.disruption.hazard.domain.HazardEventSnapshot facts) {
+        return encode(new PlanningEventSubmission(PlanningEventSubmission.SCHEMA_VERSION, "HAZARD", "disruption",
+                facts.eventId(), facts.disruptionId(), facts.classification(), facts.demoRunId(), facts.eventAt(),
+                "hazard-observation-v1", List.of(facts.sourceObservationId().toString()), null, null, facts));
+    }
+
+    @Override
     public EncodedPlanningEventSubmission encodeTraffic(TrafficIncidentPlanningSnapshot facts) {
         List<String> evidenceIds = List.of(facts.sourceObservationId().toString());
         PlanningEventSubmission submission = new PlanningEventSubmission(PlanningEventSubmission.SCHEMA_VERSION,
@@ -83,7 +90,7 @@ public class JacksonPlanningEventSubmissionAdapter implements PlanningEventSubmi
         if ("BUS_BUNCHING".equals(submission.eventType())) {
             var facts = submission.eventSnapshot();
             if (!validScope(submission.classification(), submission.demoRunId()) || facts == null
-                    || submission.trafficSnapshot() != null
+                    || submission.trafficSnapshot() != null || submission.hazardSnapshot() != null
                     || !Objects.equals(submission.eventId(), facts.eventId())
                     || !Objects.equals(submission.disruptionId(), facts.bunchingEventId())
                     || !Objects.equals(submission.classification(), facts.classification())
@@ -95,7 +102,7 @@ public class JacksonPlanningEventSubmissionAdapter implements PlanningEventSubmi
         }
         if ("TRAFFIC_INCIDENT".equals(submission.eventType())) {
             TrafficIncidentPlanningSnapshot facts = submission.trafficSnapshot();
-            if (facts == null || submission.eventSnapshot() != null
+            if (facts == null || submission.eventSnapshot() != null || submission.hazardSnapshot() != null
                     || !Objects.equals(submission.eventId(), facts.eventId())
                     || !Objects.equals(submission.disruptionId(), facts.disruptionId())
                     || !Objects.equals(submission.classification(), facts.classification())
@@ -104,6 +111,20 @@ public class JacksonPlanningEventSubmissionAdapter implements PlanningEventSubmi
                     || !"traffic-incident-observation-v1".equals(submission.detectionRuleVersion())
                     || !Objects.equals(submission.evidenceIds(), List.of(facts.sourceObservationId().toString())))
                 throw new IllegalArgumentException("Persisted traffic Planning event identity is invalid");
+            return;
+        }
+        if ("HAZARD".equals(submission.eventType())) {
+            var facts = submission.hazardSnapshot();
+            if (facts == null || submission.eventSnapshot() != null || submission.trafficSnapshot() != null
+                    || !validScope(submission.classification(), submission.demoRunId())
+                    || !Objects.equals(submission.eventId(), facts.eventId())
+                    || !Objects.equals(submission.disruptionId(), facts.disruptionId())
+                    || !Objects.equals(submission.classification(), facts.classification())
+                    || !Objects.equals(submission.demoRunId(), facts.demoRunId())
+                    || !Objects.equals(submission.detectedAt(), facts.eventAt())
+                    || !"hazard-observation-v1".equals(submission.detectionRuleVersion())
+                    || !Objects.equals(submission.evidenceIds(), List.of(facts.sourceObservationId().toString())))
+                throw new IllegalArgumentException("Persisted hazard event identity is invalid");
             return;
         }
         throw new IllegalArgumentException("Persisted Planning event type is unsupported");

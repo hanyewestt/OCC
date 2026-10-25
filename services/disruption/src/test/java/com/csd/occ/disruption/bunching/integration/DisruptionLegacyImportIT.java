@@ -42,7 +42,7 @@ class DisruptionLegacyImportIT {
 
         Flyway target = Flyway.configure().dataSource(dataSource).defaultSchema("disruption").schemas("disruption")
                 .createSchemas(true).locations("classpath:db/migration").load();
-        assertThat(target.migrate().migrationsExecuted).isEqualTo(3);
+        assertThat(target.migrate().migrationsExecuted).isEqualTo(6);
 
         assertThat(jdbc.queryForObject("SELECT last_sequence FROM disruption.consumer_state WHERE id=1", Long.class))
                 .isEqualTo(42L);

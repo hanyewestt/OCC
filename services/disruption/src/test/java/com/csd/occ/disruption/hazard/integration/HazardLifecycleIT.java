@@ -1,0 +1,264 @@
+package com.csd.occ.disruption.hazard.integration;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import com.csd.occ.disruption.bunching.domain.PlanningEventSubmissionPort;
+import com.csd.occ.disruption.hazard.domain.HazardPollPort;
+import com.csd.occ.disruption.hazard.domain.HazardSyncService;
+import com.csd.occ.disruption.hazard.domain.HazardStateRepository;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.postgresql.PostgreSQLContainer;
+
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE, properties = {
+        "OCC_DISRUPTION_INTERNAL_PORT=8002", "OCC_DISRUPTION_CONSUMER_ENABLED=false",
+        "OCC_DISRUPTION_PLANNING_WORKER_ENABLED=false", "OCC_DISRUPTION_HAZARD_ENABLED=false"
+})
+@ActiveProfiles("test")
+@Import(HazardLifecycleIT.Time.class)
+@Testcontainers(disabledWithoutDocker = true)
+class HazardLifecycleIT {
+    private static final Instant NOW = Instant.parse("2026-10-25T02:00:00Z");
+    private static final Duration FRESHNESS = Duration.ofMinutes(5);
+    private static final Duration ABSENCE_PERIOD = Duration.ofSeconds(20);
+
+    @Container
+    static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18.6-alpine")
+            .withDatabaseName("occ").withUsername("occ_admin").withPassword("synthetic-admin");
+
+    @DynamicPropertySource
+    static void databaseProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+        registry.add("spring.datasource.username", () -> "occ_admin");
+        registry.add("spring.datasource.password", () -> "synthetic-admin");
+    }
+
+    @Autowired HazardSyncService synchronization;
+    @Autowired PlanningEventSubmissionPort codec;
+    @Autowired JdbcTemplate jdbc;
+    @Autowired TestClock clock;
+    @Autowired HazardStateRepository hazards;
+
+    @BeforeEach
+    void resetRows() {
+        clock.set(NOW);
+        jdbc.execute("TRUNCATE disruption.planning_outbox, disruption.event_evidence, disruption.disruption_event, "
+                + "disruption.hazard_state, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption");
+        jdbc.update("UPDATE disruption.hazard_checkpoint SET completed_at=NULL, poll_run_id=NULL");
+    }
+
+    @Test
+    void replaysKeepOneIncidentEventAndRealPlanningPayload() {
+        var opened = poll("FLOOD", NOW, "SUCCESS", true, null,
+                List.of(fact("FLOOD", "flood-1", "OBSERVED", null, null, List.of())));
+        process("FLOOD", opened);
+        process("FLOOD", opened);
+        clock.set(NOW.plusSeconds(1));
+        process("FLOOD", poll("FLOOD", clock.instant(), "SUCCESS", true, null,
+                List.of(fact("FLOOD", "flood-1", "OBSERVED", null, null, List.of()))));
+
+        assertThat(count("hazard_state")).isEqualTo(1);
+        assertThat(count("disruption")).isEqualTo(1);
+        assertThat(count("disruption_event")).isEqualTo(1);
+        assertThat(count("planning_outbox")).isEqualTo(1);
+        String payload = jdbc.queryForObject("SELECT payload_json FROM disruption.planning_outbox", String.class);
+        UUID eventId = jdbc.queryForObject("SELECT event_id FROM disruption.planning_outbox", UUID.class);
+        assertThat(payload).contains("\"eventType\":\"HAZARD\"", "Avoid the affected area", "flood-1");
+        assertThat(codec.fingerprint(payload, eventId)).isEqualTo(jdbc.queryForObject(
+                "SELECT payload_fingerprint FROM disruption.planning_outbox", String.class));
+        assertThat(synchronization.cursor("FLOOD").completedAt()).isEqualTo(clock.instant());
+        var healthy = synchronization.cursor("FLOOD").health(clock.instant());
+        assertThat(healthy.status()).isEqualTo("HEALTHY");
+        clock.set(clock.instant().plus(FRESHNESS));
+        assertThat(synchronization.cursor("FLOOD").health(clock.instant()).status()).isEqualTo("STALE");
+        assertThat(hazards.findAll().getFirst().status()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void cancellationOnlyClearsReferencedAlertsAndCannotReopenFromOldSourceText() {
+        var first = fact("FLOOD", "flood-1", "OBSERVED", null, null, List.of());
+        var second = fact("FLOOD", "flood-2", "OBSERVED", null, null, List.of());
+        process("FLOOD", poll("FLOOD", NOW, "SUCCESS", true, null, List.of(first, second)));
+        clock.set(NOW.plusSeconds(1));
+        process("FLOOD", poll("FLOOD", clock.instant(), "SUCCESS", true, null, List.of(
+                fact("FLOOD", "cancel-1", "CANCEL", null, null, List.of("flood-1")),
+                fact("FLOOD", "cancel-unknown", "CANCEL", null, null, List.of("unknown")))));
+        assertThat(state("flood-1", "status")).isEqualTo("CLEARED");
+        assertThat(state("flood-1", "inactive_reason")).isEqualTo("SOURCE_CANCELLED");
+        assertThat(state("flood-2", "status")).isEqualTo("ACTIVE");
+        assertThat(count("hazard_state")).isEqualTo(2);
+        assertThat(count("disruption_event")).isEqualTo(3);
+        clock.set(NOW.plusSeconds(2));
+        process("FLOOD", poll("FLOOD", clock.instant(), "SUCCESS", true, null, List.of(first, second)));
+        assertThat(state("flood-1", "status")).isEqualTo("CLEARED");
+        assertThat(count("disruption_event")).isEqualTo(3);
+    }
+
+    @Test
+    void expiryAppliesExactlyAtDeadlineAndRepeatedSourceDoesNotReopenIt() {
+        var flood = fact("FLOOD", "expiring", "OBSERVED", null, NOW.plusSeconds(30), List.of());
+        process("FLOOD", poll("FLOOD", NOW, "SUCCESS", true, null, List.of(flood)));
+        clock.set(NOW.plusSeconds(29));
+        process("FLOOD", poll("FLOOD", clock.instant(), "SUCCESS", true, null, List.of(flood)));
+        assertThat(state("expiring", "status")).isEqualTo("ACTIVE");
+        assertThat(hazards.findVisible("FLOOD", null, clock.instant(), PageRequest.of(0, 20)).getTotalElements()).isEqualTo(1);
+        clock.set(NOW.plusSeconds(30));
+        assertThat(hazards.findVisible("FLOOD", null, clock.instant(), PageRequest.of(0, 20)).getTotalElements()).isZero();
+        assertThat(state("expiring", "status")).isEqualTo("ACTIVE");
+        process("FLOOD", poll("FLOOD", clock.instant(), "SUCCESS", true, null, List.of(flood)));
+        assertThat(state("expiring", "status")).isEqualTo("CLEARED");
+        assertThat(state("expiring", "inactive_reason")).isEqualTo("SOURCE_EXPIRED");
+        clock.set(NOW.plusSeconds(31));
+        process("FLOOD", poll("FLOOD", clock.instant(), "SUCCESS", true, null, List.of(flood)));
+        assertThat(count("disruption_event")).isEqualTo(2);
+    }
+
+    @Test
+    void scheduledRoadworksActivateThenRetireOnlyAfterCountAndElapsedPeriod() {
+        var works = fact("ROADWORKS", "works-1", "OBSERVED", NOW.plusSeconds(10), NOW.plusSeconds(300), List.of());
+        process("ROADWORKS", poll("ROADWORKS", NOW, "SUCCESS", true, null, List.of(works)));
+        assertThat(state("works-1", "status")).isEqualTo("SCHEDULED");
+        clock.set(NOW.plusSeconds(10));
+        process("ROADWORKS", poll("ROADWORKS", clock.instant(), "SUCCESS", true, null, List.of(works)));
+        assertThat(state("works-1", "status")).isEqualTo("ACTIVE");
+        clock.set(NOW.plusSeconds(20));
+        process("ROADWORKS", poll("ROADWORKS", clock.instant(), "SUCCESS", true, null, List.of()));
+        assertThat(absences("works-1")).isEqualTo(1);
+        clock.set(NOW.plusSeconds(25));
+        process("ROADWORKS", poll("ROADWORKS", clock.instant(), "PARTIAL", false, null, List.of()));
+        clock.set(NOW.plusSeconds(26));
+        process("ROADWORKS", poll("ROADWORKS", clock.instant(), "FAILED", false, null, List.of()));
+        assertThat(absences("works-1")).isEqualTo(1);
+        assertThat(synchronization.cursor("ROADWORKS").completedAt()).isEqualTo(clock.instant());
+        clock.set(NOW.plusSeconds(30));
+        process("ROADWORKS", poll("ROADWORKS", clock.instant(), "SUCCESS", true, null, List.of()));
+        assertThat(absences("works-1")).isEqualTo(2);
+        assertThat(state("works-1", "status")).isEqualTo("ACTIVE");
+        clock.set(NOW.plusSeconds(40));
+        process("ROADWORKS", poll("ROADWORKS", clock.instant(), "SUCCESS", true, null, List.of()));
+        assertThat(state("works-1", "status")).isEqualTo("CLEARED");
+        assertThat(state("works-1", "inactive_reason")).isEqualTo("NO_LONGER_REPORTED");
+        assertThat(count("disruption_event")).isEqualTo(3);
+        assertThat(count("planning_outbox")).isEqualTo(3);
+    }
+
+    @Test
+    void failedOutboxInsertRollsBackIncidentEventAndCheckpointThenRetryCommitsOnce() {
+        var input = poll("FLOOD", NOW, "SUCCESS", true, null,
+                List.of(fact("FLOOD", "rollback", "OBSERVED", null, null, List.of())));
+        jdbc.execute("ALTER TABLE disruption.planning_outbox ADD CONSTRAINT test_reject_hazard_outbox CHECK(false) NOT VALID");
+        try {
+            assertThatThrownBy(() -> process("FLOOD", input)).isInstanceOf(RuntimeException.class);
+        } finally {
+            jdbc.execute("ALTER TABLE disruption.planning_outbox DROP CONSTRAINT test_reject_hazard_outbox");
+        }
+        assertThat(count("hazard_state")).isZero();
+        assertThat(count("disruption")).isZero();
+        assertThat(count("disruption_event")).isZero();
+        assertThat(count("planning_outbox")).isZero();
+        assertThat(synchronization.cursor("FLOOD").completedAt()).isNull();
+        process("FLOOD", input);
+        process("FLOOD", input);
+        assertThat(count("hazard_state")).isEqualTo(1);
+        assertThat(count("disruption_event")).isEqualTo(1);
+        assertThat(count("planning_outbox")).isEqualTo(1);
+        assertThat(synchronization.cursor("FLOOD").pollRunId()).isEqualTo(input.pollRunId());
+    }
+
+    @Test
+    void failedUpdateEventLeavesPreviousFactsAndCursorIntact() {
+        var initial = poll("FLOOD", NOW, "SUCCESS", true, null,
+                List.of(fact("FLOOD", "update", "OBSERVED", null, null, List.of())));
+        process("FLOOD", initial);
+        clock.set(NOW.plusSeconds(1));
+        var update = poll("FLOOD", clock.instant(), "SUCCESS", true, null,
+                List.of(fact("FLOOD", "update", "OBSERVED", null, NOW.plusSeconds(300), List.of())));
+        jdbc.execute("ALTER TABLE disruption.disruption_event ADD CONSTRAINT test_reject_hazard_event CHECK(false) NOT VALID");
+        try {
+            assertThatThrownBy(() -> process("FLOOD", update)).isInstanceOf(RuntimeException.class);
+        } finally {
+            jdbc.execute("ALTER TABLE disruption.disruption_event DROP CONSTRAINT test_reject_hazard_event");
+        }
+        assertThat(count("disruption_event")).isEqualTo(1);
+        assertThat(count("planning_outbox")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT facts->>'effectiveUntil' FROM disruption.hazard_state", String.class)).isNull();
+        assertThat(synchronization.cursor("FLOOD").pollRunId()).isEqualTo(initial.pollRunId());
+        process("FLOOD", update);
+        assertThat(count("disruption_event")).isEqualTo(2);
+        assertThat(count("planning_outbox")).isEqualTo(2);
+    }
+
+    @Test
+    void cancellationDoesNotCrossLiveAndSimulationScopes() {
+        var flood = fact("FLOOD", "shared-key", "OBSERVED", null, null, List.of());
+        process("FLOOD", poll("FLOOD", NOW, "SUCCESS", true, null, List.of(flood)));
+        UUID run = UUID.randomUUID();
+        clock.set(NOW.plusSeconds(1));
+        process("FLOOD", poll("FLOOD", clock.instant(), "SUCCESS", true, run, List.of(flood)));
+        clock.set(NOW.plusSeconds(2));
+        process("FLOOD", poll("FLOOD", clock.instant(), "SUCCESS", true, null,
+                List.of(fact("FLOOD", "cancel-live", "CANCEL", null, null, List.of("shared-key")))));
+        assertThat(jdbc.queryForObject("SELECT status FROM disruption.hazard_state WHERE classification='OBSERVATION_ONLY'", String.class))
+                .isEqualTo("CLEARED");
+        assertThat(jdbc.queryForObject("SELECT status FROM disruption.hazard_state WHERE classification='SIMULATION'", String.class))
+                .isEqualTo("ACTIVE");
+        assertThat(count("hazard_state")).isEqualTo(2);
+    }
+
+    private void process(String kind, HazardPollPort.Poll poll) {
+        synchronization.process(kind, poll, FRESHNESS, 2, ABSENCE_PERIOD);
+    }
+    private int count(String table) {
+        return jdbc.queryForObject("SELECT count(*) FROM disruption." + table, Integer.class);
+    }
+    private String state(String key, String column) {
+        return jdbc.queryForObject("SELECT " + column + " FROM disruption.hazard_state WHERE source_event_key=?", String.class, key);
+    }
+    private int absences(String key) {
+        return jdbc.queryForObject("SELECT absence_count FROM disruption.hazard_state WHERE source_event_key=?", Integer.class, key);
+    }
+    private HazardPollPort.Poll poll(String kind, Instant at, String outcome, boolean complete, UUID run,
+                                     List<HazardPollPort.Fact> facts) {
+        return new HazardPollPort.Poll(UUID.randomUUID(), kind + "_DATAMALL", kind, outcome, complete,
+                run == null ? "OBSERVATION_ONLY" : "SIMULATION", run, at, facts.stream()
+                .map(fact -> new HazardPollPort.Observation(UUID.randomUUID(), UUID.randomUUID(), fact, at)).toList());
+    }
+    private HazardPollPort.Fact fact(String kind, String key, String action, Instant from, Instant until, List<String> references) {
+        return new HazardPollPort.Fact(kind, key, action, NOW, from, until, "Synthetic hazard", "Reported conditions",
+                "Severe", "Avoid the affected area", references, null, null, "Actual", null,
+                List.of(new HazardPollPort.Location("ROAD", "Demo Road", "Demo Road", null, null, null,
+                        "ROAD_NAME", "PROVIDER_SUPPLIED")));
+    }
+
+    static class TestClock extends Clock {
+        private Instant now = NOW;
+        void set(Instant instant) { now = instant; }
+        @Override public ZoneId getZone() { return ZoneOffset.UTC; }
+        @Override public Clock withZone(ZoneId zone) { return Clock.fixed(now, zone); }
+        @Override public Instant instant() { return now; }
+    }
+    @TestConfiguration static class Time {
+        @Bean @Primary TestClock testClock() { return new TestClock(); }
+    }
+}

@@ -29,7 +29,7 @@ public class TrafficIncidentPollSchedule {
             TrafficIncidentPollPort.TrafficIncidentPollPage page = feed.page(
                     cursor.completedAt(), cursor.pollRunId(), properties.pageSize());
             for (TrafficIncidentPollPort.TrafficIncidentPoll poll : page.polls())
-                synchronization.process(poll, properties.staleAfter(), properties.clearAfterSuccessfulAbsences());
+                synchronization.process(poll, properties.staleAfter(), properties.clearAfterSuccessfulAbsences(), properties.minimumAbsencePeriod());
             if (page.hasMore()) log.info("Traffic poll feed has more pages; remaining rows will be processed on the next interval.");
         } catch (RuntimeException failure) {
             // Do not log provider or SQL exception text; retry on the next fixed-delay interval.

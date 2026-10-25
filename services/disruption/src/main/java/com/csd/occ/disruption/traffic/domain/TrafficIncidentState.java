@@ -57,6 +57,10 @@ public class TrafficIncidentState {
     @JdbcTypeCode(SqlTypes.CHAR) private String snapshotHash;
     private String status;
     private int absenceCount;
+    // Null until a complete scoped snapshot first omits this incident.
+    private Instant firstAbsentAt;
+    // Null for current incidents; absence retirement is not verified clearance.
+    private String inactiveReason;
     private Instant openedAt;
     private Instant updatedAt;
     private Instant clearedAt;
@@ -81,6 +85,8 @@ public class TrafficIncidentState {
     public UUID lastPollRunId() { return lastPollRunId; }
     public String snapshotHash() { return snapshotHash; }
     public int absenceCount() { return absenceCount; }
+    public Instant firstAbsentAt() { return firstAbsentAt; }
+    public String inactiveReason() { return inactiveReason; }
     public Instant openedAt() { return openedAt; }
     public Instant updatedAt() { return updatedAt; }
     public UUID disruptionId() { return disruptionId; }
@@ -98,6 +104,8 @@ public class TrafficIncidentState {
         lastPollRunId = poll.pollRunId();
         snapshotHash = hash;
         absenceCount = 0;
+        firstAbsentAt = null;
+        inactiveReason = null;
         lastProcessedPollAt = poll.completedAt();
         updatedAt = now;
     }
@@ -111,16 +119,20 @@ public class TrafficIncidentState {
             lastPollRunId = poll.pollRunId();
         }
         absenceCount = 0;
+        firstAbsentAt = null;
+        inactiveReason = null;
         lastProcessedPollAt = poll.completedAt();
     }
 
     public void markAbsent(Instant completedAt) {
         absenceCount++;
+        if (firstAbsentAt == null) firstAbsentAt = completedAt;
         lastProcessedPollAt = completedAt;
     }
 
     public void clear(Instant completedAt) {
         status = "CLEARED";
+        inactiveReason = "NO_LONGER_REPORTED";
         clearedAt = completedAt;
         updatedAt = completedAt;
     }

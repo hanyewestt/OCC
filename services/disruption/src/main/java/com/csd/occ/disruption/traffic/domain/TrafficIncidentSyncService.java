@@ -50,6 +50,15 @@ public class TrafficIncidentSyncService {
     @Transactional
     public void process(TrafficIncidentPollPort.TrafficIncidentPoll poll, Duration staleAfter,
             int clearAfterSuccessfulAbsences) {
+        // Compatibility for existing internal callers; scheduled reconciliation supplies its configured period.
+        process(poll, staleAfter, clearAfterSuccessfulAbsences, Duration.ZERO);
+    }
+
+    @Transactional
+    public void process(TrafficIncidentPollPort.TrafficIncidentPoll poll, Duration staleAfter,
+            int clearAfterSuccessfulAbsences, Duration minimumAbsencePeriod) {
+        if (minimumAbsencePeriod == null || minimumAbsencePeriod.isNegative())
+            throw new IllegalArgumentException("Minimum absence period must not be negative");
         if (poll == null || poll.pollRunId() == null || poll.completedAt() == null)
             throw new IllegalArgumentException("Completed traffic poll identity and timestamp are required");
         TrafficPollCheckpoint checkpoint = checkpoints.findForUpdate().orElseThrow(
@@ -58,14 +67,15 @@ public class TrafficIncidentSyncService {
 
         Instant now = clock.instant();
         if (isCompleteAndFresh(poll, now, staleAfter) && hasValidScope(poll) && hasValidFacts(poll))
-            processCompletePoll(poll, clearAfterSuccessfulAbsences);
+            processCompletePoll(poll, clearAfterSuccessfulAbsences, minimumAbsencePeriod);
 
         // The cursor tracks feed consumption, including failed or stale polls. Only complete, fresh polls
         // are allowed to change incident state or count toward an absence-based clear.
         checkpoint.advance(poll.completedAt(), poll.pollRunId());
     }
 
-    private void processCompletePoll(TrafficIncidentPollPort.TrafficIncidentPoll poll, int clearAfterAbsences) {
+    private void processCompletePoll(TrafficIncidentPollPort.TrafficIncidentPoll poll, int clearAfterAbsences,
+            Duration minimumAbsencePeriod) {
         Set<String> present = new HashSet<>();
         for (TrafficIncidentPollPort.TrafficIncidentFact fact : poll.incidents()) {
             present.add(fact.sourceIncidentKey());
@@ -74,7 +84,8 @@ public class TrafficIncidentSyncService {
         for (TrafficIncidentState state : activeStates(poll)) {
             if (present.contains(state.sourceIncidentKey())) continue;
             state.markAbsent(poll.completedAt());
-            if (state.absenceCount() >= clearAfterAbsences) clear(poll, state);
+            if (state.absenceCount() >= clearAfterAbsences
+                    && !poll.completedAt().isBefore(state.firstAbsentAt().plus(minimumAbsencePeriod))) clear(poll, state);
         }
     }
 
@@ -95,9 +106,9 @@ public class TrafficIncidentSyncService {
 
         if (!state.isActive()) {
             UUID disruptionId = UUID.randomUUID();
-            state.reopen(disruptionId, poll, fact, hash, at);
             disruptions.recordTransition(disruptionId, KIND, poll.classification(), poll.demoRunId(), ACTIVE,
                     at, at, null);
+            state.reopen(disruptionId, poll, fact, hash, at);
             states.save(state);
             recordEvent(poll, disruptionId, "OPENED", TrafficIncidentSnapshot.of(fact, poll.pollRunId()));
             return;
