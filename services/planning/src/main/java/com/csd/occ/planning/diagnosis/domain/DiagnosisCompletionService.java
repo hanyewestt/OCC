@@ -29,7 +29,8 @@ public class DiagnosisCompletionService {
         DiagnosisRequest request = requests.findById(requestId).orElseThrow();
         if (request.status() != DiagnosisRequestStatus.PROCESSING) return;
         diagnoses.save(new RootCauseDiagnosisEntity(diagnosis, codec.encodeStringList(diagnosis.supportingEvidenceIds()),
-                codec.encodeStringList(diagnosis.limitations()), codec.encodeConfidenceComponents(diagnosis.confidenceComponents())));
+                codec.encodeStringList(diagnosis.limitations()), diagnosis.confidenceComponents() == null ? null
+                        : codec.encodeConfidenceComponents(diagnosis.confidenceComponents())));
         invocationDetails.stream().map(details -> new ModelInvocationRecord(UUID.randomUUID(), requestId,
                 details, snapshotHash)).forEach(invocations::save);
         deliveries.save(new RecommendationDelivery(deliveryId, diagnosis.id(), deliveryPayload,
@@ -43,7 +44,8 @@ public class DiagnosisCompletionService {
         DiagnosisRequest request = requests.findById(requestId).orElseThrow();
         if (request.status() != DiagnosisRequestStatus.PROCESSING) return;
         diagnoses.save(new RootCauseDiagnosisEntity(diagnosis, codec.encodeStringList(diagnosis.supportingEvidenceIds()),
-                codec.encodeStringList(diagnosis.limitations()), codec.encodeConfidenceComponents(diagnosis.confidenceComponents())));
+                codec.encodeStringList(diagnosis.limitations()), diagnosis.confidenceComponents() == null ? null
+                        : codec.encodeConfidenceComponents(diagnosis.confidenceComponents())));
         invocationDetails.stream().map(details -> new ModelInvocationRecord(UUID.randomUUID(), requestId,
                 details, snapshotHash)).forEach(invocations::save);
         request.completeNoAction("LIVE_DIAGNOSIS_NO_VALIDATED_OPERATIONAL_CONTEXT", clock.instant());

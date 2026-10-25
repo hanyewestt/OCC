@@ -81,10 +81,47 @@ class RootCauseDiagnosisProcessorTest {
         verify(completion).complete(eq(requestId), diagnosis.capture(), invocations.capture(), anyString(),
                 eq("persisted-recommendation-payload"), any(UUID.class));
         assertThat(diagnosis.getValue().causeCode()).isEqualTo("UNKNOWN");
-        assertThat(diagnosis.getValue().confidence()).isZero();
+        assertThat(diagnosis.getValue().confidence()).isNull();
+        assertThat(diagnosis.getValue().evidenceSupportScore()).isNull();
+        assertThat(diagnosis.getValue().confidenceComponents()).isNull();
         assertThat(diagnosis.getValue().supportingEvidenceIds()).containsExactlyElementsOf(event.evidenceIds());
         assertThat(invocations.getValue()).singleElement().extracting(ModelInvocationDetails::validationOutcome)
                 .isEqualTo("VALID");
+        verify(completion, never()).fail(any(UUID.class), anyString(), anyBoolean(), anyBoolean(),
+                any(Instant.class), anyList(), any());
+    }
+
+    @Test
+    void deprecatedConfidenceThresholdCannotAlterEvidenceOrRecommendationDelivery() {
+        var incident = new IncidentEvidence("incident-evidence-1", UUID.randomUUID(), "Vehicle Breakdown",
+                "Provider-reported breakdown", BigDecimal.ONE, BigDecimal.ONE, NOW.minusSeconds(180),
+                NOW.minusSeconds(60), "SIMULATION", demoRunId);
+        context = new RootCauseContext("SIMULATION", demoRunId, null, context.arrivals(), List.of(incident), List.of());
+        when(contextEvidence.findContext(event)).thenReturn(context);
+        when(model.diagnose(any(EvidenceSnapshot.class), eq(List.of()), eq(1)))
+                .thenReturn(new RootCauseModelPort.ModelCallResult(new ModelOutput("TRAFFIC_INCIDENT",
+                        "Vehicle Breakdown", "Model explanation", List.of(incident.evidenceId()), List.of()), invocation(1)));
+
+        for (double threshold : List.of(0.0, 1.0)) {
+            var alternative = new DiagnosisPolicySettings(settings.evidenceLookback(), settings.evidenceRadiusKm(),
+                    threshold, settings.maxAttempts(), settings.retryInitialDelay(), settings.retryMaxDelay());
+            new RootCauseDiagnosisProcessor(requests, eventFacts, contextEvidence, model, snapshots, payloads,
+                    completion, alternative, Clock.fixed(NOW, ZoneOffset.UTC)).process(requestId);
+        }
+
+        var diagnoses = ArgumentCaptor.forClass(RootCauseDiagnosis.class);
+        verify(completion, org.mockito.Mockito.times(2)).complete(eq(requestId), diagnoses.capture(), anyList(),
+                anyString(), eq("persisted-recommendation-payload"), any(UUID.class));
+        assertThat(diagnoses.getAllValues().getFirst()).usingRecursiveComparison().ignoringFields("id")
+                .isEqualTo(diagnoses.getAllValues().getLast());
+        assertThat(diagnoses.getAllValues()).allSatisfy(diagnosis -> {
+            assertThat(diagnosis.causeCode()).isEqualTo("TRAFFIC_INCIDENT");
+            assertThat(diagnosis.confidence()).isNull();
+            assertThat(diagnosis.evidenceSupportScore()).isNull();
+            assertThat(diagnosis.confidenceComponents()).isNull();
+            assertThat(diagnosis.likelyCause()).contains("reported 180 seconds before", "supplied bus position");
+            assertThat(diagnosis.limitations()).noneMatch(value -> value.toLowerCase(java.util.Locale.ROOT).contains("threshold"));
+        });
         verify(completion, never()).fail(any(UUID.class), anyString(), anyBoolean(), anyBoolean(),
                 any(Instant.class), anyList(), any());
     }

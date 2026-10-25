@@ -145,7 +145,7 @@ class DiagnosisRequestPersistenceIT {
     }
 
     @Test
-    void trafficIncidentIsPersistedWithAnExplicitNoActionOutcomeAndStableReplay() {
+    void trafficIncidentIsQueuedWithImmutableEvidenceAndStableReplay() {
         UUID eventId = UUID.randomUUID();
         UUID disruptionId = UUID.randomUUID();
         UUID observationId = UUID.randomUUID();
@@ -167,8 +167,8 @@ class DiagnosisRequestPersistenceIT {
 
         var stored = repository.findById(key).orElseThrow();
         assertThat(replay.id()).isEqualTo(accepted.id());
-        assertThat(stored.status().name()).isEqualTo("COMPLETED");
-        assertThat(stored.policyOutcome()).isEqualTo("TRAFFIC_INCIDENT_NO_OPERATIONAL_ACTION");
+        assertThat(stored.status().name()).isEqualTo("PENDING");
+        assertThat(stored.policyOutcome()).isNull();
         assertThat(stored.inputSnapshot()).isEqualTo(inputSnapshot);
         assertThat(diagnoses.count()).isZero();
         assertThat(deliveries.count()).isZero();

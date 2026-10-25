@@ -143,7 +143,7 @@ class PlanningRecommendationPersistenceIT {
         assertThat(response.get("mitigationType").asText()).isEqualTo("HOLD");
         assertThat(response.get("adjustmentSeconds").asInt()).isEqualTo(120);
         assertThat(response.get("targetBusReference").asText()).isEqualTo("SBS5898U");
-        assertThat(response.get("controlStopCode").asText()).isEqualTo("44241");
+        assertThat(response.get("controlStopCode").asText()).isEqualTo("44251");
         assertThat(response.get("expectedImpact").get("headwayAfterSeconds").asInt()).isEqualTo(341);
     }
 
