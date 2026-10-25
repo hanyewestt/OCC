@@ -8,9 +8,45 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.junit.jupiter.api.Test;
 
 class PlanningScopeServiceTest {
+    @Test
+    void listsLatestHazardWorkAndSafeFailureCodesForTheSelectedRun() {
+        var scopes = mock(PlanningScopePort.class);
+        var requests = mock(DiagnosisRequestRepository.class);
+        var codec = mock(SnapshotCodecPort.class);
+        var service = new PlanningScopeService(scopes, requests, mock(RootCauseDiagnosisRepository.class), codec);
+        UUID runId = UUID.randomUUID();
+        UUID requestId = UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
+        UUID disruptionId = UUID.randomUUID();
+        Instant createdAt = Instant.parse("2026-10-25T04:00:00Z");
+        var request = new DiagnosisRequest(requestId, EventType.HAZARD, "disruption", eventId,
+                DiagnosisRequestService.SCHEMA_VERSION, createdAt);
+        request.failRetryable("HAZARD_CONTEXT_OR_MODEL_UNAVAILABLE", createdAt.plusSeconds(30), createdAt);
+        request.retainInput("retained-producer-event");
+        var submission = new ProducerEventSubmission(DiagnosisRequestService.SCHEMA_VERSION, EventType.HAZARD,
+                "disruption", eventId, disruptionId, "SIMULATION", runId, createdAt,
+                "hazard-observation-v1", List.of("observation"), null, null,
+                new com.csd.occ.planning.advisory.domain.HazardEventFacts(eventId, disruptionId, "OPENED", null,
+                        "SIMULATION", runId, UUID.randomUUID(), 1L, UUID.randomUUID(), null, createdAt, null, null));
+        when(scopes.current()).thenReturn(new PlanningScope("DEMO", runId));
+        when(requests.findOpenHazardRequests("SIMULATION", runId.toString(), PageRequest.of(0, 10)))
+                .thenReturn(new PageImpl<>(List.of(request), PageRequest.of(0, 10), 1));
+        when(codec.decodeProducerEvent("retained-producer-event")).thenReturn(submission);
+
+        var page = service.listHazardRequests(0, 10);
+
+        assertThat(page.mode()).isEqualTo("DEMO");
+        assertThat(page.demoRunId()).isEqualTo(runId);
+        assertThat(page.items()).containsExactly(new PlanningHazardRequestSummary(requestId, eventId, disruptionId,
+                "HAZARD", DiagnosisRequestStatus.FAILED_RETRYABLE,
+                "HAZARD_CONTEXT_OR_MODEL_UNAVAILABLE", createdAt));
+    }
+
     @Test
     void switchingModesOrSimulationRunsMakesTheOldDiagnosisIneligible() {
         var scopes = mock(PlanningScopePort.class);

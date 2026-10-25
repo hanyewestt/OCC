@@ -86,6 +86,11 @@ and `OCC_DISRUPTION_TRAFFIC_MINIMUM_ABSENCE_PERIOD` rules. Flood cancellation,
 rail recovery and documented source expiry have their own lifecycle handling.
 Absence is reported as “No longer reported,” never as verified clearance.
 
+Cleared hazard identities are retained for `OCC_DISRUPTION_HAZARD_STATE_RETENTION`
+(30 days by default). This bounds per-poll state scans while suppressing stale
+source replays throughout that window; the immutable disruption events remain
+available after the operational state row is removed.
+
 Candidate stop proximity uses `OCC_DISRUPTION_HAZARD_ASSOCIATION_RADIUS_KM` and
 the separately imported station references from Ingestion. Associations are
 evidence for controller review only; they do not confirm road impact, safety,

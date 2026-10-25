@@ -19,6 +19,7 @@ export function NoticeBoardPage() {
     const controller = new AbortController()
     let timer: number | undefined
     async function load() {
+      let pageChanged = false
       try {
         // Public timing is independent of sign-in configuration and Supabase availability.
         const configResponse = await fetch('/frontend-config', { signal: controller.signal, cache: 'no-store', redirect: 'error' })
@@ -33,11 +34,17 @@ export function NoticeBoardPage() {
         async function poll() {
           try {
             const data = await apiRequest<PageResult<PublicNotice>>(`/api/v1/planning/public/notices?${query}`, undefined, controller.signal)
+            if (!controller.signal.aborted && data && page > Math.max(0, data.totalPages - 1)) {
+              pageChanged = true
+              setLoading(true)
+              setPage(Math.max(0, data.totalPages - 1))
+              return
+            }
             if (!controller.signal.aborted) { setNotices(data); setError(''); setLastUpdated(new Date().toISOString()) }
           } catch (failure) {
             if (!controller.signal.aborted) { setNotices(null); setError(failure instanceof Error ? failure.message : 'Notices are unavailable.') }
           } finally {
-            if (!controller.signal.aborted) { setLoading(false); timer = window.setTimeout(() => void poll(), interval! * 1000) }
+            if (!controller.signal.aborted && !pageChanged) { setLoading(false); timer = window.setTimeout(() => void poll(), interval! * 1000) }
           }
         }
         await poll()

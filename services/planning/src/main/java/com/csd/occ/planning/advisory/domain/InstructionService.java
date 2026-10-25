@@ -16,17 +16,25 @@ public class InstructionService {
     private final IssuedInstructionRepository instructions;
     private final AdvisoryContextPort context;
     private final PlanningScopePort scopes;
+    private final AdvisoryModelEvidenceRepository evidence;
     private final Clock clock;
     private final InstructionPolicy policy = new InstructionPolicy();
     public InstructionService(AdvisoryProposalRepository proposals, IssuedInstructionRepository instructions,
-            AdvisoryContextPort context, PlanningScopePort scopes, Clock clock) {
-        this.proposals = proposals; this.instructions = instructions; this.context = context; this.scopes = scopes; this.clock = clock;
+            AdvisoryContextPort context, PlanningScopePort scopes, AdvisoryModelEvidenceRepository evidence, Clock clock) {
+        this.proposals = proposals; this.instructions = instructions; this.context = context; this.scopes = scopes;
+        this.evidence = evidence; this.clock = clock;
     }
     public Page<AdvisoryProposal> proposals(int page, int size) {
+        return proposals(page, size, false);
+    }
+    public Page<AdvisoryProposal> proposals(int page, int size, boolean pendingOnly) {
         validatePage(page, size);
         var scope = scopes.current();
-        return scope.demoRunId() == null ? Page.empty(PageRequest.of(page, size))
-                : proposals.findByDemoRunIdOrderByCreatedAtAsc(scope.demoRunId(), PageRequest.of(page, size));
+        if (scope.demoRunId() == null) return Page.empty(PageRequest.of(page, size));
+        var request = PageRequest.of(page, size);
+        return pendingOnly
+                ? proposals.findByDemoRunIdAndStatusOrderByCreatedAtAsc(scope.demoRunId(), "PENDING", request)
+                : proposals.findByDemoRunIdOrderByCreatedAtAsc(scope.demoRunId(), request);
     }
     @Transactional
     public String preview(UUID id, AdvisoryCandidate override) {
@@ -34,7 +42,7 @@ public class InstructionService {
         if (!proposal.demoRunId().equals(scopes.current().demoRunId()))
             throw new AdvisoryConflictException("Proposal is outside the active simulation");
         var hazard = context.hazard(proposal.disruptionId());
-        if (!"ACTIVE".equals(hazard.status()) || !hazard.sourceObservationId().equals(proposal.context().sourceObservationId()))
+        if (!"ACTIVE".equals(hazard.status()) || !proposal.context().hasSameEvidenceAs(hazard))
             throw new AdvisoryConflictException("Hazard evidence changed; review a current proposal");
         return policy.message(override == null ? proposal.candidate() : override,
                 assignedBus(proposal.demoRunId(), proposal.busId()), hazard.exposures(), hazard.facts().instruction(), context.limits());
@@ -54,7 +62,7 @@ public class InstructionService {
         if (!proposal.demoRunId().equals(runId)) throw new AdvisoryConflictException("Proposal is outside the active simulation");
         var bus = assignedBus(runId, proposal.busId());
         var hazard = context.hazard(proposal.disruptionId());
-        if (!hazard.status().equals("ACTIVE") || !hazard.sourceObservationId().equals(proposal.context().sourceObservationId()))
+        if (!hazard.status().equals("ACTIVE") || !proposal.context().hasSameEvidenceAs(hazard))
             throw new AdvisoryConflictException("Hazard evidence changed or is no longer active; review a current proposal");
         String message = policy.message(chosen, bus, hazard.exposures(), hazard.facts().instruction(), context.limits());
         if (replaceInstructionId != null) {
@@ -72,7 +80,10 @@ public class InstructionService {
         instructions.flush();
         var issued = new IssuedInstruction(id, proposal.disruptionId(), runId, bus, chosen, message,
                 hazard.classification(), actor, clock.instant(), context.limits().acknowledgementWindow());
-        proposal.decide(chosen, actor, rationale, replaceInstructionId, clock.instant());
+        var decidedAt = clock.instant();
+        proposal.decide(chosen, actor, rationale, replaceInstructionId, decidedAt);
+        evidence.findById(proposal.id()).orElseGet(() -> evidence.save(new AdvisoryModelEvidence(proposal)))
+                .decide(chosen, actor, rationale, replaceInstructionId, decidedAt);
         return instructions.saveAndFlush(issued);
     }
     @Transactional

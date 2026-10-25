@@ -8,6 +8,8 @@ import com.csd.occ.planning.recommendation.domain.RecommendationDecisionService;
 import com.csd.occ.planning.recommendation.domain.RecommendationDecision;
 import com.csd.occ.planning.recommendation.domain.RecommendationDecisionAction;
 import com.csd.occ.planning.recommendation.domain.ControllerBusInstruction;
+import com.csd.occ.planning.advisory.domain.AdvisoryProposalRepository;
+import com.csd.occ.planning.advisory.domain.IssuedInstructionRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.util.Optional;
@@ -55,6 +57,9 @@ class BunchingRecommendationControllerTest {
 
     @MockitoBean
     private RecommendationDecisionService decisions;
+
+    @MockitoBean private AdvisoryProposalRepository proposals;
+    @MockitoBean private IssuedInstructionRepository instructions;
 
     @TestConfiguration(proxyBeanMethods = false)
     static class MeterConfiguration {

@@ -29,6 +29,12 @@ public class HazardSyncService {
 
     @Transactional
     public void process(String kind, HazardPollPort.Poll poll, Duration staleAfter, int absenceLimit, Duration absencePeriod) {
+        process(kind, poll, staleAfter, absenceLimit, absencePeriod, null);
+    }
+
+    @Transactional
+    public void process(String kind, HazardPollPort.Poll poll, Duration staleAfter, int absenceLimit,
+            Duration absencePeriod, Duration stateRetention) {
         if (poll == null || poll.pollRunId() == null || poll.completedAt() == null || !kind.equals(poll.scope())
                 || !("OBSERVATION_ONLY".equals(poll.classification()) && poll.demoRunId() == null
                     || "SIMULATION".equals(poll.classification()) && poll.demoRunId() != null))
@@ -37,7 +43,11 @@ public class HazardSyncService {
         if (!cursor.isBefore(poll)) return;
         Instant now = clock.instant();
         if (poll.complete() && "SUCCESS".equals(poll.outcome()) && !poll.completedAt().isBefore(now.minus(staleAfter))) {
-            var scoped = new java.util.ArrayList<>(hazards.findScope(poll.source(), poll.scope(), poll.classification(), poll.demoRunId()));
+            var retained = stateRetention == null
+                    ? hazards.findScope(poll.source(), poll.scope(), poll.classification(), poll.demoRunId())
+                    : hazards.findRetainedScope(poll.source(), poll.scope(), poll.classification(), poll.demoRunId(),
+                            now.minus(stateRetention));
+            var scoped = new java.util.ArrayList<>(retained);
             var cancellations = poll.observations().stream().map(HazardPollPort.Observation::facts)
                     .filter(Objects::nonNull).filter(f -> "CANCEL".equals(f.sourceAction()))
                     .flatMap(f -> f.references().stream()).collect(java.util.stream.Collectors.toSet());
@@ -50,12 +60,14 @@ public class HazardSyncService {
                 present.add(facts.sourceEventKey());
                 if ("CANCEL".equals(facts.sourceAction())) {
                     scoped.stream().filter(h -> facts.references().contains(h.sourceEventKey()))
-                            .filter(h -> !"CLEARED".equals(h.status())).forEach(h -> clear(poll, h, "SOURCE_CANCELLED", now));
+                            .filter(h -> !"CLEARED".equals(h.status()))
+                            .forEach(h -> clear(poll, h, "SOURCE_CANCELLED", now, observation));
                     continue;
                 }
                 if ("RECOVERED".equals(facts.sourceAction())) {
                     scoped.stream().filter(h -> facts.sourceEventKey().equals("network") || h.sourceEventKey().equals(facts.sourceEventKey()))
-                            .filter(h -> !"CLEARED".equals(h.status())).forEach(h -> clear(poll, h, "SOURCE_RECOVERED", now));
+                            .filter(h -> !"CLEARED".equals(h.status()))
+                            .forEach(h -> clear(poll, h, "SOURCE_RECOVERED", now, observation));
                     continue;
                 }
                 var existing = scoped.stream().filter(h -> h.sourceEventKey().equals(facts.sourceEventKey())).findFirst();
@@ -79,12 +91,12 @@ public class HazardSyncService {
                 if (!"CLEARED".equals(state.status()) && !present.contains(state.sourceEventKey())) {
                     state.markAbsent(poll.completedAt());
                     if (state.absenceCount() >= absenceLimit && !poll.completedAt().isBefore(state.firstAbsentAt().plus(absencePeriod)))
-                        clear(poll, state, "NO_LONGER_REPORTED", now);
+                        clear(poll, state, "NO_LONGER_REPORTED", now, null);
                 }
             }
             for (var state : scoped) {
                 if (!"CLEARED".equals(state.status()) && state.facts().effectiveUntil() != null && !now.isBefore(state.facts().effectiveUntil()))
-                    clear(poll, state, "SOURCE_EXPIRED", now);
+                    clear(poll, state, "SOURCE_EXPIRED", now, null);
                 else if ("SCHEDULED".equals(state.status()) && !now.isBefore(state.facts().effectiveFrom())) {
                     state.activate(now); record(poll, state, "UPDATED", now);
                 }
@@ -93,15 +105,25 @@ public class HazardSyncService {
         cursor.advance(poll, staleAfter);
     }
 
-    private void clear(HazardPollPort.Poll poll, HazardState state, String reason, Instant now) {
-        state.clear(reason, now); record(poll, state, "CLEARED", now);
+    private void clear(HazardPollPort.Poll poll, HazardState state, String reason, Instant now,
+            HazardPollPort.Observation resolution) {
+        state.clear(reason, now); record(poll, state, "CLEARED", now, resolution);
     }
     private void record(HazardPollPort.Poll poll, HazardState state, String action, Instant now) {
+        record(poll, state, action, now, null);
+    }
+    private void record(HazardPollPort.Poll poll, HazardState state, String action, Instant now,
+            HazardPollPort.Observation resolution) {
         disruptions.recordTransition(state.disruptionId(), state.kind(), state.classification(), state.demoRunId(), state.status(),
                 state.openedAt(), now, "CLEARED".equals(state.status()) ? now : null);
         UUID eventId = UUID.randomUUID();
         var encoded = codec.encodeHazard(new HazardEventSnapshot(eventId, state.disruptionId(), action, state.inactiveReason(),
-                state.classification(), state.demoRunId(), state.sourceObservationId(), poll.pollRunId(), now, state.facts()));
+                state.classification(), state.demoRunId(), state.sourceObservationId(), null, poll.pollRunId(), null, now,
+                state.facts(), resolution == null && "CLEARED".equals(action)
+                        ? new HazardEventSnapshot.ResolutionEvidence("COMPLETE_POLL", null, poll.pollRunId(),
+                                poll.completedAt(), null)
+                        : resolution == null ? null : new HazardEventSnapshot.ResolutionEvidence("SOURCE_OBSERVATION",
+                                resolution.id(), poll.pollRunId(), resolution.fetchedAt(), resolution.facts())));
         hazards.recordEvent(eventId, state.disruptionId(), state.kind(), action, state.classification(), state.demoRunId(),
                 state.sourceObservationId(), poll.pollRunId(), state.lastSeenAt(), now, encoded.payloadJson());
         outbox.save(new DiagnosisOutbox(eventId, eventId, encoded.payloadJson(), encoded.payloadFingerprint(), encoded.schemaVersion(), now));

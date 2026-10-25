@@ -14,6 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class DemoReplayService {
+    private static final String DEMO_STOP_CODE = "44251";
+
     private final DemoRunRepository runs;
     private final DemoVehicleAssignmentRepository assignments;
     private final PollRunRepository pollRuns;
@@ -84,7 +86,8 @@ public class DemoReplayService {
         poll.setOutcome("SUCCESS"); poll.setHttpStatus(200); poll.setRecordsReceived(5); poll.setClassification("SIMULATION"); poll.setDemoRunId(run.id()); pollRuns.save(poll);
         String payload = payload();
         RawObservation raw = new RawObservation(); raw.setId(UUID.randomUUID()); raw.setPollRunId(pollId); raw.setSource("DEMO");
-        raw.setSourceKey("demo:" + run.id() + ":stop:44251"); raw.setRequestParameters("{\"BusStopCode\":\"44251\"}");
+        raw.setSourceKey("demo:" + run.id() + ":stop:" + DEMO_STOP_CODE);
+        raw.setRequestParameters("{\"BusStopCode\":\"" + DEMO_STOP_CODE + "\"}");
         raw.setPayload(payload); raw.setPayloadChecksum(hash(payload)); raw.setFetchedAt(now); raw.setIngestedAt(now); raw.setHttpStatus(200);
         raw.setClassification("SIMULATION"); raw.setDemoRunId(run.id()); rawObservations.save(raw);
         UUID reference = topology.activeVersion().orElseThrow().id();
@@ -112,11 +115,24 @@ public class DemoReplayService {
                                            String tripId, String serviceId, int visit,
                                            Instant eta, Instant now) {
         BusArrivalObservation value = new BusArrivalObservation(); value.setId(UUID.randomUUID()); value.setRawObservationId(rawId);
-        value.setPollRunId(pollId); value.setReferenceVersionId(reference); value.setStopCode("44251"); value.setServiceId(serviceId);
+        value.setPollRunId(pollId); value.setReferenceVersionId(reference); value.setStopCode(DEMO_STOP_CODE); value.setServiceId(serviceId);
         value.setOperator("SBST"); value.setDirectionId(1); value.setVisitOrder(visit); value.setEstimatedArrivalAt(eta);
         value.setLatitude(new BigDecimal("1.3770000")); value.setLongitude(new BigDecimal("103.7710000")); value.setMonitored(true);
         value.setVehicleType("DD"); value.setFetchedAt(now); value.setIngestedAt(now); value.setRecordChecksum(hash(tripId + eta));
-        value.setClassification("SIMULATION"); value.setDemoRunId(runId); value.setTripId(tripId); return value;
+        value.setClassification("SIMULATION"); value.setDemoRunId(runId); value.setTripId(tripId);
+        value.setRouteStopSequence(routeStopSequence(reference, serviceId));
+        return value;
+    }
+
+    private Integer routeStopSequence(UUID referenceVersionId, String serviceId) {
+        return topology.busRoute(referenceVersionId, serviceId).stream()
+                .flatMap(route -> route.operators().stream())
+                .flatMap(operator -> operator.directions().stream())
+                .filter(direction -> direction.directionId() == 1)
+                .flatMap(direction -> direction.stops().stream())
+                .filter(stop -> DEMO_STOP_CODE.equals(stop.stopCode()))
+                .mapToInt(ReferenceTopologyPort.BusRouteStop::stopSequence)
+                .min().stream().boxed().findFirst().orElse(null);
     }
     private String payload() { try { return json.writeValueAsString(java.util.Map.of("value", List.of(java.util.Map.of("Type", "Vehicle Breakdown", "Latitude", 1.380255, "Longitude", 103.755075, "Message", "DEMO: Vehicle breakdown")))); } catch (Exception e) { throw new IllegalStateException(e); } }
     private String hash(String value) { try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); } catch (Exception e) { throw new IllegalStateException(e); } }

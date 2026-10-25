@@ -5,18 +5,22 @@ Boot service. Disruption submits work to `/internal/v1/planning/requests`; the
 diagnosis worker gathers evidence and calls the recommendation domain directly
 inside this process. There is no diagnosis-to-recommendation HTTP call.
 
-Planning accepts versioned `BUS_BUNCHING` and `TRAFFIC_INCIDENT` submissions from
-Disruption. Bunching requests follow the existing diagnosis and safe
-recommendation workflow. Traffic lifecycle snapshots are retained as immutable
-request evidence and finish with `policyOutcome=TRAFFIC_INCIDENT_NO_OPERATIONAL_ACTION`;
-phase 1 deliberately defines no traffic intervention policy.
+Planning accepts versioned `BUS_BUNCHING`, `HAZARD` and `TRAFFIC_INCIDENT`
+submissions from Disruption. Bunching requests follow the diagnosis and safe
+recommendation workflow. Hazard and traffic lifecycle events retain their source
+facts and can produce controller-reviewed proposals for exposed buses in the
+active simulation run. They do not issue instructions automatically. Live data
+remains observational: there is no live-bus assignment or live OBU mitigation
+workflow.
 
-The public API uses `/api/v1/planning/...` and accepts Supabase JWTs with an
-`occ_role` claim of `ADMIN` or `CONTROLLER`. The internal request endpoint only
-accepts the configured `X-OCC-Peer-Token` from Disruption. Captain and unassigned
-users cannot use public Planning routes. The token is a per-peer capability,
-not a Supabase user token; keep its value in the ignored root `.env` or a
-deployment secret store.
+Controller and admin APIs use `/api/v1/planning/...` and require a Supabase JWT
+with an `occ_role` claim of `ADMIN` or `CONTROLLER`. Captains can read only
+instructions assigned to their verified subject and acknowledge those
+instructions; unassigned users cannot access private Planning APIs. Public
+notice reads at `/api/v1/planning/public/notices` are anonymous. The internal
+request endpoint only accepts the configured `X-OCC-Peer-Token` from Disruption.
+That token is a per-peer capability, not a Supabase user token; keep its value
+in the ignored root `.env` or a deployment secret store.
 
 The application's existing Live/Simulation selection also scopes Planning. Planning reads
 Disruption's authoritative consumer selection; it has no independent mode toggle.
@@ -24,9 +28,13 @@ Confirmed live bunching events carry `OBSERVATION_ONLY` evidence with no demo ru
 Simulation events carry `SIMULATION` evidence and the active run ID. Captured inputs
 keep their original scope through retries and mode changes.
 
-`GET /api/v1/planning/diagnoses` returns a paginated list of requests and diagnosis
+`GET /api/v1/planning/diagnoses` returns paginated bunching requests and diagnosis
 results for the selected mode (only the active run in Simulation). Provider failures
-remain visible. Switching modes does not relabel or delete retained diagnoses.
+remain visible. `GET /api/v1/planning/diagnoses/hazard-requests` lists the latest
+unfinished hazard request per disruption in that same scope, including pending,
+retrying and terminal failures. The controller planning page shows those failures;
+failed processing never creates an instruction. Switching modes does not relabel
+or delete retained diagnoses.
 Live diagnoses finish with `LIVE_DIAGNOSIS_NO_VALIDATED_OPERATIONAL_CONTEXT` and do
 not call the simulation mitigation fixture or create operational instructions.
 Validated live vehicle assignments, control stops and crowd-safety inputs are still
@@ -36,6 +44,12 @@ Migration V007 expands the request policy-outcome constraint for live advisory
 completion. Apply it before enabling live diagnosis workers. It preserves existing
 requests and traffic outcomes; an application rollback can leave the expanded
 constraint in place without deleting retained live results.
+
+Migration V012 restores non-null legacy score columns for application rollback.
+Evidence-only diagnoses store zero compatibility values in those columns and set
+`confidence_scores_available=false`; this release reads those rows as having no
+scores. The preceding release can read them without null dereferences. Keep the
+migrated database when rolling back; do not reverse Flyway migrations.
 
 The pending recommendation queue only includes the active simulation run. Decisions
 are rejected when their retained diagnosis does not belong to the current scope.
@@ -50,12 +64,13 @@ bus instructions and a rationale; both are stored with the authenticated
 controller subject. `/api/v1/planning/recommendations/decisions` returns the
 persisted decision history, newest first, for the controller audit screen.
 
-The demo checks `/api/v1/planning/requests/by-event/{eventId}` when a recommendation
-is not yet available. This authenticated lookup reports pending, retryable and
-terminal diagnosis states even if no diagnosis result was created. It defaults
-to `BUS_BUNCHING`; `eventType=TRAFFIC_INCIDENT` selects a traffic event. A 404 means
-the event has not been accepted by Planning. A terminal failure remains recorded;
-close the simulation and start a new one to retry with fresh evidence.
+The controller can check `/api/v1/planning/requests/by-event/{eventId}` when work
+is not yet complete. This authenticated lookup reports pending, retryable and
+terminal states even if no diagnosis result was created. It defaults to
+`BUS_BUNCHING`; `eventType=HAZARD` or `eventType=TRAFFIC_INCIDENT` selects a hazard
+event. A 404 means Planning has not accepted that event. A later source or bus
+exposure event can queue fresh hazard work; a terminal failure never becomes an
+automatic OBU instruction.
 The default Gemini request deadline is 30 seconds. For a slow live provider, set
 `OCC_PLANNING_GEMINI_REQUEST_TIMEOUT=60s` in `.env` and recreate Planning to apply
 it; no application rebuild is needed. The same deadline applies to diagnosis
@@ -120,6 +135,7 @@ inventory and gives a safe example for every setting. Planning-specific values:
 | `OCC_PLANNING_RECOMMENDATION_AI_ENABLED`, `OCC_PLANNING_RECOMMENDATION_FIXTURE_LOCATION` | Enable Gemini candidate generation or choose the deterministic fixture. |
 | `OCC_PLANNING_GEMINI_API_KEY`, `OCC_PLANNING_GEMINI_BASE_URL`, `OCC_PLANNING_GEMINI_MODEL`, `OCC_PLANNING_GEMINI_TEMPERATURE`, `OCC_PLANNING_GEMINI_THINKING_LEVEL`, `OCC_PLANNING_GEMINI_REQUEST_TIMEOUT`, `OCC_PLANNING_GEMINI_RETRY_ATTEMPTS` | Shared Gemini settings for diagnosis and recommendations. Leave `OCC_PLANNING_GEMINI_BASE_URL` blank to use Google's default endpoint; set it only for a compatible Gemini API endpoint such as the local workflow-test stub. Keep AI disabled until a key is configured. |
 | `OCC_PLANNING_RECOMMENDATION_GEMINI_MAX_OUTPUT_TOKENS`, `OCC_PLANNING_DIAGNOSIS_GEMINI_MAX_OUTPUT_TOKENS` | Separate output-token limits for each model task. |
+| `OCC_PLANNING_ADVISORY_RETENTION`, `OCC_PLANNING_DIAGNOSIS_RETENTION_DURATION` | Short retention for operational advisory and diagnosis rows (12h by default); set these to control Planning independently. For compatibility, each falls back to `OCC_INGESTION_RETENTION` when unset. |
 | `OCC_PLANNING_DIAGNOSIS_RETENTION_INTERVAL`, `OCC_PLANNING_DIAGNOSIS_RETENTION_INITIAL_DELAY` | Schedule cleanup of short-lived diagnosis request/delivery state; retained AI evidence follows its separate policy. |
 | `OCC_PLANNING_DIAGNOSIS_WORKER_ENABLED`, `OCC_PLANNING_DIAGNOSIS_WORKER_INTERVAL`, `OCC_PLANNING_DIAGNOSIS_WORKER_BATCH_SIZE`, `OCC_PLANNING_DIAGNOSIS_LEASE_DURATION`, `OCC_PLANNING_DIAGNOSIS_MAX_ATTEMPTS` | Control Planning's durable diagnosis worker. |
 | `OCC_PLANNING_DIAGNOSIS_DELIVERY_MAX_ATTEMPTS`, `OCC_PLANNING_DIAGNOSIS_RETRY_INITIAL_DELAY`, `OCC_PLANNING_DIAGNOSIS_RETRY_MAX_DELAY` | Bound and schedule retries when Planning submits a recommendation record. Zero delivery attempts means retry indefinitely with capped backoff. |
@@ -139,8 +155,16 @@ DWELL recommendations keep their operational validation and have a dedicated
 approve-and-issue action. Captains read only instructions assigned to their
 verified JWT subject from `/api/v1/planning/captain/instructions`; an
 acknowledgement stores the verified subject and server time. It records receipt,
-not physical execution. Instruction and public notice lifecycle records are
-retained using the existing diagnosis retention schedule.
+not physical execution. Operational instruction and proposal rows use the
+configured short retention window. Model input/output, the original candidate,
+and the controller's final decision are copied into
+`planning.advisory_model_evidence`, which follows the existing long-lived AI
+evidence policy and is not removed by operational advisory cleanup. Operational
+advisory and diagnosis rows use a 12-hour default retention and have separate
+Planning-specific environment settings. A scheduled
+reconciliation cancels instructions from closed demo runs, including stop-based
+instructions whose acknowledgement alone has no expiry; the next operational
+cleanup then removes their expired lifecycle rows.
 Issue and acknowledgement counters use only the bounded instruction-type label;
 they do not expose bus, captain or instruction identifiers as metric labels.
 

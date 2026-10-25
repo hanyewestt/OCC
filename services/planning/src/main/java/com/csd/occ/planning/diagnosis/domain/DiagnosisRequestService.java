@@ -97,8 +97,9 @@ public class DiagnosisRequestService {
                     || !submission.classification().equals(event.classification())
                     || !java.util.Objects.equals(submission.demoRunId(), event.demoRunId())
                     || !submission.detectedAt().equals(event.eventAt()) || event.facts() == null
-                    || !List.of("FLOOD", "RAIL_DISRUPTION", "ROADWORKS").contains(event.facts().kind())
-                    || !List.of("OPENED", "UPDATED", "CLEARED").contains(event.action())
+                    || !List.of("FLOOD", "RAIL_DISRUPTION", "ROADWORKS", "TRAFFIC_INCIDENT").contains(event.facts().kind())
+                    || !List.of("OPENED", "UPDATED", "CLEARED", "REASSESSED").contains(event.action())
+                    || !validHazardTarget(event)
                     || !"hazard-observation-v1".equals(submission.detectionRuleVersion())
                     || !submission.evidenceIds().equals(List.of(event.sourceObservationId().toString())))
                 throw new IllegalArgumentException("Hazard submission facts are inconsistent");
@@ -142,6 +143,12 @@ public class DiagnosisRequestService {
                 || !"traffic-incident-observation-v1".equals(submission.detectionRuleVersion())
                 || !submission.evidenceIds().equals(List.of(event.sourceObservationId().toString())))
             throw new IllegalArgumentException("Traffic incident event submission facts are inconsistent or incomplete");
+    }
+
+    private static boolean validHazardTarget(com.csd.occ.planning.advisory.domain.HazardEventFacts event) {
+        boolean reassessment = "REASSESSED".equals(event.action());
+        if (!reassessment) return event.targetBusId() == null && event.targetRunId() == null;
+        return event.targetRunId() != null && event.targetBusId() != null && !event.targetBusId().isBlank();
     }
 
     private boolean sameRequest(DiagnosisRequest existing, EventType eventType, String producer, UUID eventId) {

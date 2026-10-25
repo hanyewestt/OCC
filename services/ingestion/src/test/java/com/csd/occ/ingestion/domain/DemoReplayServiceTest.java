@@ -69,8 +69,15 @@ class DemoReplayServiceTest {
         run.startReplay();
         when(runs.findActive()).thenReturn(Optional.of(run));
         when(mode.enabled()).thenReturn(true);
-        when(topology.activeVersion()).thenReturn(Optional.of(
-                new ReferenceTopologyPort.ReferenceTopologyVersion(UUID.randomUUID(), "a".repeat(64))));
+        var referenceVersion = new ReferenceTopologyPort.ReferenceTopologyVersion(UUID.randomUUID(), "a".repeat(64));
+        when(topology.activeVersion()).thenReturn(Optional.of(referenceVersion));
+        var repeatedStopRoute = new ReferenceTopologyPort.BusRoute("190", List.of(
+                new ReferenceTopologyPort.BusRouteOperator("SBST", "DD", List.of(
+                        new ReferenceTopologyPort.BusRouteDirection(1, List.of(
+                                new ReferenceTopologyPort.BusRouteStop("44251", "A", "Stop A", null, null, 10, null),
+                                new ReferenceTopologyPort.BusRouteStop("12345", "B", "Stop B", null, null, 20, null),
+                                new ReferenceTopologyPort.BusRouteStop("44251", "A", "Stop A", null, null, 40, null)))))));
+        when(topology.busRoute(referenceVersion.id(), "190")).thenReturn(Optional.of(repeatedStopRoute));
         List<List<BusArrivalObservation>> batches = new ArrayList<>();
         doAnswer(invocation -> {
             Iterable<BusArrivalObservation> batch = invocation.getArgument(0);
@@ -92,6 +99,8 @@ class DemoReplayServiceTest {
                 .filter(row -> "SIMULATION".equals(row.getClassification()) && runId.equals(row.getDemoRunId())).count());
         assertEquals(List.of("190", "190", "972", "972", "972"),
                 batches.getFirst().stream().map(BusArrivalObservation::getServiceId).toList());
+        assertEquals(List.of(10, 10), batches.getFirst().subList(0, 2).stream()
+                .map(BusArrivalObservation::getRouteStopSequence).toList());
         assertEquals(List.of(Duration.ofSeconds(45), Duration.ofSeconds(45)),
                 List.of(Duration.between(batches.get(1).get(2).getEstimatedArrivalAt(),
                                 batches.get(1).get(3).getEstimatedArrivalAt()),

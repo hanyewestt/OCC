@@ -26,10 +26,11 @@ class InstructionServiceTest {
     private final UUID sourceObservationId = UUID.randomUUID();
     private final AdvisoryProposalRepository proposals = mock(AdvisoryProposalRepository.class);
     private final IssuedInstructionRepository instructions = mock(IssuedInstructionRepository.class);
+    private final AdvisoryModelEvidenceRepository evidence = mock(AdvisoryModelEvidenceRepository.class);
     private final AdvisoryContextPort context = mock(AdvisoryContextPort.class);
     private final PlanningScopePort scopes = mock(PlanningScopePort.class);
     private final InstructionService service = new InstructionService(proposals, instructions, context, scopes,
-            Clock.fixed(NOW, ZoneOffset.UTC));
+            evidence, Clock.fixed(NOW, ZoneOffset.UTC));
     private final AdvisoryContextPort.Bus bus = new AdvisoryContextPort.Bus("demo-190-b", "demo-190-b", "SBS5898U",
             "190", 1, captain, "ASSIGNED", new AdvisoryContextPort.Progress("44241", 5, NOW, 30, List.of(5), List.of(300)));
     private final AdvisoryCandidate caution = new AdvisoryCandidate(InstructionType.BE_CAUTIOUS,
@@ -48,6 +49,7 @@ class InstructionServiceTest {
         when(context.fleet(runId)).thenReturn(new AdvisoryContextPort.Fleet(runId, "RUNNING", List.of(bus), 1));
         when(context.hazard(disruptionId)).thenReturn(hazard);
         when(context.limits()).thenReturn(new AdvisoryContextPort.Limits(10, 600, 5, Duration.ofMinutes(5), Duration.ofHours(12)));
+        when(evidence.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(instructions.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
@@ -84,10 +86,41 @@ class InstructionServiceTest {
 
     @Test
     void sourceRevisionChangesRequireReviewingANewProposal() {
-        when(context.hazard(disruptionId)).thenReturn(hazard(UUID.randomUUID(), hazard.exposures()));
+        when(context.hazard(disruptionId)).thenReturn(hazard(UUID.randomUUID(), 2L, hazard.exposures()));
         assertThatThrownBy(() -> service.decide(proposal.id(), null, null, "controller", null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("evidence changed");
         verify(instructions, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void unchangedTrafficReceiptDoesNotInvalidatePendingProposal() {
+        var refreshed = hazard(UUID.randomUUID(), 1L, hazard.exposures());
+        when(context.hazard(disruptionId)).thenReturn(refreshed);
+
+        var issued = service.decide(proposal.id(), null, null, "controller", null);
+
+        assertThat(issued.status()).isEqualTo("ISSUED");
+        verify(instructions).saveAndFlush(any());
+    }
+
+    @Test
+    void pendingQueueFiltersBeforeApplyingTheRequestedPage() {
+        var request = org.springframework.data.domain.PageRequest.of(1, 20);
+        var expected = new PageImpl<>(List.of(proposal), request, 21);
+        when(proposals.findByDemoRunIdAndStatusOrderByCreatedAtAsc(runId, "PENDING", request)).thenReturn(expected);
+
+        assertThat(service.proposals(1, 20, true)).isSameAs(expected);
+
+        verify(proposals).findByDemoRunIdAndStatusOrderByCreatedAtAsc(runId, "PENDING", request);
+        verify(proposals, never()).findByDemoRunIdOrderByCreatedAtAsc(any(), any());
+    }
+
+    @Test
+    void repeatedReassessmentForTheSameEvidenceKeepsOneProposalIdentity() {
+        var replay = new AdvisoryProposal(UUID.randomUUID(), runId, hazard, bus,
+                new AdvisoryDraftPort.Result(caution, "synthetic", "{}", "{}"), "Updated preview", NOW);
+
+        assertThat(replay.id()).isEqualTo(proposal.id());
     }
 
     @Test
@@ -174,10 +207,15 @@ class InstructionServiceTest {
     }
 
     private AdvisoryContextPort.Hazard hazard(UUID observation, List<AdvisoryContextPort.Exposure> exposure) {
+        return hazard(observation, 1L, exposure);
+    }
+
+    private AdvisoryContextPort.Hazard hazard(UUID observation, long sourceRevision,
+            List<AdvisoryContextPort.Exposure> exposure) {
         var facts = new HazardEventFacts.Fact("TRAFFIC_INCIDENT", "synthetic-source", "OBSERVED", NOW.minusSeconds(180),
                 null, NOW.plusSeconds(3600), "Synthetic incident", "Provider message", null, null, List.of(),
                 null, null, null, null, List.of());
         return new AdvisoryContextPort.Hazard(disruptionId, "TRAFFIC_INCIDENT", "ACTIVE", null, "SIMULATION", runId,
-                observation, NOW, facts, exposure, List.of("Road relevance unverified"));
+                observation, sourceRevision, NOW, facts, exposure, List.of("Road relevance unverified"));
     }
 }

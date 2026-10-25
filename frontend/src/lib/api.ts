@@ -45,7 +45,7 @@ export function homeFor(role: Identity['role']): string | null {
 }
 
 export type HazardFeedHealth = { kind: string; status: 'UNKNOWN' | 'HEALTHY' | 'STALE' | 'DEGRADED' | 'FAILED'; lastAttemptAt: string | null; lastSuccessAt: string | null }
-export type PageResult<T> = { items: T[]; page: number; totalItems: number; totalPages: number; feeds?: HazardFeedHealth[] }
+export type PageResult<T> = { items: T[]; page: number; totalItems: number; totalPages: number; serverTime?: string; feeds?: HazardFeedHealth[] }
 export type Arrival = {
   observationId: string; serviceId: string; stopCode: string; operator: string
   directionId?: number | null; visitOrder?: number | null; visitNumber?: number | null
@@ -161,3 +161,8 @@ export type PlanningDiagnosis = {
   confidence: number | null; limitations: string[]; failureCode: string | null; policyOutcome: string | null; createdAt: string
 }
 export type PlanningDiagnosisPage = PageResult<PlanningDiagnosis> & { mode: 'LIVE' | 'DEMO'; demoRunId: string | null }
+export type PlanningHazardRequest = {
+  requestId: string; eventId: string; disruptionId: string; eventType: 'HAZARD' | 'TRAFFIC_INCIDENT'
+  status: 'PENDING' | 'PROCESSING' | 'FAILED_RETRYABLE' | 'FAILED_TERMINAL'; failureCode: string | null; createdAt: string
+}
+export type PlanningHazardRequestPage = PageResult<PlanningHazardRequest> & { mode: 'LIVE' | 'DEMO'; demoRunId: string | null }

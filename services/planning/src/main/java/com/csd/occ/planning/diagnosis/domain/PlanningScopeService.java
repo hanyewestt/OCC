@@ -43,4 +43,17 @@ public class PlanningScopeService {
         }).getContent();
         return new ScopedDiagnosisPage(scope.mode(), scope.demoRunId(), items, page, size, found.getTotalElements(), found.getTotalPages());
     }
+
+    @Transactional(readOnly = true)
+    public ScopedHazardRequestPage listHazardRequests(int page, int size) {
+        if (page < 0 || size < 1 || size > 100) throw new IllegalArgumentException("Invalid hazard request page bounds");
+        PlanningScope scope = current();
+        var found = requests.findOpenHazardRequests(scope.classification(),
+                scope.demoRunId() == null ? "" : scope.demoRunId().toString(), PageRequest.of(page, size));
+        var items = found.map(request -> new PlanningHazardRequestSummary(request.id(), request.eventId(),
+                codec.decodeProducerEvent(request.inputSnapshot()).disruptionId(), request.eventType(),
+                request.status(), request.failureCode(), request.createdAt())).getContent();
+        return new ScopedHazardRequestPage(scope.mode(), scope.demoRunId(), items, page, size,
+                found.getTotalElements(), found.getTotalPages());
+    }
 }

@@ -11,6 +11,8 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 
 public interface IssuedInstructionRepository extends JpaRepository<IssuedInstruction, UUID> {
+    @Query("select distinct i.demoRunId from IssuedInstruction i where i.status in ('ISSUED','ACKNOWLEDGED')")
+    List<UUID> findActiveDemoRunIds();
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select i from IssuedInstruction i where i.id=:id")
     Optional<IssuedInstruction> findForUpdate(UUID id);
     List<IssuedInstruction> findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(UUID runId, String busId, List<String> statuses);
@@ -18,6 +20,9 @@ public interface IssuedInstructionRepository extends JpaRepository<IssuedInstruc
     @org.springframework.data.jpa.repository.Modifying
     @Query("update IssuedInstruction i set i.status='CANCELLED',i.inactiveReason=:reason,i.version=i.version+1 where i.disruptionId=:id and i.status in ('ISSUED','ACKNOWLEDGED')")
     int cancelByDisruption(UUID id, String reason);
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("update IssuedInstruction i set i.status='CANCELLED',i.inactiveReason='RUN_CLOSED',i.version=i.version+1 where i.demoRunId=:runId and i.status in ('ISSUED','ACKNOWLEDGED')")
+    int cancelActiveByDemoRunId(UUID runId);
     @org.springframework.data.jpa.repository.Modifying
     @Query("update IssuedInstruction i set i.status='EXPIRED',i.inactiveReason='VALIDITY_EXPIRED',i.version=i.version+1 where i.status in ('ISSUED','ACKNOWLEDGED') and ((i.acknowledgedAt is null and i.acknowledgementDeadline<=:now) or i.applicableUntil<=:now)")
     int expireDue(java.time.Instant now);

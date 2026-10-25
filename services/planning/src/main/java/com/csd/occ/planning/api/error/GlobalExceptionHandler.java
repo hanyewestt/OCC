@@ -5,9 +5,14 @@ import com.csd.occ.planning.diagnosis.domain.DiagnosisFailureException;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestService;
 import com.csd.occ.planning.recommendation.domain.IdempotencyConflictException;
 import com.csd.occ.planning.recommendation.domain.RecommendationDecisionService;
+import com.csd.occ.planning.advisory.domain.AdvisoryProposalRepository;
+import com.csd.occ.planning.advisory.domain.IssuedInstructionRepository;
+import com.csd.occ.planning.advisory.domain.InstructionType;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -19,6 +24,15 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    private static final String MOVEMENT_INDEX = "uq_issued_instruction_movement";
+    private final AdvisoryProposalRepository proposals;
+    private final IssuedInstructionRepository instructions;
+
+    public GlobalExceptionHandler(AdvisoryProposalRepository proposals, IssuedInstructionRepository instructions) {
+        this.proposals = proposals;
+        this.instructions = instructions;
+    }
+
     @ExceptionHandler(com.csd.occ.planning.advisory.domain.AdvisoryConflictException.class)
     ProblemDetail advisoryConflict(com.csd.occ.planning.advisory.domain.AdvisoryConflictException exception, HttpServletRequest request) {
         return problem(HttpStatus.CONFLICT, "Advisory conflict", exception.getMessage(), "urn:occ:problem:advisory-conflict", request);
@@ -28,8 +42,38 @@ public class GlobalExceptionHandler {
         return problem(HttpStatus.NOT_FOUND, "Advisory not found", "The requested advisory is not available.", "urn:occ:problem:advisory-not-found", request);
     }
     @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
-    ProblemDetail concurrentAdvisoryConflict(HttpServletRequest request) {
+    ProblemDetail concurrentAdvisoryConflict(org.springframework.dao.DataIntegrityViolationException exception,
+            HttpServletRequest request) {
+        if (violatesMovementIndex(exception)) {
+            var proposalId = advisoryDecisionProposalId(request.getRequestURI());
+            var proposal = proposalId.flatMap(proposals::findById);
+            if (proposal.isPresent()) {
+                var winner = instructions.findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(
+                                proposal.get().demoRunId(), proposal.get().busId(), List.of("ISSUED", "ACKNOWLEDGED"))
+                        .stream().filter(instruction -> instruction.type() != InstructionType.BE_CAUTIOUS)
+                        .findFirst();
+                if (winner.isPresent())
+                    return problem(HttpStatus.CONFLICT, "Advisory conflict",
+                            "Active movement instruction " + winner.get().id() + " must be explicitly replaced",
+                            "urn:occ:problem:advisory-conflict", request);
+            }
+        }
         return problem(HttpStatus.CONFLICT, "Concurrent update conflict", "Another decision changed this resource. Refresh before retrying.", "urn:occ:problem:concurrent-update", request);
+    }
+
+    private boolean violatesMovementIndex(Throwable exception) {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause())
+            if (cause instanceof org.hibernate.exception.ConstraintViolationException violation
+                    && MOVEMENT_INDEX.equals(violation.getConstraintName())) return true;
+        return false;
+    }
+
+    private Optional<UUID> advisoryDecisionProposalId(String requestUri) {
+        String[] segments = requestUri.split("/");
+        if (segments.length < 3 || !"decisions".equals(segments[segments.length - 1])
+                || !"advisories".equals(segments[segments.length - 3])) return Optional.empty();
+        try { return Optional.of(UUID.fromString(segments[segments.length - 2])); }
+        catch (IllegalArgumentException malformedId) { return Optional.empty(); }
     }
     @ExceptionHandler(com.csd.occ.planning.diagnosis.domain.PlanningScopePort.UnavailableException.class)
     ProblemDetail handleScopeUnavailable(HttpServletRequest request) {

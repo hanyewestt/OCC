@@ -261,9 +261,9 @@ class IngestionStartupIT {
         assertThat(arrivals.findCurrent("44251", "190", PageRequest.of(0, 50)).getContent()).isEmpty();
         assertThat(arrivals.findHistory("44251", "190", null, null, PageRequest.of(0, 50)).getContent()).isEmpty();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM ingestion.traffic_incident_observation "
-                + "WHERE demo_run_id=? AND classification='SIMULATION' AND hazard_kind='TRAFFIC_INCIDENT'", Integer.class, started.id())).isEqualTo(2);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM ingestion.traffic_incident_observation "
-                + "WHERE demo_run_id=? AND hazard_kind <> 'TRAFFIC_INCIDENT'", Integer.class, started.id())).isEqualTo(9);
+                + "WHERE demo_run_id=? AND classification='SIMULATION'", Integer.class, started.id())).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ingestion.hazard_observation "
+                + "WHERE demo_run_id=?", Integer.class, started.id())).isEqualTo(9);
         var trafficPolls = trafficIncidentPollFeed.page(null, null, 250).polls().stream()
                 .filter(poll -> started.id().equals(poll.demoRunId())).toList();
         assertThat(trafficPolls).hasSize(DemoReplayScenario.STEP_COUNT).allMatch(poll -> poll.complete()
@@ -286,6 +286,7 @@ class IngestionStartupIT {
         retention.purgeExpiredObservations();
         assertThat(jdbc.queryForObject("select count(*) from ingestion.demo_run where id = ?", Integer.class, started.id())).isZero();
         assertThat(jdbc.queryForObject("select count(*) from ingestion.traffic_incident_observation where demo_run_id = ?", Integer.class, started.id())).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.hazard_observation where demo_run_id = ?", Integer.class, started.id())).isZero();
         assertThat(jdbc.queryForObject("select count(*) from ingestion.demo_vehicle_assignment where demo_run_id = ?", Integer.class, started.id())).isZero();
     }
 

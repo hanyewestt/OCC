@@ -9,6 +9,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -42,6 +43,7 @@ class HazardObservationIT {
     @Autowired TrafficIncidentObservationRepository traffic;
     @Autowired RawObservationRepository raw;
     @Autowired HazardEvidencePort evidence;
+    @Autowired JdbcTemplate jdbc;
 
     @Test
     void roundTripsTypedFactsAndLongDescriptionsWithoutLeakingIntoTrafficReads() {
@@ -59,6 +61,16 @@ class HazardObservationIT {
         assertThat(result.polls().getFirst().observations().getFirst().facts()).isEqualTo(fact);
         assertThat(hazards.findAll()).hasSize(1);
         assertThat(traffic.findAll()).isEmpty();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ingestion.traffic_incident_observation", Integer.class))
+                .isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ingestion.hazard_observation", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM information_schema.columns WHERE table_schema = "
+                + "'ingestion' AND table_name = 'traffic_incident_observation' AND column_name = 'hazard_kind'",
+                Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT is_nullable FROM information_schema.columns WHERE table_schema = "
+                + "'ingestion' AND table_name = 'traffic_incident_observation' AND column_name = 'latitude'",
+                String.class)).isEqualTo("NO");
         var stored = raw.findAll().getFirst();
         var decoded = tools.jackson.databind.json.JsonMapper.builder().build()
                 .readValue(stored.getPayload(), String[].class);

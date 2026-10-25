@@ -44,6 +44,20 @@ class IssuedInstructionTest {
     }
 
     @Test
+    void acknowledgementUsesPostgresMicrosecondPrecisionForStableRetries() {
+        var instruction = speedInstruction();
+        Instant unrounded = ISSUED.plusNanos(123_456_789);
+
+        instruction.acknowledge(captain.toString(), unrounded);
+        Instant retryTime = instruction.acknowledgedAt();
+        instruction.acknowledge(captain.toString(), ISSUED.plusSeconds(1));
+
+        assertThat(retryTime).isEqualTo(unrounded.truncatedTo(java.time.temporal.ChronoUnit.MICROS));
+        assertThat(instruction.acknowledgedAt()).isEqualTo(retryTime);
+        assertThat(instruction.applicableUntil()).isEqualTo(retryTime.plusSeconds(300));
+    }
+
+    @Test
     void unacknowledgedInstructionExpiresAtAcknowledgementDeadline() {
         var instruction = speedInstruction();
         assertThat(instruction.acknowledgementDeadline()).isEqualTo(ISSUED.plusSeconds(300));
