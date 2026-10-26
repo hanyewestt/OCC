@@ -6,10 +6,10 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
 import { apiRequest, type PageResult, type PublicNotice } from '@/lib/api'
 import { dataClassificationLabel } from '@/lib/presentation'
-import { formatSgtDateTime, formatSgtTime } from '@/lib/time'
+import { formatSgtDateTime } from '@/lib/time'
+import { PageRefreshStatus } from '@/components/PageRefreshStatus'
 import { usePagedCollection } from '@/lib/paged-collection'
-
-type PublicNoticePage = PageResult<PublicNotice> & { receivedAt: string }
+import { usePageRefresh } from '@/lib/page-refresh'
 
 export function NoticeBoardPage() {
   const [params] = useSearchParams()
@@ -20,16 +20,16 @@ export function NoticeBoardPage() {
   const [configError, setConfigError] = useState('')
   const [refreshIntervalSeconds, setRefreshIntervalSeconds] = useState<number | null>(null)
   const collectionKey = `${classification}:${runId ?? ''}:${configReady}`
-  const collection = usePagedCollection<PublicNotice, PublicNoticePage>(collectionKey, async (page, signal) => {
+  const collection = usePagedCollection<PublicNotice, PageResult<PublicNotice>>(collectionKey, async (page, signal) => {
     if (!configReady || classification !== 'OBSERVATION_ONLY' && classification !== 'SIMULATION' || classification === 'SIMULATION' && !runId) {
-      return { items: [], page, totalItems: 0, totalPages: 0, receivedAt: new Date().toISOString() }
+      return { items: [], page, totalItems: 0, totalPages: 0 }
     }
     const query = new URLSearchParams({ classification, page: String(page), size: '20' })
     if (runId) query.set('demoRunId', runId)
     const result = await apiRequest<PageResult<PublicNotice>>(`/api/v1/planning/public/notices?${query}`, undefined, signal)
     if (!result) throw new Error('Service advisories response was empty.')
-    return { ...result, receivedAt: new Date().toISOString() }
-  }, notice => notice.id)
+    return result
+  }, notice => notice.id, configReady)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -52,15 +52,11 @@ export function NoticeBoardPage() {
     return () => controller.abort()
   }, [classification, runId, configRetry])
 
-  useEffect(() => {
-    if (!configReady || refreshIntervalSeconds === null) return
-    const timer = window.setInterval(collection.reload, refreshIntervalSeconds * 1000)
-    return () => window.clearInterval(timer)
-  }, [collection.reload, configReady, refreshIntervalSeconds])
-  const lastUpdated = collection.latestPage?.receivedAt ?? null
+  const { requestRefresh } = usePageRefresh(refreshIntervalSeconds, collection.refresh, !configReady || collection.isLoading, collectionKey)
+  const lastUpdated = collection.lastSuccessAt
   const loading = !configReady && !configError || collection.isLoading
   const error = configError || (collection.error instanceof Error ? collection.error.message : collection.error !== null ? 'Service advisories are unavailable.' : '')
-  const retry = () => configError ? setConfigRetry(value => value + 1) : collection.reload()
+  const retry = () => configError ? setConfigRetry(value => value + 1) : void requestRefresh()
 
   return <main className="min-h-svh bg-background text-foreground">
     <header className="border-b"><div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-5 md:px-8">
@@ -70,10 +66,10 @@ export function NoticeBoardPage() {
     <div className="mx-auto max-w-7xl space-y-6 p-5 md:p-8">
       <div className="flex flex-wrap items-start justify-between gap-4"><div className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Service advisories</h1>
+        <PageRefreshStatus lastSuccessAt={lastUpdated} intervalSeconds={refreshIntervalSeconds} />
         <p className="text-sm text-muted-foreground">Approved notices about affected services and stops.</p>
       </div><Button variant="outline" disabled={loading} onClick={retry}>Refresh</Button></div>
       {classification === 'SIMULATION' && <p role="status" className="rounded-lg border bg-muted p-3 text-sm font-medium">Simulation · Demonstration notices</p>}
-      {lastUpdated && <p className="text-xs text-muted-foreground">Last updated {formatSgtTime(lastUpdated)} · Refreshes every {refreshIntervalSeconds} seconds</p>}
       {loading && <p role="status" className="text-sm text-muted-foreground">Loading notices…</p>}
       {error && <div role="alert" className="space-y-3 rounded-xl border p-5"><p>{error}</p><Button variant="outline" onClick={retry}>Try again</Button></div>}
       {!loading && !error && collection.latestPage && !collection.items.length && <Card><CardContent className="text-sm text-muted-foreground">No current service advisories.</CardContent></Card>}
@@ -90,7 +86,7 @@ export function NoticeBoardPage() {
       </Card>)}</div></ScrollArea>}
       {collection.latestPage && collection.latestPage.totalItems > collection.items.length && <p className="text-xs text-muted-foreground">Showing {collection.items.length} of {collection.latestPage.totalItems} notices.</p>}
       <PagedCollectionControls label="service advisories" hasItems={!!collection.items.length} hasMore={collection.hasMore}
-        isLoadingMore={collection.isLoadingMore} error={collection.error} reload={collection.reload} loadNext={collection.loadNext} />
+        isLoadingMore={collection.isLoadingMore} error={collection.error} refreshError={collection.refreshError} reload={collection.reload} loadNext={collection.loadNext} />
     </div>
   </main>
 }

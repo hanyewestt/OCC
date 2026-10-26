@@ -63,7 +63,7 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
   await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: {
     items: [], page: 0, size: 100, totalElements: 0, feeds: [],
   } }))
-  for (const endpoint of ['planning/advisories', 'planning/instructions', 'planning/notices', 'planning/diagnoses/hazard-requests', 'planning/captain/instructions']) {
+  for (const endpoint of ['planning/advisories', 'planning/instructions', 'planning/notices', 'planning/diagnoses/hazard-requests', 'planning/diagnoses/hazard-history', 'planning/captain/instructions']) {
     await context.route(`**/api/v1/${endpoint}?*`, route => route.fulfill({ json: { items: [], page: 0, size: 100, totalItems: 0, totalPages: 0 } }))
   }
   await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ status: 204 }))
@@ -99,6 +99,20 @@ async function login(page: Page) {
   await page.getByLabel('Email').fill('user@example.test')
   await page.getByLabel('Password', { exact: true }).fill('synthetic-password')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+}
+
+async function expectAccessVerified(page: Page) {
+  await expect(page.getByRole('heading', { name: /^(Overview|Captain)$/ })).toBeVisible()
+  const expand = page.getByRole('button', { name: 'Expand sidebar' })
+  if (await expand.count()) await expand.click()
+  await expect(page.getByText('Access verified')).toBeVisible()
+}
+
+async function expectPageRefreshStatus(page: Page, intervalSeconds: number) {
+  const status = page.getByLabel('Page refresh status', { exact: true })
+  await expect(status).toHaveCount(1)
+  await expect(status).toContainText(`Refreshes every ${intervalSeconds} seconds`)
+  await expect(page.getByRole('heading', { level: 1 }).locator('..').getByLabel('Page refresh status')).toBeVisible()
 }
 
 test.describe('SGT notice scheduling', () => {
@@ -232,7 +246,7 @@ test('controller route strip shows inferred live bus positions with uncertainty'
   await expect(page.getByRole('group', { name: /Service 972/ })).toHaveCount(0)
   await expect(page.getByRole('img', { name: /Estimated bus 1, approximate position.*plus or minus 70 metres/ })).toBeVisible()
   await expect(page.getByRole('img', { name: 'Estimated buses 1 and 2: ~2m 34s estimate. Approximate time from position gap divided by estimated speed.', exact: true })).toBeVisible()
-  await expect(page.getByLabel('Arrivals freshness')).toContainText(/Last successful refresh .* · Refreshes every 30 seconds/)
+  await expect(page.getByLabel('Page refresh status')).toContainText(/Last successful refresh .* · Refreshes every 30 seconds/)
 })
 
 test('route destination uses all service pages and reports conflicts instead of trusting page zero', async ({ page, context }) => {
@@ -315,6 +329,26 @@ test('route selection resets to the first route when its route identity disappea
   await page.getByRole('button', { name: 'Refresh', exact: true }).click()
   await expect(page.getByRole('option', { name: /Service 972/ })).toBeAttached()
   await expect(selector).toHaveValue('190:SMRT:1')
+})
+
+test('partial position refresh publishes successful services while retaining failed services', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  let refresh = false
+  await context.route('**/api/v1/route-positions?*', route => {
+    if (!refresh) return route.fallback()
+    const serviceId = new URL(route.request().url()).searchParams.get('service')
+    if (serviceId === '972') return route.fulfill({ status: 503 })
+    return route.fulfill({ json: { serviceId, computedAt: '2026-10-23T05:00:00Z', refreshIntervalSeconds: 60,
+      directions: [{ operator: 'SMRT', directionId: 1, routeLengthM: 12000,
+        buses: [{ order: 1, distanceAlongRouteM: 4800, uncertaintyM: 70, speedMps: 6.2 }] }] } })
+  })
+  await login(page)
+  await expect(page.getByRole('img', { name: /Estimated bus 1, approximate position 4300 metres/ })).toBeVisible()
+  refresh = true
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByRole('img', { name: /Estimated bus 1, approximate position 4800 metres/ })).toBeVisible()
+  await page.getByLabel('Route', { exact: true }).selectOption('972:SMRT:1')
+  await expect(page.getByRole('img', { name: /Estimated bus 1, approximate position 3300 metres/ })).toBeVisible()
 })
 
 test('arrivals search, sorting and scrolling use isolated server pages and preserve route selection', async ({ page, context }) => {
@@ -504,21 +538,27 @@ test('controller sidebar, summary links and deep links work through all four scr
   await mockDashboard(context)
   await login(page)
   await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible()
+  await expectPageRefreshStatus(page, 30)
   await expect(page.getByRole('status', { name: '' }).filter({ hasText: /^Simulation$/ })).toBeVisible()
   await expect(page.getByRole('cell', { name: '190', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Expand sidebar' })).toHaveAttribute('aria-expanded', 'false')
+  await page.getByRole('button', { name: 'Expand sidebar' }).click()
   await page.screenshot({ path: 'node_modules/.cache/controller-overview.png', fullPage: true })
   await page.getByRole('button', { name: 'Collapse sidebar' }).click()
   await expect(page.getByRole('button', { name: 'Expand sidebar' })).toHaveAttribute('aria-expanded', 'false')
   await page.getByRole('link', { name: /Simulation detections/ }).click()
   await expect(page).toHaveURL(/\/controller\/disruptions$/)
   await expect(page.getByRole('heading', { name: 'Multi-hazard conditions' })).toBeVisible()
+  await expectPageRefreshStatus(page, 30)
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Disruptions', exact: true })).toBeVisible()
   await page.getByRole('navigation', { name: 'Controller navigation' }).getByRole('link', { name: 'Planning & mitigation' }).click()
   await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toBeVisible()
+  await expectPageRefreshStatus(page, 30)
   await page.getByRole('link', { name: 'Audit log', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'AI audit logs' })).toBeVisible()
   await expect(page.getByText('No controller decisions have been saved.')).toBeVisible()
+  await expectPageRefreshStatus(page, 30)
   await page.goto('/controller/unknown')
   await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible()
 })
@@ -558,6 +598,29 @@ test('controller handles conflicting decisions by retrieving the saved result', 
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   await page.getByRole('button', { name: 'Approve recommendation', exact: true }).click()
   await expect(page.getByText(/already has a decision/)).toBeVisible()
+})
+
+test('controller scrolls root-cause diagnoses within their collection viewport', async ({ page, context }) => {
+  await mockDashboard(context)
+  await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: {
+    mode: 'DEMO', demoRunId: 'run-1', page: 0, size: 100, totalItems: 5, totalPages: 1,
+    items: Array.from({ length: 5 }, (_, index) => ({
+      requestId: `request-${index}`, eventId: `event-${index}`, diagnosisId: `diagnosis-${index}`,
+      classification: 'SIMULATION', demoRunId: 'run-1', serviceId: '190', directionId: 2,
+      stopCode: `09${String(index).padStart(3, '0')}`, status: 'COMPLETED',
+      likelyCause: `Diagnosis ${index + 1}`, confidence: null, limitations: [], evidenceDetails: [],
+      failureCode: null, policyOutcome: null, createdAt: '2026-10-25T07:05:31.590871Z',
+    })),
+  } }))
+
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  const viewport = page.getByRole('region', { name: 'Root-cause diagnoses', exact: true })
+    .locator('[data-slot="scroll-area-viewport"]')
+  await expect.poll(() => viewport.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+  await viewport.hover()
+  await page.mouse.wheel(0, 400)
+  await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
 })
 
 test('controller sees concise diagnosis summaries and source facts in the evidence disclosure', async ({ page, context }) => {
@@ -724,14 +787,17 @@ test('recommendation editor keeps edits on API failure and cannot close or submi
   await expect(page.getByText('AI recommendation replaced with controller instructions.')).toBeVisible()
 })
 
-test('decision result survives a poll removing the recommendation while saving', async ({ page, context }) => {
+test('saving pauses polling and reconciles the decision after the response', async ({ page, context }) => {
   await page.clock.install()
   await mockDashboard(context)
   let saving = false
+  let pollsWhileSaving = 0
   let release!: () => void
-  await context.route('**/api/v1/planning/recommendations/pending?*', route => saving
-    ? route.fulfill({ json: { mode: 'DEMO', demoRunId: 'run-1', items: [], page: 0, totalItems: 0, totalPages: 0 } })
-    : route.fallback())
+  await context.route('**/api/v1/planning/recommendations/pending?*', route => {
+    if (!saving) return route.fallback()
+    pollsWhileSaving++
+    return route.fulfill({ json: { mode: 'DEMO', demoRunId: 'run-1', items: [], page: 0, totalItems: 0, totalPages: 0 } })
+  })
   await context.route('**/api/v1/planning/recommendations/recommendation-1/decision', async route => {
     if (route.request().method() !== 'POST') return route.fallback()
     saving = true
@@ -745,12 +811,12 @@ test('decision result survives a poll removing the recommendation while saving',
   await editor.getByLabel('Controller rationale').fill('Keep the submitted decision visible until its response.')
   await editor.locator('form button[type="submit"]').click()
   await expect.poll(() => saving).toBe(true)
-  const polled = page.waitForResponse(response => response.url().includes('/recommendations/pending?'))
   await page.clock.runFor(30000)
-  await polled
+  expect(pollsWhileSaving).toBe(0)
   await expect(editor).toBeVisible()
   await expect(editor.getByRole('button', { name: 'Saving…', exact: true })).toBeDisabled()
   release()
+  await expect.poll(() => pollsWhileSaving).toBe(1)
   await expect(editor).toHaveCount(0)
   await expect(page.getByText('AI recommendation replaced with controller instructions.')).toBeVisible()
 })
@@ -766,7 +832,7 @@ test('recommendation editor retains its draft during an unrelated refresh', asyn
   let releaseRoute!: () => void
   let signalRouteRefresh!: () => void
   const routeRefreshStarted = new Promise<void>(resolve => { signalRouteRefresh = resolve })
-  await context.route('**/api/v1/bus-routes/190', async route => {
+  await context.route('**/api/v1/planning/recommendations/pending?*', async route => {
     if (!holdRouteRefresh) return route.fallback()
     signalRouteRefresh()
     await new Promise<void>(resolve => { releaseRoute = resolve })
@@ -774,19 +840,19 @@ test('recommendation editor retains its draft during an unrelated refresh', asyn
   })
   await login(page)
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
   const rationale = editor.getByLabel('Controller rationale')
   await rationale.fill('Keep the current draft while route data refreshes.')
 
   holdRouteRefresh = true
-  const recommendationRefresh = page.waitForResponse(response =>
-    new URL(response.url()).pathname === '/api/v1/planning/recommendations/pending')
   await page.clock.fastForward(1000)
-  await Promise.all([routeRefreshStarted, recommendationRefresh])
+  await routeRefreshStarted
   await expect(editor).toBeVisible()
   await expect(rationale).toHaveValue('Keep the current draft while route data refreshes.')
   releaseRoute()
+  await expect(editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true })).toBeEnabled()
   await expect(editor).toBeVisible()
   await expect(rationale).toHaveValue('Keep the current draft while route data refreshes.')
 })
@@ -1070,7 +1136,7 @@ for (const [role, destination, title, other] of [
     await login(page)
     await expect(page).toHaveURL(new RegExp(`${destination}$`))
     await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
-    await expect(page.getByText('Access verified')).toBeVisible()
+    await expectAccessVerified(page)
     await page.reload()
     await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
     await page.goto(other)
@@ -1119,13 +1185,13 @@ test('failed session verification never renders protected content and can retry'
   await expect(page.getByText('Access verified')).toHaveCount(0)
   options.sessionFailure = false
   await page.getByRole('button', { name: 'Try again' }).click()
-  await expect(page.getByText('Access verified')).toBeVisible()
+  await expectAccessVerified(page)
 })
 test('page verification failures do not grant access', async ({ page, context }) => {
   const options = { accessFailure: false }
   await mockAuth(context, 'CONTROLLER', options)
   await login(page)
-  await expect(page.getByText('Access verified')).toBeVisible()
+  await expectAccessVerified(page)
   options.accessFailure = true
   await page.reload()
   await expect(page.getByRole('alert')).toBeVisible()
@@ -1143,10 +1209,10 @@ test('expired persisted session with rejected refresh returns to login', async (
 test('sign-out propagates to another open tab', async ({ page, context }) => {
   await mockAuth(context, 'CONTROLLER')
   await login(page)
-  await expect(page.getByText('Access verified')).toBeVisible()
+  await expectAccessVerified(page)
   const other = await context.newPage()
   await other.goto('/controller')
-  await expect(other.getByText('Access verified')).toBeVisible()
+  await expectAccessVerified(other)
   await page.getByRole('button', { name: 'Sign out' }).click()
   await expect(other).toHaveURL(/\/login$/)
   await expect(other.getByText('Access verified')).toHaveCount(0)
@@ -1173,7 +1239,7 @@ test('restored expired session refreshes and verifies the new role', async ({ pa
 test('saved browser session works in a new browser context after verification', async ({ page, context, browser }) => {
   await mockAuth(context, 'CONTROLLER')
   await login(page)
-  await expect(page.getByText('Access verified')).toBeVisible()
+  await expectAccessVerified(page)
   const restored = await browser.newContext({ storageState: await context.storageState(), baseURL: page.url(),
     ignoreHTTPSErrors: ['localhost', '127.0.0.1'].includes(new URL(page.url()).hostname) })
   try {
@@ -1189,7 +1255,7 @@ test('saved browser session works in a new browser context after verification', 
 test('Gateway rejection clears a restored session', async ({ page, context }) => {
   await mockAuth(context, 'CONTROLLER')
   await login(page)
-  await expect(page.getByText('Access verified')).toBeVisible()
+  await expectAccessVerified(page)
   await context.route('**/api/v1/auth/session', route => route.fulfill({ status: 401 }))
   await page.reload()
   await expect(page).toHaveURL(/\/401$/)
@@ -1204,7 +1270,7 @@ for (const [status, heading] of [[401, 'Sign-in required'], [403, 'Access denied
   test(`page access rejection displays ${status} without protected content`, async ({ page, context }) => {
     await mockAuth(context, 'CONTROLLER')
     await login(page)
-    await expect(page.getByText('Access verified')).toBeVisible()
+    await expectAccessVerified(page)
     await context.route('**/api/v1/auth/access/controller', route => route.fulfill({ status }))
     await page.reload()
     await expect(page.getByRole('heading', { name: heading })).toBeVisible()
@@ -1553,9 +1619,7 @@ test('controller pending queue filters on the server and can page through all pe
   const hazards = page.getByRole('region', { name: 'Hazard conditions', exact: true })
   await page.getByRole('button', { name: 'Load more hazards', exact: true }).click()
   await expect(hazards.getByRole('heading', { name: 'Hazard page 2', exact: true })).toBeVisible()
-  const processing = page.getByRole('region', { name: 'Hazard processing', exact: true })
-  await page.getByRole('button', { name: 'Load more hazard processing', exact: true }).click()
-  await expect(processing.getByText('Hazard page 2', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Hazard processing', exact: true })).toHaveCount(0)
   await expect(page.getByRole('navigation', { name: /pages/ })).toHaveCount(0)
 
   await page.goto('/controller/audit')
@@ -1589,7 +1653,7 @@ test('planning loads later source hazards and resolves an advisory source indepe
   await expect(page.getByLabel('Title', { exact: true })).toHaveValue('later-source')
 })
 
-test('hazard feed freshness keeps same-kind source and simulation scopes distinct', async ({ page, context }) => {
+test('hazard conditions show only the collection refresh time', async ({ page, context }) => {
   await mockAuth(context, 'CONTROLLER')
   await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: {
     items: [], page: 0, size: 100, totalElements: 0, feeds: [
@@ -1599,25 +1663,56 @@ test('hazard feed freshness keeps same-kind source and simulation scopes distinc
   } }))
   await login(page)
   await page.getByRole('link', { name: 'Disruptions', exact: true }).click()
-  const health = page.getByRole('group', { name: 'Hazard feed freshness' })
-  await expect(health.getByText(/LIVE API · SINGAPORE · live · failed/i)).toBeVisible()
-  await expect(health.getByText(/SIMULATION · SINGAPORE · simulation · run run-1 · healthy/i)).toBeVisible()
+  await expect(page.getByLabel('Page refresh status', { exact: true })).toContainText('Last successful refresh')
+  await expect(page.getByLabel('Hazards freshness', { exact: true })).toHaveCount(0)
+  await expect(page.getByText(/LIVE API · SINGAPORE · live · failed/i)).not.toBeVisible()
+  await expect(page.getByText(/SIMULATION · SINGAPORE · simulation · run run-1 · healthy/i)).not.toBeVisible()
 })
 
-test('scoped freshness retains last successful arrival refresh after failures', async ({ page, context }) => {
+test('Disruptions Refresh updates bunching detections and hazards together', async ({ page, context }) => {
+  await page.clock.install()
+  await mockAuth(context, 'CONTROLLER')
+  let detections = 0
+  let hazards = 0
+  await context.route('**/api/v1/live-bunching-alerts?*', route => {
+    detections++
+    return route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } })
+  })
+  await context.route('**/api/v1/disruption/hazards?*', route => {
+    hazards++
+    return route.fulfill({ json: { items: [], page: 0, size: 100, totalElements: 0, feeds: [] } })
+  })
+  await login(page)
+  await page.getByRole('link', { name: 'Disruptions', exact: true }).click()
+  await expect.poll(() => hazards).toBeGreaterThan(0)
+  await expect.poll(() => detections).toBeGreaterThan(0)
+  const before = { detections, hazards }
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect.poll(() => detections).toBeGreaterThan(before.detections)
+  await expect.poll(() => hazards).toBeGreaterThan(before.hazards)
+  await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled()
+  const afterManual = { detections, hazards }
+  await page.clock.runFor(31000)
+  await expect.poll(() => detections).toBeGreaterThan(afterManual.detections)
+  await expect.poll(() => hazards).toBeGreaterThan(afterManual.hazards)
+})
+
+test('page refresh status retains its successful time after arrival refresh failure', async ({ page, context }) => {
   await page.clock.install()
   await mockDashboard(context)
   await login(page)
-  const freshness = page.getByLabel('Arrivals freshness', { exact: true })
+  const freshness = page.getByLabel('Page refresh status', { exact: true })
   await expect(freshness).toContainText('Last successful refresh')
+  await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled()
   const before = await freshness.innerText()
   await context.route('**/api/v1/arrivals?*', route => route.fulfill({ status: 503, json: { detail: 'Unavailable' } }))
   const failed = page.waitForResponse(response => response.url().includes('/arrivals?') && response.status() === 503)
-  await page.clock.runFor(30000)
+  await page.clock.runFor(31000)
   await failed
   await expect(freshness).toHaveText(before)
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
-  await expect(page.getByLabel('Recommendations freshness', { exact: true })).toContainText('Last successful refresh')
+  await expect(page.getByLabel('Page refresh status', { exact: true })).toContainText('Last successful refresh')
+  await expect(page.getByLabel('Recommendations freshness', { exact: true })).toHaveCount(0)
 })
 
 test('controller names an empty filtered hazard list', async ({ page, context }) => {
@@ -1684,7 +1779,7 @@ test('controller can withdraw a published notice from managed notice history', a
   await expect(page.getByRole('button', { name: 'Withdraw notice', exact: true })).toHaveCount(0)
 })
 
-test('controller sees terminal hazard processing failure without presenting an advisory for issuance', async ({ page, context }) => {
+test('controller sees hazard processing history only in audit and can load later terminal records', async ({ page, context }) => {
   await mockAuth(context, 'CONTROLLER')
   const disruptionId = '00000000-0000-4000-8000-000000000205'
   await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: { items: [{
@@ -1693,11 +1788,19 @@ test('controller sees terminal hazard processing failure without presenting an a
     exposures: [{ busId: 'demo-190-b', serviceId: '190', stopCode: 'B01', stopName: 'Example Stop', stopSequence: 2, basis: 'STOP_SEQUENCE' }],
     limitations: [],
   }], page: 0, size: 100, totalElements: 1, feeds: [] } }))
-  await context.route('**/api/v1/planning/diagnoses/hazard-requests?*', route => route.fulfill({ json: {
-    mode: 'DEMO', demoRunId: 'run-205', items: [{ requestId: 'request-205', eventId: 'event-205', disruptionId,
+  let historyRequests = 0
+  await context.route('**/api/v1/planning/diagnoses/hazard-history?*', route => {
+    historyRequests++
+    const requestedPage = Number(new URL(route.request().url()).searchParams.get('page'))
+    return route.fulfill({ json: {
+    mode: 'DEMO', demoRunId: 'run-205', items: [{ requestId: 'request-205', eventId: 'event-205', disruptionId, title: 'Flood report',
       eventType: 'HAZARD', status: 'FAILED_TERMINAL', failureCode: 'HAZARD_CONTEXT_OR_MODEL_UNAVAILABLE',
-      createdAt: '2026-10-25T04:00:00Z' }], page: 0, size: 100, totalItems: 1, totalPages: 1,
-  } }))
+      createdAt: '2026-10-25T04:00:00Z', completedAt: '2026-10-25T04:02:00Z' }, ...(requestedPage ? [{
+        requestId: 'completed-request', eventId: 'completed-event', disruptionId: 'completed-hazard', eventType: 'TRAFFIC_INCIDENT', title: 'TRAFFIC INCIDENT · completed-hazard',
+        status: 'COMPLETED', failureCode: null, createdAt: '2026-10-25T03:00:00Z', completedAt: '2026-10-25T03:02:00Z',
+      }] : [])], page: requestedPage, size: 100, totalItems: 101, totalPages: 2,
+  } })
+  })
   await context.route('**/api/v1/planning/advisories?*', route => route.fulfill({ json: {
     items: [], page: 0, size: 100, totalItems: 0, totalPages: 0,
   } }))
@@ -1705,11 +1808,21 @@ test('controller sees terminal hazard processing failure without presenting an a
   await login(page)
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   const advisories = page.getByRole('region', { name: 'Multi-hazard advisories', exact: true })
-  await expect(advisories.getByText('Flood report', { exact: true })).toBeVisible()
-  await expect(advisories.getByText(/Diagnosis failed · HAZARD_CONTEXT_OR_MODEL_UNAVAILABLE/)).toBeVisible()
-  await expect(advisories.getByText('No advisory was issued. Review the feed and bus exposure before retrying.', { exact: true })).toBeVisible()
+  await expect(advisories.getByRole('heading', { name: /Hazard processing/ })).toHaveCount(0)
   await expect(advisories.getByText('No pending captain advisories.', { exact: true })).toBeVisible()
   await expect(advisories.getByRole('button', { name: 'Approve and send', exact: true })).toHaveCount(0)
+  await page.goto('/controller/disruptions')
+  await expect(page.getByRole('heading', { name: /Hazard processing/ })).toHaveCount(0)
+  expect(historyRequests).toBe(0)
+  await page.goto('/controller/audit')
+  const history = page.getByRole('region', { name: 'Hazard processing history', exact: true })
+  await expect(history.getByText('Flood report', { exact: true })).toBeVisible()
+  await expect(history.getByText(/Failed · HAZARD_CONTEXT_OR_MODEL_UNAVAILABLE/)).toBeVisible()
+  await expect(history.getByText(/12:02.*SGT/)).toBeVisible()
+  await page.getByRole('button', { name: 'Load more hazard processing history', exact: true }).click()
+  await expect(history.getByText('TRAFFIC INCIDENT · completed-hazard', { exact: true })).toBeVisible()
+  await expect(history.getByText(/^Completed ·/)).toBeVisible()
+  await expect(history.getByText('Flood report', { exact: true })).toHaveCount(1)
 })
 
 test('captain pacing updates samples and switches scenarios while only polling assigned instructions', async ({ page, context }) => {
@@ -1724,7 +1837,11 @@ test('captain pacing updates samples and switches scenarios while only polling a
   const ahead = page.getByRole('region', { name: 'Gap to bus ahead', exact: true })
   const behind = page.getByRole('region', { name: 'Gap to bus behind', exact: true })
   await expect(page.getByText('SAMPLE DATA', { exact: true })).toBeVisible()
+  await expectPageRefreshStatus(page, 5)
   await expect(page.getByText('No current instructions for your assigned bus.', { exact: true })).toBeVisible()
+  const beforeManualRefresh = operationalRequests.length
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect.poll(() => operationalRequests.length).toBeGreaterThan(beforeManualRefresh)
   await expect(ahead.getByText('1:35', { exact: true })).toBeVisible()
   await expect(ahead).toHaveAttribute('data-state', 'close')
   await expect(behind).toHaveAttribute('data-state', 'far')

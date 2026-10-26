@@ -25,7 +25,7 @@ export function DataMessage({ error, loading, empty, children }: {
 
 type ArrivalCollection = {
   items: Arrival[]; latestPage: PageResult<Arrival> | null; isLoading: boolean; isLoadingMore: boolean
-  hasMore: boolean; error: unknown; reload: () => void; loadNext: () => void
+  hasMore: boolean; error: unknown; refreshError: boolean; reload: () => void; loadNext: () => void
   onScroll: React.UIEventHandler<HTMLDivElement>
 }
 
@@ -50,7 +50,7 @@ export function ControllerOverview({ collection, search, onSearch, sortBy, sortD
       <Button type="submit" variant="outline">Search</Button>
       {(searchInput || search) && <Button type="button" variant="ghost" onClick={() => { setSearchInput(''); onSearch('') }}>Clear</Button>}
     </form>
-    <DataMessage error={initialError} loading={collection.isLoading} empty={!data?.items.length}>
+    <DataMessage error={initialError} loading={collection.isLoading && !data} empty={!data?.items.length}>
       {search ? 'No arrivals match this stop name' : 'No current arrivals.'}
     </DataMessage>
     {!!data?.items.length && <Table containerProps={{ role: 'region', 'aria-label': 'Current bus arrivals', tabIndex: 0,
@@ -79,8 +79,8 @@ export function ControllerOverview({ collection, search, onSearch, sortBy, sortD
       </TableRow>)}</TableBody>
     </Table>}
     {loadMoreError && <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-destructive">
-      <span>Unable to load more arrivals.</span>
-      <Button variant="outline" size="sm" disabled={collection.isLoadingMore} onClick={collection.loadNext}>Retry loading more arrivals</Button>
+      <span>{collection.refreshError ? 'Unable to refresh arrivals.' : 'Unable to load more arrivals.'}</span>
+      <Button variant="outline" size="sm" disabled={collection.isLoadingMore} onClick={collection.refreshError ? collection.reload : collection.loadNext}>{collection.refreshError ? 'Retry arrivals' : 'Retry loading more arrivals'}</Button>
     </div>}
     {collection.hasMore && !loadMoreError && <Button variant="outline" disabled={collection.isLoadingMore} onClick={collection.loadNext}>
       {collection.isLoadingMore ? 'Loading more arrivals…' : 'Load more arrivals'}
@@ -107,7 +107,7 @@ export function ControllerDisruptions({ liveAlerts, run, loading }: {
       </Table>}
       {!simulation && !loading && liveAlerts.latestPage && liveAlerts.latestPage.totalItems > items.length && <p className="text-xs text-muted-foreground">Showing {items.length} of {liveAlerts.latestPage.totalItems} detections.</p>}
       {!simulation && <PagedCollectionControls label="bunching detections" hasItems={!!liveAlerts.items.length} hasMore={liveAlerts.hasMore}
-        isLoadingMore={liveAlerts.isLoadingMore} error={liveAlerts.error} reload={liveAlerts.reload} loadNext={liveAlerts.loadNext} />}
+        isLoadingMore={liveAlerts.isLoadingMore} error={liveAlerts.error} refreshError={liveAlerts.refreshError} reload={liveAlerts.reload} loadNext={liveAlerts.loadNext} />}
     </section>
   </div>
 }
@@ -128,7 +128,7 @@ export function ControllerAudit({ decisions, loading }: {
       </Table>}
       {decisions.latestPage && decisions.latestPage.totalItems > items.length && <p className="text-xs text-muted-foreground">Showing {items.length} of {decisions.latestPage.totalItems} decisions.</p>}
       <PagedCollectionControls label="decisions" hasItems={!!decisions.items.length} hasMore={decisions.hasMore}
-        isLoadingMore={decisions.isLoadingMore} error={decisions.error} reload={decisions.reload} loadNext={decisions.loadNext} />
+        isLoadingMore={decisions.isLoadingMore} error={decisions.error} refreshError={decisions.refreshError} reload={decisions.reload} loadNext={decisions.loadNext} />
     </section>
     <section aria-labelledby="ai-audit-title" className="space-y-2 border-t pt-6"><h2 id="ai-audit-title" className="font-medium">AI audit logs</h2><p className="text-sm text-muted-foreground">Not connected yet. AI audit records will appear here when available.</p></section>
   </div>

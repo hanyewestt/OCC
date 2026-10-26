@@ -59,10 +59,6 @@ function pairKey(frontOrder: number, followingOrder: number) {
   return `${frontOrder}:${followingOrder}`
 }
 
-function clockTime(value: string) {
-  return formatSgtTime(value)
-}
-
 function formatDistance(meters: number | null) {
   if (meters === null) return 'Unavailable'
   return meters >= 1_000 ? `${(meters / 1_000).toFixed(1)} km apart` : `${meters} m apart`
@@ -239,7 +235,6 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
       </div>
       <div className="flex flex-col items-start text-xs text-muted-foreground sm:items-end">
         <span>{route.operator} · {route.stops.length} stops</span>
-        <span>Positions updated {snapshot ? clockTime(snapshot.computedAt) : 'unavailable'}</span>
       </div>
     </div>
     <div className="max-w-full overflow-x-auto px-2 pb-3 pt-1">
@@ -337,7 +332,7 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h4 className="text-sm font-medium">Next arrivals at {selectedStop?.description || `Stop ${selectedStopCode}`}</h4>
         <span className="text-xs text-muted-foreground">Stop {selectedStopCode} · Service {route.serviceId}, direction {route.directionId}
-          {selectedFeedFetchedAt != null ? ` · Feed updated ${formatSgtTime(new Date(selectedFeedFetchedAt).toISOString())}` : ''}</span>
+          {selectedFeedFetchedAt != null ? ` · Fetched at ${formatSgtTime(new Date(selectedFeedFetchedAt).toISOString())}` : ''}</span>
       </div>
       <p className="mt-1 text-xs text-muted-foreground">Purple dots use the location reported with each arrival prediction, projected onto this straight route line. They do not identify a physical bus.</p>
       {selectedStopLoading ? <p className="mt-2 text-sm text-muted-foreground">Loading latest arrivals…</p> : selectedStopError ?

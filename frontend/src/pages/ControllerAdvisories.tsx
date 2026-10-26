@@ -6,9 +6,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
-import { ApiError, apiRequest, type Advisory, type AdvisoryCandidate, type CaptainInstruction, type Hazard, type ManagedNotice, type NoticeSuggestion, type PageResult, type PlanningHazardRequest } from '@/lib/api'
+import { ApiError, apiRequest, type Advisory, type AdvisoryCandidate, type CaptainInstruction, type Hazard, type ManagedNotice, type NoticeSuggestion, type PageResult, type PlanningHazardHistory } from '@/lib/api'
 import { signOut } from '@/lib/auth'
-import { dataClassificationLabel, diagnosisStatusLabel } from '@/lib/presentation'
+import { dataClassificationLabel } from '@/lib/presentation'
 import { formatSgtDateTime, sgtDateTimeInputToUtc } from '@/lib/time'
 import { usePagedCollection } from '@/lib/paged-collection'
 
@@ -16,20 +16,23 @@ type Edit = { advisory: Advisory; type: AdvisoryCandidate['type']; stopSequence:
 type Draft = { id: string; previousId?: string; disruptionId: string; title: string; message: string; services: string; locations: string; from: string; until: string }
 type HazardPageResponse = Omit<PageResult<Hazard>, 'totalItems' | 'totalPages'> & { size: number; totalElements: number }
 
-export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
-  token: string; refreshIntervalSeconds: number; view: 'hazards' | 'planning' | 'audit'
+export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPendingChange, onRefreshTimeChange, view }: {
+  token: string; registerRefresh: (callback: (signal: AbortSignal) => Promise<void>) => void
+  onRefresh: () => void; onPendingChange: (pending: boolean) => void
+  onRefreshTimeChange: (at: string | null) => void
+  view: 'hazards' | 'planning' | 'audit'
 }) {
   const [actionError, setActionError] = useState('')
   const [pending, setPending] = useState(false)
-  const [refresh, setRefresh] = useState(0)
   const [edit, setEdit] = useState<Edit | null>(null)
   const [preview, setPreview] = useState<{ input: string; message: string } | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
   const draftIdentity = useRef<Draft | null>(null)
   const [kind, setKind] = useState('')
   const action = useRef<AbortController | null>(null)
+  const hazardsEnabled = view === 'hazards' || edit !== null || draft !== null
 
-  const collectionKey = `${token}:${refresh}`
+  const collectionKey = token
   const hazards = usePagedCollection<Hazard, PageResult<Hazard>>(collectionKey, async (page, signal) => {
     const params = new URLSearchParams({ page: String(page), size: '100' })
     try {
@@ -40,7 +43,7 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
       if (failure instanceof ApiError && failure.status === 401 && !signal.aborted) void signOut(failure.message)
       throw failure
     }
-  }, hazard => hazard.disruptionId)
+  }, hazard => hazard.disruptionId, hazardsEnabled)
   const advisories = usePagedCollection<Advisory, PageResult<Advisory>>(collectionKey, async (page, signal) => {
     const params = new URLSearchParams({ page: String(page), size: '100', pendingOnly: 'true' })
     try {
@@ -51,7 +54,7 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
       if (failure instanceof ApiError && failure.status === 401 && !signal.aborted) void signOut(failure.message)
       throw failure
     }
-  }, advisory => advisory.id)
+  }, advisory => advisory.id, view === 'planning')
   const instructions = usePagedCollection<CaptainInstruction, PageResult<CaptainInstruction>>(collectionKey, async (page, signal) => {
     const params = new URLSearchParams({ page: String(page), size: '100' })
     try {
@@ -62,7 +65,7 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
       if (failure instanceof ApiError && failure.status === 401 && !signal.aborted) void signOut(failure.message)
       throw failure
     }
-  }, instruction => instruction.id)
+  }, instruction => instruction.id, view === 'planning' || view === 'audit')
   const notices = usePagedCollection<ManagedNotice, PageResult<ManagedNotice>>(collectionKey, async (page, signal) => {
     const params = new URLSearchParams({ page: String(page), size: '100' })
     try {
@@ -73,18 +76,18 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
       if (failure instanceof ApiError && failure.status === 401 && !signal.aborted) void signOut(failure.message)
       throw failure
     }
-  }, notice => notice.id)
-  const hazardRequests = usePagedCollection<PlanningHazardRequest, PageResult<PlanningHazardRequest>>(collectionKey, async (page, signal) => {
+  }, notice => notice.id, view === 'planning' || view === 'audit')
+  const hazardRequests = usePagedCollection<PlanningHazardHistory, PageResult<PlanningHazardHistory>>(`${collectionKey}:${view}`, async (page, signal) => {
     const params = new URLSearchParams({ page: String(page), size: '100' })
     try {
-      const result = await apiRequest<PageResult<PlanningHazardRequest>>(`/api/v1/planning/diagnoses/hazard-requests?${params}`, token, signal)
+      const result = await apiRequest<PageResult<PlanningHazardHistory>>(`/api/v1/planning/diagnoses/hazard-history?${params}`, token, signal)
       if (!result) throw new Error('Hazard processing response was empty.')
       return result
     } catch (failure) {
       if (failure instanceof ApiError && failure.status === 401 && !signal.aborted) void signOut(failure.message)
       throw failure
     }
-  }, request => request.requestId)
+  }, request => request.requestId, view === 'audit')
   const { items: hazardItems, hasMore: hazardHasMore, isLoading: hazardsLoading, isLoadingMore: hazardsLoadingMore,
     error: hazardError, loadNext: loadNextHazard } = hazards
 
@@ -94,11 +97,28 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
     loadNextHazard()
   }, [edit, hazardError, hazardHasMore, hazardsLoading, hazardsLoadingMore, hazardItems, loadNextHazard])
 
+  const collectionsLoading = view === 'hazards' ? hazards.isLoading : view === 'planning'
+    ? hazards.isLoading || advisories.isLoading || instructions.isLoading || notices.isLoading
+    : hazardRequests.isLoading || instructions.isLoading || notices.isLoading
+  const refreshTimes = view === 'hazards' ? [hazards.lastSuccessAt] : view === 'planning'
+    ? [advisories.lastSuccessAt, instructions.lastSuccessAt, notices.lastSuccessAt]
+    : [hazardRequests.lastSuccessAt, instructions.lastSuccessAt, notices.lastSuccessAt]
+  const lastRefreshTime = refreshTimes.includes(null) ? null : [...refreshTimes].sort()[0] ?? null
+  useEffect(() => { onRefreshTimeChange(lastRefreshTime) }, [lastRefreshTime, onRefreshTimeChange])
+  useEffect(() => { onPendingChange(pending || collectionsLoading) }, [pending, collectionsLoading, onPendingChange])
+  useEffect(() => () => onPendingChange(false), [onPendingChange])
   useEffect(() => {
-    if (pending) return
-    const timer = window.setInterval(() => setRefresh(value => value + 1), refreshIntervalSeconds * 1000)
-    return () => window.clearInterval(timer)
-  }, [pending, refreshIntervalSeconds])
+    registerRefresh(async signal => {
+      const requests = view === 'hazards' ? [hazards.refresh(signal)] : view === 'planning'
+        ? [advisories.refresh(signal), instructions.refresh(signal), notices.refresh(signal)]
+        : [hazardRequests.refresh(signal), instructions.refresh(signal), notices.refresh(signal)]
+      if (view !== 'hazards' && hazardsEnabled) requests.push(hazards.refresh(signal))
+      await Promise.allSettled(requests)
+    })
+    return () => registerRefresh(async () => {})
+  // usePagedCollection returns a new wrapper object each render; its reload callbacks are stable.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registerRefresh, view, hazardsEnabled, hazards.refresh, advisories.refresh, instructions.refresh, notices.refresh, hazardRequests.refresh])
   useEffect(() => () => action.current?.abort(), [])
 
   function updateDraft(value: Draft | null) {
@@ -122,7 +142,7 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
       }
       return false
     } finally {
-      if (!controller.signal.aborted) { setPending(false); setRefresh(value => value + 1) }
+      if (!controller.signal.aborted) { setPending(false); onRefresh() }
     }
   }
 
@@ -148,7 +168,7 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
         if (failure instanceof ApiError && failure.status === 401) void signOut(failure.message)
       }
     } finally {
-      if (!controller.signal.aborted) { setPending(false); setRefresh(value => value + 1) }
+      if (!controller.signal.aborted) { setPending(false); onRefresh() }
     }
   }
 
@@ -182,13 +202,6 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
       <Button asChild variant="outline"><Link to="/notices" target="_blank" rel="noreferrer">Public notice board</Link></Button></div>
     {actionError && <p role="alert" className="rounded-lg border p-3 text-sm">{actionError}</p>}
     {view === 'hazards' && <>
-      <div role="group" aria-label="Hazard feed freshness" className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-        <span className="font-medium">Feed freshness</span>
-        {!hazards.latestPage?.feeds?.length ? <span>Feed status unavailable.</span> : hazards.latestPage.feeds.map(feed =>
-          <span key={[feed.kind, feed.source, feed.scope, feed.classification, feed.demoRunId ?? 'none'].join(':')}>
-            {feed.kind.replaceAll('_', ' ')} · {feed.source.replaceAll('_', ' ')} · {feed.scope.replaceAll('_', ' ')} · {dataClassificationLabel(feed.classification)}{feed.demoRunId ? ` · run ${feed.demoRunId}` : ''} · {feed.status.toLowerCase()}
-            {feed.lastSuccessAt ? ` · last success ${formatSgtDateTime(feed.lastSuccessAt)}` : ''}</span>)}
-      </div>
       <div className="max-w-xs space-y-2"><Label htmlFor="hazard-kind">Hazard type</Label><select id="hazard-kind" value={kind} onChange={e => setKind(e.target.value)} className="h-9 w-full rounded-md border bg-background px-3 text-sm">
         <option value="">All types</option>{['TRAFFIC_INCIDENT', 'FLOOD', 'RAIL_DISRUPTION', 'ROADWORKS'].map(value => <option key={value}>{value}</option>)}
       </select></div>
@@ -206,27 +219,26 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
         </CardContent></Card>)}</div>
       </ScrollArea>}
       <PagedCollectionControls label="hazards" hasItems={!!hazards.items.length} hasMore={hazards.hasMore}
-        isLoadingMore={hazards.isLoadingMore} error={hazards.error} reload={hazards.reload} loadNext={hazards.loadNext} />
+        isLoadingMore={hazards.isLoadingMore} error={hazards.error} refreshError={hazards.refreshError} reload={hazards.reload} loadNext={hazards.loadNext} />
     </>}
-    {(view === 'planning' || view === 'hazards') && <div className="space-y-3">
-      <h3 className="font-semibold">Hazard processing</h3>
+    {view === 'audit' && <div className="space-y-3">
+      <h3 className="font-semibold">Hazard processing history</h3>
       {hazardRequests.isLoading && !hazardRequests.latestPage && <p role="status" className="text-sm text-muted-foreground">Loading hazard processing…</p>}
       {hazardRequests.error !== null && !hazardRequests.items.length && <p role="alert" className="text-sm text-destructive">Hazard processing status is unavailable.</p>}
-      {!hazardRequests.isLoading && hazardRequests.error === null && hazardRequests.latestPage && !hazardRequests.items.length && <p className="text-sm text-muted-foreground">No pending or failed hazard processing.</p>}
-      {!!hazardRequests.items.length && <ScrollArea role="region" aria-label="Hazard processing" tabIndex={0}
-        className="max-h-[28rem]" viewportProps={{ onScroll: hazardRequests.onScroll }}>
+      {!hazardRequests.isLoading && hazardRequests.error === null && hazardRequests.latestPage && !hazardRequests.items.length && <p className="text-sm text-muted-foreground">No completed or failed hazard processing in this scope.</p>}
+      {!!hazardRequests.items.length && <ScrollArea role="region" aria-label="Hazard processing history" tabIndex={0}
+        className="h-[28rem]" viewportProps={{ onScroll: hazardRequests.onScroll }}>
         <div className="space-y-3">{hazardRequests.items.map(request => {
-            const status = diagnosisStatusLabel(request.status)
-            const source = hazards.items.find(hazard => hazard.disruptionId === request.disruptionId)
+            const status = request.status === 'COMPLETED' ? 'Completed' : 'Failed'
             return <Card key={request.requestId} className="min-h-28"><CardContent className="space-y-1">
-              <p className="font-medium">{source?.facts.title ?? `${request.eventType.replaceAll('_', ' ')} · ${request.disruptionId}`}</p>
-              <p className="text-xs text-muted-foreground">{status}{request.failureCode ? ` · ${request.failureCode}` : ''} · {formatSgtDateTime(request.createdAt)}</p>
-              {request.status === 'FAILED_TERMINAL' && <p className="text-sm">No advisory was issued. Review the feed and bus exposure before retrying.</p>}
+              <p className="font-medium">{request.title ?? `${request.eventType.replaceAll('_', ' ')} · ${request.disruptionId}`}</p>
+              <p className="text-xs text-muted-foreground">{status}{request.failureCode ? ` · ${request.failureCode}` : ''} · {formatSgtDateTime(request.completedAt)}</p>
+              <p className="text-xs text-muted-foreground">Event {request.eventId}</p>
             </CardContent></Card>
           })}</div>
       </ScrollArea>}
-      <PagedCollectionControls label="hazard processing" hasItems={!!hazardRequests.items.length} hasMore={hazardRequests.hasMore}
-        isLoadingMore={hazardRequests.isLoadingMore} error={hazardRequests.error} reload={hazardRequests.reload} loadNext={hazardRequests.loadNext} />
+      <PagedCollectionControls label="hazard processing history" hasItems={!!hazardRequests.items.length} hasMore={hazardRequests.hasMore}
+        isLoadingMore={hazardRequests.isLoadingMore} error={hazardRequests.error} refreshError={hazardRequests.refreshError} reload={hazardRequests.reload} loadNext={hazardRequests.loadNext} />
     </div>}
     {view === 'planning' && <>
       {advisories.isLoading && !advisories.latestPage && <p role="status" className="text-sm text-muted-foreground">Loading pending advisories…</p>}
@@ -242,7 +254,7 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
         </CardContent></Card>)}</div>
       </ScrollArea>}
       <PagedCollectionControls label="pending advisories" hasItems={!!advisories.items.length} hasMore={advisories.hasMore}
-        isLoadingMore={advisories.isLoadingMore} error={advisories.error} reload={advisories.reload} loadNext={advisories.loadNext} />
+        isLoadingMore={advisories.isLoadingMore} error={advisories.error} refreshError={advisories.refreshError} reload={advisories.reload} loadNext={advisories.loadNext} />
       {edit && <Card><CardContent><form className="space-y-4" onSubmit={event => {
         event.preventDefault()
         if (preview?.input !== JSON.stringify(edit)) { void previewInstruction(edit); return }
@@ -274,7 +286,7 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
           {['ISSUED', 'ACKNOWLEDGED'].includes(i.status) && <Button variant="outline" disabled={pending} onClick={() => void submit(`/api/v1/planning/instructions/${i.id}/cancellations`)}>Cancel instruction</Button>}
         </CardContent></Card>)}</div></ScrollArea>}
       <PagedCollectionControls label="instructions" hasItems={!!instructions.items.length} hasMore={instructions.hasMore}
-        isLoadingMore={instructions.isLoadingMore} error={instructions.error} reload={instructions.reload} loadNext={instructions.loadNext} />
+        isLoadingMore={instructions.isLoadingMore} error={instructions.error} refreshError={instructions.refreshError} reload={instructions.reload} loadNext={instructions.loadNext} />
       <div className="flex items-center justify-between gap-3"><h3 className="font-semibold">Public notices</h3><Button variant="outline" disabled={pending} onClick={() => updateDraft({ id: crypto.randomUUID(), disruptionId: '', title: '', message: '', services: '', locations: '', from: '', until: '' })}>Draft notice</Button></div>
       {draft && <Card><CardContent><form className="space-y-4" onSubmit={event => {
         event.preventDefault()
@@ -289,7 +301,7 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
           updateDraft({ ...draft, disruptionId: e.target.value, title: source?.facts.title ?? '', message: [source?.facts.description, source?.facts.instruction].filter(Boolean).join('\n') })
         }}><option value="">Select a hazard</option>{hazards.items.map(h => <option key={h.disruptionId} value={h.disruptionId}>{h.facts.title} · {dataClassificationLabel(h.classification)}</option>)}</select>
         <PagedCollectionControls label="source hazards" hasItems={!!hazards.items.length} hasMore={hazards.hasMore}
-          isLoadingMore={hazards.isLoadingMore} error={hazards.error} reload={hazards.reload} loadNext={hazards.loadNext} /></div>
+          isLoadingMore={hazards.isLoadingMore} error={hazards.error} refreshError={hazards.refreshError} reload={hazards.reload} loadNext={hazards.loadNext} /></div>
         <Button type="button" variant="outline" disabled={pending || !draft.disruptionId || hazards.items.find(h => h.disruptionId === draft.disruptionId)?.status === 'CLEARED'} onClick={() => void suggestNotice()}>Suggest passenger wording</Button>
         <div className="space-y-2"><Label htmlFor="notice-title">Title</Label><Input id="notice-title" required maxLength={160} value={draft.title} onChange={e => updateDraft({ ...draft, title: e.target.value })} /></div>
         <div className="space-y-2"><Label htmlFor="notice-message">Passenger message</Label><textarea id="notice-message" required maxLength={2000} rows={4} className="w-full rounded-md border bg-background p-3 text-sm" value={draft.message} onChange={e => updateDraft({ ...draft, message: e.target.value })} /></div>
@@ -311,7 +323,7 @@ export function ControllerAdvisories({ token, refreshIntervalSeconds, view }: {
           </div>
         </CardContent></Card>)}</div></ScrollArea>}
       <PagedCollectionControls label="managed notices" hasItems={!!notices.items.length} hasMore={notices.hasMore}
-        isLoadingMore={notices.isLoadingMore} error={notices.error} reload={notices.reload} loadNext={notices.loadNext} />
+        isLoadingMore={notices.isLoadingMore} error={notices.error} refreshError={notices.refreshError} reload={notices.reload} loadNext={notices.loadNext} />
     </>}
   </section>
 }

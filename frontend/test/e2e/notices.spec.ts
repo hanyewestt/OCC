@@ -30,6 +30,8 @@ for (const viewport of [{ name: 'mobile', width: 375, height: 812 }, { name: 'de
 
     await page.goto('/notices')
     await expect(page.getByRole('heading', { name: 'Service advisories', exact: true })).toBeVisible()
+    await expect(page.getByLabel('Page refresh status')).toHaveCount(1)
+    await expect(page.getByRole('heading', { level: 1 }).locator('..').getByLabel('Page refresh status')).toContainText('Refreshes every 30 seconds')
     await expect(page.getByRole('heading', { name: notice.title, exact: true })).toBeVisible()
     await expect(page.getByText(notice.message, { exact: true })).toBeVisible()
     await expect(page.getByText('Services: 190, 972', { exact: true }).first()).toBeVisible()
@@ -108,6 +110,7 @@ test('simulation board rejects missing run identity before requesting notices', 
 })
 
 test('public board scrolls through notices and refresh returns to the latest first page', async ({ page, context }) => {
+  await page.clock.install()
   await publicConfig(context)
   const laterNotice = { ...notice, id: 'notice-synthetic-2', title: 'Later page notice' }
   let shrunk = false
@@ -124,12 +127,18 @@ test('public board scrolls through notices and refresh returns to the latest fir
   })
 
   await page.goto('/notices')
+  const refreshedAt = page.getByLabel('Page refresh status')
+  await expect(refreshedAt).toContainText('Last successful refresh')
+  const firstRefresh = await refreshedAt.innerText()
+  await page.clock.runFor(2000)
   await page.getByRole('button', { name: 'Load more service advisories', exact: true }).click()
   await expect(page.getByRole('heading', { name: laterNotice.title, exact: true })).toBeVisible()
+  await expect(refreshedAt).toHaveText(firstRefresh)
   await expect(page.getByRole('navigation', { name: 'Notice pages', exact: true })).toHaveCount(0)
   shrunk = true
   await page.getByRole('button', { name: 'Refresh', exact: true }).click()
 
   await expect(page.getByRole('heading', { name: notice.title, exact: true })).toBeVisible()
+  await expect(refreshedAt).not.toHaveText(firstRefresh)
   expect(requestedPages.slice(-2)).toEqual([1, 0])
 })
