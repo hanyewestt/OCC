@@ -4,11 +4,22 @@
 ## Engineering Standards
 
 - Deliver final, durable fixes rather than temporary workarounds.
+- Write minimal, efficient code. Prefer built-in operators, standard library
+  functions, and existing utilities over new classes, methods, or abstractions
+  that do the same thing. For example, use `x + y` instead of an `add(x, y)`
+  wrapper. Add abstractions only when they provide meaningful behavior or clarity.
 - Follow [docs/CONVENTIONS.md](docs/CONVENTIONS.md) for all service work.
 - Follow [docs/commit-convention.md](docs/commit-convention.md) for commits.
   Append `[skip ci]` to the commit subject when no service or frontend code is
   edited, including documentation-only and local development launcher changes.
   Still run checks relevant to the changed files.
+- Before reporting work complete, run the relevant automated test suites and
+  make sure all applicable tests pass. Investigate every failed or skipped test;
+  fix failures and determine whether skips are intentional, documenting any
+  remaining justified skips.
+- Verify behavior with the relevant automated tests in the codebase and by
+  exercising the feature in the running application. Report what was exercised
+  and any verification that could not be completed.
 
 ## Frontend Standards
 
