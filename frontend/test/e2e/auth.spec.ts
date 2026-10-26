@@ -227,7 +227,7 @@ test('controller shows one selectable live route strip and keeps the overview de
   await page.screenshot({ path: 'node_modules/.cache/controller-route-strip.png', fullPage: true })
   await page.locator('section[aria-labelledby="route-strip-title"]').screenshot({ path: 'node_modules/.cache/route-strip-services-190-972.png' })
   await page.getByLabel('Route', { exact: true }).selectOption('972:SMRT:1')
-  const service972Direction1 = page.getByRole('group', { name: /Service 972, Destination unavailable, SMRT, direction 1/ })
+  const service972Direction1 = page.getByRole('group', { name: /Service 972, Towards Stop G03, SMRT, direction 1/ })
   await expect(service972Direction1).toBeVisible()
   await expect(page.locator('svg[role="group"]')).toHaveCount(1)
   await expect(page.getByRole('group', { name: /Service 190/ })).toHaveCount(0)
