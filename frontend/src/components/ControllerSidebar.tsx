@@ -14,7 +14,7 @@ export const controllerPages = [
 
 export function ControllerSidebar({ email }: { email: string }) {
   const { pathname } = useLocation()
-  const [expanded, setExpanded] = useState(() => window.matchMedia('(min-width: 768px)').matches)
+  const [expanded, setExpanded] = useState(false)
   const closeMobile = () => { if (!window.matchMedia('(min-width: 768px)').matches) setExpanded(false) }
   return <>
     {expanded && <button aria-label="Close navigation" className="fixed inset-0 z-20 bg-black/20 md:hidden" onClick={() => setExpanded(false)} />}
