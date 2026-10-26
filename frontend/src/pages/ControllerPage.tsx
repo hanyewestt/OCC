@@ -9,8 +9,9 @@ import { ControllerOverview, ControllerDisruptions, ControllerAudit } from '@/pa
 import { ControllerRouteStrip } from '@/pages/ControllerRouteStrip'
 import { ControllerPlanning } from '@/pages/ControllerPlanning'
 import { ControllerAdvisories } from '@/pages/ControllerAdvisories'
-import { formatSgtDateTime } from '@/lib/time'
 import { usePagedCollection } from '@/lib/paged-collection'
+import { usePageRefresh } from '@/lib/page-refresh'
+import { PageRefreshStatus } from '@/components/PageRefreshStatus'
 
 export type Resource<T> = { data: T | null; error: string }
 export type Planning = { recommendations: PageResult<PendingRecommendation> & { mode: string; demoRunId: string | null }; decisions: PageResult<Decision> }
@@ -87,7 +88,12 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
 }) {
   const { pathname, hash } = useLocation()
   const current = controllerPages.find(page => page.path === pathname)!
-  const [refresh, setRefresh] = useState(0)
+  const [advisoryPending, setAdvisoryPending] = useState(false)
+  const [planningPending, setPlanningPending] = useState(false)
+  const [shellRefreshTime, setShellRefreshTime] = useState({ key: '', at: null as string | null })
+  const [advisoryRefreshTime, setAdvisoryRefreshTime] = useState({ key: '', at: null as string | null })
+  const refreshAdvisories = useRef<(signal: AbortSignal) => Promise<void>>(() => Promise.resolve())
+  const registerAdvisoryRefresh = useCallback((callback: (signal: AbortSignal) => Promise<void>) => { refreshAdvisories.current = callback }, [])
   const [arrivalStopName, setArrivalStopName] = useState('')
   const [arrivalSortBy, setArrivalSortBy] = useState<'arrival' | 'stopName'>('arrival')
   const [arrivalSortDirection, setArrivalSortDirection] = useState<'asc' | 'desc'>('asc')
@@ -95,14 +101,21 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const [routeStops, setRouteStops] = useState<Resource<RouteDirection[]>>(empty)
   const [routePositions, setRoutePositions] = useState<Resource<RoutePositions[]>>(empty)
   const [run, setRun] = useState<Resource<DemoRun>>(empty)
+  const runState = useRef<Resource<DemoRun>>(empty)
+  const routeReference = useRef<Resource<RouteDirection[]>>(empty)
   const [loaded, setLoaded] = useState('')
   const [switching, setSwitching] = useState(false)
   const [modeError, setModeError] = useState('')
   const modeRequestRef = useRef<AbortController | null>(null)
   const switchingRef = useRef(false)
-  const requestKey = `${token}:${refresh}`
+  const requestKey = `${token}:${pathname}`
   const loading = loaded !== requestKey || switching
+  const scopeVerified = loaded === requestKey && !run.error
   const simulation = run.data && run.data.status !== 'CLOSED' ? run.data : null
+  const refreshScope = `${requestKey}:${simulation?.id ?? 'LIVE'}`
+  const reportAdvisoryRefresh = useCallback((at: string | null) => {
+    setAdvisoryRefreshTime(previous => previous.key === refreshScope && previous.at === at ? previous : { key: refreshScope, at })
+  }, [refreshScope])
   const arrivalCollectionKey = `${token}:${arrivalStopName}:${arrivalSortBy}:${arrivalSortDirection}`
   const arrivalCollection = usePagedCollection<Arrival, PageResult<Arrival>>(arrivalCollectionKey, async (page, signal) => {
     const params = new URLSearchParams({ page: String(page), size: '50', sortBy: arrivalSortBy, sortDirection: arrivalSortDirection })
@@ -115,9 +128,8 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       if (error instanceof ApiError && error.status === 401 && !signal.aborted) void signOut(error.message)
       throw error
     }
-  }, arrival => arrival.observationId)
-  const reloadArrivals = arrivalCollection.reload
-  const scopeKey = `${token}:${refresh}:${simulation?.id ?? 'LIVE'}`
+  }, arrival => arrival.observationId, pathname === '/controller')
+  const scopeKey = `${token}:${simulation?.id ?? 'LIVE'}`
   const alertCollection = usePagedCollection<BunchingAlert, PageResult<BunchingAlert>>(scopeKey, async (page, signal) => {
     const params = new URLSearchParams({ page: String(page), size: '200' })
     try {
@@ -128,8 +140,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       if (error instanceof ApiError && error.status === 401 && !signal.aborted) void signOut(error.message)
       throw error
     }
-  }, alert => alert.eventId)
-  const reloadAlerts = alertCollection.reload
+  }, alert => alert.eventId, scopeVerified && !simulation && (pathname === '/controller' || pathname === '/controller/disruptions'))
   const recommendationCollection = usePagedCollection<PendingRecommendation, Planning['recommendations']>(scopeKey, async (page, signal) => {
     const params = new URLSearchParams({ page: String(page), size: '100' })
     try {
@@ -140,8 +151,8 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       if (error instanceof ApiError && error.status === 401 && !signal.aborted) void signOut(error.message)
       throw error
     }
-  }, recommendation => recommendation.recommendationId)
-  const decisionCollection = usePagedCollection<Decision, PageResult<Decision>>(`${token}:${refresh}`, async (page, signal) => {
+  }, recommendation => recommendation.recommendationId, scopeVerified && (pathname === '/controller' || pathname === '/controller/planning'))
+  const decisionCollection = usePagedCollection<Decision, PageResult<Decision>>(token, async (page, signal) => {
     const params = new URLSearchParams({ page: String(page), size: '100' })
     try {
       const result = await apiRequest<PageResult<Decision>>(`/api/v1/planning/recommendations/decisions?${params}`, token, signal)
@@ -151,7 +162,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       if (error instanceof ApiError && error.status === 401 && !signal.aborted) void signOut(error.message)
       throw error
     }
-  }, decision => decision.recommendationId)
+  }, decision => decision.recommendationId, pathname === '/controller/audit')
   const diagnosisCollection = usePagedCollection<PlanningDiagnosisPage['items'][number], PlanningDiagnosisPage>(scopeKey, async (page, signal) => {
     const params = new URLSearchParams({ page: String(page), size: '100' })
     try {
@@ -162,7 +173,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       if (error instanceof ApiError && error.status === 401 && !signal.aborted) void signOut(error.message)
       throw error
     }
-  }, diagnosis => diagnosis.requestId)
+  }, diagnosis => diagnosis.requestId, scopeVerified && pathname === '/controller/planning')
   const requestLiveData = useCallback(async (signal: AbortSignal): Promise<LiveData | null> => {
     return loadLiveData(token, signal)
   }, [token])
@@ -193,57 +204,74 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     document.getElementById('arrivals-title')?.focus({ preventScroll: true })
     document.getElementById('arrivals')?.scrollIntoView({ block: 'start' })
   }, [pathname, hash])
-  useEffect(() => {
-    const controller = new AbortController()
-    const signal = controller.signal
+  const loadShell = useCallback(async (signal: AbortSignal) => {
     const runPromise = readResource(apiRequest<DemoRun>('/api/v1/demo-runs/active', token, signal).then(async value =>
       value ? { ...value, alerts: await enrichBunchingStops(value.alerts, token, signal) } : null), signal)
-    const routePromise = Promise.all(['190', '972'].map(serviceId =>
+    const routePromise = pathname === '/controller'
+      ? Promise.all(['190', '972'].map(serviceId =>
       readResource(apiRequest<BusRoute>(`/api/v1/bus-routes/${serviceId}`, token, signal), signal)))
       .then(results => ({
         data: routeDirections(results.flatMap(result => result.data ? [result.data] : [])),
         error: results.some(result => result.error) ? 'Unable to load all route references.' : '',
-      }))
-    void Promise.all([requestLiveData(signal), runPromise, routePromise])
-      .then(([live, nextRun, nextRouteStops]) => {
-      if (signal.aborted) return
-      if (live) { setRouteArrivals(live.routeArrivals); setRoutePositions(live.positions) }
-      setRun(previous => nextRun.error && previous.data ? { ...previous, error: nextRun.error } : nextRun)
-      setRouteStops(nextRouteStops)
-      setLoaded(requestKey)
+      })) : Promise.resolve(null)
+    const [live, nextRun, nextRouteStops] = await Promise.all([
+      pathname === '/controller' ? requestLiveData(signal) : Promise.resolve(null), runPromise, routePromise,
+    ])
+    if (signal.aborted) return false
+    if (live) {
+      setRouteArrivals(previous => live.routeArrivals.error && previous.data ? { ...previous, error: live.routeArrivals.error } : live.routeArrivals)
+      setRoutePositions(previous => {
+        if (!live.positions.error) return live.positions
+        const snapshots = new Map((previous.data ?? []).map(snapshot => [snapshot.serviceId, snapshot]))
+        for (const snapshot of live.positions.data ?? []) snapshots.set(snapshot.serviceId, snapshot)
+        return { data: snapshots.size ? [...snapshots.values()] : null, error: live.positions.error }
+      })
+    }
+    const previousMode = runState.current.data?.id ?? 'LIVE'
+    const resolvedRun = nextRun.error && runState.current.data ? { ...runState.current, error: nextRun.error } : nextRun
+    runState.current = resolvedRun
+    setRun(resolvedRun)
+    if (nextRouteStops) { routeReference.current = nextRouteStops; setRouteStops(nextRouteStops) }
+    setLoaded(requestKey)
+    if (!nextRun.error && !live?.routeArrivals.error && !live?.positions.error && !nextRouteStops?.error) {
+      setShellRefreshTime({ key: requestKey, at: new Date().toISOString() })
+    }
+    return previousMode !== (resolvedRun.data?.id ?? 'LIVE')
+  }, [token, pathname, requestKey, requestLiveData])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    void Promise.resolve().then(() => {
+      if (!controller.signal.aborted) return loadShell(controller.signal)
     })
     return () => controller.abort()
-  }, [token, refresh, requestKey, requestLiveData])
+  }, [loadShell])
 
   const pollIntervalSeconds = routePositions.data?.length
     ? Math.min(...routePositions.data.map(value => value.refreshIntervalSeconds)) : ingestionPollIntervalSeconds
-  useEffect(() => {
-    if (pathname !== '/controller') return
-    const controller = new AbortController()
-    const refreshAll = async () => {
-      const live = await requestLiveData(controller.signal)
-      if (!live || controller.signal.aborted) return
-      reloadArrivals()
-      reloadAlerts(); setRouteArrivals(live.routeArrivals)
-      setRoutePositions(previous => {
-        const byService = new Map((previous.data ?? []).map(snapshot => [snapshot.serviceId, snapshot]))
-        for (const snapshot of live.positions.data ?? []) byService.set(snapshot.serviceId, snapshot)
-        return { data: byService.size ? [...byService.values()] : null, error: live.positions.error }
-      })
-    }
-    const timer = window.setInterval(() => {
-      void refreshAll()
-    }, controllerRefreshIntervalSeconds * 1000)
-    return () => { window.clearInterval(timer); controller.abort() }
-  }, [pathname, requestLiveData, controllerRefreshIntervalSeconds, reloadArrivals, reloadAlerts])
+  const collectionsLoading = pathname === '/controller'
+    ? arrivalCollection.isLoading || !simulation && alertCollection.isLoading || recommendationCollection.isLoading
+    : pathname.endsWith('/disruptions') ? !simulation && alertCollection.isLoading
+      : pathname.endsWith('/planning') ? recommendationCollection.isLoading || diagnosisCollection.isLoading : decisionCollection.isLoading
+  const { requestRefresh, isRefreshing } = usePageRefresh(controllerRefreshIntervalSeconds, async signal => {
+    const modeChanged = await loadShell(signal)
+    if (signal.aborted || modeChanged) return
+    const requests: Promise<void>[] = []
+    if (pathname === '/controller') requests.push(arrivalCollection.refresh(signal), recommendationCollection.refresh(signal))
+    if (!simulation && (pathname === '/controller' || pathname.endsWith('/disruptions'))) requests.push(alertCollection.refresh(signal))
+    if (pathname === '/controller/planning') requests.push(recommendationCollection.refresh(signal), diagnosisCollection.refresh(signal))
+    if (pathname === '/controller/audit') requests.push(decisionCollection.refresh(signal))
+    if (pathname !== '/controller') requests.push(refreshAdvisories.current(signal))
+    await Promise.allSettled(requests)
+  }, loading || collectionsLoading || advisoryPending || planningPending || switching, requestKey)
 
-  useEffect(() => {
-    if (pathname !== '/controller/planning') return
-    const timer = window.setInterval(() => {
-      if (!switchingRef.current) setRefresh(value => value + 1)
-    }, controllerRefreshIntervalSeconds * 1000)
-    return () => window.clearInterval(timer)
-  }, [pathname, controllerRefreshIntervalSeconds])
+  const refreshTimes = [shellRefreshTime.key === requestKey ? shellRefreshTime.at : null,
+    ...(pathname === '/controller' ? [arrivalCollection.lastSuccessAt, recommendationCollection.lastSuccessAt]
+      : pathname.endsWith('/planning') ? [recommendationCollection.lastSuccessAt, diagnosisCollection.lastSuccessAt]
+        : pathname.endsWith('/audit') ? [decisionCollection.lastSuccessAt] : []),
+    ...(!simulation && (pathname === '/controller' || pathname.endsWith('/disruptions')) ? [alertCollection.lastSuccessAt] : []),
+    ...(pathname !== '/controller' ? [advisoryRefreshTime.key === refreshScope ? advisoryRefreshTime.at : null] : [])]
+  const lastPageRefresh = refreshTimes.includes(null) ? null : [...refreshTimes].sort()[0] ?? null
 
   const modeValue = simulation ? 'DEMO' : 'LIVE'
   const recommendationPage = recommendationCollection.latestPage
@@ -275,7 +303,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       switchingRef.current = false
       if (!controller.signal.aborted) {
         setSwitching(false)
-        setRefresh(value => value + 1)
+        void requestRefresh('mutation')
       }
     }
   }
@@ -286,18 +314,13 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       <header className="sticky top-0 z-10 flex min-h-16 flex-wrap items-center justify-between gap-3 border-b bg-background px-5 py-3 md:px-8">
         <p className="text-sm text-muted-foreground">Operations control</p>
         <div className="flex flex-wrap items-center gap-4"><span role="status" className={`flex items-center gap-2 text-xs font-medium ${simulation ? 'text-amber-700 dark:text-amber-400' : !loading && !run.error ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground'}`}><span className="size-1.5 rounded-full bg-current" />{mode}</span>
-          <Button variant="outline" disabled={loading || !!run.error} onClick={() => void switchMode()}>{switching ? 'Switching…' : simulation ? 'Return to live' : 'Start simulation'}</Button>
+          <Button variant="outline" disabled={loading || isRefreshing || advisoryPending || planningPending || !!run.error} onClick={() => void switchMode()}>{switching ? 'Switching…' : simulation ? 'Return to live' : 'Start simulation'}</Button>
         </div>
       </header>
       <div className="mx-auto max-w-7xl space-y-7 p-5 md:p-8">
-        <div className="flex flex-wrap items-start justify-between gap-4"><div><h1 className="text-2xl font-semibold tracking-tight">{current.title}</h1></div>
-          <Button variant="outline" disabled={loading} onClick={() => {
-            reloadArrivals()
-            setRefresh(value => value + 1)
-          }}>{loading ? 'Refreshing…' : 'Refresh'}</Button></div>
-        {pathname === '/controller' && <p aria-label="Arrivals freshness" className="text-xs text-muted-foreground">
-          {arrivalCollection.lastSuccessAt ? `Last successful refresh ${formatSgtDateTime(arrivalCollection.lastSuccessAt)}` : 'Arrivals have not refreshed successfully yet'} · Refreshes every {controllerRefreshIntervalSeconds} seconds
-        </p>}
+        <div className="flex flex-wrap items-start justify-between gap-4"><div className="space-y-3"><h1 className="text-2xl font-semibold tracking-tight">{current.title}</h1>
+          <PageRefreshStatus lastSuccessAt={lastPageRefresh} intervalSeconds={controllerRefreshIntervalSeconds} /></div>
+          <Button variant="outline" disabled={loading || collectionsLoading || advisoryPending || planningPending || isRefreshing} onClick={() => { void requestRefresh() }}>{loading || isRefreshing ? 'Refreshing…' : 'Refresh'}</Button></div>
         {run.error && !loading && <p role="alert" className="text-sm text-destructive">{run.error} Simulation state could not be verified.</p>}
         {modeError && <p role="alert" className="text-sm text-destructive">{modeError}</p>}
         {pathname === '/controller' && <>
@@ -325,10 +348,10 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         {pathname.endsWith('/disruptions') && <ControllerDisruptions liveAlerts={alertCollection} run={run} loading={loading} />}
         {pathname.endsWith('/planning') && <ControllerPlanning recommendations={recommendationCollection} diagnoses={diagnosisCollection}
           loading={loading} modeError={run.error} mode={modeValue} demoRunId={simulation?.id ?? null} token={token}
-          onRefresh={() => setRefresh(value => value + 1)} onSaved={() => setRefresh(value => value + 1)} />}
+          onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { void requestRefresh('mutation') }} />}
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} loading={loading} />}
-        {pathname !== '/controller' && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
-          refreshIntervalSeconds={controllerRefreshIntervalSeconds}
+        {pathname !== '/controller' && loaded === requestKey && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
+          registerRefresh={registerAdvisoryRefresh} onRefresh={() => { void requestRefresh('mutation') }} onPendingChange={setAdvisoryPending} onRefreshTimeChange={reportAdvisoryRefresh}
           view={pathname.endsWith('/disruptions') ? 'hazards' : pathname.endsWith('/planning') ? 'planning' : 'audit'} />}
       </div>
     </div>

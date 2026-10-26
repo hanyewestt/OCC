@@ -10,11 +10,13 @@ type CollectionState<T, P> = {
   isLoading: boolean
   isLoadingMore: boolean
   error: unknown
+  refreshError: boolean
   lastSuccessAt: string | null
 }
 
 export type PagedCollection<T, P extends PagedResult<T>> = CollectionState<T, P> & {
-  reload: () => void
+  reload: () => Promise<void>
+  refresh: (signal?: AbortSignal) => Promise<void>
   loadNext: () => void
   updateItem: (item: T) => void
   onScroll: UIEventHandler<HTMLDivElement>
@@ -22,21 +24,23 @@ export type PagedCollection<T, P extends PagedResult<T>> = CollectionState<T, P>
 
 function emptyState<T, P>(collectionKey: string, isLoading: boolean): CollectionState<T, P> {
   return { collectionKey, items: [], latestPage: null, nextPage: 0, hasMore: false,
-    isLoading, isLoadingMore: false, error: null, lastSuccessAt: null }
+    isLoading, isLoadingMore: false, error: null, refreshError: false, lastSuccessAt: null }
 }
 
 export function usePagedCollection<T, P extends PagedResult<T>>(
   collectionKey: string,
   loadPage: (page: number, signal: AbortSignal) => Promise<P>,
   itemId: (item: T) => string,
+  enabled = true,
 ) {
-  const [state, setState] = useState(() => emptyState<T, P>(collectionKey, true))
+  const [state, setState] = useState(() => emptyState<T, P>(collectionKey, enabled))
   const stateRef = useRef(state)
   const latestKey = useRef(collectionKey)
   const loadPageRef = useRef(loadPage)
   const itemIdRef = useRef(itemId)
   const generation = useRef(0)
   const activeRequest = useRef<{ generation: number; controller: AbortController } | null>(null)
+  const viewport = useRef<HTMLDivElement | null>(null)
 
   const publish = useCallback((next: CollectionState<T, P>) => {
     stateRef.current = next
@@ -59,26 +63,32 @@ export function usePagedCollection<T, P extends PagedResult<T>>(
       }
       publish({ ...current, collectionKey: key, items: merged, latestPage: response,
         nextPage: page + 1, hasMore: response.items.length > 0 && page + 1 < response.totalPages,
-        isLoading: false, isLoadingMore: false, error: null, lastSuccessAt: new Date().toISOString() })
+        isLoading: false, isLoadingMore: false, error: null, refreshError: false,
+        lastSuccessAt: page === 0 ? new Date().toISOString() : current.lastSuccessAt })
+      if (page === 0 && viewport.current) viewport.current.scrollTop = 0
     } catch (error) {
       if (!controller.signal.aborted && requestGeneration === generation.current && key === latestKey.current) {
         const current = stateRef.current.collectionKey === key ? stateRef.current : emptyState<T, P>(key, false)
-        publish({ ...current, isLoading: false, isLoadingMore: false, error })
+        publish({ ...current, isLoading: false, isLoadingMore: false, error, refreshError: page === 0 })
       }
     } finally {
       if (activeRequest.current?.controller === controller) activeRequest.current = null
     }
   }, [publish])
 
-  const reload = useCallback(() => {
+  const refresh = useCallback((signal?: AbortSignal) => {
+    if (signal?.aborted) return Promise.resolve()
     activeRequest.current?.controller.abort()
     const requestGeneration = ++generation.current
     const controller = new AbortController()
+    const abort = () => controller.abort()
+    signal?.addEventListener('abort', abort, { once: true })
     activeRequest.current = { generation: requestGeneration, controller }
     const previous = stateRef.current.collectionKey === collectionKey ? stateRef.current : emptyState<T, P>(collectionKey, true)
-    publish({ ...emptyState<T, P>(collectionKey, true), lastSuccessAt: previous.lastSuccessAt })
-    void fetchPage(0, requestGeneration, collectionKey, controller)
+    publish({ ...previous, isLoading: true, isLoadingMore: false, error: null, refreshError: false })
+    return fetchPage(0, requestGeneration, collectionKey, controller).finally(() => signal?.removeEventListener('abort', abort))
   }, [collectionKey, fetchPage, publish])
+  const reload = useCallback(() => refresh(), [refresh])
 
   const updateItem = useCallback((item: T) => {
     const current = stateRef.current
@@ -101,9 +111,10 @@ export function usePagedCollection<T, P extends PagedResult<T>>(
   }, [collectionKey, fetchPage, publish])
 
   const onScroll: UIEventHandler<HTMLDivElement> = useCallback(event => {
+    const element = event.currentTarget
+    viewport.current = element
     if (stateRef.current.error !== null) return
-    const viewport = event.currentTarget
-    if (viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 48) loadNext()
+    if (element.scrollHeight - element.scrollTop - element.clientHeight <= 48) loadNext()
   }, [loadNext])
 
   useEffect(() => {
@@ -113,17 +124,16 @@ export function usePagedCollection<T, P extends PagedResult<T>>(
   }, [collectionKey, itemId, loadPage])
 
   useEffect(() => {
-    const requestGeneration = ++generation.current
-    const controller = new AbortController()
-    activeRequest.current = { generation: requestGeneration, controller }
-    void fetchPage(0, requestGeneration, collectionKey, controller)
+    if (!enabled) return
+    void refresh()
     return () => {
       generation.current += 1
       activeRequest.current?.controller.abort()
       activeRequest.current = null
     }
-  }, [collectionKey, fetchPage])
+  }, [enabled, refresh])
 
-  const current = state.collectionKey === collectionKey ? state : emptyState<T, P>(collectionKey, true)
-  return { ...current, reload, loadNext, updateItem, onScroll }
+  const current = state.collectionKey === collectionKey ? state : emptyState<T, P>(collectionKey, enabled)
+  return { ...current, isLoading: enabled && current.isLoading, isLoadingMore: enabled && current.isLoadingMore,
+    reload, refresh, loadNext, updateItem, onScroll }
 }

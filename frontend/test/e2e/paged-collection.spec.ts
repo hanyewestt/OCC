@@ -2,6 +2,32 @@ import { expect, test } from '@playwright/test'
 
 type PageRequest = { scope: string; page: number }
 
+test('a failed refresh retains rows and timestamp while successful refresh resets pagination', async ({ page }) => {
+  await page.clock.install()
+  let fail = false
+  await page.route('**/__test/pages?**', route => {
+    const query = new URL(route.request().url()).searchParams
+    return fail ? route.fulfill({ status: 503 }) : route.fulfill({ json: rows(query.get('scope')!, Number(query.get('page'))) })
+  })
+  await page.goto('/test/fixtures/paged-collection.html')
+  await expect(page.getByTestId('arrival-row')).toHaveCount(10)
+  const timestamp = page.getByLabel('Last successful refresh')
+  const originalTimestamp = await timestamp.innerText()
+  await page.clock.runFor(2000)
+  await page.getByRole('button', { name: 'Load more rows', exact: true }).click()
+  await expect(page.getByTestId('arrival-row')).toHaveCount(19)
+  await expect(timestamp).toHaveText(originalTimestamp)
+  fail = true
+  await page.getByRole('button', { name: 'Refresh rows' }).click()
+  await expect(page.getByRole('alert')).toBeVisible()
+  await expect(page.getByTestId('arrival-row')).toHaveCount(19)
+  await expect(timestamp).toHaveText(originalTimestamp)
+  fail = false
+  await page.getByRole('button', { name: 'Refresh rows' }).click()
+  await expect(page.getByTestId('arrival-row')).toHaveCount(10)
+  await expect(timestamp).not.toHaveText(originalTimestamp)
+})
+
 function rows(scope: string, page: number) {
   const numbers = page === 0 ? Array.from({ length: 10 }, (_, index) => index + 1) :
     page === 1 ? [10, ...Array.from({ length: 9 }, (_, index) => index + 11)] :

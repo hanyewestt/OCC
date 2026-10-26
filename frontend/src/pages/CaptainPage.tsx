@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -9,6 +9,8 @@ import { classify, clockText, deltaText, gapFlex, initialScenario, sampleGaps,
   scenarios, SAMPLE_REFRESH_MS, SAMPLE_TARGET_SECONDS, type GapState, type Scenario } from '@/lib/obu-pacing'
 import { groupStops, sampleUpcomingStops, skipLabel } from '@/lib/skip-stops'
 import { CaptainInstructions } from './CaptainInstructions'
+import { usePageRefresh } from '@/lib/page-refresh'
+import { PageRefreshStatus } from '@/components/PageRefreshStatus'
 
 const states: Record<GapState, { symbol: string; label: string; color: string }> = {
   close: { symbol: '▲', label: 'TOO CLOSE', color: 'text-red-700 dark:text-red-400' },
@@ -81,6 +83,10 @@ export function CaptainPage({ email, token, refreshIntervalSeconds }: { email: s
   const { search } = useLocation()
   const [sample, setSample] = useState(() => ({ scenario: initialScenario(search), tick: 0 }))
   const [theme, setTheme] = useState(initialTheme)
+  const [instructionPending, setInstructionPending] = useState(false)
+  const [lastInstructionRefresh, setLastInstructionRefresh] = useState<string | null>(null)
+  const instructionRefresh = useRef<(signal: AbortSignal) => Promise<void>>(() => Promise.resolve())
+  const { requestRefresh, isRefreshing } = usePageRefresh(refreshIntervalSeconds, signal => instructionRefresh.current(signal), instructionPending, token)
   const gaps = sampleGaps(sample.scenario, sample.tick)
 
   useEffect(() => {
@@ -96,16 +102,20 @@ export function CaptainPage({ email, token, refreshIntervalSeconds }: { email: s
   return <section aria-label="Captain pacing display" data-theme={theme}
     className={cn('w-full max-w-7xl space-y-6 rounded-xl border bg-background p-4 text-foreground sm:p-6', theme === 'night' && 'dark')}>
     <header className="flex flex-wrap items-center justify-between gap-4 border-b pb-4">
-      <div><h1 className="text-2xl font-semibold">Captain</h1>
+      <div className="space-y-3"><h1 className="text-2xl font-semibold">Captain</h1>
+        <PageRefreshStatus lastSuccessAt={lastInstructionRefresh} intervalSeconds={refreshIntervalSeconds} />
         <p role="status" className="text-sm text-muted-foreground">Access verified</p></div>
       <div className="flex flex-wrap gap-2">
+        <Button variant="outline" disabled={instructionPending || isRefreshing} onClick={() => { void requestRefresh() }}>
+          {isRefreshing ? 'Refreshing…' : 'Refresh'}</Button>
         <Button variant="outline" onClick={() => setTheme(current => current === 'night' ? 'day' : 'night')}>
           {theme === 'night' ? 'Day mode' : 'Night mode'}</Button>
         <Button variant="outline" onClick={() => void signOut()}>Sign out</Button>
       </div>
     </header>
 
-    <CaptainInstructions key={token} token={token} refreshIntervalSeconds={refreshIntervalSeconds} />
+    <CaptainInstructions key={token} token={token} registerRefresh={callback => { instructionRefresh.current = callback }}
+      onPendingChange={setInstructionPending} onSaved={() => { void requestRefresh('mutation') }} onRefreshTimeChange={setLastInstructionRefresh} />
     <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
       <div><p className="text-xl font-bold">Service 190 · Direction 1</p>
         <p className="text-sm text-muted-foreground">DEMO-190-B</p></div>
@@ -143,7 +153,7 @@ export function CaptainPage({ email, token, refreshIntervalSeconds }: { email: s
     </div>
     <UpcomingStops />
     <footer className="space-y-1 border-t pt-4 text-sm text-muted-foreground">
-      <p>Sample data · updates every 10 seconds · no live bus feed.</p>
+      <p>Sample data · no live bus feed.</p>
       <p className="break-all">Signed in as {email} · Role: Captain</p>
     </footer>
   </section>

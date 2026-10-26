@@ -26,6 +26,7 @@ function PagedCollectionHarness() {
     </label>
     <Button onClick={collection.reload}>Refresh rows</Button>
     <p role="status">Loaded {collection.items.length} rows</p>
+    <p aria-label="Last successful refresh">{collection.lastSuccessAt ?? 'Never'}</p>
     {collection.error != null && <p role="alert">{collection.error instanceof Error ? collection.error.message : 'Rows are unavailable.'}</p>}
     <Table containerProps={{
       role: 'region', 'aria-label': 'Arrival rows', tabIndex: 0,

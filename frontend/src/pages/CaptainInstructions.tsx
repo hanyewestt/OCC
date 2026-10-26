@@ -11,7 +11,11 @@ import { usePagedCollection } from '@/lib/paged-collection'
 
 type CaptainInstructionPage = PageResult<CaptainInstruction> & { receivedAt: number }
 
-export function CaptainInstructions({ token, refreshIntervalSeconds }: { token: string; refreshIntervalSeconds: number }) {
+export function CaptainInstructions({ token, registerRefresh, onPendingChange, onSaved, onRefreshTimeChange }: {
+  token: string; registerRefresh: (callback: (signal: AbortSignal) => Promise<void>) => void
+  onPendingChange: (pending: boolean) => void; onSaved: () => void
+  onRefreshTimeChange: (at: string | null) => void
+}) {
   const [actionError, setActionError] = useState('')
   const [pending, setPending] = useState<string | null>(null)
   const [monotonicNow, setMonotonicNow] = useState(() => performance.now())
@@ -30,11 +34,10 @@ export function CaptainInstructions({ token, refreshIntervalSeconds }: { token: 
 
   const serverNow = collection.latestPage?.serverTime
     ? Date.parse(collection.latestPage.serverTime) + Math.max(0, monotonicNow - collection.latestPage.receivedAt) : null
-  useEffect(() => {
-    if (pending !== null) return
-    const timer = window.setInterval(collection.reload, refreshIntervalSeconds * 1000)
-    return () => window.clearInterval(timer)
-  }, [collection.reload, pending, refreshIntervalSeconds])
+  useEffect(() => { registerRefresh(collection.refresh) }, [collection.refresh, registerRefresh])
+  useEffect(() => { onRefreshTimeChange(collection.lastSuccessAt) }, [collection.lastSuccessAt, onRefreshTimeChange])
+  useEffect(() => { onPendingChange(pending !== null || collection.isLoading) }, [pending, collection.isLoading, onPendingChange])
+  useEffect(() => () => onPendingChange(false), [onPendingChange])
   useEffect(() => {
     const timer = window.setInterval(() => setMonotonicNow(performance.now()), 1000)
     return () => { window.clearInterval(timer); action.current?.abort() }
@@ -55,7 +58,7 @@ export function CaptainInstructions({ token, refreshIntervalSeconds }: { token: 
         if (failure instanceof ApiError && failure.status === 401) void signOut(failure.message)
       }
     } finally {
-      if (!controller.signal.aborted) setPending(null)
+      if (!controller.signal.aborted) { setPending(null); onSaved() }
     }
   }
   return <section aria-labelledby="captain-instructions-heading" className="space-y-4">
@@ -77,6 +80,6 @@ export function CaptainInstructions({ token, refreshIntervalSeconds }: { token: 
       </CardContent></Card>)}</div></ScrollArea>}
     {collection.latestPage && collection.latestPage.totalItems > collection.items.length && <p className="text-xs text-muted-foreground">Showing {collection.items.length} of {collection.latestPage.totalItems} instructions.</p>}
     <PagedCollectionControls label="captain instructions" hasItems={!!collection.items.length} hasMore={collection.hasMore}
-      isLoadingMore={collection.isLoadingMore} error={collection.error} reload={collection.reload} loadNext={collection.loadNext} />
+      isLoadingMore={collection.isLoadingMore} error={collection.error} refreshError={collection.refreshError} reload={collection.reload} loadNext={collection.loadNext} />
   </section>
 }

@@ -175,3 +175,6 @@ export type PlanningHazardRequest = {
   status: 'PENDING' | 'PROCESSING' | 'FAILED_RETRYABLE' | 'FAILED_TERMINAL'; failureCode: string | null; createdAt: string
 }
 export type PlanningHazardRequestPage = PageResult<PlanningHazardRequest> & { mode: 'LIVE' | 'DEMO'; demoRunId: string | null }
+export type PlanningHazardHistory = Omit<PlanningHazardRequest, 'status'> & {
+  status: 'COMPLETED' | 'FAILED_TERMINAL'; title: string; completedAt: string
+}
