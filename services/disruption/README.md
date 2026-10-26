@@ -46,6 +46,16 @@ The service binds to `OCC_DISRUPTION_INTERNAL_PORT` in Compose and uses
 peer URLs use distinct internal/public variables so Compose traffic uses service
 DNS while host-native runs use `localhost`.
 
+Operational parameters—such as detection thresholds (`occ.disruption.threshold: 90s`),
+stale limits (`120s`), headway baselines (`600s`), worker delivery intervals, batch sizes,
+and hazard association/absence rules—are configured with safe canonical defaults in
+`application.yml`. They can be overridden via standard Spring Boot relaxed binding (`OCC_*`
+environment variables) when necessary. Deployment credentials, ports, and peer tokens are
+inventoried in the repository-root `.env.example`.
+Existing aliases, including `OCC_DISRUPTION_HAZARD_ENABLED`, remain supported.
+Inject optional Compose overrides into the service's `environment` with an
+additional Compose file; placing them only in the root `.env` does not forward them.
+
 To refresh the checked-in OpenAPI contract, start the local Compose stack, put a
 short-lived ADMIN or CONTROLLER access token in `OCC_OPENAPI_EXPORT_TOKEN` for the
 current shell only, then run from the repository root:

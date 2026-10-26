@@ -36,14 +36,17 @@ to ADMIN/CONTROLLER. Health and internal-route rules are unchanged.
 
 Nginx serves the React build. `GET /frontend-config` exposes only the public
 Supabase project URL and publishable key, plus the controller refresh and
-ingestion poll intervals used to label data age. These values are bound through
-`FrontendProperties`. Set `OCC_CONTROLLER_DATA_REFRESH_INTERVAL` in the root
-`.env` to change the default 30-second overview refresh. The ingestion interval
-uses the existing `OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL` setting. Adjacent
-alerts are grouped when their saved gaps differ by no more than the configured
-`OCC_ROUTE_INCIDENT_GAP_TOLERANCE` (20 seconds by default).
-Change the tolerance in the root `.env` when local grouping should be more or
-less strict.
+ingestion poll intervals used to label data age. These values are bound through `FrontendProperties`. The controller overview
+refresh defaults to 30s, the ingestion poll interval defaults to 60s, and adjacent alerts are grouped
+when their saved gaps differ by no more than 20 seconds. These operational defaults are set in
+`application.yml` and can be overridden via `OCC_CONTROLLER_DATA_REFRESH_INTERVAL` or
+`OCC_ROUTE_INCIDENT_GAP_TOLERANCE` in the environment if required.
+These legacy aliases remain supported alongside canonical names such as
+`OCC_FRONTEND_CONTROLLERREFRESHINTERVAL`. For Compose, inject optional settings
+into Gateway with an additional Compose file; placing them only in the root
+`.env` does not forward them. If Ingestion's arrival polling cadence changes,
+also set Gateway's `OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL` so freshness labels
+use the same cadence.
 
 `GET /frontend-config` also returns the public `OCC_CAPTAIN_DATA_REFRESH_INTERVAL`
 and `OCC_PUBLIC_NOTICE_REFRESH_INTERVAL` settings. These values control the

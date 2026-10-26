@@ -1,3 +1,4 @@
+# Defaults live here; placeholders preserve existing environment-variable aliases.
 spring:
   application:
     name: disruption
@@ -19,7 +20,7 @@ spring:
     create-schemas: false
     locations: classpath:db/migration
 server:
-  port: ${OCC_DISRUPTION_INTERNAL_PORT}
+  port: ${OCC_DISRUPTION_INTERNAL_PORT:8002}
 management:
   endpoints:
     web:

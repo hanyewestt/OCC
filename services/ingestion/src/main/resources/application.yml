@@ -1,3 +1,4 @@
+# Defaults live here; placeholders preserve existing environment-variable aliases.
 spring:
   task:
     scheduling:
