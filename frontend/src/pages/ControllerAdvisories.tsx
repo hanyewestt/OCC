@@ -210,7 +210,7 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       {!hazards.isLoading && hazards.error === null && hazards.latestPage && !filteredHazards.length && <p className="text-sm text-muted-foreground">{kind ? 'No hazards found for the selected type.' : 'No hazards found.'}</p>}
       {!!filteredHazards.length && <ScrollArea role="region" aria-label="Hazard conditions" tabIndex={0} className="h-[32rem] rounded-lg border"
         viewportProps={{ onScroll: hazards.onScroll }}>
-        <div className="space-y-3 p-1">{filteredHazards.map(h => <Card key={h.disruptionId} className="min-h-28"><CardContent className="space-y-3">
+        <div className="space-y-3 p-1 pr-3.5">{filteredHazards.map(h => <Card key={h.disruptionId} className="min-h-28"><CardContent className="space-y-3">
           <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{h.facts.title}</h3><p className="text-xs text-muted-foreground">{h.status} · {dataClassificationLabel(h.classification)}</p></div>
           <p className="text-sm">{h.facts.description}</p>{h.facts.instruction && <p className="text-sm font-medium">{h.facts.instruction}</p>}
           <p className="text-xs text-muted-foreground">Updated {formatSgtDateTime(h.updatedAt)} · Exposure uses simulated progress.</p>
@@ -246,7 +246,7 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       {!advisories.isLoading && advisories.error === null && advisories.latestPage && !pendingAdvisories.length && <p className="text-sm text-muted-foreground">No pending captain advisories.</p>}
       {!!pendingAdvisories.length && <ScrollArea role="region" aria-label="Pending captain advisories" tabIndex={0}
         className="max-h-[28rem]" viewportProps={{ onScroll: advisories.onScroll }}>
-        <div className="space-y-3">{pendingAdvisories.map(a =>
+        <div className="space-y-3 p-1 pr-3.5">{pendingAdvisories.map(a =>
         <Card key={a.id} className="min-h-28"><CardContent className="space-y-4"><p className="text-xs text-muted-foreground">Simulation · {a.busId} · Hazard: {dataClassificationLabel(a.hazardClassification)}</p>
           <h3 className="text-lg font-semibold">{a.preview}</h3><p className="text-sm text-muted-foreground">{a.candidate.rationale}</p>
           <div className="flex flex-wrap gap-2"><Button disabled={pending} onClick={() => void submit(`/api/v1/planning/advisories/${a.id}/decisions`, {})}>Approve and send</Button>
@@ -281,7 +281,7 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       {instructions.error !== null && !instructions.items.length && <p role="alert" className="text-sm text-destructive">Instruction history is unavailable.</p>}
       {!instructions.isLoading && instructions.error === null && instructions.latestPage && !instructions.items.length && <p className="text-sm text-muted-foreground">No issued instructions in this run.</p>}
       {!!instructions.items.length && <ScrollArea role="region" aria-label="Issued instructions" tabIndex={0} className="max-h-[28rem]"
-        viewportProps={{ onScroll: instructions.onScroll }}><div className="space-y-3">{instructions.items.map(i => <Card key={i.id} className="min-h-28"><CardContent className="flex flex-wrap items-center justify-between gap-4">
+        viewportProps={{ onScroll: instructions.onScroll }}><div className="space-y-3 p-1 pr-3.5">{instructions.items.map(i => <Card key={i.id} className="min-h-28"><CardContent className="flex flex-wrap items-center justify-between gap-4">
           <div className="space-y-1"><p className="font-medium">{i.message}</p><p className="text-xs text-muted-foreground">{i.busId} · {i.status}{i.acknowledgedAt ? ` · Acknowledged ${formatSgtDateTime(i.acknowledgedAt)}` : ''}</p></div>
           {['ISSUED', 'ACKNOWLEDGED'].includes(i.status) && <Button variant="outline" disabled={pending} onClick={() => void submit(`/api/v1/planning/instructions/${i.id}/cancellations`)}>Cancel instruction</Button>}
         </CardContent></Card>)}</div></ScrollArea>}
@@ -314,7 +314,7 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       {notices.error !== null && !notices.items.length && <p role="alert" className="text-sm text-destructive">Notices are unavailable.</p>}
       {!notices.isLoading && notices.error === null && notices.latestPage && !notices.items.length && <p className="text-sm text-muted-foreground">No notices.</p>}
       {!!notices.items.length && <ScrollArea role="region" aria-label="Managed notices" tabIndex={0} className="max-h-[32rem]"
-        viewportProps={{ onScroll: notices.onScroll }}><div className="space-y-3">{notices.items.map(n => <Card key={n.id} className="min-h-28"><CardContent className="space-y-3">
+        viewportProps={{ onScroll: notices.onScroll }}><div className="space-y-3 p-1 pr-3.5">{notices.items.map(n => <Card key={n.id} className="min-h-28"><CardContent className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-medium">{n.title}</h4><p className="text-xs text-muted-foreground">{dataClassificationLabel(n.classification)} · {n.status}</p></div><p className="whitespace-pre-wrap text-sm">{n.message}</p>
           <div className="flex flex-wrap gap-2">{n.status === 'DRAFT' && <Button disabled={pending} onClick={() => void submit(`/api/v1/planning/notices/${n.id}/publications`)}>Publish notice</Button>}
             {n.status === 'PUBLISHED' && <><Button variant="outline" disabled={pending} onClick={() => void submit(`/api/v1/planning/notices/${n.id}/withdrawals`)}>Withdraw notice</Button>
