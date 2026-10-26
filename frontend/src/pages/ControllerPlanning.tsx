@@ -146,8 +146,8 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
       <h2 id="planning-diagnoses-title" className="font-medium">Root-cause diagnoses</h2>
       <p className="text-sm text-muted-foreground">Live diagnoses are advisory; actions require validated vehicle, control-stop and crowd-safety inputs.</p>
       <DataMessage error={diagnosisError} loading={loading || diagnoses.isLoading && !diagnosisPage} empty={!diagnosisItems.length}>No confirmed bunching events have reached Planning in this mode.</DataMessage>
-      {!!diagnosisItems.length && <ScrollArea role="region" aria-label="Root-cause diagnoses" tabIndex={0} className="h-[28rem]"
-        viewportProps={{ onScroll: diagnoses.onScroll }}><div className="space-y-3 p-1">{diagnosisItems.map(item => <Card key={item.requestId} className="min-h-28">
+      {!!diagnosisItems.length && <ScrollArea role="region" aria-label="Root-cause diagnoses" tabIndex={0} className="max-h-[28rem]"
+        viewportProps={{ onScroll: diagnoses.onScroll }}><div className="space-y-3 p-1 pr-3.5">{diagnosisItems.map(item => <Card key={item.requestId} className="min-h-28">
           <CardContent className="space-y-2 text-sm">
             <p className="font-medium">Service {item.serviceId ?? 'unavailable'} · {item.directionId === null ? 'Direction unavailable' : `Direction ${item.directionId}`} · Stop {item.stopCode ?? 'unavailable'}</p>
             <p className="text-xs text-muted-foreground">{dataClassificationLabel(item.classification)} · {diagnosisStatusLabel(item.status)} · {timestamp(item.createdAt)}</p>
