@@ -120,6 +120,17 @@ sorting. Use the existing Dialog and AlertDialog primitives for multi-field
 controller edits; preserve drafts on validation or API errors, confirm before
 discarding changed values, and block duplicate or stale submissions.
 
+Each data page owns one refresh cycle through `lib/page-refresh.ts`. Its manual
+Refresh action and timer refresh the same enabled resources. Schedule the next
+poll after the complete cycle settles, coalesce repeated clicks, and request a
+follow-up cycle after mutations. Pause polling while saving, cancel obsolete
+requests on scope changes, and preserve editor drafts during background refresh.
+Keep existing rows and the last successful refresh timestamp if a same-scope
+refresh fails; retry page zero for refresh failures and the failed page for
+load-more failures. Loading another page must not advance the refresh timestamp.
+Captain sample animation and instruction countdown timers update local display
+state independently of data polling.
+
 [React state](https://react.dev/learn/choosing-the-state-structure),
 [Effects](https://react.dev/learn/you-might-not-need-an-effect).
 

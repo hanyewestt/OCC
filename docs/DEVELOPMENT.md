@@ -188,6 +188,24 @@ and Nginx's explicit allowlist aligned when adding a screen.
 
 ## Development and troubleshooting
 
+### Page data refresh
+
+Controller, Captain and public notices use the shared `page-refresh` scheduler
+with their existing public runtime refresh intervals. Each page has one cycle:
+manual refresh and polling update the same relevant collections, and the next
+poll waits until the current cycle finishes. Controller Disruptions refreshes
+both bunching detections and multi-hazard conditions. Planning and Audit refresh
+their visible decision, instruction and notice collections. Captain polls assigned
+instructions; its pacing samples and countdowns use local display timers.
+
+Successful saves request reconciliation through the same page cycle. Polling
+pauses while a save is pending, and editor drafts survive background refresh.
+Collection rows remain visible during a same-scope refresh or temporary failure;
+the last successful refresh timestamp advances only after a successful first-page
+refresh, not after loading additional pages. A successful refresh returns the
+collection to its first page. Authentication and configuration retain their own
+existing lifecycles.
+
 After Java, dependency, Dockerfile or migration changes, run the start action
 again to rebuild changed images. To rebuild only Gateway, use Compose directly:
 
