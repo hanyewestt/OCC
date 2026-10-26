@@ -18,7 +18,11 @@ summary and optional source evidence. Controllers can approve an AI recommendati
 or replace it with instructions for up to three buses and a rationale in a modal;
 unsaved edits require explicit discard confirmation. The audit log shows the
 authenticated controller, saved decision, replacement instructions and rationale
-from the Planning database. The simulation supplies a two-bus service 190 event
+from the Planning database. It also lists the latest completed or terminally
+failed hazard processing per disruption in the selected mode, with completion
+times and failure codes. Pending and processing work is excluded from this log;
+Disruptions and Planning & mitigation do not display a hazard processing section.
+The simulation supplies a two-bus service 190 event
 and a three-bus service 972 event so controller workflows can be exercised in one
 run.
 

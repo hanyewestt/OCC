@@ -82,6 +82,27 @@ public class PlanningScopeService {
     }
 
     @Transactional(readOnly = true)
+    public ScopedHazardHistoryPage listHazardHistory(int page, int size) {
+        if (page < 0 || size < 1 || size > 100) throw new IllegalArgumentException("Invalid hazard history page bounds");
+        PlanningScope scope = current();
+        var found = requests.findTerminalHazardRequests(scope.classification(),
+                scope.demoRunId() == null ? "" : scope.demoRunId().toString(), PageRequest.of(page, size));
+        var items = found.map(request -> {
+            var submission = codec.decodeProducerEvent(request.inputSnapshot());
+            String title = submission.hazardSnapshot() != null && submission.hazardSnapshot().facts() != null
+                    ? submission.hazardSnapshot().facts().title()
+                    : submission.trafficSnapshot() != null ? submission.trafficSnapshot().message() : null;
+            if (title == null || title.isBlank())
+                title = request.eventType().replace('_', ' ') + " · " + submission.disruptionId();
+            return new PlanningHazardHistorySummary(request.id(), request.eventId(),
+                submission.disruptionId(), request.eventType(), title,
+                request.status(), request.failureCode(), request.createdAt(), request.updatedAt());
+        }).getContent();
+        return new ScopedHazardHistoryPage(scope.mode(), scope.demoRunId(), items, page, size,
+                found.getTotalElements(), found.getTotalPages());
+    }
+
+    @Transactional(readOnly = true)
     public ScopedHazardRequestPage listHazardRequests(int page, int size) {
         if (page < 0 || size < 1 || size > 100) throw new IllegalArgumentException("Invalid hazard request page bounds");
         PlanningScope scope = current();

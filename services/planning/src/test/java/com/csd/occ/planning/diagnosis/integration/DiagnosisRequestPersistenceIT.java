@@ -136,6 +136,53 @@ class DiagnosisRequestPersistenceIT {
         return request;
     }
 
+    @Test
+    void terminalHazardHistoryExcludesActiveWorkAndPagesLatestTerminalResultsWithinScope() {
+        UUID run = UUID.randomUUID();
+        UUID disruption = UUID.randomUUID();
+        var oldFailure = hazardRequest(UUID.randomUUID(), disruption, run, NOW.minusSeconds(60));
+        oldFailure.failTerminal("OLD_FAILURE", NOW.minusSeconds(50));
+        repository.saveAndFlush(oldFailure);
+        var completed = hazardRequest(UUID.randomUUID(), disruption, run, NOW.minusSeconds(40));
+        completed.complete(NOW.minusSeconds(10));
+        repository.saveAndFlush(completed);
+        var pending = hazardRequest(UUID.randomUUID(), disruption, run, NOW);
+        repository.saveAndFlush(pending);
+        var retrying = hazardRequest(UUID.randomUUID(), UUID.randomUUID(), run, NOW);
+        retrying.failRetryable("RETRY", NOW.plusSeconds(60), NOW);
+        repository.saveAndFlush(retrying);
+        var processing = hazardRequest(UUID.randomUUID(), UUID.randomUUID(), run, NOW);
+        processing.claim(NOW.plusSeconds(60), NOW);
+        repository.saveAndFlush(processing);
+        var failedTraffic = new DiagnosisRequest(UUID.randomUUID(), EventType.TRAFFIC_INCIDENT, PRODUCER,
+                UUID.randomUUID(), DiagnosisRequestService.SCHEMA_VERSION, NOW.minusSeconds(30));
+        failedTraffic.retainInput("{\"disruptionId\":\"" + UUID.randomUUID()
+                + "\",\"classification\":\"SIMULATION\",\"demoRunId\":\"" + run + "\"}");
+        failedTraffic.failTerminal("TRAFFIC_FAILURE", NOW);
+        repository.saveAndFlush(failedTraffic);
+        var otherRun = hazardRequest(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), NOW);
+        otherRun.complete(NOW);
+        repository.saveAndFlush(otherRun);
+        var live = new DiagnosisRequest(UUID.randomUUID(), EventType.HAZARD, PRODUCER,
+                UUID.randomUUID(), DiagnosisRequestService.SCHEMA_VERSION, NOW);
+        live.retainInput("{\"disruptionId\":\"" + UUID.randomUUID()
+                + "\",\"classification\":\"OBSERVATION_ONLY\",\"demoRunId\":null}");
+        live.complete(NOW);
+        repository.saveAndFlush(live);
+
+        var first = repository.findTerminalHazardRequests("SIMULATION", run.toString(),
+                org.springframework.data.domain.PageRequest.of(0, 1));
+        var second = repository.findTerminalHazardRequests("SIMULATION", run.toString(),
+                org.springframework.data.domain.PageRequest.of(1, 1));
+        assertThat(first.getContent()).extracting(DiagnosisRequest::id).containsExactly(failedTraffic.id());
+        assertThat(first.getTotalElements()).isEqualTo(2);
+        assertThat(first.getTotalPages()).isEqualTo(2);
+        assertThat(second.getContent()).extracting(DiagnosisRequest::id).containsExactly(completed.id());
+        assertThat(repository.findTerminalHazardRequests("OBSERVATION_ONLY", "",
+                org.springframework.data.domain.PageRequest.of(0, 10)).getContent())
+                .extracting(DiagnosisRequest::id).containsExactly(live.id());
+    }
+
     @DynamicPropertySource
     static void database(DynamicPropertyRegistry registry) {
         registry.add("OCC_PLANNING_DB_INTERNAL_URL", POSTGRES::getJdbcUrl);

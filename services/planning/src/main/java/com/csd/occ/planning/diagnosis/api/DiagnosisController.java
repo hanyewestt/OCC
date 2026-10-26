@@ -52,6 +52,21 @@ public class DiagnosisController {
                 scopes.listHazardRequests(page, size));
     }
 
+    @GetMapping("/hazard-history")
+    @Operation(operationId = "listHazardProcessingHistory", summary = "List completed and terminally failed hazard processing",
+            description = "Controller/admin only. Latest terminal request per disruption in the selected live or active simulation scope, ordered by completion time newest first. Page defaults to 0; size defaults to 50 (1–100). Pending, processing and retryable failures are excluded. Uses existing operational retention.")
+    @ApiResponse(responseCode = "200", description = "Scoped terminal processing history")
+    @ApiResponse(responseCode = "400", description = "Invalid page bounds")
+    @ApiResponse(responseCode = "401", description = "Authentication required")
+    @ApiResponse(responseCode = "403", description = "ADMIN or CONTROLLER role required")
+    @ApiResponse(responseCode = "503", description = "Shared data selection is unavailable")
+    public com.csd.occ.planning.diagnosis.api.dto.PlanningHazardHistoryPageResponse listHazardHistory(
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "0") int page,
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "50") int size) {
+        return com.csd.occ.planning.diagnosis.api.dto.PlanningHazardHistoryPageResponse.from(
+                scopes.listHazardHistory(page, size));
+    }
+
     @GetMapping("/{diagnosisId}")
     @Operation(operationId = "getDiagnosis", summary = "Get a diagnosis result when processing has completed")
     @ApiResponse(responseCode = "200", description = "Diagnosis lifecycle and result")
