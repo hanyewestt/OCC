@@ -84,8 +84,10 @@ event. A 404 means Planning has not accepted that event. A later source or bus
 exposure event can queue fresh hazard work; a terminal failure never becomes an
 automatic OBU instruction.
 The default Gemini request deadline is 30 seconds. For a slow live provider, set
-`OCC_PLANNING_GEMINI_REQUEST_TIMEOUT=60s` in `.env` and recreate Planning to apply
-it; no application rebuild is needed. The same deadline applies to diagnosis
+`OCC_PLANNING_GEMINI_REQUEST_TIMEOUT: 60s` in Planning's `environment` through
+an additional Compose file and recreate Planning to apply it; host-native local
+runs can set `OCC_PLANNING_GEMINI_REQUEST_TIMEOUT=60s` in `.env`. No application
+rebuild is needed. The same deadline applies to diagnosis
 and recommendation requests. An exhausted diagnosis retry budget is reported
 as a terminal failure in the demo instead of remaining pending indefinitely.
 
@@ -135,28 +137,26 @@ available.
 
 ## Runtime settings
 
-The root [`.env.example`](../../.env.example) is the authoritative variable
-inventory and gives a safe example for every setting. Planning-specific values:
+The root [`.env.example`](../../.env.example) inventories supported deployment variables and secrets:
 
-| Variables | Purpose |
+| Deployment Variables | Purpose |
 | --- | --- |
 | `OCC_PLANNING_DB_INTERNAL_URL`, `OCC_PLANNING_DB_PUBLIC_URL`, `OCC_PLANNING_DB_USERNAME`, `OCC_PLANNING_DB_PASSWORD` | PostgreSQL connection for Compose and host-native runs. |
 | `OCC_PLANNING_INTERNAL_PORT`, `OCC_DISRUPTION_TO_PLANNING_PEER_TOKEN`, `OCC_PLANNING_TO_DISRUPTION_PEER_TOKEN` | Listener port and the two directed Planning/Disruption service capabilities. |
-| `OCC_PLANNING_RECOMMENDATION_AUDIT_MAX_RESPONSE_CHARACTERS`, `OCC_PLANNING_DIAGNOSIS_AUDIT_MAX_RESPONSE_CHARACTERS` | Bound retained model response text. |
-| `OCC_PLANNING_RECOMMENDATION_MAX_PROMPT_INPUT_BYTES`, `OCC_PLANNING_DIAGNOSIS_MAX_PROMPT_INPUT_BYTES`, `OCC_PLANNING_DIAGNOSIS_PEER_RESPONSE_MAX_BYTES` | Bound generated prompts and peer response bodies. |
 | `OCC_PLANNING_RECOMMENDATION_AI_ENABLED`, `OCC_PLANNING_RECOMMENDATION_FIXTURE_LOCATION` | Enable Gemini candidate generation or choose the deterministic fixture. |
-| `OCC_PLANNING_GEMINI_API_KEY`, `OCC_PLANNING_GEMINI_BASE_URL`, `OCC_PLANNING_GEMINI_MODEL`, `OCC_PLANNING_GEMINI_TEMPERATURE`, `OCC_PLANNING_GEMINI_THINKING_LEVEL`, `OCC_PLANNING_GEMINI_REQUEST_TIMEOUT`, `OCC_PLANNING_GEMINI_RETRY_ATTEMPTS` | Shared Gemini settings for diagnosis and recommendations. Leave `OCC_PLANNING_GEMINI_BASE_URL` blank to use Google's default endpoint; set it only for a compatible Gemini API endpoint such as the local workflow-test stub. Keep AI disabled until a key is configured. |
-| `OCC_PLANNING_RECOMMENDATION_GEMINI_MAX_OUTPUT_TOKENS`, `OCC_PLANNING_DIAGNOSIS_GEMINI_MAX_OUTPUT_TOKENS` | Separate output-token limits for each model task. |
-| `OCC_PLANNING_ADVISORY_RETENTION`, `OCC_PLANNING_DIAGNOSIS_RETENTION_DURATION` | Short retention for operational advisory and diagnosis rows (12h by default); set these to control Planning independently. For compatibility, each falls back to `OCC_INGESTION_RETENTION` when unset. |
-| `OCC_PLANNING_DIAGNOSIS_RETENTION_INTERVAL`, `OCC_PLANNING_DIAGNOSIS_RETENTION_INITIAL_DELAY` | Schedule cleanup of short-lived diagnosis request/delivery state; retained AI evidence follows its separate policy. |
-| `OCC_PLANNING_DIAGNOSIS_WORKER_ENABLED`, `OCC_PLANNING_DIAGNOSIS_WORKER_INTERVAL`, `OCC_PLANNING_DIAGNOSIS_WORKER_BATCH_SIZE`, `OCC_PLANNING_DIAGNOSIS_LEASE_DURATION`, `OCC_PLANNING_DIAGNOSIS_MAX_ATTEMPTS` | Control Planning's durable diagnosis worker. |
-| `OCC_PLANNING_DIAGNOSIS_DELIVERY_MAX_ATTEMPTS`, `OCC_PLANNING_DIAGNOSIS_RETRY_INITIAL_DELAY`, `OCC_PLANNING_DIAGNOSIS_RETRY_MAX_DELAY` | Bound and schedule retries when Planning submits a recommendation record. Zero delivery attempts means retry indefinitely with capped backoff. |
-| `OCC_PLANNING_DIAGNOSIS_EVIDENCE_LOOKBACK`, `OCC_PLANNING_DIAGNOSIS_EVIDENCE_RADIUS_KM` | Configure the evidence window and spatial association bound. |
-| `OCC_PLANNING_DIAGNOSIS_CONFIDENCE_THRESHOLD` | Deprecated compatibility no-op; it does not affect eligibility, recommendation generation or approval. |
-| `OCC_PLANNING_DIAGNOSIS_REQUEST_TIMEOUT`, `OCC_DISRUPTION_INTERNAL_URL`, `OCC_INGESTION_INTERNAL_URL` | Configure internal evidence-service destinations and request timeouts. Compose uses service DNS and internal ports. |
-| `OCC_PLANNING_ADVISORY_MAX_SPEED_REDUCTION_KMH`, `OCC_PLANNING_ADVISORY_MAX_DURATION_SECONDS`, `OCC_PLANNING_ADVISORY_MAX_SUBSEQUENT_STOPS` | Bound controller-reviewed synthetic instructions; scenario-specific allowed values impose tighter limits. |
-| `OCC_PLANNING_ADVISORY_ACKNOWLEDGEMENT_WINDOW` | Expire instructions that the captain does not acknowledge. Timed speed advice starts only after server-recorded acknowledgement. |
-| `OCC_PLANNING_SWAGGER_ENABLED` | Enable or disable Swagger UI and generated API docs. |
+| `OCC_PLANNING_GEMINI_API_KEY`, `OCC_PLANNING_GEMINI_BASE_URL`, `OCC_PLANNING_GEMINI_MODEL` | Gemini credentials and model selection. Leave `OCC_PLANNING_GEMINI_BASE_URL` blank to use Google's default endpoint. |
+
+Operational timings, AI sampling parameters, worker loops, prompt byte caps, and advisory bounds have safe canonical defaults in `application.yml` and can be overridden via `OCC_*` environment variables when needed:
+
+- Advisory bounds (`occ.planning.advisory.max-speed-reduction-kmh: 10`, `max-duration-seconds: 900`, `max-subsequent-stops: 10`, `acknowledgement-window: 5m`, `retention: 12h`).
+- AI generation & audit caps (`gemini.temperature: 1.0`, `thinking-level: MINIMAL`, `max-output-tokens: 512/1024`, prompt input max bytes: 65,536, audit response max chars: 65,536).
+- Diagnosis worker & retries (`worker-interval: 2s`, `batch-size: 10`, `lease-duration: 5m`, `max-attempts: 3`, `evidence-lookback: 15m`, `evidence-radius-km: 2.0`).
+
+Existing aliases such as `OCC_PLANNING_DIAGNOSIS_WORKER_ENABLED` and
+`OCC_PLANNING_GEMINI_REQUEST_TIMEOUT` remain supported. Canonical names use the
+actual property path, for example `OCC_DIAGNOSIS_WORKERENABLED`. Inject optional
+Compose overrides into Planning's `environment` with an additional Compose file;
+the base stack no longer forwards tuning values from the root `.env`.
 
 ### Captain instructions and public notices
 

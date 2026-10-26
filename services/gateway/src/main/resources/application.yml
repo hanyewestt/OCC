@@ -1,3 +1,4 @@
+# Defaults live here; placeholders preserve existing environment-variable aliases.
 spring:
   application:
     name: gateway
@@ -28,13 +29,13 @@ spring:
               predicates:
                 - Path=/api/v1/{resource:(?!auth$).+}/**
 server:
-  port: ${OCC_GATEWAY_INTERNAL_PORT}
+  port: ${OCC_GATEWAY_INTERNAL_PORT:8004}
 occ:
   frontend:
     project-url: ${SUPABASE_PROJECT_URL}
     publishable-key: ${SUPABASE_SB_PUBLISHABLE:}
     controller-refresh-interval: ${OCC_CONTROLLER_DATA_REFRESH_INTERVAL:30s}
-    ingestion-poll-interval: ${OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL}
+    ingestion-poll-interval: ${OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL:60s}
     route-incident-gap-tolerance: ${OCC_ROUTE_INCIDENT_GAP_TOLERANCE:20s}
     captain-refresh-interval: ${OCC_CAPTAIN_DATA_REFRESH_INTERVAL:5s}
     public-notice-refresh-interval: ${OCC_PUBLIC_NOTICE_REFRESH_INTERVAL:30s}

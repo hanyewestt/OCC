@@ -138,41 +138,18 @@ Compose runs the `ingestion-migrate` Flyway job before starting the service; Hib
 
 If the active reference topology is absent, the scheduler first retries the reference import and target seeding. If that import fails, it skips the poll cycle without sending per-stop arrival requests; the terminal log records the single import failure.
 
-The arrival poller is enabled by `OCC_INGESTION_BUS_ARRIVAL_ENABLED` (default `true`);
-set it to `false` in an isolated test stack to prevent calls to DataMall. When enabled,
-its schedule is externally configurable: `OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL`
-and `OCC_INGESTION_BUS_ARRIVAL_INITIAL_DELAY` default to `60s`; retention cleanup uses
-`OCC_INGESTION_RETENTION_INTERVAL=1h` after `OCC_INGESTION_RETENTION_INITIAL_DELAY=5m`.
-Poll intervals are validated from 1 second to 1 hour and retention intervals from
-1 minute to 24 hours. DataMall calls use a 5-second connect timeout and 20-second
-response timeout by default (`OCC_DATAMALL_CONNECT_TIMEOUT` and
-`OCC_DATAMALL_RESPONSE_TIMEOUT`); accepted ranges are 100ms–30s and 100ms–2m.
-Each decoded response is capped at 5,000,000 bytes by default through
-`OCC_DATAMALL_MAX_RESPONSE_BYTES` (accepted range 1,024–20,000,000 bytes).
-Oversized responses fail before parsing or persistence; a later incident-page
-failure leaves the accumulated snapshot marked incomplete.
-LTA Traffic Incidents are polled by a separate scheduler every two minutes by
-default, matching the provider's published update frequency. Control it with
-`OCC_INGESTION_TRAFFIC_INCIDENT_ENABLED`,
-`OCC_INGESTION_TRAFFIC_INCIDENT_POLL_INTERVAL` (minimum `2m`), and
-`OCC_INGESTION_TRAFFIC_INCIDENT_INITIAL_DELAY`. The adapter follows the current
-DataMall response limit with `$skip` pagination: `OCC_DATAMALL_TRAFFIC_INCIDENT_PAGE_SIZE`
-defaults to `500` and `OCC_DATAMALL_TRAFFIC_INCIDENT_MAX_PAGES` defaults to `10`.
-If every configured page is full, or a response exceeds the configured page
-size, the poll is marked partial so Disruption cannot clear active
-incidents from a truncated snapshot. The raw observation preserves every
-successful page response; normalized incident rows reference that observation.
-The DataMall contract has no incident ID, so the stable source key is derived
-from incident type and coordinates rounded to the database's seven decimal
-places. A duplicate type/location with conflicting facts also makes the poll
-partial. The normalized `observedAt` is null because the provider does not
-return an observation timestamp; `fetchedAt` records when OCC received the
-snapshot. These pagination limits follow [LTA DataMall API User Guide v6.10,
-section 2.18](https://datamall.lta.gov.sg/content/dam/datamall/datasets/LTA_DataMall_API_User_Guide.pdf?ref=public_apis),
-which documents a 500-record response limit and `$skip` paging; update the
-settings if LTA changes that provider limit.
-All values are inventoried in the repository-root `.env.example` and passed to Compose
-through the ingestion service environment.
+The arrival poller is enabled by default (`occ.ingestion.schedule.bus-arrival-enabled=true`);
+set `OCC_INGESTION_BUS_ARRIVAL_ENABLED=false` in an isolated test stack to prevent calls to DataMall.
+Operational timings, retry bounds, and pagination limits are configured with safe canonical defaults
+in `application.yml`: the bus arrival poller defaults to a 60-second interval with a 60-second initial delay,
+while retention cleanup runs every hour after an initial 5-minute delay. DataMall HTTP calls use a default
+5-second connect timeout and 20-second response timeout, with a 5,000,000-byte response limit.
+LTA Traffic Incidents are polled every two minutes by default, matching the provider's update frequency,
+with 500-record `$skip` pages (up to 10 pages). All operational parameters can be tuned via standard
+Spring Boot relaxed binding or the retained legacy environment aliases when necessary.
+In Compose, inject optional overrides into the service with an additional Compose file;
+the base stack no longer forwards tuning values from the root `.env`. Deployment credentials, ports,
+and monitored services are inventoried in the repository-root `.env.example`.
 
 ### Polling coverage and bus-bunching coverage
 
