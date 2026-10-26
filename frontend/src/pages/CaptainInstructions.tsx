@@ -68,7 +68,7 @@ export function CaptainInstructions({ token, registerRefresh, onPendingChange, o
     {collection.error !== null && !collection.items.length && <p role="alert" className="rounded-lg border p-3 text-sm">Instructions are unavailable.</p>}
     {!collection.isLoading && collection.error === null && collection.latestPage && !collection.items.length && <p className="text-sm text-muted-foreground">No current instructions for your assigned bus.</p>}
     {!!collection.items.length && <ScrollArea role="region" aria-label="Captain instructions" tabIndex={0} className="max-h-[28rem]"
-      viewportProps={{ onScroll: collection.onScroll }}><div className="space-y-3">{collection.items.map(item => <Card key={item.id} className="min-h-28"><CardContent className="space-y-4">
+      viewportProps={{ onScroll: collection.onScroll }}><div className="space-y-3 p-1 pr-3.5">{collection.items.map(item => <Card key={item.id} className="min-h-28"><CardContent className="space-y-4">
         <p className="text-xs font-medium text-muted-foreground">Simulation · {item.busId} · Hazard: {dataClassificationLabel(item.hazardClassification)}</p>
         <p className="text-2xl font-semibold leading-snug">{item.message}</p>
         {item.acknowledgedAt ? <div role="status" className="space-y-1 text-sm">

@@ -56,7 +56,7 @@ function UpcomingStops() {
       <p className="text-lg font-semibold sm:ml-auto">{skipped === 0 ? 'No stops to skip' : `${skipLabel(skipped)} on this trip`}</p>
     </div>
     <ScrollArea role="region" aria-label="Upcoming stops in route order" tabIndex={0} className="max-h-[26rem]">
-    <ol aria-label="Upcoming stops in route order" className="space-y-2">
+    <ol aria-label="Upcoming stops in route order" className="space-y-2 p-1 pr-3.5">
       {segments.map(segment => segment.kind === 'stop'
         ? <li key={segment.stop.stopCode} className="flex items-center gap-3 px-4 py-2 text-lg">
           <span aria-hidden="true" className="size-3 shrink-0 rounded-full bg-foreground" />

@@ -74,7 +74,7 @@ export function NoticeBoardPage() {
       {error && <div role="alert" className="space-y-3 rounded-xl border p-5"><p>{error}</p><Button variant="outline" onClick={retry}>Try again</Button></div>}
       {!loading && !error && collection.latestPage && !collection.items.length && <Card><CardContent className="text-sm text-muted-foreground">No current service advisories.</CardContent></Card>}
       {!!collection.items.length && <ScrollArea role="region" aria-label="Public service advisories" tabIndex={0} className="max-h-[34rem]"
-        viewportProps={{ onScroll: collection.onScroll }}><div className="grid gap-4 p-1 md:grid-cols-2">{collection.items.map(notice => <Card key={notice.id} className="min-h-56">
+        viewportProps={{ onScroll: collection.onScroll }}><div className="grid gap-4 p-1 pr-3.5 md:grid-cols-2">{collection.items.map(notice => <Card key={notice.id} className="min-h-56">
         <CardContent className="space-y-4">
           <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground">{dataClassificationLabel(notice.classification)}</p>
             <h2 className="text-lg font-semibold">{notice.title}</h2></div>
