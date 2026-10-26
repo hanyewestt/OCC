@@ -18,6 +18,38 @@ class PlanningScopeServiceTest {
     private static final Instant CONFIRMED = Instant.parse("2026-10-25T07:05:31Z");
 
     @Test
+    void terminalHazardHistoryUsesTheSelectedScopeAndReportsTerminalTime() {
+        var scopes = mock(PlanningScopePort.class);
+        var requests = mock(DiagnosisRequestRepository.class);
+        var codec = mock(SnapshotCodecPort.class);
+        var service = new PlanningScopeService(scopes, requests, mock(RootCauseDiagnosisRepository.class), codec);
+        var request = new DiagnosisRequest(UUID.randomUUID(), EventType.HAZARD, "disruption", UUID.randomUUID(),
+                DiagnosisRequestService.SCHEMA_VERSION, CONFIRMED);
+        request.retainInput("retained-history");
+        request.failTerminal("HAZARD_CONTEXT_OR_MODEL_UNAVAILABLE", CONFIRMED.plusSeconds(60));
+        var submission = mock(ProducerEventSubmission.class);
+        UUID disruptionId = UUID.randomUUID();
+        when(submission.disruptionId()).thenReturn(disruptionId);
+        when(codec.decodeProducerEvent("retained-history")).thenReturn(submission);
+        when(scopes.current()).thenReturn(new PlanningScope("DEMO", RUN_ID), new PlanningScope("LIVE", null));
+        var pageable = PageRequest.of(1, 10);
+        when(requests.findTerminalHazardRequests("SIMULATION", RUN_ID.toString(), pageable))
+                .thenReturn(new PageImpl<>(List.of(request), pageable, 11));
+        when(requests.findTerminalHazardRequests("OBSERVATION_ONLY", "", pageable))
+                .thenReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        var history = service.listHazardHistory(1, 10);
+        assertThat(history.demoRunId()).isEqualTo(RUN_ID);
+        assertThat(history.items()).containsExactly(new PlanningHazardHistorySummary(request.id(), request.eventId(),
+                disruptionId, "HAZARD", "HAZARD · " + disruptionId, DiagnosisRequestStatus.FAILED_TERMINAL,
+                "HAZARD_CONTEXT_OR_MODEL_UNAVAILABLE", CONFIRMED, CONFIRMED.plusSeconds(60)));
+        assertThat(history.totalItems()).isEqualTo(11);
+        assertThat(service.listHazardHistory(1, 10).items()).isEmpty();
+        assertThatThrownBy(() -> service.listHazardHistory(-1, 10)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.listHazardHistory(0, 101)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void listsLatestHazardWorkAndSafeFailureCodesForTheSelectedRun() {
         var scopes = mock(PlanningScopePort.class);
         var requests = mock(DiagnosisRequestRepository.class);

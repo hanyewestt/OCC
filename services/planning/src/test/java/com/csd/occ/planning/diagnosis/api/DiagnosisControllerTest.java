@@ -45,6 +45,33 @@ class DiagnosisControllerTest {
     @MockitoBean IssuedInstructionRepository instructions;
 
     @Test
+    void hazardHistoryIsAvailableToOperationalRoles() throws Exception {
+        var finishedAt = Instant.parse("2026-10-25T04:02:00Z");
+        when(scopes.listHazardHistory(0, 10)).thenReturn(new com.csd.occ.planning.diagnosis.domain.ScopedHazardHistoryPage(
+                "LIVE", null, List.of(new com.csd.occ.planning.diagnosis.domain.PlanningHazardHistorySummary(
+                        UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "HAZARD", "Flood report", DiagnosisRequestStatus.COMPLETED,
+                        null, finishedAt.minusSeconds(120), finishedAt)), 0, 10, 1, 1));
+        for (String role : List.of("CONTROLLER", "ADMIN")) {
+            mvc.perform(get("/api/v1/planning/diagnoses/hazard-history?page=0&size=10")
+                            .with(jwt().authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_" + role))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.items[0].status").value("COMPLETED"))
+                    .andExpect(jsonPath("$.items[0].title").value("Flood report"))
+                    .andExpect(jsonPath("$.items[0].completedAt").value("2026-10-25T04:02:00Z"));
+        }
+    }
+
+    @Test
+    void hazardHistoryRequiresAnOperationalRole() throws Exception {
+        mvc.perform(get("/api/v1/planning/diagnoses/hazard-history"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/planning/diagnoses/hazard-history")
+                        .with(jwt().authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_CAPTAIN"))))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(scopes);
+    }
+
+    @Test
     void exposesOnlyScopedUnfinishedHazardStatusesToControllers() throws Exception {
         UUID runId = UUID.randomUUID();
         UUID disruptionId = UUID.randomUUID();

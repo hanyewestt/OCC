@@ -36,8 +36,16 @@ disclosure. Existing retained diagnoses are presented from stored snapshots with
 rerunning AI or changing decisions. Provider failures remain visible.
 `GET /api/v1/planning/diagnoses/hazard-requests` lists the latest
 unfinished hazard request per disruption in that same scope, including pending,
-retrying and terminal failures. The controller planning page shows those failures;
-failed processing never creates an instruction. Switching modes does not relabel
+retrying and terminal failures. This endpoint remains available to operational clients;
+failed processing never creates an instruction. The controller Audit log uses
+`GET /api/v1/planning/diagnoses/hazard-history` for the latest terminal request
+per disruption in the selected scope. Only `COMPLETED` and `FAILED_TERMINAL`
+requests appear; pending work, processing and retryable failures are excluded.
+Results are ordered by terminal `completedAt` newest first, with page default 0
+and size default 50 (1–100). A later pending request does not hide an earlier
+terminal result. This is a bounded operational view under existing retention,
+not a permanent processing trail. The original `hazard-requests` endpoint keeps
+its unfinished-work behavior. Switching modes does not relabel
 or delete retained diagnoses.
 Live diagnoses finish with `LIVE_DIAGNOSIS_NO_VALIDATED_OPERATIONAL_CONTEXT` and do
 not call the simulation mitigation fixture or create operational instructions.
