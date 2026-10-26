@@ -94,3 +94,21 @@ occ:
       cluster-tolerance-meters: ${OCC_INGESTION_ROUTE_POSITION_CLUSTER_TOLERANCE_M:150}
       max-poll-age-cycles: ${OCC_INGESTION_ROUTE_POSITION_MAX_POLL_AGE_CYCLES:2}
       speed-cap-meters-per-second: ${OCC_INGESTION_ROUTE_POSITION_SPEED_CAP_MPS:16.7}
+      uncertainty-meters: ${OCC_INGESTION_ROUTE_POSITION_UNCERTAINTY_M:50}
+      circular-projection-speed-meters-per-second: ${OCC_INGESTION_ROUTE_POSITION_CIRCULAR_PROJECTION_SPEED_MPS:7.0}
+      circular-projection-minimum-stop-count: ${OCC_INGESTION_ROUTE_POSITION_CIRCULAR_PROJECTION_MIN_STOP_COUNT:3}
+      identity-link-distance-meters: ${OCC_INGESTION_ROUTE_POSITION_IDENTITY_LINK_DISTANCE_M:25}
+      identity-link-projection-speed-meters-per-second: ${OCC_INGESTION_ROUTE_POSITION_IDENTITY_LINK_PROJECTION_SPEED_MPS:7.0}
+      identity-eta-tolerance: ${OCC_INGESTION_ROUTE_POSITION_IDENTITY_ETA_TOLERANCE:20s}
+      identity-link-routes: ${OCC_INGESTION_ROUTE_POSITION_IDENTITY_LINK_ROUTES:190:1,190:2}
+      coordinated-refresh-boundary-routes: ${OCC_INGESTION_ROUTE_POSITION_COORDINATED_REFRESH_BOUNDARY_ROUTES:190:1}
+      refresh-boundary-distance-meters: ${OCC_INGESTION_ROUTE_POSITION_REFRESH_BOUNDARY_DISTANCE_M:250}
+      refresh-boundary-window: ${OCC_INGESTION_ROUTE_POSITION_REFRESH_BOUNDARY_WINDOW:5s}
+      refresh-boundary-allowed-overlap: ${OCC_INGESTION_ROUTE_POSITION_REFRESH_BOUNDARY_ALLOWED_OVERLAP:250ms}
+      refresh-boundary-profile-residual: ${OCC_INGESTION_ROUTE_POSITION_REFRESH_BOUNDARY_PROFILE_RESIDUAL:75s}
+      refresh-boundary-profile-minimum-seconds-per-meter: ${OCC_INGESTION_ROUTE_POSITION_REFRESH_BOUNDARY_PROFILE_MIN_SECONDS_PER_M:0.02}
+      refresh-boundary-profile-maximum-seconds-per-meter: ${OCC_INGESTION_ROUTE_POSITION_REFRESH_BOUNDARY_PROFILE_MAX_SECONDS_PER_M:2.0}
+      circular-phase-link-distance-meters: ${OCC_INGESTION_ROUTE_POSITION_CIRCULAR_PHASE_LINK_DISTANCE_M:250}
+      circular-phase-maximum-gap-meters: ${OCC_INGESTION_ROUTE_POSITION_CIRCULAR_PHASE_MAXIMUM_GAP_M:2000}
+      circular-phase-maximum-eta-error: ${OCC_INGESTION_ROUTE_POSITION_CIRCULAR_PHASE_MAXIMUM_ETA_ERROR:75s}
+      circular-phase-link-routes: ${OCC_INGESTION_ROUTE_POSITION_CIRCULAR_PHASE_LINK_ROUTES:972:1}

@@ -47,14 +47,16 @@ export type BusRoute = {
 export type RouteDirection = { serviceId: string; operator: string; directionId: number; stops: RouteStop[] }
 export type RoutePositionBus = {
   order: number; distanceAlongRouteM: number; uncertaintyM: number; speedMps: number | null
-  evidenceObservationIds?: string[]; supportingStopCount?: number
+  evidenceObservationIds?: string[]; positionEvidenceObservationIds?: string[]; supportingStopCount?: number
 }
 export type RoutePositionDirection = {
-  serviceId: string; operator: string; directionId: number; routeLengthM: number; buses: RoutePositionBus[]
+  operator: string; directionId: number; routeLengthM: number; buses: RoutePositionBus[]
   suppressedBusCount?: number
 }
 export type RoutePositions = {
-  serviceId: string; computedAt: string; refreshIntervalSeconds: number; directions: RoutePositionDirection[]
+  serviceId: string; computedAt: string; refreshIntervalSeconds: number; maxSourceAgeSeconds: number
+  directions: RoutePositionDirection[]
+  sourcePollCycleId?: string | null; sourceObservedAt?: string | null
 }
 export type BunchingAlert = {
   eventId: string; action: string; classification: string; serviceId: string

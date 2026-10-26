@@ -85,15 +85,13 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const [switching, setSwitching] = useState(false)
   const [modeError, setModeError] = useState('')
   const modeRequestRef = useRef<AbortController | null>(null)
-  const liveRefreshInFlightRef = useRef(false)
+  const liveRequestGenerationRef = useRef(0)
   const switchingRef = useRef(false)
   const requestKey = `${token}:${refresh}:${arrivalPage}`
   const loading = loaded !== requestKey || switching
-  const requestLiveData = useCallback(async (signal: AbortSignal): Promise<LiveData | null> => {
-    if (liveRefreshInFlightRef.current) return null
-    liveRefreshInFlightRef.current = true
-    try { return await loadLiveData(token, arrivalPage, signal) }
-    finally { liveRefreshInFlightRef.current = false }
+  const requestLiveData = useCallback(async (signal: AbortSignal) => {
+    const generation = ++liveRequestGenerationRef.current
+    return { generation, data: await loadLiveData(token, arrivalPage, signal) }
   }, [token, arrivalPage])
   const fetchStopArrivals = useCallback(async (route: RouteDirection, stopCode: string, signal: AbortSignal): Promise<Arrival[]> => {
     const params = new URLSearchParams({ stopCode, serviceId: route.serviceId, page: '0', size: '50' })
@@ -128,12 +126,14 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         error: results.some(result => result.error) ? 'Unable to load all route references.' : '',
       }))
     void Promise.all([requestLiveData(signal), runPromise, planningPromise, routePromise])
-      .then(([live, nextRun, nextPlanning, nextRouteStops]) => {
+      .then(([liveRequest, nextRun, nextPlanning, nextRouteStops]) => {
       if (signal.aborted) return
-      if (live) {
+      if (liveRequest.generation === liveRequestGenerationRef.current) {
+        const live = liveRequest.data
         setArrivals(live.arrivals); setAlerts(live.alerts); setRouteArrivals(live.routeArrivals); setRoutePositions(live.positions)
+        setLastUpdated(new Date().toISOString())
       }
-      setRun(nextRun); setPlanning(nextPlanning); setRouteStops(nextRouteStops); setLastUpdated(new Date().toISOString())
+      setRun(nextRun); setPlanning(nextPlanning); setRouteStops(nextRouteStops)
       setLoaded(requestKey)
     })
     return () => controller.abort()
@@ -145,16 +145,24 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   useEffect(() => {
     if (pathname !== '/controller') return
     const controller = new AbortController()
+    let refreshInFlight = false
     const refreshAll = async () => {
-      const live = await requestLiveData(controller.signal)
-      if (!live || controller.signal.aborted) return
-      setArrivals(live.arrivals); setAlerts(live.alerts); setRouteArrivals(live.routeArrivals)
-      setRoutePositions(previous => {
-        const byService = new Map((previous.data ?? []).map(snapshot => [snapshot.serviceId, snapshot]))
-        for (const snapshot of live.positions.data ?? []) byService.set(snapshot.serviceId, snapshot)
-        return { data: byService.size ? [...byService.values()] : null, error: live.positions.error }
-      })
-      setLastUpdated(new Date().toISOString())
+      if (refreshInFlight) return
+      refreshInFlight = true
+      try {
+        const liveRequest = await requestLiveData(controller.signal)
+        if (controller.signal.aborted || liveRequest.generation !== liveRequestGenerationRef.current) return
+        const live = liveRequest.data
+        setArrivals(live.arrivals); setAlerts(live.alerts); setRouteArrivals(live.routeArrivals)
+        setRoutePositions(previous => {
+          const byService = new Map((previous.data ?? []).map(snapshot => [snapshot.serviceId, snapshot]))
+          for (const snapshot of live.positions.data ?? []) byService.set(snapshot.serviceId, snapshot)
+          return { data: byService.size ? [...byService.values()] : null, error: live.positions.error }
+        })
+        setLastUpdated(new Date().toISOString())
+      } finally {
+        refreshInFlight = false
+      }
     }
     const timer = window.setInterval(() => {
       void refreshAll()
