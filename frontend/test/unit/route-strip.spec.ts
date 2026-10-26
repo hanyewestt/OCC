@@ -50,22 +50,37 @@ test('resolves one matching destination, ignores opposite directions and collaps
     makeArrival({ observationId: 'arrival-2', stopCode: 'B01', destinationCode: 'C01' }),
     makeArrival({ observationId: 'arrival-3', directionId: 2, destinationCode: 'F01' }),
   ])).toEqual({ status: 'resolved', stopCode: 'C01', stopName: 'Stop C01' })
+  // Falls back to static terminus Stop C01 when only another direction has live arrivals
   expect(routeDestination(route, [route, otherDirection], [
     makeArrival({ directionId: 2, destinationCode: 'F01' }),
-  ])).toEqual({ status: 'unavailable' })
+  ])).toEqual({ status: 'resolved', stopCode: 'C01', stopName: 'Stop C01' })
   const repeatedStop = makeRoute(2, ['A01', 'D01', 'E01'])
+  // Falls back to static terminus Stop C01 when arrival direction is ambiguous
   expect(routeDestination(route, [route, repeatedStop], [
     makeArrival({ directionId: null, destinationCode: 'C01' }),
-  ])).toEqual({ status: 'unavailable' })
+  ])).toEqual({ status: 'resolved', stopCode: 'C01', stopName: 'Stop C01' })
 })
 
-test('reports missing, conflicting and unknown-name destinations without inventing a stop name', () => {
+test('falls back to route terminus when arrivals are missing or empty, and handles empty stops', () => {
+  const route = makeRoute()
+  expect(routeDestination(route, [route], [])).toEqual({ status: 'resolved', stopCode: 'C01', stopName: 'Stop C01' })
+  expect(routeDestination(route, [route], [makeArrival({ destinationCode: null })])).toEqual({ status: 'resolved', stopCode: 'C01', stopName: 'Stop C01' })
+  const emptyRoute = { ...route, stops: [] }
+  expect(routeDestination(emptyRoute, [emptyRoute], [])).toEqual({ status: 'unavailable' })
+  expect(routeDestination(emptyRoute, [emptyRoute], [makeArrival({ destinationCode: null })])).toEqual({ status: 'unavailable' })
+})
+
+test('reports conflicting destinations, short-trip overrides and unknown-name destinations', () => {
   const route = makeRoute()
 
-  expect(routeDestination(route, [route], [makeArrival({ destinationCode: null })])).toEqual({ status: 'unavailable' })
+  // Conflicting live destinations
   expect(routeDestination(route, [route], [
     makeArrival({ destinationCode: 'B01' }), makeArrival({ observationId: 'arrival-2', destinationCode: 'C01' }),
   ])).toEqual({ status: 'multiple' })
+  // Short-trip override to intermediate stop B01
+  expect(routeDestination(route, [route], [makeArrival({ destinationCode: 'B01' })]))
+    .toEqual({ status: 'resolved', stopCode: 'B01', stopName: 'Stop B01' })
+  // External/unknown destination code not in route.stops
   expect(routeDestination(route, [route], [makeArrival({ destinationCode: 'Z99' })]))
     .toEqual({ status: 'resolved', stopCode: 'Z99', stopName: null })
 })
@@ -74,9 +89,10 @@ test('arrival matching keeps operators with the same service and direction disti
   const route = makeRoute()
   const otherOperator = { ...route, operator: 'SBS Transit' }
   expect(arrivalDirectionMatches(makeArrival({ operator: 'SBS Transit' }), route, [route, otherOperator])).toBe(false)
+  // Unmatched other-operator arrivals fall back to route terminus Stop C01
   expect(routeDestination(route, [route, otherOperator], [
     makeArrival({ operator: 'SBS Transit', destinationCode: 'Z99' }),
-  ])).toEqual({ status: 'unavailable' })
+  ])).toEqual({ status: 'resolved', stopCode: 'C01', stopName: 'Stop C01' })
 })
 
 test('gap helper calculates saved prediction gaps and severity boundaries', () => {

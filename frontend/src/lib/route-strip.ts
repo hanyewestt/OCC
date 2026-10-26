@@ -256,9 +256,13 @@ export function routeDestination(route: RouteDirection, routes: RouteDirection[]
     return code && arrivalDirectionMatches(arrival, route, routes) ? [code] : []
   }))
   if (codes.size > 1) return { status: 'multiple' }
-  const stopCode = codes.values().next().value
+  const liveStopCode = codes.values().next().value
+  const fallbackStop = route.stops[route.stops.length - 1]
+  const stopCode = liveStopCode || fallbackStop?.stopCode
   if (!stopCode) return { status: 'unavailable' }
-  const stopName = route.stops.find(stop => stop.stopCode === stopCode)?.description?.trim() || null
+  const stopName = route.stops.find(stop => stop.stopCode === stopCode)?.description?.trim()
+    || (fallbackStop?.stopCode === stopCode ? fallbackStop.description?.trim() : null)
+    || null
   return { status: 'resolved', stopCode, stopName }
 }
 
