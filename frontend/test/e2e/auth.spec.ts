@@ -589,6 +589,16 @@ for (const [action, button] of [['APPROVED', 'Approve recommendation'], ['REJECT
     await expect(page.getByRole('cell', { name: action, exact: true })).toBeVisible()
     await page.reload()
     await expect(page.getByRole('cell', { name: action, exact: true })).toBeVisible()
+    const header = page.locator('header').first()
+    const tableHeader = page.getByRole('columnheader', { name: 'Decision', exact: true })
+    await tableHeader.scrollIntoViewIfNeeded()
+    await page.evaluate(() => window.scrollBy(0, 80))
+    const headerBox = (await header.boundingBox())!
+    const elementAtHeaderPoint = await page.evaluate(({ x, y }) => {
+      const el = document.elementFromPoint(x, y)
+      return el?.closest('header') ? 'header' : el?.tagName
+    }, { x: headerBox.x + 50, y: headerBox.y + headerBox.height / 2 })
+    expect(elementAtHeaderPoint).toBe('header')
   })
 }
 
