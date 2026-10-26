@@ -228,7 +228,7 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       {!hazardRequests.isLoading && hazardRequests.error === null && hazardRequests.latestPage && !hazardRequests.items.length && <p className="text-sm text-muted-foreground">No completed or failed hazard processing in this scope.</p>}
       {!!hazardRequests.items.length && <ScrollArea role="region" aria-label="Hazard processing history" tabIndex={0}
         className="h-[28rem]" viewportProps={{ onScroll: hazardRequests.onScroll }}>
-        <div className="space-y-3">{hazardRequests.items.map(request => {
+        <div className="space-y-3 p-1 pr-3.5">{hazardRequests.items.map(request => {
             const status = request.status === 'COMPLETED' ? 'Completed' : 'Failed'
             return <Card key={request.requestId} className="min-h-28"><CardContent className="space-y-1">
               <p className="font-medium">{request.title ?? `${request.eventType.replaceAll('_', ' ')} · ${request.disruptionId}`}</p>
