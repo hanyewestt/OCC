@@ -7,9 +7,14 @@ import static org.mockito.Mockito.*;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -50,6 +55,62 @@ class BusArrivalServiceTest {
         assertThat(run.getCompletedAt()).isEqualTo(now);
         assertThat(observation.getPollRunId()).isEqualTo(run.getId());
         assertThat(run.getRoutePositionPollCycleId()).isNotNull();
+    }
+
+    @Test
+    void pollCycleUsesOneIdempotencyBucketWhenTargetRequestsCrossAMinute() {
+        Instant firstCycleStartedAt = Instant.parse("2026-09-24T00:00:59Z");
+        Instant secondCycleStartedAt = Instant.parse("2026-09-24T00:01:40Z");
+        MutableClock mutableClock = new MutableClock(firstCycleStartedAt);
+        BusArrivalService crossingMinuteService = new BusArrivalService(targets, runs, observations, normalized,
+                routeStops, feedStatuses, arrivals, topology, configuration, mutableClock);
+        PollTarget firstTarget = target(true);
+        PollTarget secondTarget = target(true);
+        secondTarget.setScopeKey("stop:45009");
+        secondTarget.setStopCode("45009");
+        when(targets.findAll()).thenReturn(List.of(firstTarget, secondTarget));
+        when(topology.activeVersion()).thenReturn(Optional.of(
+                new ReferenceTopologyPort.ReferenceTopologyVersion(UUID.randomUUID(), "checksum")));
+        when(configuration.monitoredServices()).thenReturn(List.of("190"));
+        when(configuration.staleAfterSeconds()).thenReturn(180);
+
+        Map<String, PollRun> savedByIdempotencyKey = new LinkedHashMap<>();
+        when(runs.findByIdempotencyKey(any(String.class))).thenAnswer(invocation ->
+                Optional.ofNullable(savedByIdempotencyKey.get(invocation.getArgument(0))));
+        Map<UUID, PollRun> savedById = new LinkedHashMap<>();
+        when(runs.save(any(PollRun.class))).thenAnswer(invocation -> {
+            PollRun run = invocation.getArgument(0);
+            savedByIdempotencyKey.put(run.getIdempotencyKey(), run);
+            savedById.put(run.getId(), run);
+            return run;
+        });
+        AtomicBoolean crossedMinute = new AtomicBoolean();
+        when(arrivals.arrivalsAt(any(String.class), eq("190"))).thenAnswer(invocation -> {
+            if (crossedMinute.compareAndSet(false, true)) {
+                mutableClock.set(Instant.parse("2026-09-24T00:01:01Z"));
+            }
+            return snapshot();
+        });
+
+        crossingMinuteService.poll();
+        mutableClock.set(secondCycleStartedAt);
+        crossingMinuteService.poll();
+
+        long firstBucket = firstCycleStartedAt.getEpochSecond() / 60;
+        long secondBucket = secondCycleStartedAt.getEpochSecond() / 60;
+        assertThat(savedByIdempotencyKey.keySet()).containsExactlyInAnyOrder(
+                "DATAMALL-stop:44009-" + firstBucket,
+                "DATAMALL-stop:45009-" + firstBucket,
+                "DATAMALL-stop:44009-" + secondBucket,
+                "DATAMALL-stop:45009-" + secondBucket);
+        assertThat(savedById.values()).hasSize(4)
+                .extracting(PollRun::getRoutePositionPollCycleId).doesNotContainNull();
+        assertThat(savedById.values().stream()
+                .collect(java.util.stream.Collectors.groupingBy(PollRun::getRoutePositionPollCycleId,
+                        java.util.stream.Collectors.counting())))
+                .hasSize(2).allSatisfy((cycleId, targetCount) -> assertThat(targetCount).isEqualTo(2));
+        verify(arrivals, times(2)).arrivalsAt("44009", "190");
+        verify(arrivals, times(2)).arrivalsAt("45009", "190");
     }
 
     @Test
@@ -212,7 +273,29 @@ class BusArrivalServiceTest {
     }
 
     @Test
-    void ambiguousRouteDirectionUsesMatchingTerminalsAndHandlesMissingOperator() {
+    void explicitProviderDirectionDoesNotConsultRouteTopology() {
+        UUID referenceVersionId = UUID.randomUUID();
+        when(targets.findAll()).thenReturn(List.of(target(true)));
+        when(topology.activeVersion()).thenReturn(java.util.Optional.of(
+                new ReferenceTopologyPort.ReferenceTopologyVersion(referenceVersionId, "checksum")));
+        when(configuration.monitoredServices()).thenReturn(List.of("190"));
+        when(configuration.staleAfterSeconds()).thenReturn(180);
+        when(arrivals.arrivalsAt("44009", "190")).thenReturn(new BusArrivalSnapshot(200, "{}", List.of(
+                new BusArrivalPrediction("190", "SBST", 2, 1, "SHORT_B", "100", now, true,
+                        BigDecimal.valueOf(1.3), BigDecimal.valueOf(103.8), 1, "SEA", "WAB", "DD")), List.of()));
+
+        service.poll();
+
+        verifyNoInteractions(routeStops);
+        verify(normalized).saveAll(argThat(values -> {
+            assertThat(values).singleElement()
+                    .extracting(BusArrivalObservation::getDirectionId).isEqualTo(2);
+            return true;
+        }));
+    }
+
+    @Test
+    void sharedStopDirectionUsesOrderedFullAndShortTurnJourneys() {
         UUID referenceVersionId = UUID.randomUUID();
         when(targets.findAll()).thenReturn(List.of(target(true)));
         when(topology.activeVersion()).thenReturn(java.util.Optional.of(
@@ -221,11 +304,15 @@ class BusArrivalServiceTest {
         when(configuration.staleAfterSeconds()).thenReturn(180);
         when(routeStops.findByIdReferenceVersionIdAndIdServiceIdAndIdOperatorOrderByIdDirectionIdAscIdStopSequenceAsc(
                 referenceVersionId, "190", "SBST")).thenReturn(List.of(
-                routeStop(referenceVersionId, 1, 1, "100"), routeStop(referenceVersionId, 1, 2, "44009"),
-                routeStop(referenceVersionId, 1, 3, "200"), routeStop(referenceVersionId, 2, 1, "300"),
-                routeStop(referenceVersionId, 2, 2, "44009"), routeStop(referenceVersionId, 2, 3, "400")));
+                routeStop(referenceVersionId, 1, 1, "100"), routeStop(referenceVersionId, 1, 2, "SHORT_A"),
+                routeStop(referenceVersionId, 1, 3, "44009"), routeStop(referenceVersionId, 1, 4, "SHORT_B"),
+                routeStop(referenceVersionId, 1, 5, "200"), routeStop(referenceVersionId, 2, 1, "200"),
+                routeStop(referenceVersionId, 2, 2, "SHORT_B"), routeStop(referenceVersionId, 2, 3, "44009"),
+                routeStop(referenceVersionId, 2, 4, "SHORT_A"), routeStop(referenceVersionId, 2, 5, "100")));
         when(arrivals.arrivalsAt("44009", "190")).thenReturn(new BusArrivalSnapshot(200, "{}", List.of(
-                directionless("SBST", "100", "200"), directionless("SBST", null, "200"),
+                directionless("SBST", "100", "200"), directionless("SBST", "200", "100"),
+                directionless("SBST", "SHORT_B", "100"), directionless("SBST", "44009", "44009"),
+                directionless("SBST", null, "200"),
                 directionless("SBST", "100", null), directionless("SBST", "missing", "200"),
                 directionless("SBST", "100", "missing"), directionless(null, null, null),
                 directionless("   ", null, null)), List.of()));
@@ -238,9 +325,9 @@ class BusArrivalServiceTest {
             List<BusArrivalObservation> saved = java.util.stream.StreamSupport
                     .stream(values.spliterator(), false).toList();
             assertThat(values).extracting(BusArrivalObservation::getDirectionId)
-                    .containsExactly(1, null, null, null, null, null, null);
-            assertThat(saved.get(5).getOperator()).isNull();
-            assertThat(saved.get(6).getOperator()).isNull();
+                    .containsExactly(1, 2, 2, null, null, null, null, null, null, null);
+            assertThat(saved.get(8).getOperator()).isNull();
+            assertThat(saved.get(9).getOperator()).isNull();
             return true;
         }));
     }
@@ -272,5 +359,32 @@ class BusArrivalServiceTest {
     private BusRouteStop routeStop(UUID referenceVersionId, int directionId, int sequence, String stopCode) {
         return new BusRouteStop(new BusRouteStopId(referenceVersionId, "190", "SBST", (short) directionId, sequence),
                 stopCode, BigDecimal.ZERO);
+    }
+
+    private static final class MutableClock extends Clock {
+        private Instant current;
+
+        private MutableClock(Instant current) {
+            this.current = current;
+        }
+
+        private void set(Instant value) {
+            current = value;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return current;
+        }
     }
 }

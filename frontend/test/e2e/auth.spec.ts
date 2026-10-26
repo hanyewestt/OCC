@@ -38,7 +38,7 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
   await context.route('**/api/v1/route-positions?*', route => {
     const serviceId = new URL(route.request().url()).searchParams.get('service') ?? ''
     return route.fulfill({ json: {
-      serviceId, computedAt: '2026-10-23T04:00:00Z', refreshIntervalSeconds: 60,
+      serviceId, computedAt: '2026-10-23T04:00:00Z', refreshIntervalSeconds: 60, maxSourceAgeSeconds: 120,
       directions: [
         { operator: 'SMRT', directionId: 1, routeLengthM: 12_000,
           buses: serviceId === '190' ? [
@@ -161,8 +161,80 @@ test('controller route strip shows inferred live bus positions with uncertainty'
   await login(page)
   await expect(page.getByRole('heading', { name: 'Live route strip', exact: true })).toBeVisible()
   await expect(page.getByRole('img', { name: /Estimated bus 1, approximate position.*plus or minus 70 metres/ })).toBeVisible()
-  await expect(page.getByText(/#1→#2 ~2m 34s \(estimated from distance\/speed\)/)).toBeVisible()
+  await expect(page.getByRole('img', { name: /Estimated buses 1 and 2: ~2m 34s estimate\. Approximate time from position gap divided by estimated speed\./ })).toBeVisible()
   await expect(page.getByText(/Last updated .* · Refreshes every 30 seconds/)).toBeVisible()
+})
+
+test('an older periodic response cannot replace a newer manual position snapshot', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  await context.route('**/frontend-config', route => route.fulfill({ json: {
+    projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
+    controllerRefreshIntervalSeconds: 1, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20,
+  } }))
+
+  type Phase = 'initial' | 'blocked-periodic' | 'newer'
+  let phase: Phase = 'initial'
+  let releaseOlder!: () => void
+  const olderGate = new Promise<void>(resolve => { releaseOlder = resolve })
+  let resolveBlocked!: () => void
+  const blockedStarted = new Promise<void>(resolve => { resolveBlocked = resolve })
+  const blockedServices = new Set<string>()
+  let resolveNextNewerBatch!: () => void
+  const nextNewerBatchStarted = new Promise<void>(resolve => { resolveNextNewerBatch = resolve })
+  const newerCalls = new Map<string, number>()
+  const snapshot = (serviceId: string, distanceAlongRouteM: number, computedAt: string) => ({
+    serviceId, computedAt, refreshIntervalSeconds: 60, maxSourceAgeSeconds: 120,
+    directions: [{ operator: 'SMRT', directionId: 1, routeLengthM: 12_000, buses: [
+      { order: 1, distanceAlongRouteM, uncertaintyM: 70, speedMps: 6.2 },
+      { order: 2, distanceAlongRouteM: distanceAlongRouteM - 800, uncertaintyM: 70, speedMps: 4.2 },
+    ] }],
+  })
+
+  await context.route('**/api/v1/route-positions?*', async route => {
+    const serviceId = new URL(route.request().url()).searchParams.get('service')!
+    if (phase === 'blocked-periodic') {
+      blockedServices.add(serviceId)
+      if (blockedServices.size === 2) resolveBlocked()
+      await olderGate
+      return route.fulfill({ json: snapshot(serviceId, 1_200, '2026-10-23T04:00:10Z') })
+    }
+    if (phase === 'newer') {
+      const calls = (newerCalls.get(serviceId) ?? 0) + 1
+      newerCalls.set(serviceId, calls)
+      if ([...newerCalls.values()].filter(count => count >= 2).length === 2) resolveNextNewerBatch()
+      return route.fulfill({ json: snapshot(serviceId, 6_500, '2026-10-23T04:00:30Z') })
+    }
+    return route.fulfill({ json: snapshot(serviceId, 4_300, '2026-10-23T04:00:00Z') })
+  })
+
+  await login(page)
+  await expect(page.getByRole('img', { name: /Estimated bus 1, approximate position 4300 metres/ }).first()).toBeVisible()
+  phase = 'blocked-periodic'
+  await blockedStarted
+
+  phase = 'newer'
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByRole('img', { name: /Estimated bus 1, approximate position 6500 metres/ }).first()).toBeVisible()
+  await page.evaluate(() => {
+    const state = window as typeof window & { sawOlderPosition?: boolean; positionObserver?: MutationObserver }
+    state.sawOlderPosition = false
+    const check = () => {
+      if (document.querySelector('[aria-label*="approximate position 1200 metres"]')) state.sawOlderPosition = true
+    }
+    state.positionObserver = new MutationObserver(check)
+    state.positionObserver.observe(document.body, {
+      subtree: true, childList: true, attributes: true, attributeFilter: ['aria-label'],
+    })
+  })
+
+  releaseOlder()
+  await nextNewerBatchStarted
+  await expect(page.getByRole('img', { name: /Estimated bus 1, approximate position 6500 metres/ }).first()).toBeVisible()
+  expect(await page.evaluate(() => {
+    const state = window as typeof window & { sawOlderPosition?: boolean; positionObserver?: MutationObserver }
+    state.positionObserver?.disconnect()
+    return state.sawOlderPosition
+  })).toBe(false)
 })
 
 test('bunching predictions preserve slots and reject unrelated or malformed evidence', () => {
