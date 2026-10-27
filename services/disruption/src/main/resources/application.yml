@@ -51,7 +51,7 @@ occ:
       planning-token: ${OCC_DISRUPTION_TO_PLANNING_PEER_TOKEN}
   disruption:
     hazards:
-      enabled: ${OCC_DISRUPTION_HAZARD_ENABLED:false}
+      enabled: ${OCC_DISRUPTION_HAZARD_ENABLED:true}
       poll-interval: ${OCC_DISRUPTION_HAZARD_POLL_INTERVAL:10s}
       stale-after: ${OCC_DISRUPTION_HAZARD_STALE_AFTER:48h}
       absence-limit: ${OCC_DISRUPTION_HAZARD_ABSENCE_LIMIT:2}

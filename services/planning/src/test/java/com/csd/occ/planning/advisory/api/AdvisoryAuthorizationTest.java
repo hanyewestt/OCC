@@ -40,6 +40,7 @@ import org.springframework.test.web.servlet.assertj.MockMvcTester;
 class AdvisoryAuthorizationTest {
     @Autowired MockMvcTester mvc;
     @MockitoBean InstructionService instructions;
+    @MockitoBean AdvisoryGroupService groups;
     @MockitoBean PublicNoticeService notices;
     @MockitoBean MeterRegistry metrics;
     @MockitoBean JwtDecoder decoder;

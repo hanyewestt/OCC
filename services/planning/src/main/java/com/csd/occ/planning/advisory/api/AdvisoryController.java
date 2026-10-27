@@ -2,6 +2,7 @@ package com.csd.occ.planning.advisory.api;
 
 import com.csd.occ.planning.advisory.api.dto.*;
 import com.csd.occ.planning.advisory.domain.InstructionService;
+import com.csd.occ.planning.advisory.domain.AdvisoryGroupService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -23,10 +24,36 @@ import org.springframework.web.bind.annotation.*;
 public class AdvisoryController {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AdvisoryController.class);
     private final InstructionService instructions;
+    private final AdvisoryGroupService groups;
     private final MeterRegistry metrics;
     private final Clock clock;
-    public AdvisoryController(InstructionService instructions, MeterRegistry metrics, Clock clock) {
-        this.instructions = instructions; this.metrics = metrics; this.clock = clock;
+    public AdvisoryController(InstructionService instructions, AdvisoryGroupService groups, MeterRegistry metrics, Clock clock) {
+        this.instructions = instructions; this.groups = groups; this.metrics = metrics; this.clock = clock;
+    }
+    @GetMapping("/advisory-groups")
+    @Operation(operationId = "listAdvisoryGroups", summary = "Review pending hazard advisories by service and direction",
+            description = "Controller/admin only. Groups matching hazard evidence, service, direction, action and parameters before pagination. Each group contains all affected proposal recipients. Oldest first; page defaults 0, size 20, maximum 100.")
+    public AdvisoryGroupResponse.PageResponse groups(@RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
+        var result = groups.pending(page, size);
+        return new AdvisoryGroupResponse.PageResponse(result.map(AdvisoryGroupResponse::from).toList(), page, size,
+                result.getTotalElements(), result.getTotalPages());
+    }
+
+    @PostMapping("/advisory-groups/decisions")
+    @Operation(operationId = "decideAdvisoryGroup", summary = "Approve the reviewed service/direction recipients atomically",
+            description = "Controller/admin only. Submit all distinct proposal IDs from one reviewed group. The server revalidates run, membership, route, hazard evidence, downstream exposure, assignment and movement conflicts for each bus. Any failure rolls back every delivery. Identical retries return the original per-captain instructions. New recipients require a fresh review; this does not subscribe future buses.")
+    @ApiResponse(responseCode = "200", description = "Individual deliveries or identical replay")
+    @ApiResponse(responseCode = "400", description = "Invalid recipient list", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = org.springframework.http.ProblemDetail.class)))
+    @ApiResponse(responseCode = "404", description = "Proposal not found", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = org.springframework.http.ProblemDetail.class)))
+    @ApiResponse(responseCode = "409", description = "Changed group, evidence, assignment or movement conflict; no deliveries issued", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = org.springframework.http.ProblemDetail.class)))
+    public InstructionResponse.PageResponse decideGroup(@RequestBody @Valid DecideAdvisoryGroupRequest body,
+                                                        @AuthenticationPrincipal Jwt jwt) {
+        var issued = groups.decide(body.proposalIds(), jwt.getSubject());
+        issued.forEach(value -> metrics.counter("occ.planning.instruction.issue", "type", value.type().name()).increment());
+        log.info("Advisory group issued: controllerSubject={} recipients={}", jwt.getSubject(), issued.size());
+        return new InstructionResponse.PageResponse(issued.stream().map(InstructionResponse::from).toList(),
+                0, issued.size(), issued.size(), 1, clock.instant());
     }
     @GetMapping("/advisories")
     @Operation(operationId = "listAdvisories", summary = "Review structured proposals for the active simulation",

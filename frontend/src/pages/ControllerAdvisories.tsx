@@ -5,8 +5,10 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
-import { ApiError, apiRequest, type Advisory, type AdvisoryCandidate, type CaptainInstruction, type Hazard, type ManagedNotice, type NoticeSuggestion, type PageResult, type PlanningHazardHistory } from '@/lib/api'
+import { ApiError, apiRequest, type Advisory, type AdvisoryGroup, type AdvisoryCandidate, type CaptainInstruction, type Hazard, type ManagedNotice, type NoticeSuggestion, type PageResult, type PlanningHazardHistory } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { dataClassificationLabel } from '@/lib/presentation'
 import { formatSgtDateTime, sgtDateTimeInputToUtc } from '@/lib/time'
@@ -15,26 +17,33 @@ import { usePagedCollection } from '@/lib/paged-collection'
 type Edit = { advisory: Advisory; type: AdvisoryCandidate['type']; stopSequence: string; speed: string; minutes: string; count: string; rationale: string; replacement: string }
 type Draft = { id: string; previousId?: string; disruptionId: string; title: string; message: string; services: string; locations: string; from: string; until: string }
 type HazardPageResponse = Omit<PageResult<Hazard>, 'totalItems' | 'totalPages'> & { size: number; totalElements: number }
+const instructionLabels = { BE_CAUTIOUS: 'Be cautious', REDUCE_SPEED: 'Reduce speed', SLOW_DOWN_NEAR_STOPS: 'Slow down near stops', HOLD: 'Hold', DWELL_ADJUSTMENT: 'Adjust dwell' }
 
 export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPendingChange, onRefreshTimeChange, view }: {
   token: string; registerRefresh: (callback: (signal: AbortSignal) => Promise<void>) => void
   onRefresh: () => void; onPendingChange: (pending: boolean) => void
   onRefreshTimeChange: (at: string | null) => void
-  view: 'hazards' | 'planning' | 'audit'
+  view: 'hazards' | 'planning' | 'notices' | 'audit'
 }) {
   const [actionError, setActionError] = useState('')
   const [pending, setPending] = useState(false)
   const [edit, setEdit] = useState<Edit | null>(null)
   const [preview, setPreview] = useState<{ input: string; message: string } | null>(null)
+  const [groupReview, setGroupReview] = useState<AdvisoryGroup | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
   const draftIdentity = useRef<Draft | null>(null)
+  const initialDraft = useRef('')
+  const [discardDraft, setDiscardDraft] = useState(false)
+  const [noticeSaving, setNoticeSaving] = useState(false)
   const [kind, setKind] = useState('')
   const action = useRef<AbortController | null>(null)
   const hazardsEnabled = view === 'hazards' || edit !== null || draft !== null
 
   const collectionKey = token
-  const hazards = usePagedCollection<Hazard, PageResult<Hazard>>(collectionKey, async (page, signal) => {
+  const hazardKind = view === 'hazards' ? kind : ''
+  const hazards = usePagedCollection<Hazard, PageResult<Hazard>>(`${collectionKey}:${hazardKind}`, async (page, signal) => {
     const params = new URLSearchParams({ page: String(page), size: '100' })
+    if (hazardKind) params.set('kind', hazardKind)
     try {
       const result = await apiRequest<HazardPageResponse>(`/api/v1/disruption/hazards?${params}`, token, signal)
       if (!result) throw new Error('Hazard response was empty.')
@@ -44,10 +53,10 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       throw failure
     }
   }, hazard => hazard.disruptionId, hazardsEnabled)
-  const advisories = usePagedCollection<Advisory, PageResult<Advisory>>(collectionKey, async (page, signal) => {
-    const params = new URLSearchParams({ page: String(page), size: '100', pendingOnly: 'true' })
+  const advisories = usePagedCollection<AdvisoryGroup, PageResult<AdvisoryGroup>>(collectionKey, async (page, signal) => {
+    const params = new URLSearchParams({ page: String(page), size: '20' })
     try {
-      const result = await apiRequest<PageResult<Advisory>>(`/api/v1/planning/advisories?${params}`, token, signal)
+      const result = await apiRequest<PageResult<AdvisoryGroup>>(`/api/v1/planning/advisory-groups?${params}`, token, signal)
       if (!result) throw new Error('Advisory response was empty.')
       return result
     } catch (failure) {
@@ -76,7 +85,7 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       if (failure instanceof ApiError && failure.status === 401 && !signal.aborted) void signOut(failure.message)
       throw failure
     }
-  }, notice => notice.id, view === 'planning' || view === 'audit')
+  }, notice => notice.id, view === 'notices' || view === 'audit')
   const hazardRequests = usePagedCollection<PlanningHazardHistory, PageResult<PlanningHazardHistory>>(`${collectionKey}:${view}`, async (page, signal) => {
     const params = new URLSearchParams({ page: String(page), size: '100' })
     try {
@@ -98,11 +107,13 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
   }, [edit, hazardError, hazardHasMore, hazardsLoading, hazardsLoadingMore, hazardItems, loadNextHazard])
 
   const collectionsLoading = view === 'hazards' ? hazards.isLoading : view === 'planning'
-    ? hazards.isLoading || advisories.isLoading || instructions.isLoading || notices.isLoading
-    : hazardRequests.isLoading || instructions.isLoading || notices.isLoading
+    ? hazards.isLoading || advisories.isLoading || instructions.isLoading
+    : view === 'notices' ? hazards.isLoading || notices.isLoading
+      : hazardRequests.isLoading || instructions.isLoading || notices.isLoading
   const refreshTimes = view === 'hazards' ? [hazards.lastSuccessAt] : view === 'planning'
-    ? [advisories.lastSuccessAt, instructions.lastSuccessAt, notices.lastSuccessAt]
-    : [hazardRequests.lastSuccessAt, instructions.lastSuccessAt, notices.lastSuccessAt]
+    ? [advisories.lastSuccessAt, instructions.lastSuccessAt]
+    : view === 'notices' ? [notices.lastSuccessAt]
+      : [hazardRequests.lastSuccessAt, instructions.lastSuccessAt, notices.lastSuccessAt]
   const lastRefreshTime = refreshTimes.includes(null) ? null : [...refreshTimes].sort()[0] ?? null
   useEffect(() => { onRefreshTimeChange(lastRefreshTime) }, [lastRefreshTime, onRefreshTimeChange])
   useEffect(() => { onPendingChange(pending || collectionsLoading) }, [pending, collectionsLoading, onPendingChange])
@@ -110,8 +121,9 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
   useEffect(() => {
     registerRefresh(async signal => {
       const requests = view === 'hazards' ? [hazards.refresh(signal)] : view === 'planning'
-        ? [advisories.refresh(signal), instructions.refresh(signal), notices.refresh(signal)]
-        : [hazardRequests.refresh(signal), instructions.refresh(signal), notices.refresh(signal)]
+        ? [advisories.refresh(signal), instructions.refresh(signal)]
+        : view === 'notices' ? [notices.refresh(signal)]
+          : [hazardRequests.refresh(signal), instructions.refresh(signal), notices.refresh(signal)]
       if (view !== 'hazards' && hazardsEnabled) requests.push(hazards.refresh(signal))
       await Promise.allSettled(requests)
     })
@@ -124,6 +136,18 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
   function updateDraft(value: Draft | null) {
     draftIdentity.current = value
     setDraft(value)
+  }
+
+  function openDraft(value: Draft) {
+    initialDraft.current = JSON.stringify(value)
+    setActionError('')
+    updateDraft(value)
+  }
+
+  function closeDraft() {
+    if (pending) return
+    if (draft && JSON.stringify(draft) !== initialDraft.current) setDiscardDraft(true)
+    else updateDraft(null)
   }
 
   async function submit(path: string, body?: unknown) {
@@ -195,22 +219,22 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       if (!controller.signal.aborted) setActionError(failure instanceof Error ? failure.message : 'Preview unavailable.')
     } finally { if (!controller.signal.aborted) setPending(false) }
   }
-  const pendingAdvisories = advisories.items.filter(advisory => advisory.status === 'PENDING')
-  const filteredHazards = hazards.items.filter(hazard => !kind || hazard.kind === kind)
-  return <section aria-label="Multi-hazard advisories" className="space-y-5 border-t pt-6">
-    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">{view === 'hazards' ? 'Multi-hazard conditions' : view === 'audit' ? 'Instruction and notice history' : 'Captain and public advisories'}</h2>
-      <Button asChild variant="outline"><Link to="/notices" target="_blank" rel="noreferrer">Public notice board</Link></Button></div>
-    {actionError && <p role="alert" className="rounded-lg border p-3 text-sm">{actionError}</p>}
+  const pendingAdvisories = advisories.items
+  return <section aria-label={view === 'notices' ? 'Public notice management' : 'Multi-hazard advisories'} className={view === 'notices' ? 'space-y-5' : 'space-y-5 border-t pt-6'}>
+    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">{view === 'hazards' ? 'Multi-hazard conditions' : view === 'audit' ? 'Instruction and notice history' : view === 'notices' ? 'Managed notices' : 'Captain advisories'}</h2>
+      {view === 'notices' && <div className="flex flex-wrap gap-2"><Button asChild variant="outline"><Link to="/notices" target="_blank" rel="noreferrer">Public notice board</Link></Button>
+        <Button variant="outline" disabled={pending} onClick={() => openDraft({ id: crypto.randomUUID(), disruptionId: '', title: '', message: '', services: '', locations: '', from: '', until: '' })}>Draft notice</Button></div>}</div>
+    {actionError && !draft && !groupReview && <p role="alert" className="rounded-lg border p-3 text-sm">{actionError}</p>}
     {view === 'hazards' && <>
       <div className="max-w-xs space-y-2"><Label htmlFor="hazard-kind">Hazard type</Label><select id="hazard-kind" value={kind} onChange={e => setKind(e.target.value)} className="h-9 w-full rounded-md border bg-background px-3 text-sm">
-        <option value="">All types</option>{['TRAFFIC_INCIDENT', 'FLOOD', 'RAIL_DISRUPTION', 'ROADWORKS'].map(value => <option key={value}>{value}</option>)}
+        <option value="">All types</option>{[['TRAFFIC_INCIDENT', 'Traffic Incidents'], ['FLOOD', 'Floods'], ['RAIL_DISRUPTION', 'Rail Disruptions'], ['ROADWORKS', 'Roadworks']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </select></div>
       {hazards.isLoading && !hazards.latestPage && <p role="status" className="text-sm text-muted-foreground">Loading hazards…</p>}
       {hazards.error !== null && !hazards.items.length && <p role="alert" className="text-sm text-destructive">Hazards are unavailable.</p>}
-      {!hazards.isLoading && hazards.error === null && hazards.latestPage && !filteredHazards.length && <p className="text-sm text-muted-foreground">{kind ? 'No hazards found for the selected type.' : 'No hazards found.'}</p>}
-      {!!filteredHazards.length && <ScrollArea role="region" aria-label="Hazard conditions" tabIndex={0} className="h-[32rem] rounded-lg border"
+      {!hazards.isLoading && hazards.error === null && hazards.latestPage && !hazards.items.length && <p className="text-sm text-muted-foreground">{kind ? 'No hazards found for the selected type.' : 'No hazards found.'}</p>}
+      {!!hazards.items.length && <ScrollArea role="region" aria-label="Hazard conditions" tabIndex={0} className="h-[32rem] rounded-lg border"
         viewportProps={{ onScroll: hazards.onScroll }}>
-        <div className="space-y-3 p-1 pr-3.5">{filteredHazards.map(h => <Card key={h.disruptionId} className="min-h-28"><CardContent className="space-y-3">
+        <div className="space-y-3 p-1 pr-3.5">{hazards.items.map(h => <Card key={h.disruptionId} className="min-h-28"><CardContent className="space-y-3">
           <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{h.facts.title}</h3><p className="text-xs text-muted-foreground">{h.status} · {dataClassificationLabel(h.classification)}</p></div>
           <p className="text-sm">{h.facts.description}</p>{h.facts.instruction && <p className="text-sm font-medium">{h.facts.instruction}</p>}
           <p className="text-xs text-muted-foreground">Updated {formatSgtDateTime(h.updatedAt)} · Exposure uses simulated progress.</p>
@@ -246,15 +270,41 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       {!advisories.isLoading && advisories.error === null && advisories.latestPage && !pendingAdvisories.length && <p className="text-sm text-muted-foreground">No pending captain advisories.</p>}
       {!!pendingAdvisories.length && <ScrollArea role="region" aria-label="Pending captain advisories" tabIndex={0}
         className="max-h-[28rem]" viewportProps={{ onScroll: advisories.onScroll }}>
-        <div className="space-y-3 p-1 pr-3.5">{pendingAdvisories.map(a =>
-        <Card key={a.id} className="min-h-28"><CardContent className="space-y-4"><p className="text-xs text-muted-foreground">Simulation · {a.busId} · Hazard: {dataClassificationLabel(a.hazardClassification)}</p>
-          <h3 className="text-lg font-semibold">{a.preview}</h3><p className="text-sm text-muted-foreground">{a.candidate.rationale}</p>
-          <div className="flex flex-wrap gap-2"><Button disabled={pending} onClick={() => void submit(`/api/v1/planning/advisories/${a.id}/decisions`, {})}>Approve and send</Button>
-            <Button variant="outline" disabled={pending} onClick={() => setEdit({ advisory: a, type: a.candidate.type, stopSequence: String(a.candidate.parameters.stopSequence ?? ''), speed: String(a.candidate.parameters.speedReductionKmh ?? ''), minutes: a.candidate.parameters.durationSeconds ? String(a.candidate.parameters.durationSeconds / 60) : '', count: String(a.candidate.parameters.subsequentStopCount ?? 0), rationale: '', replacement: '' })}>Edit instruction</Button></div>
+        <div className="space-y-3 p-1 pr-3.5">{pendingAdvisories.map(group =>
+        <Card key={group.id} className="min-h-28"><CardContent className="space-y-4">
+          <div className="space-y-1"><h3 className="text-lg font-semibold">Service {group.serviceId} · Direction {group.directionId}</h3>
+            <p className="text-sm font-medium">{group.hazardTitle} · {instructionLabels[group.candidate.type]}</p>
+            <p className="text-xs text-muted-foreground">Simulation · {group.members.length} affected {group.members.length === 1 ? 'bus' : 'buses'} · Hazard: {dataClassificationLabel(group.hazardClassification)}</p></div>
+          <p className="text-sm">{group.preview}</p>
+          <Button disabled={pending} aria-label="Review and send to affected captains" onClick={() => { setActionError(''); setGroupReview(group) }}>Review and send</Button>
+          <details open={group.members.length === 1} className="space-y-3 text-sm"><summary className="cursor-pointer font-medium">Individual bus instructions</summary>
+            <div className="space-y-3">{group.members.map(a => <div key={a.id} className="space-y-2 rounded-lg border p-3">
+              <p className="font-medium">{a.busId}</p><p className="text-xs text-muted-foreground">{a.candidate.rationale}</p>
+              <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={pending} onClick={() => void submit(`/api/v1/planning/advisories/${a.id}/decisions`, {})}>Send to this bus</Button>
+              <Button variant="outline" disabled={pending} onClick={() => setEdit({ advisory: a, type: a.candidate.type, stopSequence: String(a.candidate.parameters.stopSequence ?? ''), speed: String(a.candidate.parameters.speedReductionKmh ?? ''), minutes: a.candidate.parameters.durationSeconds ? String(a.candidate.parameters.durationSeconds / 60) : '', count: String(a.candidate.parameters.subsequentStopCount ?? 0), rationale: '', replacement: '' })}>Edit instruction</Button></div>
+            </div>)}</div>
+          </details>
         </CardContent></Card>)}</div>
       </ScrollArea>}
       <PagedCollectionControls label="pending advisories" hasItems={!!advisories.items.length} hasMore={advisories.hasMore}
         isLoadingMore={advisories.isLoadingMore} error={advisories.error} refreshError={advisories.refreshError} reload={advisories.reload} loadNext={advisories.loadNext} />
+      <Dialog open={groupReview !== null} onOpenChange={open => { if (!open && !pending) setGroupReview(null) }}>
+        {groupReview && <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
+          <DialogHeader><DialogTitle>Send advisory to affected captains</DialogTitle><DialogDescription>Each captain receives an individual instruction and acknowledges separately. If any bus is no longer eligible, nothing is sent.</DialogDescription></DialogHeader>
+          <div className="space-y-2"><p className="font-semibold">Service {groupReview.serviceId} · Direction {groupReview.directionId}</p>
+            <p className="text-sm">{groupReview.hazardTitle} · {instructionLabels[groupReview.candidate.type]}</p>
+            <p className="text-xs text-muted-foreground">Simulation delivery · Hazard: {dataClassificationLabel(groupReview.hazardClassification)}</p>
+            <p className="rounded-lg border p-3 text-sm">{groupReview.preview}</p></div>
+          <ScrollArea className="max-h-64 rounded-lg border" tabIndex={0} aria-label="Broadcast recipients"><ul className="divide-y">{groupReview.members.map(member => <li key={member.id} className="px-3 py-2 text-sm">{member.busId}</li>)}</ul></ScrollArea>
+          {actionError && <p role="alert" className="text-sm text-destructive">{actionError}</p>}
+          <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" disabled={pending} onClick={() => setGroupReview(null)}>Cancel</Button>
+            <Button disabled={pending} onClick={() => {
+              if (pending) return
+              void submit('/api/v1/planning/advisory-groups/decisions', { proposalIds: groupReview.members.map(member => member.id) })
+                .then(saved => { if (saved) setGroupReview(null) })
+            }}>{pending ? 'Sending…' : 'Approve and send group'}</Button></div>
+        </DialogContent>}
+      </Dialog>
       {edit && <Card><CardContent><form className="space-y-4" onSubmit={event => {
         event.preventDefault()
         if (preview?.input !== JSON.stringify(edit)) { void previewInstruction(edit); return }
@@ -287,15 +337,22 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
         </CardContent></Card>)}</div></ScrollArea>}
       <PagedCollectionControls label="instructions" hasItems={!!instructions.items.length} hasMore={instructions.hasMore}
         isLoadingMore={instructions.isLoadingMore} error={instructions.error} refreshError={instructions.refreshError} reload={instructions.reload} loadNext={instructions.loadNext} />
-      <div className="flex items-center justify-between gap-3"><h3 className="font-semibold">Public notices</h3><Button variant="outline" disabled={pending} onClick={() => updateDraft({ id: crypto.randomUUID(), disruptionId: '', title: '', message: '', services: '', locations: '', from: '', until: '' })}>Draft notice</Button></div>
-      {draft && <Card><CardContent><form className="space-y-4" onSubmit={event => {
+    </>}
+    {(view === 'notices' || view === 'audit') && <>
+      {view === 'audit' && <h3 className="font-semibold">Notice history</h3>}
+      <Dialog open={draft !== null} onOpenChange={open => { if (!open) closeDraft() }}>
+      {draft && <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>{draft.previousId ? 'Publish a correction' : 'New notice draft'}</DialogTitle><DialogDescription>Review the passenger message and its publication period before saving.</DialogDescription></DialogHeader>
+      <form className="space-y-4" onSubmit={event => {
         event.preventDefault()
+        if (pending || noticeSaving) return
         const body = { id: draft.id, disruptionId: draft.disruptionId, title: draft.title, message: draft.message,
           services: draft.services.split(',').map(s => s.trim()).filter(Boolean), locations: draft.locations.split(',').map(s => s.trim()).filter(Boolean),
           effectiveFrom: sgtDateTimeInputToUtc(draft.from), effectiveUntil: sgtDateTimeInputToUtc(draft.until) }
-        void submit(draft.previousId ? `/api/v1/planning/notices/${draft.previousId}/replacements` : '/api/v1/planning/notices', body).then(saved => { if (saved) updateDraft(null) })
-      }}>
-        <h4 className="font-semibold">{draft.previousId ? 'Publish a correction' : 'New notice draft'}</h4>
+        setNoticeSaving(true)
+        void submit(draft.previousId ? `/api/v1/planning/notices/${draft.previousId}/replacements` : '/api/v1/planning/notices', body)
+          .then(saved => { if (saved) updateDraft(null) }).finally(() => setNoticeSaving(false))
+      }}><fieldset disabled={noticeSaving} className="space-y-4">
+        {actionError && <p role="alert" className="text-sm text-destructive">{actionError}</p>}
         <div className="space-y-2"><Label htmlFor="notice-source">Source hazard</Label><select id="notice-source" required className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={draft.disruptionId} disabled={!!draft.previousId} onChange={e => {
           const source = hazards.items.find(h => h.disruptionId === e.target.value)
           updateDraft({ ...draft, disruptionId: e.target.value, title: source?.facts.title ?? '', message: [source?.facts.description, source?.facts.instruction].filter(Boolean).join('\n') })
@@ -308,8 +365,10 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
         <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="notice-services">Services (comma separated)</Label><Input id="notice-services" value={draft.services} onChange={e => updateDraft({ ...draft, services: e.target.value })} /></div><div className="space-y-2"><Label htmlFor="notice-locations">Locations (comma separated)</Label><Input id="notice-locations" value={draft.locations} onChange={e => updateDraft({ ...draft, locations: e.target.value })} /></div></div>
         <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="notice-from">Starts (SGT)</Label><Input id="notice-from" required type="datetime-local" value={draft.from} onChange={e => updateDraft({ ...draft, from: e.target.value })} /></div><div className="space-y-2"><Label htmlFor="notice-until">Expires (SGT)</Label><Input id="notice-until" required type="datetime-local" value={draft.until} onChange={e => updateDraft({ ...draft, until: e.target.value })} /></div></div>
         <div className="space-y-2 rounded-lg border p-4"><p className="text-xs text-muted-foreground">Passenger preview</p><h4 className="font-semibold">{draft.title || 'Notice title'}</h4><p className="whitespace-pre-wrap text-sm">{draft.message || 'Notice message'}</p></div>
-        <div className="flex gap-2"><Button disabled={pending}>{draft.previousId ? 'Publish correction' : 'Save draft'}</Button><Button type="button" variant="outline" onClick={() => updateDraft(null)}>Cancel draft</Button></div>
-      </form></CardContent></Card>}
+        <div className="flex gap-2"><Button disabled={pending}>{draft.previousId ? 'Publish correction' : 'Save draft'}</Button><Button type="button" variant="outline" disabled={pending} onClick={closeDraft}>Cancel draft</Button></div>
+      </fieldset></form></DialogContent>}
+      </Dialog>
+      <AlertDialog open={discardDraft} onOpenChange={setDiscardDraft}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Discard notice draft?</AlertDialogTitle><AlertDialogDescription>Your unsaved changes will be lost.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => updateDraft(null)}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
       {notices.isLoading && !notices.latestPage && <p role="status" className="text-sm text-muted-foreground">Loading notices…</p>}
       {notices.error !== null && !notices.items.length && <p role="alert" className="text-sm text-destructive">Notices are unavailable.</p>}
       {!notices.isLoading && notices.error === null && notices.latestPage && !notices.items.length && <p className="text-sm text-muted-foreground">No notices.</p>}
@@ -318,7 +377,7 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
           <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-medium">{n.title}</h4><p className="text-xs text-muted-foreground">{dataClassificationLabel(n.classification)} · {n.status}</p></div><p className="whitespace-pre-wrap text-sm">{n.message}</p>
           <div className="flex flex-wrap gap-2">{n.status === 'DRAFT' && <Button disabled={pending} onClick={() => void submit(`/api/v1/planning/notices/${n.id}/publications`)}>Publish notice</Button>}
             {n.status === 'PUBLISHED' && <><Button variant="outline" disabled={pending} onClick={() => void submit(`/api/v1/planning/notices/${n.id}/withdrawals`)}>Withdraw notice</Button>
-              <Button variant="outline" disabled={pending} onClick={() => updateDraft({ id: crypto.randomUUID(), previousId: n.id, disruptionId: n.disruptionId, title: n.title, message: n.message, services: n.services.join(', '), locations: n.locations.join(', '), from: '', until: '' })}>Correct notice</Button></>}
+              <Button variant="outline" disabled={pending} onClick={() => openDraft({ id: crypto.randomUUID(), previousId: n.id, disruptionId: n.disruptionId, title: n.title, message: n.message, services: n.services.join(', '), locations: n.locations.join(', '), from: '', until: '' })}>Correct notice</Button></>}
             {n.classification === 'SIMULATION' && n.demoRunId && <Button asChild variant="outline"><Link target="_blank" rel="noreferrer" to={`/notices?classification=SIMULATION&demoRunId=${encodeURIComponent(n.demoRunId)}`}>Preview simulation board</Link></Button>}
           </div>
         </CardContent></Card>)}</div></ScrollArea>}

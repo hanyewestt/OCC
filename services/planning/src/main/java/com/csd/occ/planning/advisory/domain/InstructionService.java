@@ -61,6 +61,8 @@ public class InstructionService {
         UUID runId = scopes.current().demoRunId();
         if (!proposal.demoRunId().equals(runId)) throw new AdvisoryConflictException("Proposal is outside the active simulation");
         var bus = assignedBus(runId, proposal.busId());
+        if (!bus.serviceId().equals(proposal.bus().serviceId()) || bus.directionId() != proposal.bus().directionId())
+            throw new AdvisoryConflictException("Bus route changed; review a current advisory for its service and direction");
         var hazard = context.hazard(proposal.disruptionId());
         if (!hazard.status().equals("ACTIVE") || !proposal.context().hasSameEvidenceAs(hazard))
             throw new AdvisoryConflictException("Hazard evidence changed or is no longer active; review a current proposal");

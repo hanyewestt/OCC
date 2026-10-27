@@ -48,7 +48,7 @@ def main() -> int:
             raise AssertionError("Unknown website route does not serve the custom 404 artifact")
     print("PASS custom website error page retains HTTP 404")
     for route in ("/", "/login", "/notices", "/controller", "/controller/disruptions",
-                  "/controller/planning", "/controller/audit", "/captain", "/401", "/403", "/404"):
+                  "/controller/planning", "/controller/notices", "/controller/audit", "/captain", "/401", "/403", "/404"):
         with urllib.request.urlopen(base_url + route, context=ssl._create_unverified_context(), timeout=10) as response:
             if response.read() != html or "text/html" not in response.headers.get("Content-Type", ""):
                 raise AssertionError(f"{route}: response differs from the React entry HTML")
@@ -80,6 +80,8 @@ def main() -> int:
         ("React login page", "/login", 200, None, "GET"),
         ("anonymous public notice read", "/api/v1/planning/public/notices?page=0&size=1", 200, None, "GET"),
         ("public notice management requires a token", "/api/v1/planning/notices?page=0&size=1", 401, None, "GET"),
+        ("advisory group review requires a token", "/api/v1/planning/advisory-groups?page=0&size=1", 401, None, "GET"),
+        ("advisory group send requires a token", "/api/v1/planning/advisory-groups/decisions", 401, None, "POST"),
         ("captain instructions require a token", "/api/v1/planning/captain/instructions?page=0&size=1", 401, None, "GET"),
         ("protected API without token", "/api/v1/arrivals?page=0&size=1", 401, None, "GET"),
         ("forged peer token cannot authorize a public API", "/api/v1/arrivals", 401,
