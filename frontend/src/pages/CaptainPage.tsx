@@ -5,10 +5,11 @@ import { Card } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { signOut } from '@/lib/auth'
 import { cn } from '@/lib/utils'
-import { classify, clockText, deltaText, gapFlex, initialScenario, sampleGaps,
+import { classify, clockText, gapFlex, gapSummary, initialScenario, sampleGaps,
   scenarios, SAMPLE_REFRESH_MS, SAMPLE_TARGET_SECONDS, type GapState, type Scenario } from '@/lib/obu-pacing'
-import { groupStops, sampleUpcomingStops, skipLabel } from '@/lib/skip-stops'
+import { groupStops, sampleUpcomingStops, SET_DOWN_GUIDANCE, skipLabel } from '@/lib/skip-stops'
 import { CaptainInstructions } from './CaptainInstructions'
+import { CaptainRouteView } from './CaptainRoute'
 import { usePageRefresh } from '@/lib/page-refresh'
 import { PageRefreshStatus } from '@/components/PageRefreshStatus'
 
@@ -30,10 +31,10 @@ function GapTile({ side, seconds }: { side: 'ahead' | 'behind'; seconds: number 
   return <Card role="region" aria-label={`Gap to bus ${side}`} data-state={state}
     className={cn('gap-3 border-4 border-current p-5 shadow-none', info.color,
       (state === 'far' || state === 'unknown') && 'border-dashed', side === 'ahead' && 'max-md:order-first')}>
-    <h2 className="text-lg font-bold tracking-wide text-muted-foreground uppercase">Gap to bus {side}</h2>
-    <p className="text-[clamp(4rem,10vw,9rem)] leading-none font-black text-foreground tabular-nums">{clockText(seconds)}</p>
-    <p className="text-2xl font-black sm:text-3xl"><span aria-hidden="true">{info.symbol} </span>{info.label}</p>
-    <p className="text-lg font-semibold text-foreground">{deltaText(seconds, SAMPLE_TARGET_SECONDS)}</p>
+    <h4 className="text-base font-bold tracking-wide text-muted-foreground uppercase">Gap to bus {side}</h4>
+    <p className="text-[clamp(1.75rem,5vw,2.75rem)] leading-tight font-black"><span aria-hidden="true">{info.symbol} </span>{info.label}</p>
+    <p className="text-[clamp(3.5rem,9vw,8rem)] leading-none font-black text-foreground tabular-nums">{clockText(seconds)}</p>
+    <p className="text-lg font-semibold text-foreground">{gapSummary(side, seconds, SAMPLE_TARGET_SECONDS)}</p>
   </Card>
 }
 
@@ -51,7 +52,7 @@ function UpcomingStops() {
   const skipped = sampleUpcomingStops.filter(stop => stop.skipped).length
   return <section aria-labelledby="upcoming-stops-heading" className="space-y-4 rounded-xl border bg-card p-4 sm:p-6">
     <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-      <h2 id="upcoming-stops-heading" className="text-xl font-bold">Upcoming stops</h2>
+      <h3 id="upcoming-stops-heading" className="text-xl font-bold">Skip-stop instruction preview</h3>
       <p className="text-sm text-muted-foreground">Sample stops · no live instructions.</p>
       <p className="text-lg font-semibold sm:ml-auto">{skipped === 0 ? 'No stops to skip' : `${skipLabel(skipped)} on this trip`}</p>
     </div>
@@ -66,7 +67,8 @@ function UpcomingStops() {
         </li>
         : <li key={segment.stops[0].stopCode}
           className="rounded-lg border-4 border-amber-700 px-4 py-3 text-amber-800 dark:border-amber-400 dark:text-amber-400">
-          <p className="text-xl font-black uppercase sm:text-2xl"><span aria-hidden="true">✕ </span>{skipLabel(segment.stops.length)}</p>
+          <p className="text-xl font-black uppercase sm:text-2xl"><span aria-hidden="true">⊘ </span>{skipLabel(segment.stops.length)}</p>
+          <p className="font-semibold">{SET_DOWN_GUIDANCE}</p>
           <ol aria-label={skipLabel(segment.stops.length)} className="mt-2 space-y-1">
             {segment.stops.map(stop => <li key={stop.stopCode} className="flex items-center gap-3 text-lg text-foreground">
               <span className="w-14 shrink-0 text-sm text-muted-foreground tabular-nums">{stop.stopCode}</span>
@@ -86,7 +88,10 @@ export function CaptainPage({ email, token, refreshIntervalSeconds }: { email: s
   const [instructionPending, setInstructionPending] = useState(false)
   const [lastInstructionRefresh, setLastInstructionRefresh] = useState<string | null>(null)
   const instructionRefresh = useRef<(signal: AbortSignal) => Promise<void>>(() => Promise.resolve())
-  const { requestRefresh, isRefreshing } = usePageRefresh(refreshIntervalSeconds, signal => instructionRefresh.current(signal), instructionPending, token)
+  const routeRefresh = useRef<(signal: AbortSignal) => Promise<void>>(() => Promise.resolve())
+  const { requestRefresh, isRefreshing } = usePageRefresh(refreshIntervalSeconds,
+    signal => Promise.all([instructionRefresh.current(signal), routeRefresh.current(signal)]).then(() => undefined),
+    instructionPending, token)
   const gaps = sampleGaps(sample.scenario, sample.tick)
 
   useEffect(() => {
@@ -116,9 +121,15 @@ export function CaptainPage({ email, token, refreshIntervalSeconds }: { email: s
 
     <CaptainInstructions key={token} token={token} registerRefresh={callback => { instructionRefresh.current = callback }}
       onPendingChange={setInstructionPending} onSaved={() => { void requestRefresh('mutation') }} onRefreshTimeChange={setLastInstructionRefresh} />
+    <CaptainRouteView key={`route-${token}`} token={token} registerRefresh={callback => { routeRefresh.current = callback }} />
+
+    <section aria-labelledby="sample-previews-heading" className="space-y-6 border-t pt-6">
+    <div className="space-y-1">
+      <h2 id="sample-previews-heading" className="text-lg font-semibold">Sample previews</h2>
+      <p className="text-sm text-muted-foreground">Built-in examples of displays that are not connected to live data yet.</p>
+    </div>
     <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-      <div><p className="text-xl font-bold">Service 190 · Direction 1</p>
-        <p className="text-sm text-muted-foreground">DEMO-190-B</p></div>
+      <h3 className="text-xl font-bold">Pacing</h3>
       <span className="border-2 border-amber-700 px-3 py-1 text-sm font-bold dark:border-amber-400">SAMPLE DATA</span>
       <p className="text-lg sm:ml-auto">Target gap <strong className="tabular-nums">{clockText(SAMPLE_TARGET_SECONDS)}</strong></p>
     </div>
@@ -152,8 +163,9 @@ export function CaptainPage({ email, token, refreshIntervalSeconds }: { email: s
         onClick={() => setSample({ scenario: name, tick: 0 })}>{scenarios[name].label}</Button>)}
     </div>
     <UpcomingStops />
+    </section>
     <footer className="space-y-1 border-t pt-4 text-sm text-muted-foreground">
-      <p>Sample data · no live bus feed.</p>
+      <p>Route stops come from LTA route data; bus position and controller instructions come from the current simulation run.</p>
       <p className="break-all">Signed in as {email} · Role: Captain</p>
     </footer>
   </section>
