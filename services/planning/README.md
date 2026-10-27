@@ -160,8 +160,19 @@ the base stack no longer forwards tuning values from the root `.env`.
 
 ### Captain instructions and public notices
 
-`/api/v1/planning/advisories` exposes the controller review queue. Controllers
-preview the exact OBU message, then issue an approved instruction through the
+`/api/v1/planning/advisory-groups` exposes the pending controller review queue,
+grouped by hazard evidence revision, service, direction, action and exact
+instruction parameters before pagination. Each group includes its complete
+reviewed bus list. Controllers submit all group proposal IDs to
+`POST /api/v1/planning/advisory-groups/decisions` to send once to those recipients.
+The transaction revalidates every bus's route, downstream exposure, assignment
+and movement conflicts; one invalid recipient rolls back all deliveries. A
+changed recipient list requires another review. Identical retries return the
+original individual instructions, with independent captain acknowledgements,
+expiry and cancellation. Broadcasts do not subscribe buses that arrive later.
+The existing `/api/v1/planning/advisories` endpoints remain available for
+individual review, overrides and conflict resolution. Controllers preview the
+exact OBU message, then issue an approved instruction through the
 same Planning transaction that persists the decision. Existing typed HOLD and
 DWELL recommendations keep their operational validation and have a dedicated
 approve-and-issue action. Captains read only instructions assigned to their

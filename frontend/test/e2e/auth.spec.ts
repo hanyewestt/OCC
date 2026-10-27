@@ -5,6 +5,13 @@ import { groupStops, skipLabel, type UpcomingStop } from '../../src/lib/skip-sto
 import { formatSgtDateTime } from '../../src/lib/time'
 import type { Advisory, CaptainInstruction } from '../../src/lib/api'
 
+function advisoryGroup(members: Advisory[], serviceId = '190', directionId = 1) {
+  const first = members[0]
+  return { id: first.id, disruptionId: first.disruptionId, demoRunId: first.demoRunId, serviceId, directionId,
+    hazardTitle: 'Reported hazard', hazardClassification: first.hazardClassification, candidate: first.candidate,
+    preview: first.preview, members }
+}
+
 // Synthetic Supabase and Gateway responses. These tests do not prove provider
 // behavior or backend authorization; Gateway tests and the opt-in live smoke do.
 const userId = '11111111-1111-4111-8111-111111111111'
@@ -63,7 +70,7 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
   await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: {
     items: [], page: 0, size: 100, totalElements: 0, feeds: [],
   } }))
-  for (const endpoint of ['planning/advisories', 'planning/instructions', 'planning/notices', 'planning/diagnoses/hazard-requests', 'planning/diagnoses/hazard-history', 'planning/captain/instructions']) {
+  for (const endpoint of ['planning/advisories', 'planning/advisory-groups', 'planning/instructions', 'planning/notices', 'planning/diagnoses/hazard-requests', 'planning/diagnoses/hazard-history', 'planning/captain/instructions']) {
     await context.route(`**/api/v1/${endpoint}?*`, route => route.fulfill({ json: { items: [], page: 0, size: 100, totalItems: 0, totalPages: 0 } }))
   }
   await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ status: 204 }))
@@ -112,7 +119,13 @@ async function expectPageRefreshStatus(page: Page, intervalSeconds: number) {
   const status = page.getByLabel('Page refresh status', { exact: true })
   await expect(status).toHaveCount(1)
   await expect(status).toContainText(`Refreshes every ${intervalSeconds} seconds`)
-  await expect(page.getByRole('heading', { level: 1 }).locator('..').getByLabel('Page refresh status')).toBeVisible()
+  if (new URL(page.url()).pathname.startsWith('/controller')) {
+    const title = page.locator('header').getByRole('heading', { level: 1 })
+    await expect(title).toHaveCount(1)
+    await expect(title).toHaveCSS('font-weight', '700')
+    await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1)
+  }
+  await expect(page.getByLabel('Page refresh status')).toBeVisible()
 }
 
 test.describe('SGT notice scheduling', () => {
@@ -133,9 +146,9 @@ test.describe('SGT notice scheduling', () => {
 
     await login(page)
     expect(await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone)).toBe('America/New_York')
-    await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
-    const advisories = page.getByRole('region', { name: 'Multi-hazard advisories', exact: true })
-    await advisories.getByRole('button', { name: 'Draft notice', exact: true }).click()
+    await page.getByRole('link', { name: 'Public notices', exact: true }).click()
+    await page.getByRole('button', { name: 'Draft notice', exact: true }).click()
+    const advisories = page.getByRole('dialog', { name: 'New notice draft', exact: true })
     await advisories.getByLabel('Source hazard', { exact: true }).selectOption('notice-hazard')
     await advisories.getByLabel('Title', { exact: true }).fill('Caution near Example Stop')
     await advisories.getByLabel('Passenger message', { exact: true }).fill('Water reported near Example Stop.')
@@ -1120,7 +1133,7 @@ test('controller narrow layout keeps navigation and tables within the viewport',
 test('captain cannot open any controller dashboard route', async ({ page, context }) => {
   await mockAuth(context, 'CAPTAIN')
   await login(page)
-  for (const route of ['/controller', '/controller/disruptions', '/controller/planning', '/controller/audit']) {
+  for (const route of ['/controller', '/controller/disruptions', '/controller/planning', '/controller/notices', '/controller/audit']) {
     await page.goto(route)
     await expect(page.getByRole('heading', { name: 'Access denied' })).toBeVisible()
     await expect(page.getByRole('navigation', { name: 'Controller navigation' })).toHaveCount(0)
@@ -1398,7 +1411,7 @@ test('captain instruction cards scroll and load later server pages without losin
   expect(requestedPages).toContain(1)
 })
 
-test('controller approval sends a concise synthetic instruction and refreshes issued history', async ({ page, context }) => {
+test('controller reviews a service-direction broadcast and sends only the reviewed captain recipients', async ({ page, context }) => {
   await mockAuth(context, 'CONTROLLER')
   const issued = syntheticInstruction(new Date())
   const advisory: Advisory = {
@@ -1408,27 +1421,153 @@ test('controller approval sends a concise synthetic instruction and refreshes is
     limitations: ['Simulation only.'], createdAt: issued.issuedAt,
   }
   let sent = false
-  await context.route('**/api/v1/planning/advisories?*', route => route.fulfill({
-    json: { items: [{ ...advisory, status: sent ? 'APPROVED' : 'PENDING' }], page: 0, totalItems: 1, totalPages: 1 },
+  const other = { ...advisory, id: 'second-proposal', busId: 'demo-190-c' }
+  const reverse = { ...advisory, id: 'reverse-proposal', busId: 'demo-190-reverse' }
+  const deliveries = [issued, { ...issued, id: other.id, busId: other.busId }]
+  await context.route('**/api/v1/planning/advisory-groups?*', route => route.fulfill({
+    json: { items: [...(sent ? [] : [advisoryGroup([advisory, other])]), advisoryGroup([reverse], '190', 2)], page: 0, totalItems: sent ? 1 : 2, totalPages: 1 },
   }))
   await context.route('**/api/v1/planning/instructions?*', route => route.fulfill({
-    json: { items: sent ? [issued] : [], page: 0, totalItems: sent ? 1 : 0, totalPages: sent ? 1 : 0 },
+    json: { items: sent ? deliveries : [], page: 0, totalItems: sent ? 2 : 0, totalPages: sent ? 1 : 0 },
   }))
-  await context.route(`**/api/v1/planning/advisories/${advisory.id}/decisions`, route => {
+  await context.route('**/api/v1/planning/advisory-groups/decisions', route => {
     expect(route.request().headers().authorization).toMatch(/^Bearer /)
-    expect(route.request().postDataJSON()).toEqual({})
+    expect(route.request().postDataJSON()).toEqual({ proposalIds: [advisory.id, other.id] })
     sent = true
-    return route.fulfill({ json: issued })
+    return route.fulfill({ json: { items: deliveries, page: 0, totalItems: 2, totalPages: 1 } })
   })
   await login(page)
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   const advisories = page.getByRole('region', { name: 'Multi-hazard advisories', exact: true })
-  await expect(advisories.getByRole('heading', { name: issued.message, exact: true })).toBeVisible()
-  await advisories.getByRole('button', { name: 'Approve and send', exact: true }).click()
-  await expect(advisories.getByText('No pending captain advisories.', { exact: true })).toBeVisible()
-  await expect(advisories.getByText(issued.message, { exact: true })).toBeVisible()
+  await expect(advisories.getByRole('heading', { name: 'Service 190 · Direction 1', exact: true })).toBeVisible()
+  await expect(advisories.getByRole('heading', { name: 'Service 190 · Direction 2', exact: true })).toBeVisible()
+  await expect(advisories.getByText('2 affected buses', { exact: false })).toBeVisible()
+  await page.screenshot({ path: 'node_modules/.cache/controller-advisory-groups-desktop.png', fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await page.screenshot({ path: 'node_modules/.cache/controller-advisory-groups-mobile.png', fullPage: true })
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await advisories.getByRole('button', { name: 'Review and send to affected captains', exact: true }).first().click()
+  const review = page.getByRole('dialog', { name: 'Send advisory to affected captains', exact: true })
+  await expect(review.getByText(advisory.busId, { exact: true })).toBeVisible()
+  await expect(review.getByText(other.busId, { exact: true })).toBeVisible()
+  await expect(review.getByText(reverse.busId, { exact: true })).toHaveCount(0)
+  expect(sent).toBe(false)
+  await review.getByRole('button', { name: 'Approve and send group', exact: true }).click()
+  await expect(advisories.getByRole('heading', { name: 'Service 190 · Direction 1', exact: true })).toHaveCount(0)
+  await expect(advisories.getByRole('heading', { name: 'Service 190 · Direction 2', exact: true })).toBeVisible()
+  await expect(advisories.getByRole('region', { name: 'Issued instructions', exact: true }).getByText(issued.message, { exact: true })).toHaveCount(2)
   await expect(advisories.getByText('demo-190-b · ISSUED', { exact: true })).toBeVisible()
+  await expect(advisories.getByText('demo-190-c · ISSUED', { exact: true })).toBeVisible()
   expect(sent).toBe(true)
+})
+
+test('changed advisory groups preserve the review and show the server conflict without issuing', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const sample = syntheticInstruction(new Date())
+  const first: Advisory = { id: 'group-one', disruptionId: 'hazard-one', demoRunId: sample.demoRunId, busId: sample.busId,
+    status: 'PENDING', candidate: { type: sample.type, parameters: sample.parameters, rationale: 'Reported hazard.' },
+    finalCandidate: null, preview: sample.message, hazardClassification: 'OBSERVATION_ONLY', limitations: [], createdAt: sample.issuedAt }
+  const second = { ...first, id: 'group-two', busId: 'demo-190-c' }
+  let changed = false
+  let sends = 0
+  await context.route('**/api/v1/planning/advisory-groups?*', route => route.fulfill({ json: {
+    items: [advisoryGroup(changed ? [first] : [first, second])], page: 0, totalItems: 1, totalPages: 1,
+  } }))
+  await context.route('**/api/v1/planning/advisory-groups/decisions', route => {
+    sends++
+    changed = true
+    return route.fulfill({ status: 409, json: { detail: 'Advisory group recipients changed; refresh and review before sending' } })
+  })
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await page.getByRole('button', { name: 'Review and send to affected captains', exact: true }).click()
+  const review = page.getByRole('dialog', { name: 'Send advisory to affected captains', exact: true })
+  await review.getByRole('button', { name: 'Approve and send group', exact: true }).click()
+  await expect(review.getByRole('alert')).toContainText('recipients changed')
+  expect(sends).toBe(1)
+  await expect(page.getByRole('region', { name: 'Issued instructions', exact: true })).toHaveCount(0)
+  await review.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await page.getByRole('button', { name: 'Review and send to affected captains', exact: true }).click()
+  await expect(review.getByText(second.busId, { exact: true })).toHaveCount(0)
+  await expect(review.getByText(first.busId, { exact: true })).toBeVisible()
+})
+
+test('controller manages public notices on a dedicated page below planning', async ({ page, context }) => {
+  await page.clock.install()
+  await mockAuth(context, 'CONTROLLER')
+  let noticeReads = 0
+  await context.route('**/api/v1/planning/notices?*', route => {
+    noticeReads++
+    return route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } })
+  })
+  await login(page)
+  await page.getByRole('link', { name: 'Disruptions', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Multi-hazard conditions', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Public notice board', exact: true })).toHaveCount(0)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Captain advisories', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Draft notice', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'Public notice board', exact: true })).toHaveCount(0)
+  expect(noticeReads).toBe(0)
+  const navigation = page.getByRole('navigation', { name: 'Controller navigation' })
+  await expect(navigation.getByRole('link')).toHaveCount(5)
+  expect(await navigation.getByRole('link').evaluateAll(links => links.map(link => link.getAttribute('href'))))
+    .toEqual(['/controller', '/controller/disruptions', '/controller/planning', '/controller/notices', '/controller/audit'])
+  await page.getByRole('link', { name: 'Public notices', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Public notices', level: 1, exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Public notices', exact: true })).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('link', { name: 'Public notice board', exact: true })).toHaveAttribute('href', '/notices')
+  await expect(page.getByText('No notices.', { exact: true })).toBeVisible()
+  const beforeRefresh = noticeReads
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect.poll(() => noticeReads).toBeGreaterThan(beforeRefresh)
+  const afterRefresh = noticeReads
+  await page.clock.runFor(31000)
+  await expect.poll(() => noticeReads).toBeGreaterThan(afterRefresh)
+  await page.getByRole('button', { name: 'Draft notice', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'New notice draft', exact: true })
+  await editor.getByLabel('Title', { exact: true }).fill('Keep this draft')
+  const beforeDraftRefresh = noticeReads
+  await page.clock.runFor(31000)
+  await expect.poll(() => noticeReads).toBeGreaterThan(beforeDraftRefresh)
+  await expect(editor.getByLabel('Title', { exact: true })).toHaveValue('Keep this draft')
+  await editor.getByRole('button', { name: 'Cancel draft', exact: true }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Keep editing', exact: true }).click()
+  await expect(editor.getByLabel('Title', { exact: true })).toHaveValue('Keep this draft')
+  await editor.getByRole('button', { name: 'Cancel draft', exact: true }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Discard draft', exact: true }).click()
+  await expect(editor).toHaveCount(0)
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Public notices', level: 1, exact: true })).toBeVisible()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.getByRole('link', { name: 'Public notice board', exact: true })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await page.screenshot({ path: 'node_modules/.cache/controller-public-notices-mobile.png', fullPage: true })
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.screenshot({ path: 'node_modules/.cache/controller-public-notices-desktop.png', fullPage: true })
+})
+
+test('public notice editor preserves its draft when saving fails', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: {
+    items: [{ disruptionId: 'source-hazard', kind: 'FLOOD', status: 'ACTIVE', classification: 'OBSERVATION_ONLY',
+      demoRunId: null, updatedAt: '2026-10-25T04:00:00Z', facts: { title: 'Flood report', description: 'Water reported.', instruction: null, effectiveUntil: null }, exposures: [], limitations: [] }],
+    page: 0, size: 100, totalElements: 1, feeds: [],
+  } }))
+  await context.route('**/api/v1/planning/notices', route => route.fulfill({ status: 503, json: { detail: 'Notice save unavailable.' } }))
+  await login(page)
+  await page.goto('/controller/notices')
+  await page.getByRole('button', { name: 'Draft notice', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'New notice draft', exact: true })
+  await editor.getByLabel('Source hazard', { exact: true }).selectOption('source-hazard')
+  await editor.getByLabel('Title', { exact: true }).fill('Keep this passenger notice')
+  await editor.getByLabel('Starts (SGT)', { exact: true }).fill('2026-10-27T15:00')
+  await editor.getByLabel('Expires (SGT)', { exact: true }).fill('2026-10-27T16:00')
+  await editor.getByRole('button', { name: 'Save draft', exact: true }).click()
+  await expect(editor.getByRole('alert')).toContainText('Notice save unavailable.')
+  await expect(editor.getByLabel('Title', { exact: true })).toHaveValue('Keep this passenger notice')
+  await expect(editor.getByRole('button', { name: 'Save draft', exact: true })).toBeEnabled()
 })
 
 test('controller can apply a passenger notice suggestion without saving or publishing it', async ({ page, context }) => {
@@ -1454,9 +1593,9 @@ test('controller can apply a passenger notice suggestion without saving or publi
   })
 
   await login(page)
-  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
-  const advisories = page.getByRole('region', { name: 'Multi-hazard advisories', exact: true })
-  await advisories.getByRole('button', { name: 'Draft notice', exact: true }).click()
+  await page.getByRole('link', { name: 'Public notices', exact: true }).click()
+  await page.getByRole('button', { name: 'Draft notice', exact: true }).click()
+  const advisories = page.getByRole('dialog', { name: 'New notice draft', exact: true })
   const suggest = advisories.getByRole('button', { name: 'Suggest passenger wording', exact: true })
   await expect(suggest).toBeDisabled()
   await advisories.getByLabel('Source hazard', { exact: true }).selectOption(disruptionId)
@@ -1491,9 +1630,9 @@ test('late notice suggestions cannot overwrite the selected hazard draft', async
   })
 
   await login(page)
-  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
-  const advisories = page.getByRole('region', { name: 'Multi-hazard advisories', exact: true })
-  await advisories.getByRole('button', { name: 'Draft notice', exact: true }).click()
+  await page.getByRole('link', { name: 'Public notices', exact: true }).click()
+  await page.getByRole('button', { name: 'Draft notice', exact: true }).click()
+  const advisories = page.getByRole('dialog', { name: 'New notice draft', exact: true })
   const source = advisories.getByLabel('Source hazard', { exact: true })
   await source.selectOption(hazardA)
   await advisories.getByRole('button', { name: 'Suggest passenger wording', exact: true }).click()
@@ -1525,8 +1664,8 @@ test('controller reviews the server preview before issuing an edited instruction
     exposures: [{ busId: advisory.busId, serviceId: '190', stopCode: 'B01', stopName: 'Example Stop', stopSequence: 2, basis: 'POINT_PROXIMITY' }],
     limitations: ['Road relevance has not been verified.'],
   }], page: 0, size: 100, totalElements: 1, feeds: [] } }))
-  await context.route('**/api/v1/planning/advisories?*', route => route.fulfill({
-    json: { items: [{ ...advisory, status: sent ? 'APPROVED' : 'PENDING' }], page: 0, totalItems: 1, totalPages: 1 },
+  await context.route('**/api/v1/planning/advisory-groups?*', route => route.fulfill({
+    json: { items: sent ? [] : [advisoryGroup([advisory])], page: 0, totalItems: 1, totalPages: 1 },
   }))
   await context.route('**/api/v1/planning/instructions?*', route => route.fulfill({
     json: { items: sent ? [issued] : [], page: 0, totalItems: sent ? 1 : 0, totalPages: sent ? 1 : 0 },
@@ -1601,28 +1740,24 @@ test('controller pending queue filters on the server and can page through all pe
     return route.fulfill({ json: { items: [{ requestId: `request-${page}`, eventType: 'HAZARD', status: 'COMPLETED', failureCode: null,
       disruptionId: `hazard-${page}`, createdAt: '2026-10-25T04:00:00Z' }], page, size: 100, totalItems: 101, totalPages: 2 } })
   })
-  await context.route('**/api/v1/planning/advisories?*', route => {
+  await context.route('**/api/v1/planning/advisory-groups?*', route => {
     const url = new URL(route.request().url())
     requested.push(url)
-    if (url.searchParams.get('pendingOnly') !== 'true') {
-      const oldApproved = Array.from({ length: 100 }, (_, index) => ({ ...pending[0], id: `approved-${index}`, status: 'APPROVED' }))
-      return route.fulfill({ json: { items: oldApproved, page: 0, size: 100, totalItems: 101, totalPages: 2 } })
-    }
     const requestedPage = Number(url.searchParams.get('page'))
-    return route.fulfill({ json: { items: [pending[requestedPage]], page: requestedPage, size: 100, totalItems: 101, totalPages: 2 } })
+    return route.fulfill({ json: { items: [advisoryGroup([pending[requestedPage]])], page: requestedPage, size: 100, totalItems: 101, totalPages: 2 } })
   })
 
   await login(page)
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   const advisories = page.getByRole('region', { name: 'Multi-hazard advisories', exact: true })
-  await expect(advisories.getByRole('heading', { name: pending[0].preview, exact: true })).toBeVisible()
+  await expect(advisories.getByText(pending[0].preview, { exact: true })).toBeVisible()
   await expect(advisories.getByRole('region', { name: 'Pending captain advisories', exact: true })).toBeVisible()
   await advisories.getByRole('button', { name: 'Load more pending advisories', exact: true }).click()
-  await expect(advisories.getByRole('heading', { name: pending[1].preview, exact: true })).toBeVisible()
+  await expect(advisories.getByText(pending[1].preview, { exact: true })).toBeVisible()
   await advisories.getByRole('button', { name: 'Load more instructions', exact: true }).click()
   await expect(advisories.getByText(instructions[1].message, { exact: true })).toBeVisible()
   await expect(page.getByRole('navigation', { name: /pages/ })).toHaveCount(0)
-  expect(requested.every(url => url.searchParams.get('pendingOnly') === 'true')).toBe(true)
+  expect(requested.every(url => url.pathname.endsWith('/advisory-groups'))).toBe(true)
   expect(requested.map(url => url.searchParams.get('page'))).toContain('1')
 
   await page.goto('/controller/disruptions')
@@ -1648,16 +1783,18 @@ test('planning loads later source hazards and resolves an advisory source indepe
     return route.fulfill({ json: { items: [hazard(page ? 'later-source' : 'first-source')], page, size: 100, totalElements: 101, feeds: [] } })
   })
   await context.route('**/api/v1/disruption/hazards/later-source', route => route.fulfill({ json: hazard('later-source') }))
-  await context.route('**/api/v1/planning/advisories?*', route => route.fulfill({ json: { items: [{
-    id: 'later-advisory', disruptionId: 'later-source', demoRunId: null, busId: 'demo-190-b', status: 'PENDING',
-    candidate: { type: 'BE_CAUTIOUS', parameters: { stopCode: 'B01', stopName: 'Later source stop', stopSequence: 2 }, rationale: 'Source after page zero.' },
+  await context.route('**/api/v1/planning/advisory-groups?*', route => route.fulfill({ json: { items: [advisoryGroup([{
+    id: 'later-advisory', disruptionId: 'later-source', demoRunId: 'demo-run', busId: 'demo-190-b', status: 'PENDING',
+    candidate: { type: 'BE_CAUTIOUS', parameters: { stopCode: 'B01', stopName: 'Later source stop', stopSequence: 2, subsequentStopCount: null, speedReductionKmh: null, durationSeconds: null }, rationale: 'Source after page zero.' },
     finalCandidate: null, preview: 'Later advisory', hazardClassification: 'OBSERVATION_ONLY', limitations: [], createdAt: '2026-10-25T04:00:00Z',
-  }], page: 0, totalItems: 1, totalPages: 1 } }))
+  }])], page: 0, totalItems: 1, totalPages: 1 } }))
   await login(page)
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   await page.getByRole('button', { name: 'Edit instruction', exact: true }).click()
   await expect(page.getByLabel('Starting stop').locator('option', { hasText: 'Later source stop' })).toHaveCount(1)
+  await page.getByRole('link', { name: 'Public notices', exact: true }).click()
   await page.getByRole('button', { name: 'Draft notice', exact: true }).click()
+  await page.getByRole('button', { name: 'Load more source hazards', exact: true }).click()
   await expect(page.locator('#notice-source option[value="later-source"]')).toHaveCount(1)
   await page.getByLabel('Source hazard', { exact: true }).selectOption('later-source')
   await expect(page.getByLabel('Title', { exact: true })).toHaveValue('later-source')
@@ -1867,7 +2004,7 @@ test('controller sees hazard processing history only in audit and can load later
       }] : [])], page: requestedPage, size: 100, totalItems: 101, totalPages: 2,
   } })
   })
-  await context.route('**/api/v1/planning/advisories?*', route => route.fulfill({ json: {
+  await context.route('**/api/v1/planning/advisory-groups?*', route => route.fulfill({ json: {
     items: [], page: 0, size: 100, totalItems: 0, totalPages: 0,
   } }))
 
