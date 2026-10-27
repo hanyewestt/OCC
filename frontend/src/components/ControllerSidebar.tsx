@@ -9,6 +9,7 @@ export const controllerPages = [
   { path: '/controller', title: 'Overview', icon: 'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z' },
   { path: '/controller/disruptions', title: 'Disruptions', icon: 'm12 3 10 18H2L12 3Z M12 9v5 M12 17v1' },
   { path: '/controller/planning', title: 'Planning & mitigation', icon: 'M9 5h11 M9 12h11 M9 19h11 m-17-14 1 1 2-2 m-3 8 1 1 2-2 m-3 8 1 1 2-2' },
+  { path: '/controller/notices', title: 'Public notices', icon: 'M4 5h16v14H4z M7 9h10 M7 13h10 M7 16h6' },
   { path: '/controller/audit', title: 'Audit log', icon: 'M5 3h14v18H5z M8 7h8 M8 12h8 M8 17h5' },
 ]
 

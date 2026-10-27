@@ -252,7 +252,8 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const collectionsLoading = pathname === '/controller'
     ? arrivalCollection.isLoading || !simulation && alertCollection.isLoading || recommendationCollection.isLoading
     : pathname.endsWith('/disruptions') ? !simulation && alertCollection.isLoading
-      : pathname.endsWith('/planning') ? recommendationCollection.isLoading || diagnosisCollection.isLoading : decisionCollection.isLoading
+      : pathname.endsWith('/planning') ? recommendationCollection.isLoading || diagnosisCollection.isLoading
+        : pathname.endsWith('/audit') && decisionCollection.isLoading
   const { requestRefresh, isRefreshing } = usePageRefresh(controllerRefreshIntervalSeconds, async signal => {
     const modeChanged = await loadShell(signal)
     if (signal.aborted || modeChanged) return
@@ -312,13 +313,13 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     <ControllerSidebar email={email} />
     <div className="min-w-0 flex-1">
       <header className="sticky top-0 z-10 flex min-h-16 flex-wrap items-center justify-between gap-3 border-b bg-background px-5 py-3 md:px-8">
-        <p className="text-sm text-muted-foreground">Operations control</p>
+        <h1 className="text-xl font-bold tracking-tight">{current.title}</h1>
         <div className="flex flex-wrap items-center gap-4"><span role="status" className={`flex items-center gap-2 text-xs font-medium ${simulation ? 'text-amber-700 dark:text-amber-400' : !loading && !run.error ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground'}`}><span className="size-1.5 rounded-full bg-current" />{mode}</span>
           <Button variant="outline" disabled={loading || isRefreshing || advisoryPending || planningPending || !!run.error} onClick={() => void switchMode()}>{switching ? 'Switching…' : simulation ? 'Return to live' : 'Start simulation'}</Button>
         </div>
       </header>
       <div className="mx-auto max-w-7xl space-y-7 p-5 md:p-8">
-        <div className="flex flex-wrap items-start justify-between gap-4"><div className="space-y-3"><h1 className="text-2xl font-semibold tracking-tight">{current.title}</h1>
+        <div className="flex flex-wrap items-start justify-between gap-4"><div>
           <PageRefreshStatus lastSuccessAt={lastPageRefresh} intervalSeconds={controllerRefreshIntervalSeconds} /></div>
           <Button variant="outline" disabled={loading || collectionsLoading || advisoryPending || planningPending || isRefreshing} onClick={() => { void requestRefresh() }}>{loading || isRefreshing ? 'Refreshing…' : 'Refresh'}</Button></div>
         {run.error && !loading && <p role="alert" className="text-sm text-destructive">{run.error} Simulation state could not be verified.</p>}
@@ -352,7 +353,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} loading={loading} />}
         {pathname !== '/controller' && loaded === requestKey && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
           registerRefresh={registerAdvisoryRefresh} onRefresh={() => { void requestRefresh('mutation') }} onPendingChange={setAdvisoryPending} onRefreshTimeChange={reportAdvisoryRefresh}
-          view={pathname.endsWith('/disruptions') ? 'hazards' : pathname.endsWith('/planning') ? 'planning' : 'audit'} />}
+          view={pathname.endsWith('/disruptions') ? 'hazards' : pathname.endsWith('/planning') ? 'planning' : pathname.endsWith('/notices') ? 'notices' : 'audit'} />}
       </div>
     </div>
   </div>
