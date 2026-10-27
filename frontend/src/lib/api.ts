@@ -130,6 +130,20 @@ export function routeDirections(routes: BusRoute[]): RouteDirection[] {
   }))))
 }
 
+export type CaptainRouteStop = {
+  sequence: number; stopCode: string; description: string | null; roadName: string | null
+  distanceKm: number | null; arrivalAt: string | null; arrivalKind: 'PREDICTED' | 'ESTIMATED' | null
+}
+export type CaptainRoute = {
+  classification: 'SIMULATION'
+  bus: { busId: string; registrationNumber: string; serviceId: string; directionId: number }
+  stops: CaptainRouteStop[]
+  position: {
+    source: 'SIMULATION' | 'UNAVAILABLE'; lastStopSequence: number | null
+    nextStopSequence: number | null; observedAt: string | null
+  }
+}
+
 // All dashboard requests stay on the same origin. Null represents a documented
 // empty response, never a failed request or an assumed count of zero.
 export async function apiRequest<T>(path: string, token: string | undefined, signal: AbortSignal,

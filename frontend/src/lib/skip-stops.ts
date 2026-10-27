@@ -26,6 +26,9 @@ export function groupStops(stops: UpcomingStop[]): StopSegment[] {
   return segments
 }
 
+// Skipping a stop means no pick-up there: passengers on board may still alight if the bell is rung.
+export const SET_DOWN_GUIDANCE = 'Set down only if bell rung'
+
 export function skipLabel(count: number): string {
-  return `Skip ${count} ${count === 1 ? 'stop' : 'stops'}`
+  return `No pick-up · ${count} ${count === 1 ? 'stop' : 'stops'}`
 }
