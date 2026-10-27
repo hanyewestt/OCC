@@ -2,6 +2,8 @@ package com.csd.occ.disruption.bunching.domain;
 
 /** Encodes and verifies immutable Planning event submissions stored with the Disruption outbox. */
 public interface PlanningEventSubmissionPort {
+    EncodedPlanningEventSubmission encodeHazard(com.csd.occ.disruption.hazard.domain.HazardEventSnapshot snapshot);
+    com.csd.occ.disruption.hazard.domain.HazardEventSnapshot decodeHazard(String payloadJson);
     EncodedPlanningEventSubmission encode(AlertEvent event);
 
     EncodedPlanningEventSubmission encodeTraffic(

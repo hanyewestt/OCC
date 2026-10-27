@@ -7,7 +7,7 @@ import java.util.UUID;
 
 /** Producer-owned traffic incident facts for one immutable lifecycle transition. */
 public record TrafficIncidentEventFacts(UUID eventId, UUID disruptionId, String action,
-        String classification, UUID demoRunId, UUID sourceObservationId, UUID pollRunId,
+        String classification, UUID demoRunId, UUID sourceObservationId, Long sourceRevision, UUID pollRunId,
         String source, String sourceIncidentKey, String incidentType, String message,
         BigDecimal latitude, BigDecimal longitude, Instant observedAt, Instant fetchedAt, Instant eventAt) {
     public TrafficIncidentEventFacts {
@@ -19,6 +19,8 @@ public record TrafficIncidentEventFacts(UUID eventId, UUID disruptionId, String 
                 || message == null || message.isBlank() || message.length() > 500
                 || latitude == null || longitude == null || fetchedAt == null || eventAt == null)
             throw new IllegalArgumentException("Traffic incident event facts are incomplete or outside supported bounds");
+        if (sourceRevision != null && sourceRevision < 1)
+            throw new IllegalArgumentException("Traffic incident source revision must be positive");
         if (latitude.compareTo(BigDecimal.valueOf(-90)) < 0 || latitude.compareTo(BigDecimal.valueOf(90)) > 0
                 || longitude.compareTo(BigDecimal.valueOf(-180)) < 0
                 || longitude.compareTo(BigDecimal.valueOf(180)) > 0)
@@ -26,5 +28,13 @@ public record TrafficIncidentEventFacts(UUID eventId, UUID disruptionId, String 
         if (!("OBSERVATION_ONLY".equals(classification) && demoRunId == null)
                 && !("SIMULATION".equals(classification) && demoRunId != null))
             throw new IllegalArgumentException("Traffic incident event scope is invalid");
+    }
+
+    public TrafficIncidentEventFacts(UUID eventId, UUID disruptionId, String action, String classification,
+            UUID demoRunId, UUID sourceObservationId, UUID pollRunId, String source, String sourceIncidentKey,
+            String incidentType, String message, BigDecimal latitude, BigDecimal longitude, Instant observedAt,
+            Instant fetchedAt, Instant eventAt) {
+        this(eventId, disruptionId, action, classification, demoRunId, sourceObservationId, null, pollRunId,
+                source, sourceIncidentKey, incidentType, message, latitude, longitude, observedAt, fetchedAt, eventAt);
     }
 }

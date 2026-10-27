@@ -11,9 +11,9 @@ class FrontendPropertiesTest {
     @Test
     void acceptsPublicPublishableKeysAndAnUnconfiguredBrowserLogin() {
         assertThatCode(() -> new FrontendProperties(URI.create("https://example.supabase.co"),
-                "sb_publishable_fixture", Duration.ofSeconds(30), Duration.ofSeconds(60), Duration.ofSeconds(20))).doesNotThrowAnyException();
+                "sb_publishable_fixture", Duration.ofSeconds(30), Duration.ofSeconds(60), Duration.ofSeconds(20), Duration.ofSeconds(5), Duration.ofSeconds(30))).doesNotThrowAnyException();
         assertThatCode(() -> new FrontendProperties(URI.create("https://example.supabase.co"), "",
-                Duration.ofSeconds(30), Duration.ofSeconds(60), Duration.ofSeconds(20)))
+                Duration.ofSeconds(30), Duration.ofSeconds(60), Duration.ofSeconds(20), Duration.ofSeconds(5), Duration.ofSeconds(30)))
                 .doesNotThrowAnyException();
     }
 
@@ -22,7 +22,7 @@ class FrontendPropertiesTest {
         for (String key : new String[] {"sb_secret_forbidden", "eyJhbGciOiJIUzI1NiJ9.legacy.signature"}) {
             assertThatIllegalArgumentException().isThrownBy(() ->
                     new FrontendProperties(URI.create("https://example.supabase.co"), key,
-                            Duration.ofSeconds(30), Duration.ofSeconds(60), Duration.ofSeconds(20)));
+                            Duration.ofSeconds(30), Duration.ofSeconds(60), Duration.ofSeconds(20), Duration.ofSeconds(5), Duration.ofSeconds(30)));
         }
     }
 
@@ -30,12 +30,12 @@ class FrontendPropertiesTest {
     void rejectsIntervalsBelowOneSecond() {
         assertThatIllegalArgumentException().isThrownBy(() -> new FrontendProperties(
                 URI.create("https://example.supabase.co"), "sb_publishable_fixture", Duration.ZERO,
-                Duration.ofSeconds(60), Duration.ofSeconds(20)));
+                Duration.ofSeconds(60), Duration.ofSeconds(20), Duration.ofSeconds(5), Duration.ofSeconds(30)));
         assertThatIllegalArgumentException().isThrownBy(() -> new FrontendProperties(
                 URI.create("https://example.supabase.co"), "sb_publishable_fixture", Duration.ofSeconds(30),
-                Duration.ofMillis(500), Duration.ofSeconds(20)));
+                Duration.ofMillis(500), Duration.ofSeconds(20), Duration.ofSeconds(5), Duration.ofSeconds(30)));
         assertThatIllegalArgumentException().isThrownBy(() -> new FrontendProperties(
                 URI.create("https://example.supabase.co"), "sb_publishable_fixture", Duration.ofSeconds(30),
-                Duration.ofSeconds(60), Duration.ofMillis(500)));
+                Duration.ofSeconds(60), Duration.ofMillis(500), Duration.ofSeconds(5), Duration.ofSeconds(30)));
     }
 }

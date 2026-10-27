@@ -40,7 +40,8 @@ public class DisruptionSecurityConfig {
                         .hasAuthority(PeerCapabilityAuthenticationFilter.INGESTION_AUTHORITY)
                         .requestMatchers(HttpMethod.PUT, "/internal/v1/disruption/consumer-selection")
                         .hasAuthority(PeerCapabilityAuthenticationFilter.INGESTION_AUTHORITY)
-                        .requestMatchers(HttpMethod.GET, "/internal/v1/disruption/events/**")
+                        .requestMatchers(HttpMethod.GET, "/internal/v1/disruption/events/**", "/internal/v1/disruption/consumer-selection",
+                                "/internal/v1/disruption/hazards/*")
                         .hasAuthority(PeerCapabilityAuthenticationFilter.PLANNING_AUTHORITY)
                         .requestMatchers("/internal/v1/**").denyAll()
                         .requestMatchers("/api/v1/**").hasAnyRole("ADMIN", "CONTROLLER")

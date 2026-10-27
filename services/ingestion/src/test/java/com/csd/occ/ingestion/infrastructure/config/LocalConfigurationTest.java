@@ -32,12 +32,22 @@ class LocalConfigurationTest {
         runProbe("override");
     }
 
+    @Test
+    void exampleEnvironmentResolvesLocalPlanningPeer() throws Exception {
+        runProbe("example");
+    }
+
     private void runProbe(String profile) throws Exception {
         Path service = Files.createDirectories(temporaryRepository.resolve("services/ingestion"));
         Files.writeString(temporaryRepository.resolve(".env"),
                 "OCC_INGESTION_DB_PASSWORD=synthetic-password\nDATAMALL_API_KEY=synthetic-key\n"
                 + "POSTGRES_DB=synthetic_db\nPOSTGRES_PORT=5544\n"
+                + "OCC_INGESTION_PACING_TARGET_HEADWAY=240s\n"
                 + (profile.equals("override") ? "OCC_INGESTION_DB_PUBLIC_URL=jdbc:postgresql://example.test/override\n" : ""));
+        if (profile.equals("example")) {
+            Files.copy(Path.of("../../.env.example"), temporaryRepository.resolve(".env"),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
         String separator = System.getProperty("path.separator");
         String classpath = Arrays.stream(System.getProperty("java.class.path").split(separator))
                 .map(entry -> Path.of(entry).toAbsolutePath().toString()).collect(Collectors.joining(separator));
@@ -57,9 +67,15 @@ class LocalConfigurationTest {
         public static void main(String[] args) {
             StandardEnvironment environment = new StandardEnvironment();
             environment.getPropertySources().addFirst(new MapPropertySource("probe", Map.of(
-                    "spring.profiles.active", args[0].equals("override") ? "local" : args[0])));
+                    "spring.profiles.active", args[0].equals("override") || args[0].equals("example") ? "local" : args[0])));
             ConfigDataEnvironmentPostProcessor.applyTo(environment);
+            if (args[0].equals("example")) {
+                assertThat(environment.getProperty("occ.ingestion.demo.planning-internal-url"))
+                        .isEqualTo("http://localhost:6769");
+                return;
+            }
             if (!args[0].equals("deployment")) {
+                assertThat(environment.getProperty("occ.ingestion.pacing.target-headway")).isEqualTo("240s");
                 String expectedUrl = args[0].equals("override") ? "jdbc:postgresql://example.test/override"
                         : "jdbc:postgresql://localhost:5544/synthetic_db";
                 if (!"synthetic-password".equals(environment.getProperty("spring.datasource.password"))

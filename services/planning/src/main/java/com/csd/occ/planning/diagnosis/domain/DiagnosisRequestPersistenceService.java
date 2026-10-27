@@ -104,8 +104,6 @@ public class DiagnosisRequestPersistenceService {
         } else if (inputSnapshot != null && !sameProducerFacts(existing.inputSnapshot(), submission)) {
             throw new DiagnosisRequestService.IdempotencyConflictException();
         }
-        if (submission.eventType() == EventType.TRAFFIC_INCIDENT)
-            existing.completeNoAction("TRAFFIC_INCIDENT_NO_OPERATIONAL_ACTION", clock.instant());
         return existing;
     }
 

@@ -83,22 +83,38 @@ public class DiagnosisRequestService {
                 || submission.evidenceIds() == null || submission.evidenceIds().isEmpty()
                 || submission.evidenceIds().size() > 100
                 || submission.evidenceIds().stream().anyMatch(java.util.Objects::isNull))
-            throw new UnsupportedEventTypeException("Event submission is not a supported confirmed simulation event");
+            throw new UnsupportedEventTypeException("Event submission is not a supported confirmed event");
 
         if (submission.eventType() == EventType.TRAFFIC_INCIDENT) {
             validateTrafficIncident(submission);
             return;
         }
-        if (submission.eventType() != EventType.BUS_BUNCHING || submission.trafficSnapshot() != null
-                || !"SIMULATION".equals(submission.classification()) || submission.demoRunId() == null
+        if (submission.eventType() == EventType.HAZARD) {
+            var event = submission.hazardSnapshot();
+            if (event == null || submission.eventSnapshot() != null || submission.trafficSnapshot() != null
+                    || !PlanningScope.valid(submission.classification(), submission.demoRunId())
+                    || !submission.eventId().equals(event.eventId()) || !submission.disruptionId().equals(event.disruptionId())
+                    || !submission.classification().equals(event.classification())
+                    || !java.util.Objects.equals(submission.demoRunId(), event.demoRunId())
+                    || !submission.detectedAt().equals(event.eventAt()) || event.facts() == null
+                    || !List.of("FLOOD", "RAIL_DISRUPTION", "ROADWORKS", "TRAFFIC_INCIDENT").contains(event.facts().kind())
+                    || !List.of("OPENED", "UPDATED", "CLEARED", "REASSESSED").contains(event.action())
+                    || !validHazardTarget(event)
+                    || !"hazard-observation-v1".equals(submission.detectionRuleVersion())
+                    || !submission.evidenceIds().equals(List.of(event.sourceObservationId().toString())))
+                throw new IllegalArgumentException("Hazard submission facts are inconsistent");
+            return;
+        }
+        if (submission.eventType() != EventType.BUS_BUNCHING || submission.trafficSnapshot() != null || submission.hazardSnapshot() != null
+                || !PlanningScope.valid(submission.classification(), submission.demoRunId())
                 || submission.eventSnapshot() == null)
-            throw new UnsupportedEventTypeException("Event submission is not a supported confirmed simulation event");
+            throw new UnsupportedEventTypeException("Event submission is not a supported confirmed event");
 
         BunchingEventFacts event = submission.eventSnapshot();
         if (!submission.eventId().equals(event.eventId())
                 || !submission.disruptionId().equals(event.bunchingEventId())
                 || !submission.classification().equals(event.classification())
-                || !submission.demoRunId().equals(event.demoRunId())
+                || !java.util.Objects.equals(submission.demoRunId(), event.demoRunId())
                 || !submission.detectionRuleVersion().equals(event.detectionRuleVersion())
                 || !"CONFIRMED".equals(event.status()) || event.serviceId() == null
                 || event.monitoredStopCode() == null || event.detectionRuleVersion() == null
@@ -118,7 +134,7 @@ public class DiagnosisRequestService {
 
     private void validateTrafficIncident(ProducerEventSubmission submission) {
         TrafficIncidentEventFacts event = submission.trafficSnapshot();
-        if (event == null || submission.eventSnapshot() != null
+        if (event == null || submission.eventSnapshot() != null || submission.hazardSnapshot() != null
                 || !submission.eventId().equals(event.eventId())
                 || !submission.disruptionId().equals(event.disruptionId())
                 || !submission.classification().equals(event.classification())
@@ -127,6 +143,12 @@ public class DiagnosisRequestService {
                 || !"traffic-incident-observation-v1".equals(submission.detectionRuleVersion())
                 || !submission.evidenceIds().equals(List.of(event.sourceObservationId().toString())))
             throw new IllegalArgumentException("Traffic incident event submission facts are inconsistent or incomplete");
+    }
+
+    private static boolean validHazardTarget(com.csd.occ.planning.advisory.domain.HazardEventFacts event) {
+        boolean reassessment = "REASSESSED".equals(event.action());
+        if (!reassessment) return event.targetBusId() == null && event.targetRunId() == null;
+        return event.targetRunId() != null && event.targetBusId() != null && !event.targetBusId().isBlank();
     }
 
     private boolean sameRequest(DiagnosisRequest existing, EventType eventType, String producer, UUID eventId) {

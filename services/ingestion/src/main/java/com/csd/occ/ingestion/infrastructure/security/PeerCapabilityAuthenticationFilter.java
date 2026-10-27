@@ -29,14 +29,23 @@ final class PeerCapabilityAuthenticationFilter extends OncePerRequestFilter {
         String path = applicationPath(request);
         String authority = null;
         String expectedToken = null;
-        if (HttpMethod.GET.matches(request.getMethod()) && (path.equals("/internal/v1/arrival-snapshots")
+        if (HttpMethod.GET.matches(request.getMethod()) && (path.equals("/internal/v1/ingestion/demo-fleet")
+                || path.startsWith("/internal/v1/ingestion/bus-routes/") || path.startsWith("/internal/v1/ingestion/stations/"))) {
+            if (matches(properties.planningToIngestionToken(), request.getHeader(HEADER_NAME))) {
+                authority = PLANNING_AUTHORITY;
+                expectedToken = properties.planningToIngestionToken();
+            } else {
+                authority = DISRUPTION_AUTHORITY;
+                expectedToken = properties.disruptionToIngestionToken();
+            }
+        } else if (HttpMethod.GET.matches(request.getMethod()) && (path.equals("/internal/v1/arrival-snapshots")
                 || path.startsWith("/internal/v1/arrival-snapshots/")
                 || path.matches("/internal/v1/demo-runs/[^/]+/arrival-snapshots(?:/.*)?")
-                || path.equals("/internal/v1/traffic-incident-polls"))) {
+                || path.equals("/internal/v1/traffic-incident-polls") || path.equals("/internal/v1/hazard-polls"))) {
             authority = DISRUPTION_AUTHORITY;
             expectedToken = properties.disruptionToIngestionToken();
-        } else if (HttpMethod.GET.matches(request.getMethod()) && path.startsWith("/internal/v1/ingestion/demo-runs/")
-                && path.endsWith("/planning-context")) {
+        } else if (HttpMethod.GET.matches(request.getMethod()) && (path.startsWith("/internal/v1/ingestion/demo-runs/")
+                && path.endsWith("/planning-context") || path.equals("/internal/v1/ingestion/planning-context"))) {
             authority = PLANNING_AUTHORITY;
             expectedToken = properties.planningToIngestionToken();
         }

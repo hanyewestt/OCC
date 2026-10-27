@@ -14,5 +14,9 @@ public interface RecommendationRecordPort {
 
     long countPending();
 
+    List<RecommendationRecord> findPendingForRun(UUID demoRunId, int offset, int limit);
+
+    long countPendingForRun(UUID demoRunId);
+
     boolean saveIfAbsent(RecommendationRecord record);
 }

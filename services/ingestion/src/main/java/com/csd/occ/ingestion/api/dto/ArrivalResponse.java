@@ -8,7 +8,8 @@ import java.util.UUID;
 @Schema(requiredProperties = {"observationId", "stopCode", "serviceId", "operator", "directionId", "visitOrder", "visitNumber",
         "estimatedArrivalAt", "originCode", "destinationCode", "monitored", "latitude", "longitude", "loadCategory",
         "feature", "vehicleType", "fetchedAt", "ageSeconds", "referenceVersionId"})
-public record ArrivalResponse(UUID observationId, String stopCode, String serviceId, String operator,
+public record ArrivalResponse(UUID observationId, String stopCode, @Schema(nullable = true) String stopName,
+        String serviceId, String operator,
         @Schema(nullable = true) Integer directionId, @Schema(nullable = true) Integer visitOrder,
         @Schema(nullable = true) Integer visitNumber,
         @Schema(nullable = true) Instant estimatedArrivalAt, @Schema(nullable = true) String originCode,

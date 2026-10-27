@@ -1,9 +1,27 @@
 export type Identity = { subject: string; role: 'CONTROLLER' | 'CAPTAIN' | 'ADMIN' | 'UNASSIGNED' }
 
+export type InstructionType = 'BE_CAUTIOUS' | 'REDUCE_SPEED' | 'SLOW_DOWN_NEAR_STOPS' | 'HOLD' | 'DWELL_ADJUSTMENT'
+export type InstructionParameters = { stopCode: string | null; stopName: string | null; stopSequence: number | null;
+  subsequentStopCount: number | null; speedReductionKmh: number | null; durationSeconds: number | null }
+export type AdvisoryCandidate = { type: InstructionType; parameters: InstructionParameters; rationale: string }
+export type Advisory = { id: string; disruptionId: string; demoRunId: string; busId: string; status: string;
+  candidate: AdvisoryCandidate; finalCandidate: AdvisoryCandidate | null; preview: string; hazardClassification: string; limitations: string[]; createdAt: string }
+export type CaptainInstruction = { id: string; demoRunId: string; busId: string; type: InstructionType;
+  parameters: InstructionParameters; message: string; busClassification: string; hazardClassification: string;
+  status: string; issuedAt: string; acknowledgementDeadline: string; acknowledgedAt: string | null;
+  applicableUntil: string | null; inactiveReason: string | null }
+export type Hazard = { disruptionId: string; kind: string; status: string; classification: string; demoRunId: string | null;
+  updatedAt: string; facts: { title: string; description: string; instruction: string | null; effectiveUntil: string | null };
+  exposures: { busId: string; serviceId: string; stopCode: string; stopName: string; stopSequence: number; basis: string }[]; limitations: string[] }
+export type PublicNotice = { id: string; classification: string; title: string; message: string; services: string[];
+  locations: string[]; effectiveFrom: string; effectiveUntil: string; publishedAt: string | null }
+export type ManagedNotice = PublicNotice & { disruptionId: string; demoRunId: string | null; status: string; withdrawnAt: string | null }
+export type NoticeSuggestion = { title: string; message: string; services: string[]; locations: string[]; generator: string }
+
 export class ApiError extends Error {
-  constructor(public status: number) {
+  constructor(public status: number, detail?: string) {
     super(status === 401 ? 'Your session has expired. Sign in again.' :
-      status === 403 ? 'Access is not available for this role.' : 'Unable to verify access. Try again.')
+      status === 403 ? 'Access is not available for this role.' : detail ?? 'Unable to load or save this data. Try again.')
   }
 }
 
@@ -26,10 +44,13 @@ export function homeFor(role: Identity['role']): string | null {
   return role === 'CONTROLLER' ? '/controller' : role === 'CAPTAIN' ? '/captain' : null
 }
 
-export type PageResult<T> = { items: T[]; page: number; totalItems: number; totalPages: number }
+export type HazardFeedHealth = { kind: string; source: string; scope: string; classification: string; demoRunId: string | null;
+  status: 'UNKNOWN' | 'HEALTHY' | 'STALE' | 'DEGRADED' | 'FAILED'; lastAttemptAt: string | null; lastSuccessAt: string | null }
+export type PageResult<T> = { items: T[]; page: number; totalItems: number; totalPages: number; serverTime?: string; feeds?: HazardFeedHealth[] }
 export type Arrival = {
   observationId: string; serviceId: string; stopCode: string; operator: string
   directionId?: number | null; visitOrder?: number | null; visitNumber?: number | null
+  stopName?: string | null; originCode?: string | null; destinationCode?: string | null
   estimatedArrivalAt: string | null; fetchedAt: string; loadCategory: string | null
   latitude?: number | null; longitude?: number | null; vehicleType?: string | null
 }
@@ -69,8 +90,14 @@ export type Recommendation = {
   rationale: string; likelyCause: string; tradeOffs: string[]; limitations: string[]
 }
 export type RecommendationExplanation = {
-  rationale: string; likelyCause: string; diagnosisConfidence: number
-  tradeOffs: string[]; limitations: string[]
+  rationale: string; likelyCause: string; diagnosisConfidence: number | null
+  tradeOffs: string[]; limitations: string[]; evidenceDetails?: DiagnosisEvidenceDetail[]
+}
+export type DiagnosisEvidenceDetail = {
+  evidenceId: string; incidentType: string; message: string
+  reportTime: string | null; fetchedAt: string | null; firstConfirmedAt: string | null
+  secondsBeforeFirstConfirmed: number | null; distanceMetersFromSuppliedBusPosition: number | null
+  busPositionEvidenceId: string | null; monitoredStopCode: string | null
 }
 export type RecommendationImpact = {
   headwayBeforeSeconds: number; headwayAfterSeconds: number
@@ -101,16 +128,20 @@ export function routeDirections(routes: BusRoute[]): RouteDirection[] {
 
 // All dashboard requests stay on the same origin. Null represents a documented
 // empty response, never a failed request or an assumed count of zero.
-export async function apiRequest<T>(path: string, token: string, signal: AbortSignal,
+export async function apiRequest<T>(path: string, token: string | undefined, signal: AbortSignal,
   options?: { method: 'POST'; body?: unknown }): Promise<T | null> {
   if (!path.startsWith('/api/v1/')) throw new Error('Invalid API request.')
+  if (!token && !path.startsWith('/api/v1/planning/public/notices')) throw new Error('Authentication required.')
   const response = await fetch(path, {
     method: options?.method ?? 'GET',
-    headers: { Authorization: `Bearer ${token}`, ...(options?.body ? { 'Content-Type': 'application/json' } : {}) },
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(options?.body ? { 'Content-Type': 'application/json' } : {}) },
     body: options?.body ? JSON.stringify(options.body) : undefined,
     cache: 'no-store', redirect: 'error', signal,
   })
-  if (!response.ok) throw new ApiError(response.status)
+  if (!response.ok) {
+    const problem = await response.json().catch(() => null) as { detail?: string } | null
+    throw new ApiError(response.status, typeof problem?.detail === 'string' ? problem.detail : undefined)
+  }
   return response.status === 204 ? null : await response.json() as T
 }
 
@@ -130,4 +161,20 @@ export async function enrichBunchingStops(alerts: BunchingAlert[], token: string
     const stop = await stops.get(alert.stopCode)
     return { ...alert, stopName: stop?.description, stopRoadName: stop?.roadName }
   }))
+}
+
+export type PlanningDiagnosis = {
+  requestId: string; eventId: string; diagnosisId: string | null; classification: string; demoRunId: string | null
+  serviceId: string | null; directionId: number | null; stopCode: string | null; status: string; likelyCause: string | null
+  confidence: number | null; limitations: string[]; evidenceDetails?: DiagnosisEvidenceDetail[]
+  failureCode: string | null; policyOutcome: string | null; createdAt: string
+}
+export type PlanningDiagnosisPage = PageResult<PlanningDiagnosis> & { mode: 'LIVE' | 'DEMO'; demoRunId: string | null }
+export type PlanningHazardRequest = {
+  requestId: string; eventId: string; disruptionId: string; eventType: 'HAZARD' | 'TRAFFIC_INCIDENT'
+  status: 'PENDING' | 'PROCESSING' | 'FAILED_RETRYABLE' | 'FAILED_TERMINAL'; failureCode: string | null; createdAt: string
+}
+export type PlanningHazardRequestPage = PageResult<PlanningHazardRequest> & { mode: 'LIVE' | 'DEMO'; demoRunId: string | null }
+export type PlanningHazardHistory = Omit<PlanningHazardRequest, 'status'> & {
+  status: 'COMPLETED' | 'FAILED_TERMINAL'; title: string; completedAt: string
 }

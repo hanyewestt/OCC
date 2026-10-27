@@ -6,7 +6,7 @@ recommended action with the repository's shared simulation in
 
 - monitored stop `44251`
 - follower `SBS5898U`
-- approved control stop `44241`
+- approved control stop `44251`
 - first hold of 120 seconds
 
 The fixture's `221`-second headway before the action is the shared scenario's

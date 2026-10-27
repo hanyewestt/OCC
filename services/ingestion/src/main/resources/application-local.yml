@@ -9,3 +9,4 @@ occ:
   ingestion:
     demo:
       disruption-internal-url: ${OCC_DISRUPTION_PUBLIC_URL:http://localhost:6768}
+      planning-internal-url: ${OCC_PLANNING_PUBLIC_URL:http://localhost:6769}

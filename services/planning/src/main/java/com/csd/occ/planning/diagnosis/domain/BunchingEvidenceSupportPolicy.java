@@ -1,99 +1,132 @@
 package com.csd.occ.planning.diagnosis.domain;
 
+import java.math.BigDecimal;
 import java.time.Duration;
-import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 
+/** Validates cited evidence and reports associations without assigning confidence or causation. */
 public final class BunchingEvidenceSupportPolicy {
-    public static final String VERSION = "bunching-evidence-support-v1";
+    public static final String VERSION = "bunching-evidence-association-v2";
 
-    public ScoredEvidence score(BunchingEventFacts event, RootCauseContext context, ModelOutput output,
-                                Duration lookback, double radiusKm) {
-        boolean validScope = "SIMULATION".equals(event.classification())
-                && "SIMULATION".equals(context.classification())
-                && event.demoRunId() != null && event.demoRunId().equals(context.demoRunId());
-        if (!validScope) throw new IllegalArgumentException("Simulation evidence provenance does not match event");
+    public AssociatedEvidence associate(BunchingEventFacts event, RootCauseContext context, ModelOutput output,
+                                        Duration lookback, double radiusKm) {
+        if (!PlanningScope.valid(event.classification(), event.demoRunId())
+                || !event.classification().equals(context.classification())
+                || !Objects.equals(event.demoRunId(), context.demoRunId()))
+            throw new IllegalArgumentException("Evidence provenance does not match event");
+        if (lookback == null || lookback.isZero() || lookback.isNegative()
+                || !Double.isFinite(radiusKm) || radiusKm <= 0)
+            throw new IllegalArgumentException("Positive evidence lookback and radius are required");
         if (!List.of("TRAFFIC_INCIDENT", "UNKNOWN").contains(output.causeCode()))
             throw new IllegalArgumentException("Unsupported cause code");
 
-        List<String> availableIds = java.util.stream.Stream.of(
-                event.evidenceIds().stream(),
+        List<String> availableIds = java.util.stream.Stream.of(event.evidenceIds().stream(),
                 context.arrivals().stream().map(ArrivalEvidence::evidenceId),
                 context.incidents().stream().map(IncidentEvidence::evidenceId))
                 .flatMap(stream -> stream).distinct().toList();
         if (output.supportingEvidenceIds().stream().anyMatch(id -> !availableIds.contains(id)))
             throw new IllegalArgumentException("Model cited evidence outside the supplied snapshot");
-
-        if ("UNKNOWN".equals(output.causeCode())) {
-            return new ScoredEvidence(0, new ConfidenceComponents(validScope ? 1 : 0, 0, 0, 0, 0),
-                    event.evidenceIds(), "UNKNOWN", null);
-        }
+        if ("UNKNOWN".equals(output.causeCode()))
+            return new AssociatedEvidence("UNKNOWN", null, event.evidenceIds(), List.of(),
+                    List.of("Available evidence does not identify a supported contributing incident."));
         if (output.supportingEvidenceIds().isEmpty())
             throw new IllegalArgumentException("Traffic incident diagnosis requires supporting evidence");
-        List<IncidentEvidence> citedIncidents = context.incidents().stream()
-                .filter(incident -> output.supportingEvidenceIds().contains(incident.evidenceId())).toList();
-        if (citedIncidents.isEmpty()) throw new IllegalArgumentException("Traffic incident diagnosis must cite an incident");
-        if (output.causeSubtype() != null && citedIncidents.stream()
+
+        List<IncidentEvidence> cited = context.incidents().stream()
+                .filter(incident -> output.supportingEvidenceIds().contains(incident.evidenceId()))
+                .sorted(Comparator.comparing(IncidentEvidence::evidenceId)).toList();
+        if (cited.isEmpty()) throw new IllegalArgumentException("Traffic incident diagnosis must cite an incident");
+        if (output.causeSubtype() != null && cited.stream()
                 .noneMatch(incident -> output.causeSubtype().equals(incident.incidentType())))
             throw new IllegalArgumentException("Cause subtype must match cited incident evidence");
+        if (cited.stream().anyMatch(incident -> !event.classification().equals(incident.classification())
+                || !Objects.equals(event.demoRunId(), incident.demoRunId())))
+            throw new IllegalArgumentException("Cited incident provenance does not match event");
 
-        IncidentEvidence best = citedIncidents.stream().max(Comparator.comparingDouble(incident -> {
-            double temporal = temporalAlignment(incident, event.firstConfirmedAt(), lookback);
-            double spatial = spatialAlignment(incident, context.arrivals(), event.monitoredStopCode(), radiusKm);
-            return temporal * 0.30 + spatial * 0.25 + specificity(incident) * 0.20
-                    + chronology(incident, event.confirmingObservationTimes()) * 0.25;
-        })).orElseThrow();
-        double temporal = temporalAlignment(best, event.firstConfirmedAt(), lookback);
-        double spatial = spatialAlignment(best, context.arrivals(), event.monitoredStopCode(), radiusKm);
-        double specificity = specificity(best);
-        double chronology = chronology(best, event.confirmingObservationTimes());
-        ConfidenceComponents components = new ConfidenceComponents(1, temporal, spatial, specificity, chronology);
-        double score = components.score();
-        List<String> ids = output.supportingEvidenceIds().stream().distinct().toList();
-        return new ScoredEvidence(score, components, ids, "TRAFFIC_INCIDENT", best.incidentType());
+        // Coordinates are bus-position observations, not verified road paths or stop geometry.
+        var position = busPositionFor(event, context);
+        List<String> facts = new ArrayList<>();
+        List<String> limitations = new ArrayList<>();
+        List<IncidentEvidence> associated = new ArrayList<>();
+        for (IncidentEvidence incident : cited) {
+            String label = incident.evidenceId();
+            facts.add(label + ": provider-reported incident type " + incident.incidentType() + ".");
+            boolean supportedTime = false;
+            if (incident.observedAt() == null || event.firstConfirmedAt() == null) {
+                limitations.add(label + ": provider report time is unknown; fetch time does not establish incident chronology.");
+            } else {
+                Duration before = Duration.between(incident.observedAt(), event.firstConfirmedAt());
+                supportedTime = !before.isNegative() && before.compareTo(lookback) <= 0;
+                facts.add(label + ": provider report time " + incident.observedAt() + ".");
+                if (supportedTime)
+                    facts.add(label + ": reported " + before.toSeconds() + " seconds before the first confirmed irregularity.");
+                else limitations.add(label + ": report time is outside the preceding evidence window.");
+            }
+            boolean supportedLocation = false;
+            if (!hasValidCoordinates(incident.latitude(), incident.longitude()) || position.isEmpty()) {
+                limitations.add(label + ": distance cannot be computed from the available coordinates.");
+            } else {
+                var arrival = position.orElseThrow();
+                double distance = distanceKm(incident.latitude().doubleValue(), incident.longitude().doubleValue(),
+                        arrival.latitude().doubleValue(), arrival.longitude().doubleValue());
+                supportedLocation = distance <= radiusKm;
+                facts.add(String.format(Locale.ROOT, "%s: approximately %.0f m from supplied bus position %s associated with monitored stop %s.",
+                        label, distance * 1000, arrival.evidenceId(), event.monitoredStopCode()));
+                if (!supportedLocation) limitations.add(label + ": supplied position is outside the evidence radius.");
+            }
+            boolean knownTimeExcludes = incident.observedAt() != null && event.firstConfirmedAt() != null && !supportedTime;
+            if (!knownTimeExcludes && (supportedTime || supportedLocation)
+                    && (output.causeSubtype() == null || output.causeSubtype().equals(incident.incidentType())))
+                associated.add(incident);
+        }
+        limitations.add("Road and direction relevance have not been verified; proximity or timing does not establish impact or causation.");
+        if (associated.isEmpty()) {
+            limitations.add("No cited incident has a supported temporal or spatial association within the evidence bounds.");
+            return new AssociatedEvidence("UNKNOWN", null, event.evidenceIds(), facts, limitations);
+        }
+        List<String> types = associated.stream().map(IncidentEvidence::incidentType).filter(Objects::nonNull).distinct().toList();
+        String subtype = output.causeSubtype() != null ? output.causeSubtype() : types.size() == 1 ? types.getFirst() : null;
+        List<String> ids = java.util.stream.Stream.concat(event.evidenceIds().stream(),
+                associated.stream().map(IncidentEvidence::evidenceId)).distinct().toList();
+        return new AssociatedEvidence("TRAFFIC_INCIDENT", subtype, ids, facts, limitations);
     }
 
-    private double temporalAlignment(IncidentEvidence incident, Instant confirmedAt, Duration lookback) {
-        Instant observed = incident.observedAt() == null ? incident.fetchedAt() : incident.observedAt();
-        if (observed == null || observed.isAfter(confirmedAt)) return 0;
-        double age = Duration.between(observed, confirmedAt).toMillis();
-        return Math.max(0, 1 - age / (double) lookback.toMillis());
+    static java.util.Optional<ArrivalEvidence> busPositionFor(BunchingEventFacts event, RootCauseContext context) {
+        return context.arrivals().stream()
+                .filter(arrival -> Objects.equals(event.classification(), arrival.classification())
+                        && Objects.equals(event.demoRunId(), arrival.demoRunId())
+                        && Objects.equals(event.serviceId(), arrival.serviceId())
+                        && Objects.equals(event.directionId(), arrival.directionId())
+                        && Objects.equals(event.monitoredStopCode(), arrival.stopCode())
+                        && hasValidCoordinates(arrival.latitude(), arrival.longitude()))
+                .sorted(Comparator.comparing(ArrivalEvidence::evidenceId,
+                        Comparator.nullsLast(Comparator.naturalOrder()))).findFirst();
     }
 
-    private double spatialAlignment(IncidentEvidence incident, List<ArrivalEvidence> arrivals,
-                                    String stopCode, double radiusKm) {
-        if (incident.latitude() == null || incident.longitude() == null) return 0;
-        double distance = arrivals.stream().filter(arrival -> stopCode.equals(arrival.stopCode())
-                        && arrival.latitude() != null && arrival.longitude() != null)
-                .mapToDouble(arrival -> distanceKm(incident.latitude().doubleValue(), incident.longitude().doubleValue(),
-                        arrival.latitude().doubleValue(), arrival.longitude().doubleValue()))
-                .min().orElse(Double.POSITIVE_INFINITY);
-        return Math.max(0, 1 - distance / radiusKm);
+    static boolean hasValidCoordinates(BigDecimal latitude, BigDecimal longitude) {
+        return latitude != null && longitude != null
+                && latitude.compareTo(BigDecimal.valueOf(-90)) >= 0 && latitude.compareTo(BigDecimal.valueOf(90)) <= 0
+                && longitude.compareTo(BigDecimal.valueOf(-180)) >= 0 && longitude.compareTo(BigDecimal.valueOf(180)) <= 0;
     }
 
-    private double specificity(IncidentEvidence incident) {
-        return incident.incidentType() == null || incident.incidentType().isBlank() ? 0
-                : "Traffic Incident".equalsIgnoreCase(incident.incidentType()) ? 0.5 : 1;
-    }
-
-    private double chronology(IncidentEvidence incident, List<Instant> headwayTimes) {
-        Instant observed = incident.observedAt() == null ? incident.fetchedAt() : incident.observedAt();
-        long before = headwayTimes.stream().filter(time -> observed != null && !observed.isAfter(time)).count();
-        return before == headwayTimes.size() ? 1 : before > 0 ? 0.5 : 0;
-    }
-
-    private double distanceKm(double lat1, double lon1, double lat2, double lon2) {
+    static double distanceKm(double lat1, double lon1, double lat2, double lon2) {
         double latDistance = Math.toRadians(lat2 - lat1);
         double lonDistance = Math.toRadians(lon2 - lon1);
         double a = Math.sin(latDistance / 2) * Math.sin(latDistance / 2)
                 + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
                 * Math.sin(lonDistance / 2) * Math.sin(lonDistance / 2);
+        a = Math.max(0, Math.min(1, a));
         return 6_371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
-    public record ScoredEvidence(double score, ConfidenceComponents components, List<String> evidenceIds,
-                                 String causeCode, String causeSubtype) {
-        public ScoredEvidence { evidenceIds = List.copyOf(evidenceIds); }
+    public record AssociatedEvidence(String causeCode, String causeSubtype, List<String> evidenceIds,
+                                     List<String> facts, List<String> limitations) {
+        public AssociatedEvidence {
+            evidenceIds = List.copyOf(evidenceIds); facts = List.copyOf(facts); limitations = List.copyOf(limitations);
+        }
     }
 }

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestRepository;
+import com.csd.occ.planning.diagnosis.domain.DiagnosisRequest;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestService;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestPersistenceService;
 import com.csd.occ.planning.diagnosis.domain.EventType;
@@ -79,6 +80,109 @@ class DiagnosisRequestPersistenceIT {
                 + "planning.diagnosis_result, planning.planning_request");
     }
 
+    @Test
+    void scopedRequestsKeepLiveAndEachSimulationRunSeparate() {
+        UUID run = UUID.randomUUID();
+        for (String scope : List.of("", run.toString(), UUID.randomUUID().toString())) {
+            var request = new com.csd.occ.planning.diagnosis.domain.DiagnosisRequest(UUID.randomUUID(),
+                    EventType.BUS_BUNCHING, PRODUCER, UUID.randomUUID(), DiagnosisRequestService.SCHEMA_VERSION, NOW);
+            String classification = scope.isEmpty() ? "OBSERVATION_ONLY" : "SIMULATION";
+            request.retainInput("{\"event\":{\"classification\":\"" + classification + "\",\"demoRunId\":"
+                    + (scope.isEmpty() ? "null" : "\"" + scope + "\"") + "}}");
+            repository.saveAndFlush(request);
+        }
+        var page = org.springframework.data.domain.PageRequest.of(0, 10);
+        assertThat(repository.findScoped("OBSERVATION_ONLY", "", page).getTotalElements()).isEqualTo(1);
+        assertThat(repository.findScoped("SIMULATION", run.toString(), page).getTotalElements()).isEqualTo(1);
+        assertThat(repository.findScoped("SIMULATION", UUID.randomUUID().toString(), page).getTotalElements()).isZero();
+    }
+
+    @Test
+    void scopedHazardQueueShowsOnlyTheLatestUnfinishedRequestPerDisruption() {
+        UUID run = UUID.randomUUID();
+        UUID failingDisruption = UUID.randomUUID();
+        var oldFailure = hazardRequest(UUID.randomUUID(), failingDisruption, run, NOW.minusSeconds(2));
+        oldFailure.failTerminal("OLD_PROVIDER_FAILURE", NOW.minusSeconds(2));
+        repository.saveAndFlush(oldFailure);
+
+        var currentFailure = hazardRequest(UUID.randomUUID(), failingDisruption, run, NOW);
+        currentFailure.failRetryable("MODEL_PROVIDER_FAILURE", NOW.plusSeconds(60), NOW);
+        repository.saveAndFlush(currentFailure);
+
+        UUID completedDisruption = UUID.randomUUID();
+        var staleFailure = hazardRequest(UUID.randomUUID(), completedDisruption, run, NOW.minusSeconds(2));
+        staleFailure.failTerminal("OLD_PROVIDER_FAILURE", NOW.minusSeconds(2));
+        repository.saveAndFlush(staleFailure);
+        var completed = hazardRequest(UUID.randomUUID(), completedDisruption, run, NOW);
+        completed.complete(NOW);
+        repository.saveAndFlush(completed);
+
+        var otherRunFailure = hazardRequest(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), NOW);
+        otherRunFailure.failTerminal("OTHER_RUN_FAILURE", NOW);
+        repository.saveAndFlush(otherRunFailure);
+
+        var found = repository.findOpenHazardRequests("SIMULATION", run.toString(),
+                org.springframework.data.domain.PageRequest.of(0, 10));
+
+        assertThat(found.getContent()).extracting(DiagnosisRequest::id).containsExactly(currentFailure.id());
+        assertThat(found.getTotalElements()).isEqualTo(1);
+    }
+
+    private DiagnosisRequest hazardRequest(UUID eventId, UUID disruptionId, UUID runId, Instant at) {
+        var request = new DiagnosisRequest(UUID.randomUUID(), EventType.HAZARD, PRODUCER, eventId,
+                DiagnosisRequestService.SCHEMA_VERSION, at);
+        request.retainInput("{\"eventType\":\"HAZARD\",\"disruptionId\":\"" + disruptionId
+                + "\",\"classification\":\"SIMULATION\",\"demoRunId\":\"" + runId + "\"}");
+        return request;
+    }
+
+    @Test
+    void terminalHazardHistoryExcludesActiveWorkAndPagesLatestTerminalResultsWithinScope() {
+        UUID run = UUID.randomUUID();
+        UUID disruption = UUID.randomUUID();
+        var oldFailure = hazardRequest(UUID.randomUUID(), disruption, run, NOW.minusSeconds(60));
+        oldFailure.failTerminal("OLD_FAILURE", NOW.minusSeconds(50));
+        repository.saveAndFlush(oldFailure);
+        var completed = hazardRequest(UUID.randomUUID(), disruption, run, NOW.minusSeconds(40));
+        completed.complete(NOW.minusSeconds(10));
+        repository.saveAndFlush(completed);
+        var pending = hazardRequest(UUID.randomUUID(), disruption, run, NOW);
+        repository.saveAndFlush(pending);
+        var retrying = hazardRequest(UUID.randomUUID(), UUID.randomUUID(), run, NOW);
+        retrying.failRetryable("RETRY", NOW.plusSeconds(60), NOW);
+        repository.saveAndFlush(retrying);
+        var processing = hazardRequest(UUID.randomUUID(), UUID.randomUUID(), run, NOW);
+        processing.claim(NOW.plusSeconds(60), NOW);
+        repository.saveAndFlush(processing);
+        var failedTraffic = new DiagnosisRequest(UUID.randomUUID(), EventType.TRAFFIC_INCIDENT, PRODUCER,
+                UUID.randomUUID(), DiagnosisRequestService.SCHEMA_VERSION, NOW.minusSeconds(30));
+        failedTraffic.retainInput("{\"disruptionId\":\"" + UUID.randomUUID()
+                + "\",\"classification\":\"SIMULATION\",\"demoRunId\":\"" + run + "\"}");
+        failedTraffic.failTerminal("TRAFFIC_FAILURE", NOW);
+        repository.saveAndFlush(failedTraffic);
+        var otherRun = hazardRequest(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), NOW);
+        otherRun.complete(NOW);
+        repository.saveAndFlush(otherRun);
+        var live = new DiagnosisRequest(UUID.randomUUID(), EventType.HAZARD, PRODUCER,
+                UUID.randomUUID(), DiagnosisRequestService.SCHEMA_VERSION, NOW);
+        live.retainInput("{\"disruptionId\":\"" + UUID.randomUUID()
+                + "\",\"classification\":\"OBSERVATION_ONLY\",\"demoRunId\":null}");
+        live.complete(NOW);
+        repository.saveAndFlush(live);
+
+        var first = repository.findTerminalHazardRequests("SIMULATION", run.toString(),
+                org.springframework.data.domain.PageRequest.of(0, 1));
+        var second = repository.findTerminalHazardRequests("SIMULATION", run.toString(),
+                org.springframework.data.domain.PageRequest.of(1, 1));
+        assertThat(first.getContent()).extracting(DiagnosisRequest::id).containsExactly(failedTraffic.id());
+        assertThat(first.getTotalElements()).isEqualTo(2);
+        assertThat(first.getTotalPages()).isEqualTo(2);
+        assertThat(second.getContent()).extracting(DiagnosisRequest::id).containsExactly(completed.id());
+        assertThat(repository.findTerminalHazardRequests("OBSERVATION_ONLY", "",
+                org.springframework.data.domain.PageRequest.of(0, 10)).getContent())
+                .extracting(DiagnosisRequest::id).containsExactly(live.id());
+    }
+
     @DynamicPropertySource
     static void database(DynamicPropertyRegistry registry) {
         registry.add("OCC_PLANNING_DB_INTERNAL_URL", POSTGRES::getJdbcUrl);
@@ -128,7 +232,7 @@ class DiagnosisRequestPersistenceIT {
     }
 
     @Test
-    void trafficIncidentIsPersistedWithAnExplicitNoActionOutcomeAndStableReplay() {
+    void trafficIncidentIsQueuedWithImmutableEvidenceAndStableReplay() {
         UUID eventId = UUID.randomUUID();
         UUID disruptionId = UUID.randomUUID();
         UUID observationId = UUID.randomUUID();
@@ -150,12 +254,45 @@ class DiagnosisRequestPersistenceIT {
 
         var stored = repository.findById(key).orElseThrow();
         assertThat(replay.id()).isEqualTo(accepted.id());
-        assertThat(stored.status().name()).isEqualTo("COMPLETED");
-        assertThat(stored.policyOutcome()).isEqualTo("TRAFFIC_INCIDENT_NO_OPERATIONAL_ACTION");
+        assertThat(stored.status().name()).isEqualTo("PENDING");
+        assertThat(stored.policyOutcome()).isNull();
         assertThat(stored.inputSnapshot()).isEqualTo(inputSnapshot);
         assertThat(diagnoses.count()).isZero();
         assertThat(deliveries.count()).isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM planning.recommendation_job", Integer.class)).isZero();
+    }
+
+    @Test
+    void reassessmentSnapshotRetainsItsTargetRunAndRequiresACompleteTarget() {
+        UUID eventId = UUID.randomUUID();
+        UUID disruptionId = UUID.randomUUID();
+        UUID targetRunId = UUID.randomUUID();
+        UUID observationId = UUID.randomUUID();
+        UUID key = UUID.randomUUID();
+        var facts = new com.csd.occ.planning.advisory.domain.HazardEventFacts(eventId, disruptionId, "REASSESSED",
+                null, "OBSERVATION_ONLY", null, targetRunId, observationId, 1L, null, "demo-190-b", NOW,
+                new com.csd.occ.planning.advisory.domain.HazardEventFacts.Fact("FLOOD", "flood-1", "OBSERVED",
+                        NOW, null, null, "Flood", "Water near stop", null, null, List.of(), null, null, null, null,
+                        List.of()), null);
+        var submission = new ProducerEventSubmission(DiagnosisRequestService.SCHEMA_VERSION, EventType.HAZARD,
+                PRODUCER, eventId, disruptionId, "OBSERVATION_ONLY", null, NOW, "hazard-observation-v1",
+                List.of(observationId.toString()), null, null, facts);
+        String inputSnapshot = snapshots.encodeProducerEvent(submission);
+        org.mockito.Mockito.when(inputs.capture(submission)).thenReturn(inputSnapshot);
+
+        var accepted = requests.enqueue(submission, key, fingerprints.fingerprint(submission));
+
+        assertThat(accepted.inputSnapshot()).contains("\"targetRunId\":\"" + targetRunId + "\"");
+        assertThat(accepted.status().name()).isEqualTo("PENDING");
+
+        var missingTarget = new com.csd.occ.planning.advisory.domain.HazardEventFacts(eventId, disruptionId,
+                "REASSESSED", null, "OBSERVATION_ONLY", null, observationId, 1L, null, "demo-190-b", NOW,
+                facts.facts(), null);
+        var invalidSubmission = new ProducerEventSubmission(DiagnosisRequestService.SCHEMA_VERSION, EventType.HAZARD,
+                PRODUCER, eventId, disruptionId, "OBSERVATION_ONLY", null, NOW, "hazard-observation-v1",
+                List.of(observationId.toString()), null, null, missingTarget);
+        assertThatThrownBy(() -> requests.enqueue(invalidSubmission, UUID.randomUUID(),
+                fingerprints.fingerprint(invalidSubmission))).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -235,6 +372,59 @@ class DiagnosisRequestPersistenceIT {
                 Integer.class, requestId)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM planning.recommendation_job", Integer.class))
                 .isEqualTo(1);
+    }
+
+    @Test
+    void liveAdvisoryCompletionPersistsDiagnosisAndInvocationWithoutDeliveryAndIgnoresReplay() {
+        UUID requestId = UUID.randomUUID();
+        requests.enqueue(EventType.BUS_BUNCHING, PRODUCER, UUID.randomUUID(), requestId);
+        assertThat(requests.claimDueRequests(1, Duration.ofMinutes(1))).containsExactly(requestId);
+        RootCauseDiagnosis diagnosis = new RootCauseDiagnosis(UUID.randomUUID(), requestId, "UNKNOWN", null,
+                "Available evidence is insufficient.", 0.0, 0.0, List.of("evidence-1"), List.of(),
+                new ConfidenceComponents(1, 0, 0, 0, 0),
+                "{\"event\":{\"classification\":\"OBSERVATION_ONLY\",\"demoRunId\":null}}",
+                "evidence-hash", "GOOGLE_GENAI", "synthetic-model", "prompt-v1", "schema-v1", NOW);
+
+        completion.completeAdvisory(requestId, diagnosis, List.of(invocation("synthetic-model")), "evidence-hash");
+        completion.completeAdvisory(requestId, diagnosis, List.of(invocation("synthetic-model")), "evidence-hash");
+
+        var stored = repository.findById(requestId).orElseThrow();
+        assertThat(stored.status().name()).isEqualTo("COMPLETED");
+        assertThat(stored.policyOutcome()).isEqualTo("LIVE_DIAGNOSIS_NO_VALIDATED_OPERATIONAL_CONTEXT");
+        assertThat(stored.failureCode()).isNull();
+        assertThat(diagnoses.findByRequestId(requestId)).hasValueSatisfying(persisted ->
+                assertThat(persisted.id()).isEqualTo(diagnosis.id()));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM planning.model_invocation_record WHERE request_id = ?",
+                Integer.class, requestId)).isEqualTo(1);
+        assertThat(deliveries.count()).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM planning.recommendation_job", Integer.class)).isZero();
+        assertThatThrownBy(() -> jdbc.update("UPDATE planning.planning_request SET policy_outcome = ? WHERE id = ?",
+                "UNSUPPORTED_OUTCOME", requestId)).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        assertThat(repository.findById(requestId).orElseThrow().policyOutcome())
+                .isEqualTo("LIVE_DIAGNOSIS_NO_VALIDATED_OPERATIONAL_CONTEXT");
+    }
+
+    @Test
+    void evidenceOnlyDiagnosisKeepsLegacyScoreColumnsReadableForRollback() {
+        UUID requestId = UUID.randomUUID();
+        requests.enqueue(EventType.BUS_BUNCHING, PRODUCER, UUID.randomUUID(), requestId);
+        requests.claimDueRequests(1, Duration.ofMinutes(1));
+        var diagnosis = new RootCauseDiagnosis(UUID.randomUUID(), requestId, "UNKNOWN", null,
+                "Available evidence is insufficient.", null, null, List.of("evidence-1"), List.of(), null,
+                "{}", "evidence-hash", "GOOGLE_GENAI", "synthetic-model", "prompt-v1", "schema-v1", NOW);
+
+        completion.completeAdvisory(requestId, diagnosis, List.of(), "evidence-hash");
+
+        assertThat(diagnoses.findByRequestId(requestId)).hasValueSatisfying(persisted -> {
+            assertThat(persisted.confidence()).isNull();
+            assertThat(persisted.evidenceSupportScore()).isNull();
+        });
+        assertThat(jdbc.queryForMap("SELECT confidence, evidence_support_score, confidence_components::text, "
+                + "confidence_scores_available FROM planning.diagnosis_result WHERE request_id = ?", requestId))
+                .containsEntry("confidence", new java.math.BigDecimal("0.000"))
+                .containsEntry("evidence_support_score", new java.math.BigDecimal("0.000"))
+                .containsEntry("confidence_components", "{}")
+                .containsEntry("confidence_scores_available", false);
     }
 
     @Test
