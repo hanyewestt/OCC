@@ -3,9 +3,11 @@ import { Card, CardContent } from '@/components/ui/card'
 import type { Arrival, BunchingAlert, DemoRun, PageResult, RouteDirection, RoutePositionDirection, RoutePositions } from '@/lib/api'
 import { formatSgtTime } from '@/lib/time'
 import {
-  arrivalDirectionMatches, estimateRouteHeadways, etaFallbacksForRoute, formatGap, gapSeverity, groupRouteIncidents,
-  linkIncidentToPosition, oldestStopDataAgeSeconds, projectCoordinateToRoute, routeKey, routeStopDistances, ROUTE_STRIP_GAP_SEVERITY,
-  routeDestination, type IncidentStripLink, type RouteDestination, type RouteIncident,
+  alignArrivalsToPositionEvidence, arrivalDirectionMatches, estimateRouteHeadways, etaFallbacksForRoute, formatGap, gapSeverity,
+  groupRouteIncidents, linkIncidentToPosition, oldestStopDataAgeSeconds, placeArrivalAtPositionEvidence,
+  positionSourceFreshness, positionSourceIsStale, routeKey, routePositionEvidenceDescription,
+  routePositionSnapshotIsDisplayed, routeStopDistances, routeDestination, ROUTE_STRIP_GAP_SEVERITY,
+  type IncidentStripLink, type RouteDestination, type RouteIncident,
 } from '@/lib/route-strip'
 import { DataMessage } from './ControllerViews'
 import type { Resource } from './ControllerPage'
@@ -24,7 +26,10 @@ type Props = {
   fetchStopName: (stopCode: string) => Promise<string | null>
 }
 
-type PositionSnapshot = { position: RoutePositionDirection; computedAt: string }
+type PositionSnapshot = {
+  position: RoutePositionDirection; computedAt: string; sourceObservedAt?: string | null
+  maxSourceAgeSeconds: number
+}
 type PositionedIncident = RouteIncident & { stripLink: IncidentStripLink | null }
 
 const stopSpacing = 140
@@ -64,7 +69,7 @@ function formatDistance(meters: number | null) {
   return meters >= 1_000 ? `${(meters / 1_000).toFixed(1)} km apart` : `${meters} m apart`
 }
 
-function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, showPositions, nowMs, pollIntervalSeconds, lastUpdated, fetchStopArrivals }: {
+function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, showPositions, nowMs, lastUpdated, fetchStopArrivals }: {
   route: RouteDirection
   destination: string
   snapshot?: PositionSnapshot
@@ -73,7 +78,6 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
   incidents: PositionedIncident[]
   showPositions: boolean
   nowMs: number
-  pollIntervalSeconds: number
   lastUpdated: string
   fetchStopArrivals: Props['fetchStopArrivals']
 }) {
@@ -94,7 +98,6 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
         arrivalDirectionMatches(arrival, route, routes) && arrival.estimatedArrivalAt &&
         Date.parse(arrival.estimatedArrivalAt) > currentTime)
         .sort((first, second) => Date.parse(first.estimatedArrivalAt!) - Date.parse(second.estimatedArrivalAt!))
-        .slice(0, 3)
       setSelectedArrivals(next)
     }).catch(() => {
       if (!controller.signal.aborted) setSelectedStopError('Unable to load arrivals for this stop. Try refreshing.')
@@ -149,22 +152,22 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
   })
   const stopLabels = route.stops.map(stop => stopNameLines(stop.description))
   const selectedStop = route.stops.find(stop => stop.stopCode === selectedStopCode)
-  const selectedPoints = selectedArrivals.map((arrival, index) => ({
-    arrival,
-    label: `Next ${index + 1}`,
-    projection: arrival.latitude != null && arrival.longitude != null
-      ? projectCoordinateToRoute(route, arrival.latitude, arrival.longitude, routeLengthM) : null,
-  }))
-  const selectedFeedFetchedAt = selectedArrivals.map(arrival => Date.parse(arrival.fetchedAt))
+  const selectedEvidence = alignArrivalsToPositionEvidence(selectedArrivals, buses)
+  const selectedPoints = selectedEvidence.arrivals.slice(0, 3).flatMap((arrival, index) => {
+    const placement = placeArrivalAtPositionEvidence(arrival, buses, route, routeLengthM)
+    return placement ? [{ arrival, label: `Next ${index + 1}`, ...placement }] : []
+  })
+  const selectedFeedFetchedAt = (selectedEvidence.status === 'aligned' ? selectedEvidence.arrivals : selectedArrivals)
+    .map(arrival => Date.parse(arrival.fetchedAt))
     .filter(Number.isFinite).sort((first, second) => second - first)[0]
   const pointLabelWidths = selectedPoints.map(point => {
     const etaSeconds = Math.max(0, Math.round((Date.parse(point.arrival.estimatedArrivalAt ?? '') - nowMs) / 1000))
-    return Math.max(52, `${point.label} · ${formatGap(etaSeconds)}`.length * 5.3 + 12)
+    const busLabel = point.busOrder === undefined ? '' : `#${point.busOrder} · `
+    return Math.max(52, `${busLabel}${point.label} · ${formatGap(etaSeconds)}`.length * 5.3 + 12)
   })
   const pointLaneIntervals: Array<Array<{ start: number; end: number }>> = []
   const pointLanes = selectedPoints.map((point, pointIndex) => {
-    if (!point.projection) return 0
-    const x = xForDistance(point.projection.distanceAlongRouteM)
+    const x = xForDistance(point.displayDistanceAlongRouteM)
     const halfWidth = pointLabelWidths[pointIndex] / 2
     const start = x - halfWidth
     const end = x + halfWidth
@@ -192,8 +195,8 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
   const labelLaneHeight = maxLabelLines * labelLineHeight + 8
   const labelsStartY = routeY + 48
   const labelsEndY = labelsStartY + (labelLaneCount - 1) * labelLaneHeight + (maxLabelLines - 1) * labelLineHeight + 8
-  const etaFallbacks = position ? etaFallbacksForRoute(route, routes, arrivals, buses, routeLengthM, nowMs,
-    pollIntervalSeconds * 2) : []
+  const etaFallbacks = position && snapshot
+    ? etaFallbacksForRoute(route, routes, arrivals, buses, routeLengthM, nowMs, snapshot.maxSourceAgeSeconds) : []
   const headways = estimateRouteHeadways(buses, etaFallbacks)
   const linksByPair = new Map<string, PositionedIncident[]>()
   incidents.forEach(incident => {
@@ -229,12 +232,20 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
     <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-4 pt-4">
       <div>
         <h3 className="text-sm font-medium">Service {route.serviceId} · {destination}</h3>
-        {position && position.suppressedBusCount ? <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">
-          {buses.length} feed-supported buses · {position.suppressedBusCount} extra estimate hidden
+        {position && buses.length > 0 ? <p className="mt-1 text-xs text-muted-foreground">
+          {buses.length === 1
+            ? '1 distinct feed-supported bus estimate displayed · physical vehicle identity remains unresolved'
+            : `${buses.length} distinct feed-supported bus estimates displayed · physical vehicle identities remain unresolved`}
+        </p> : null}
+        {position?.suppressedBusCount ? <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+          The source also reports {position.suppressedBusCount} excluded low-support estimate{position.suppressedBusCount === 1 ? '' : 's'}.
         </p> : null}
       </div>
       <div className="flex flex-col items-start text-xs text-muted-foreground sm:items-end">
         <span>{route.operator} · {route.stops.length} stops</span>
+        <span>{snapshot?.sourceObservedAt
+          ? `Source observations ${formatSgtTime(snapshot.sourceObservedAt)}`
+          : snapshot ? `Computed ${formatSgtTime(snapshot.computedAt)} · source time unavailable` : 'Position source unavailable'}</span>
       </div>
     </div>
     <div className="max-w-full overflow-x-auto px-2 pb-3 pt-1">
@@ -246,7 +257,7 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
           const x = xForStop(index)
           const selected = selectedStopCode === stop.stopCode
           return <g key={`${stop.stopCode}:${stop.stopSequence}`} role="button" tabIndex={0}
-            aria-label={`${stop.description || `Stop ${stop.stopCode}`}, stop ${stop.stopCode}. Select to show the next three arrival locations.`}
+            aria-label={`${stop.description || `Stop ${stop.stopCode}`}, stop ${stop.stopCode}. Select to compare same-sweep arrival evidence.`}
             aria-pressed={selected} className="cursor-pointer outline-none focus-visible:stroke-sky-700"
             onClick={() => toggleStopSelection(stop.stopCode)}
             onKeyDown={event => {
@@ -255,7 +266,7 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
                 toggleStopSelection(stop.stopCode)
               }
             }}>
-            <title>{stop.description || `Stop ${stop.stopCode}`}. Select to show the next three arrival locations.</title>
+            <title>{stop.description || `Stop ${stop.stopCode}`}. Select to compare same-sweep arrival evidence.</title>
             <circle cx={x} cy={routeY} r={selected ? 7 : 5} fill={selected ? 'var(--primary)' : 'var(--background)'} stroke={selected ? 'var(--primary)' : 'var(--muted-foreground)'} strokeWidth="2" />
             <text x={x} y={routeY + 30} textAnchor="middle" fontSize="10" fontWeight="600" fill="currentColor" className="text-foreground">{stop.stopCode}</text>
             <text x={x} y={labelsStartY + labelLanes[index] * labelLaneHeight} textAnchor="middle" fontSize="9" fill="currentColor" className="text-muted-foreground">
@@ -298,7 +309,7 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
         {buses.map((bus, index) => {
           const x = xForDistance(bus.distanceAlongRouteM)
           const uncertaintyPx = uncertaintyPxFor(bus.uncertaintyM)
-          const description = `Estimated bus ${bus.order}, approximate position ${Math.round(bus.distanceAlongRouteM)} metres along the route, plus or minus ${Math.round(bus.uncertaintyM)} metres. This is an order estimate, not a verified vehicle identity.`
+          const description = `Estimated bus ${bus.order}, approximate position ${Math.round(bus.distanceAlongRouteM)} metres along the route, plus or minus ${Math.round(bus.uncertaintyM)} metres. ${routePositionEvidenceDescription(bus, buses.length)}`
           const markerY = routeY - busLanes[index] * 24
           const uncertaintyY = markerY + 6
           return <g key={bus.order} role="img" aria-label={description} className="text-sky-700 dark:text-sky-400">
@@ -311,13 +322,15 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
           </g>
         })}
         {selectedPoints.map((point, index) => {
-          if (!point.projection) return null
-          const x = xForDistance(point.projection.distanceAlongRouteM)
+          const x = xForDistance(point.displayDistanceAlongRouteM)
           const labelY = routeY - Math.max(0, busLaneIntervals.length - 1) * 24 - 56 - pointLanes[index] * 22
           const etaSeconds = Math.max(0, Math.round((Date.parse(point.arrival.estimatedArrivalAt ?? '') - nowMs) / 1000))
-          const label = `${point.label} · ${formatGap(etaSeconds)}`
+          const label = `${point.busOrder === undefined ? '' : `#${point.busOrder} · `}${point.label} · ${formatGap(etaSeconds)}`
           const labelWidth = Math.max(52, label.length * 5.3 + 12)
-          const description = `${label}, DataMall reported location projected onto the route, approximately ${Math.round(point.projection.offsetMeters)} metres from the straight route line.`
+          const rawLocation = point.rawProjection
+            ? `The raw coordinate is approximately ${Math.round(point.rawProjection.offsetMeters)} metres from route geometry; its nearest geometric occurrence is ${Math.round(point.rawProjection.distanceAlongRouteM)} metres along the route.`
+            : 'The raw reported coordinate is unavailable.'
+          const description = `${label}, same-sweep source evidence for estimated bus ${point.busOrder}, displayed at the backend-selected route occurrence ${Math.round(point.displayDistanceAlongRouteM)} metres along the route. ${rawLocation} Physical vehicle identity remains unresolved.`
           return <g key={point.arrival.observationId} role="img" aria-label={description} className="text-violet-700 dark:text-violet-400">
             <title>{description}</title>
             <line x1={x} y1={labelY + 18} x2={x} y2={routeY - 7} stroke="currentColor" strokeWidth="1.5" />
@@ -332,22 +345,29 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h4 className="text-sm font-medium">Next arrivals at {selectedStop?.description || `Stop ${selectedStopCode}`}</h4>
         <span className="text-xs text-muted-foreground">Stop {selectedStopCode} · Service {route.serviceId}, direction {route.directionId}
-          {selectedFeedFetchedAt != null ? ` · Fetched at ${formatSgtTime(new Date(selectedFeedFetchedAt).toISOString())}` : ''}</span>
+          {selectedFeedFetchedAt != null ? ` · ${selectedEvidence.status === 'aligned' ? 'Overlay source' : 'Latest stop feed'} ${formatSgtTime(new Date(selectedFeedFetchedAt).toISOString())}` : ''}</span>
       </div>
-      <p className="mt-1 text-xs text-muted-foreground">Purple dots use the location reported with each arrival prediction, projected onto this straight route line. They do not identify a physical bus.</p>
+      <p className="mt-1 text-xs text-muted-foreground">Purple dots show only in-band selected-stop observations used by the displayed blue position sweep, at the backend-selected route occurrence. Details retain the raw coordinate’s physical offset from route geometry. They do not identify a physical bus.</p>
       {selectedStopLoading ? <p className="mt-2 text-sm text-muted-foreground">Loading latest arrivals…</p> : selectedStopError ?
-        <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">{selectedStopError}</p> : selectedPoints.length ?
+        <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">{selectedStopError}</p> : selectedEvidence.status === 'evidence-unavailable' ?
+          <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">The displayed positions do not include source-observation evidence, so stop arrivals are kept separate and are not overlaid.</p> :
+          selectedEvidence.status === 'different-sweep' ?
+            <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">The latest stop feed is not from the displayed position sweep, so it is kept separate and is not overlaid.</p> :
+            selectedEvidence.status === 'linkage-only' ?
+              <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">This stop matches linkage evidence retained for audit, but not the in-band evidence used for the blue position interval, so it is not overlaid.</p> :
+              selectedEvidence.status === 'no-arrivals' ?
+                <p className="mt-2 text-sm text-muted-foreground">No upcoming arrival from the displayed position sweep is available for this stop and direction.</p> : selectedPoints.length ?
           <ol className="mt-2 grid gap-2 text-sm sm:grid-cols-3">
             {selectedPoints.map(point => {
               const etaSeconds = Math.max(0, Math.round((Date.parse(point.arrival.estimatedArrivalAt ?? '') - nowMs) / 1000))
               return <li key={point.arrival.observationId} className="rounded-md border bg-background p-2">
-                <strong>{point.label}: {formatGap(etaSeconds)}</strong>
-                <span className="mt-1 block text-xs text-muted-foreground">{point.projection
-                  ? `Reported location · ${Math.round(point.projection.offsetMeters)} m from route line`
-                  : 'Arrival time available · location unavailable'}</span>
+                <strong>{point.busOrder === undefined ? '' : `Bus #${point.busOrder} · `}{point.label}: {formatGap(etaSeconds)}</strong>
+                <span className="mt-1 block text-xs text-muted-foreground">{point.rawProjection
+                  ? `Raw coordinate · ${Math.round(point.rawProjection.offsetMeters)} m from route geometry · nearest occurrence ${Math.round(point.rawProjection.distanceAlongRouteM)} m · shown at selected occurrence ${Math.round(point.displayDistanceAlongRouteM)} m`
+                  : `Shown at Bus #${point.busOrder} route occurrence · raw coordinate unavailable`}</span>
               </li>
             })}
-          </ol> : <p className="mt-2 text-sm text-muted-foreground">No upcoming arrival predictions are available for this stop and direction.</p>}
+          </ol> : <p className="mt-2 text-sm text-muted-foreground">No aligned arrival locations are available for this stop and direction.</p>}
     </div>}
     {showPositions && !position && <p role="status" className="px-4 pb-3 text-xs text-muted-foreground">No current position estimate for this direction.</p>}
     {position && !routeDistances.hasGeometry && <p className="px-4 pb-3 text-xs text-muted-foreground">Route stops use even spacing because stop coordinates are incomplete; bus positions remain approximate.</p>}
@@ -374,12 +394,16 @@ export function ControllerRouteStrip({ alerts, run, stops, positions, arrivals, 
   const selectedRoute = routes.find(route => routeKey(route) === selectedRouteKey) ?? routes[0]
   const nowMs = Date.parse(lastUpdated) || 0
   const currentPositions = positions.data ?? noPositionSnapshots
+  const displayedPositionSnapshots = useMemo(() => currentPositions.filter(snapshot =>
+    routePositionSnapshotIsDisplayed(snapshot, routes)), [currentPositions, routes])
   const positionByRoute = useMemo(() => new Map<string, PositionSnapshot>(currentPositions.flatMap(snapshot =>
     snapshot.directions.map(direction => [
       `${snapshot.serviceId}:${direction.operator}:${direction.directionId}`,
-      { position: direction, computedAt: snapshot.computedAt },
+      { position: direction, computedAt: snapshot.computedAt, sourceObservedAt: snapshot.sourceObservedAt,
+        maxSourceAgeSeconds: snapshot.maxSourceAgeSeconds },
     ] as const))), [currentPositions])
-  const pollSeconds = currentPositions.length ? Math.min(...currentPositions.map(snapshot => snapshot.refreshIntervalSeconds)) : pollIntervalSeconds
+  const pollSeconds = displayedPositionSnapshots.length
+    ? Math.min(...displayedPositionSnapshots.map(snapshot => snapshot.refreshIntervalSeconds)) : pollIntervalSeconds
   const incidents = useMemo(() => groupRouteIncidents(events, routes, nowMs, pollSeconds, incidentGapToleranceSeconds),
     [events, routes, nowMs, pollSeconds, incidentGapToleranceSeconds])
   const positionedIncidents = useMemo(() => incidents.map(incident => {
@@ -387,10 +411,11 @@ export function ControllerRouteStrip({ alerts, run, stops, positions, arrivals, 
     const snapshot = route ? positionByRoute.get(routeKey(route)) : undefined
     return {
       ...incident,
-      stripLink: !simulationRun && route
-        ? linkIncidentToPosition(incident, route, snapshot?.position, snapshot?.computedAt, pollSeconds) : null,
+      stripLink: !simulationRun && route && snapshot
+        ? linkIncidentToPosition(incident, route, snapshot.position,
+          snapshot.sourceObservedAt ?? snapshot.computedAt, snapshot.maxSourceAgeSeconds) : null,
     }
-  }), [incidents, routes, positionByRoute, pollSeconds, simulationRun])
+  }), [incidents, routes, positionByRoute, simulationRun])
 
   const routeDestinations = useMemo(() => new Map(routes.map(route => [
     routeKey(route), arrivals.error ? { status: 'unavailable' } as const : routeDestination(route, routes, arrivals.data ?? []),
@@ -425,19 +450,33 @@ export function ControllerRouteStrip({ alerts, run, stops, positions, arrivals, 
     return () => { active = false }
   }, [externalStopCodes, fetchStopName])
   const stopNames = referenceStopNames?.fetcher === fetchStopName ? referenceStopNames.names : new Map<string, string | null>()
-  const sourceAgeSeconds = selectedRoute ? oldestStopDataAgeSeconds(arrivals.data ?? [], [selectedRoute], nowMs) : null
-  const stale = sourceAgeSeconds !== null && sourceAgeSeconds > pollSeconds * 2
+  const selectedPositionSnapshots = useMemo(() => selectedRoute ? currentPositions.filter(snapshot =>
+    routePositionSnapshotIsDisplayed(snapshot, [selectedRoute])) : [], [currentPositions, selectedRoute])
+  const positionFreshness = positionSourceFreshness(selectedPositionSnapshots, nowMs)
+  const positionStale = selectedPositionSnapshots.some(snapshot => positionSourceIsStale(snapshot, nowMs))
+  const positionSourceUnavailable = selectedPositionSnapshots.length > 0 && positionFreshness.unavailableCount > 0
+  const arrivalSourceAgeSeconds = selectedRoute
+    ? oldestStopDataAgeSeconds(arrivals.data ?? [], [selectedRoute], nowMs) : null
+  const arrivalSourceAgeLimitSeconds = selectedPositionSnapshots.length
+    ? Math.min(...selectedPositionSnapshots.map(snapshot => snapshot.maxSourceAgeSeconds)) : null
+  const arrivalFallbackStale = arrivalSourceAgeSeconds !== null && arrivalSourceAgeLimitSeconds !== null
+    && arrivalSourceAgeSeconds > arrivalSourceAgeLimitSeconds
   const routeError = stops.error && routes.length ? 'Some route references could not be loaded; available routes are shown.' : stops.error
   const dataError = [positions.error, arrivals.error].filter(Boolean).join(' ')
 
   return <section aria-labelledby="route-strip-title" className="space-y-4">
     <div>
       <h2 id="route-strip-title" className="font-medium">Approximate Live Route Strip</h2>
+      <p className="mt-1 text-xs text-muted-foreground">Stops are evenly spaced for readability; bus positions are approximate along the ordered route. Numbers are order estimates, not vehicle identities.</p>
       {simulationRun && <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">Simulation alerts · route positions remain live.</p>}
+      <p className="mt-1 text-xs text-muted-foreground">Gaps use same-poll arrival times when available; otherwise time is estimated from position and speed, or shown as distance only.</p>
       {positions.error && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">Estimated positions could not be refreshed; showing available estimates.</p>}
       {arrivals.error && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">Route arrivals are incomplete; destinations and same-stop gaps may be unavailable.</p>}
-      {stale && <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">Arrival data is stale; treat positions and headways as approximate.</p>}
-      {dataError && !stale && sourceAgeSeconds === null && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">Current source data is unavailable; estimates cannot be confirmed.</p>}
+      {positionStale && <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">The displayed blue position exceeds its configured source-age limit; treat it as stale.</p>}
+      {positionSourceUnavailable && <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">Source-observation time is unavailable for the displayed position; blue-position freshness cannot be confirmed.</p>}
+      {arrivalFallbackStale && <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">At least one stop’s latest arrival data exceeds the position-source age limit; same-stop ETA headway fallback may be stale.</p>}
+      {dataError && !positionStale && !arrivalFallbackStale && positionFreshness.oldestAgeSeconds === null && arrivalSourceAgeSeconds === null &&
+        <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">Current source data is unavailable; no fresh estimates can be confirmed.</p>}
       {routeError && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">{routeError}</p>}
     </div>
 
@@ -456,7 +495,7 @@ export function ControllerRouteStrip({ alerts, run, stops, positions, arrivals, 
         {selectedRoute && <RouteRow key={routeKey(selectedRoute)} route={selectedRoute}
           destination={destinationText(routeDestinations.get(routeKey(selectedRoute)) ?? { status: 'unavailable' }, stopNames)}
           snapshot={positionByRoute.get(routeKey(selectedRoute))} arrivals={arrivals.data ?? []} routes={routes}
-          incidents={positionedIncidents} showPositions nowMs={nowMs} pollIntervalSeconds={pollSeconds}
+          incidents={positionedIncidents} showPositions nowMs={nowMs}
           lastUpdated={lastUpdated} fetchStopArrivals={fetchStopArrivals} />}
         <CardContent className="flex flex-wrap gap-x-5 gap-y-2 border-t py-3 text-xs text-muted-foreground">
           {Object.entries(ROUTE_STRIP_GAP_SEVERITY).map(([key, severity]) => <span key={key} className="inline-flex items-center gap-2">
@@ -464,7 +503,7 @@ export function ControllerRouteStrip({ alerts, run, stops, positions, arrivals, 
           </span>)}
           <span className="inline-flex items-center gap-2"><span className="size-2.5 rounded-full border-2 border-muted-foreground" aria-hidden="true" />Bus stop</span>
           <span className="inline-flex items-center gap-2"><span className="size-2.5 rounded-full border-2 border-sky-700 dark:border-sky-400" aria-hidden="true" />Estimated bus · uncertainty bar</span>
-          <span className="inline-flex items-center gap-2"><span className="size-2.5 rounded-full bg-violet-700 dark:bg-violet-400" aria-hidden="true" />Selected-stop arrival location</span>
+          <span className="inline-flex items-center gap-2"><span className="size-2.5 rounded-full bg-violet-700 dark:bg-violet-400" aria-hidden="true" />Selected-stop observation from position sweep</span>
           <span className="inline-flex items-center gap-2"><span className="size-2.5 rounded-full bg-destructive" aria-hidden="true" />Incident linked by service, direction, time and stop position</span>
         </CardContent>
       </Card>

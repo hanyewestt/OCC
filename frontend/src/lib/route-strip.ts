@@ -1,4 +1,4 @@
-import type { Arrival, BunchingAlert, RouteDirection, RoutePositionBus, RoutePositionDirection } from './api'
+import type { Arrival, BunchingAlert, RouteDirection, RoutePositionBus, RoutePositionDirection, RoutePositions } from './api'
 import { bunchingArrivals } from './bunching'
 
 export const ROUTE_STRIP_GAP_SEVERITY = {
@@ -48,9 +48,19 @@ export type RouteIncident = {
   latestStopIndex: number | null
 }
 export type IncidentStripLink = { frontOrder: number; followingOrder: number; stopCode: string; match: 'evidence' | 'approximate' }
+export type PositionEvidenceAlignment = {
+  arrivals: Arrival[]
+  status: 'aligned' | 'different-sweep' | 'evidence-unavailable' | 'linkage-only' | 'no-arrivals'
+}
+export type PositionSourceFreshness = { oldestAgeSeconds: number | null; unavailableCount: number }
 
 export function routeKey(route: RouteDirection) {
   return `${route.serviceId}:${route.operator}:${route.directionId}`
+}
+
+export function routePositionSnapshotIsDisplayed(snapshot: RoutePositions, routes: RouteDirection[]): boolean {
+  return snapshot.directions.some(direction => routes.some(route => route.serviceId === snapshot.serviceId &&
+    route.operator === direction.operator && route.directionId === direction.directionId))
 }
 
 export function gapSeverity(seconds: number | null): GapSeverity | null {
@@ -245,6 +255,40 @@ export function arrivalDirectionMatches(arrival: Arrival, route: RouteDirection,
   return directions.size === 1 && directions.has(route.directionId)
 }
 
+export function alignArrivalsToPositionEvidence(arrivals: Arrival[], buses: RoutePositionBus[]): PositionEvidenceAlignment {
+  const evidenceObservationIds = new Set(buses.flatMap(bus => bus.positionEvidenceObservationIds ?? []))
+  if (evidenceObservationIds.size === 0) return { arrivals: [], status: 'evidence-unavailable' }
+  if (arrivals.length === 0) return { arrivals: [], status: 'no-arrivals' }
+  const aligned = arrivals.filter(arrival => evidenceObservationIds.has(arrival.observationId))
+  if (aligned.length) return { arrivals: aligned, status: 'aligned' }
+  const auditObservationIds = new Set(buses.flatMap(bus => bus.evidenceObservationIds ?? []))
+  return {
+    arrivals: [],
+    status: arrivals.some(arrival => auditObservationIds.has(arrival.observationId)) ? 'linkage-only' : 'different-sweep',
+  }
+}
+
+export function routePositionEvidenceDescription(bus: RoutePositionBus, displayedBusCount: number): string {
+  const auditEvidenceIds = new Set(bus.evidenceObservationIds ?? [])
+  const positionEvidenceIds = new Set(bus.positionEvidenceObservationIds ?? [])
+  const positionEvidenceCount = positionEvidenceIds.size
+  const linkageOnlyCount = [...auditEvidenceIds].filter(observationId => !positionEvidenceIds.has(observationId)).length
+  const supportingStopCount = Number.isInteger(bus.supportingStopCount) && (bus.supportingStopCount ?? 0) > 0
+    ? bus.supportingStopCount! : null
+  const multiplicity = displayedBusCount === 1
+    ? 'The displayed source sweep supports one distinct bus estimate.'
+    : `The displayed source sweep supports ${displayedBusCount} distinct bus estimates.`
+  const positionSupport = positionEvidenceCount
+    ? `Its blue-position interval uses ${positionEvidenceCount} in-band source observation${positionEvidenceCount === 1 ? '' : 's'}.`
+    : 'Position-specific source evidence is unavailable.'
+  const stopSupport = supportingStopCount === null
+    ? 'Track stop coverage is unavailable.'
+    : `Track evidence spans ${supportingStopCount} stop${supportingStopCount === 1 ? '' : 's'}.`
+  const auditSupport = linkageOnlyCount
+    ? ` ${linkageOnlyCount} additional linkage observation${linkageOnlyCount === 1 ? '' : 's'} remain available for audit and do not place the selected-stop overlay.` : ''
+  return `${multiplicity} ${positionSupport} ${stopSupport}${auditSupport} Physical vehicle identity remains unresolved; the marker number is route order only.`
+}
+
 export type RouteDestination =
   | { status: 'unavailable' }
   | { status: 'multiple' }
@@ -284,7 +328,29 @@ export function oldestStopDataAgeSeconds(arrivals: Arrival[], routes: RouteDirec
   return Math.max(0, (nowMs - oldestLatestFetch) / 1000)
 }
 
+export function positionSourceFreshness(snapshots: RoutePositions[], nowMs: number): PositionSourceFreshness {
+  const observedAtValues = snapshots.map(snapshot => Date.parse(snapshot.sourceObservedAt ?? ''))
+  const validObservedAtValues = observedAtValues.filter(Number.isFinite)
+  return {
+    oldestAgeSeconds: validObservedAtValues.length
+      ? Math.max(0, (nowMs - Math.min(...validObservedAtValues)) / 1000) : null,
+    unavailableCount: observedAtValues.length - validObservedAtValues.length,
+  }
+}
+
+export function positionSourceIsStale(snapshot: RoutePositions, nowMs: number): boolean {
+  const observedAtMs = Date.parse(snapshot.sourceObservedAt ?? '')
+  return Number.isFinite(observedAtMs) && Number.isFinite(snapshot.maxSourceAgeSeconds)
+    && snapshot.maxSourceAgeSeconds > 0
+    && Math.max(0, (nowMs - observedAtMs) / 1000) > snapshot.maxSourceAgeSeconds
+}
+
 export type ProjectedRoutePoint = { distanceAlongRouteM: number; offsetMeters: number }
+export type PositionEvidencePlacement = {
+  busOrder: number
+  displayDistanceAlongRouteM: number
+  rawProjection: ProjectedRoutePoint | null
+}
 
 export function projectCoordinateToRoute(route: RouteDirection, latitude: number, longitude: number,
   routeLengthM: number): ProjectedRoutePoint | null {
@@ -320,6 +386,19 @@ export function projectCoordinateToRoute(route: RouteDirection, latitude: number
   return closest
 }
 
+export function placeArrivalAtPositionEvidence(arrival: Arrival, buses: RoutePositionBus[], route: RouteDirection,
+  routeLengthM: number): PositionEvidencePlacement | null {
+  const bus = buses.find(candidate => candidate.positionEvidenceObservationIds?.includes(arrival.observationId))
+  if (!bus) return null
+  const rawProjection = arrival.latitude != null && arrival.longitude != null
+    ? projectCoordinateToRoute(route, arrival.latitude, arrival.longitude, routeLengthM) : null
+  return { busOrder: bus.order, displayDistanceAlongRouteM: bus.distanceAlongRouteM, rawProjection }
+}
+
+function markerEvidenceObservationIds(bus: RoutePositionBus): string[] {
+  return bus.positionEvidenceObservationIds ?? bus.evidenceObservationIds ?? []
+}
+
 export function etaFallbacksForRoute(route: RouteDirection, routes: RouteDirection[], arrivals: Arrival[], buses: RoutePositionBus[],
   routeLengthM: number, nowMs: number, maxAgeSeconds: number): EtaHeadwayFallback[] {
   const routeDistances = routeStopDistances(route, routeLengthM)
@@ -336,8 +415,8 @@ export function etaFallbacksForRoute(route: RouteDirection, routes: RouteDirecti
   const orderedBuses = [...buses].sort((first, second) => first.order - second.order)
   return orderedBuses.slice(0, -1).map((front, index) => {
     const following = orderedBuses[index + 1]
-    const frontIds = new Set(front.evidenceObservationIds ?? [])
-    const followingIds = new Set(following.evidenceObservationIds ?? [])
+    const frontIds = new Set(markerEvidenceObservationIds(front))
+    const followingIds = new Set(markerEvidenceObservationIds(following))
     const sharedStops = new Map<string, { stopDistance: number; frontEta: number; followingEta: number }>()
     for (const id of frontIds) {
       const first = arrivalsByObservationId.get(id)
@@ -369,7 +448,7 @@ export function etaFallbacksForRoute(route: RouteDirection, routes: RouteDirecti
 }
 
 export function linkIncidentToPosition(incident: RouteIncident, route: RouteDirection,
-  position: RoutePositionDirection | undefined, positionComputedAt: string | undefined, pollIntervalSeconds: number): IncidentStripLink | null {
+  position: RoutePositionDirection | undefined, positionComputedAt: string | undefined, maxSourceAgeSeconds: number): IncidentStripLink | null {
   if (!position || incident.routeKey !== routeKey(route) || incident.latestStopIndex === null ||
     position.buses.length < 2 || !routeStopDistances(route, position.routeLengthM).hasGeometry) return null
   const computedAt = Date.parse(positionComputedAt ?? '')
@@ -385,10 +464,10 @@ export function linkIncidentToPosition(incident: RouteIncident, route: RouteDire
   // proximity, while still describing observations rather than physical buses.
   for (const alert of incident.alerts) {
     const evidence = alertEvidence(alert)
-    if (!evidence || Math.abs(computedAt - evidence.fetchedAt) > pollIntervalSeconds * 2_000) continue
+    if (!evidence || Math.abs(computedAt - evidence.fetchedAt) > maxSourceAgeSeconds * 1_000) continue
     for (const pair of evidence.bunchedPairs) {
-      const front = ordered.find(bus => bus.evidenceObservationIds?.includes(pair.leadingObservationId))
-      const following = ordered.find(bus => bus.evidenceObservationIds?.includes(pair.followingObservationId))
+      const front = ordered.find(bus => markerEvidenceObservationIds(bus).includes(pair.leadingObservationId))
+      const following = ordered.find(bus => markerEvidenceObservationIds(bus).includes(pair.followingObservationId))
       // The IDs are from the alert's arrival snapshot at this exact stop.
       // They establish the observation link even when the predicted arrival is
       // still some distance away from the stop.
@@ -401,7 +480,7 @@ export function linkIncidentToPosition(incident: RouteIncident, route: RouteDire
   const latestAlert = incident.alerts.at(-1)
   const sourceFetchedAt = latestAlert ? alertEvidence(latestAlert)?.fetchedAt : undefined
   const comparisonTime = sourceFetchedAt ?? (latestAlert?.fetchedAt ? Date.parse(latestAlert.fetchedAt) : Date.parse(incident.latestDetectedAt))
-  if (!Number.isFinite(comparisonTime) || Math.abs(computedAt - comparisonTime) > pollIntervalSeconds * 2_000) return null
+  if (!Number.isFinite(comparisonTime) || Math.abs(computedAt - comparisonTime) > maxSourceAgeSeconds * 1_000) return null
   const ageAtSnapshotSeconds = Math.max(0, (computedAt - comparisonTime) / 1000)
   for (let index = 0; index < ordered.length - 1; index++) {
     const front = ordered[index]

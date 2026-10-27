@@ -37,7 +37,14 @@ public class RoutePositionsController {
 
     @GetMapping("/route-positions")
     @Operation(operationId = "getRoutePositions", summary = "Estimate bus positions from recent route observations",
-            description = "Returns temporary order-based position estimates. They do not identify vehicles or prove that observations belong to the same bus.")
+            description = "Returns direction-scoped positions from the newest completed eligible provider poll cycle. "
+                    + "On configured service directions, compatible non-cooccurring coordinate versions may be "
+                    + "linked, but estimates returned together by one stop snapshot remain separate. Coordinated "
+                    + "refresh-boundary matching is enabled only for configured service directions. On configured "
+                    + "circular service directions, evidence can share a compatible phase without reducing the number "
+                    + "of estimates. Evidence IDs and sourcePollCycleId identify source "
+                    + "records, not verified physical vehicles; sourceObservedAt is source time while computedAt is "
+                    + "response computation time.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Estimated positions returned",
                     content = @Content(schema = @Schema(implementation = RoutePositionsResponse.class))),
@@ -50,12 +57,14 @@ public class RoutePositionsController {
         String normalizedService = serviceId.trim();
         RoutePositionSnapshot snapshot = positions.positions(normalizedService)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Bus route not found"));
-        return new RoutePositionsResponse(snapshot.serviceId(), snapshot.computedAt(), snapshot.refreshIntervalSeconds(),
+        return new RoutePositionsResponse(snapshot.serviceId(), snapshot.computedAt(),
+                snapshot.sourcePollCycleId().orElse(null), snapshot.sourceObservedAt().orElse(null),
+                snapshot.refreshIntervalSeconds(), snapshot.maxSourceAgeSeconds(),
                 snapshot.directions().stream().map(direction -> new RoutePositionDirectionResponse(
                         direction.operator(), direction.directionId(), direction.routeLengthM(), direction.buses().stream()
                         .map(bus -> new RoutePositionBusResponse(bus.order(), bus.distanceAlongRouteM(),
                                 bus.uncertaintyM(), bus.speedMps(), bus.evidenceObservationIds(),
-                                bus.supportingStopCount())).toList(),
+                                bus.positionEvidenceObservationIds(), bus.supportingStopCount())).toList(),
                         direction.suppressedBusCount())).toList());
     }
 }

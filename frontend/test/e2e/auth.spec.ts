@@ -47,7 +47,7 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
   await context.route('**/api/v1/route-positions?*', route => {
     const serviceId = new URL(route.request().url()).searchParams.get('service') ?? ''
     return route.fulfill({ json: {
-      serviceId, computedAt: '2026-10-23T04:00:00Z', refreshIntervalSeconds: 60,
+      serviceId, computedAt: '2026-10-23T04:00:00Z', refreshIntervalSeconds: 60, maxSourceAgeSeconds: 120,
       directions: [
         { operator: 'SMRT', directionId: 1, routeLengthM: 12_000,
           buses: serviceId === '190' ? [
@@ -465,6 +465,85 @@ test('arrivals search, sorting and scrolling use isolated server pages and prese
   await page.goto('/controller/disruptions')
   await page.goto('/controller#arrivals')
   await expect(page.getByRole('heading', { name: 'Current bus arrivals' })).toBeFocused()
+})
+
+test('an obsolete page-scope response cannot replace a newer position snapshot', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  await context.route('**/frontend-config', route => route.fulfill({ json: {
+    projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
+    controllerRefreshIntervalSeconds: 1, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20,
+    captainRefreshIntervalSeconds: 5, publicNoticeRefreshIntervalSeconds: 30,
+  } }))
+
+  type Phase = 'initial' | 'blocked-periodic' | 'newer'
+  let phase: Phase = 'initial'
+  let releaseOlder!: () => void
+  const olderGate = new Promise<void>(resolve => { releaseOlder = resolve })
+  let resolveBlocked!: () => void
+  const blockedStarted = new Promise<void>(resolve => { resolveBlocked = resolve })
+  const blockedServices = new Set<string>()
+  let resolveOlderFinished!: () => void
+  const olderFinished = new Promise<void>(resolve => { resolveOlderFinished = resolve })
+  const finishedOlderServices = new Set<string>()
+  const snapshot = (serviceId: string, distanceAlongRouteM: number, computedAt: string) => ({
+    serviceId, computedAt, refreshIntervalSeconds: 60, maxSourceAgeSeconds: 120,
+    directions: [{ operator: 'SMRT', directionId: 1, routeLengthM: 12_000, buses: [
+      { order: 1, distanceAlongRouteM, uncertaintyM: 70, speedMps: 6.2 },
+      { order: 2, distanceAlongRouteM: distanceAlongRouteM - 800, uncertaintyM: 70, speedMps: 4.2 },
+    ] }],
+  })
+
+  await context.route('**/api/v1/route-positions?*', async route => {
+    const serviceId = new URL(route.request().url()).searchParams.get('service')!
+    if (phase === 'blocked-periodic') {
+      blockedServices.add(serviceId)
+      if (blockedServices.size === 2) resolveBlocked()
+      await olderGate
+      try {
+        await route.fulfill({ json: snapshot(serviceId, 1_200, '2026-10-23T04:00:10Z') })
+      } catch {
+        // The old page scope normally aborts these requests before the held response is released.
+      } finally {
+        finishedOlderServices.add(serviceId)
+        if (finishedOlderServices.size === 2) resolveOlderFinished()
+      }
+      return
+    }
+    if (phase === 'newer') {
+      return route.fulfill({ json: snapshot(serviceId, 6_500, '2026-10-23T04:00:30Z') })
+    }
+    return route.fulfill({ json: snapshot(serviceId, 4_300, '2026-10-23T04:00:00Z') })
+  })
+
+  await login(page)
+  await expect(page.getByRole('img', { name: /Estimated bus 1, approximate position 4300 metres/ }).first()).toBeVisible()
+  phase = 'blocked-periodic'
+  await blockedStarted
+
+  phase = 'newer'
+  await page.getByRole('link', { name: 'Disruptions', exact: true }).click()
+  await page.getByRole('link', { name: 'Overview', exact: true }).click()
+  await expect(page.getByRole('img', { name: /Estimated bus 1, approximate position 6500 metres/ }).first()).toBeVisible()
+  await page.evaluate(() => {
+    const state = window as typeof window & { sawOlderPosition?: boolean; positionObserver?: MutationObserver }
+    state.sawOlderPosition = false
+    const check = () => {
+      if (document.querySelector('[aria-label*="approximate position 1200 metres"]')) state.sawOlderPosition = true
+    }
+    state.positionObserver = new MutationObserver(check)
+    state.positionObserver.observe(document.body, {
+      subtree: true, childList: true, attributes: true, attributeFilter: ['aria-label'],
+    })
+  })
+
+  releaseOlder()
+  await olderFinished
+  await expect(page.getByRole('img', { name: /Estimated bus 1, approximate position 6500 metres/ }).first()).toBeVisible()
+  expect(await page.evaluate(() => {
+    const state = window as typeof window & { sawOlderPosition?: boolean; positionObserver?: MutationObserver }
+    state.positionObserver?.disconnect()
+    return state.sawOlderPosition
+  })).toBe(false)
 })
 
 test('bunching predictions preserve slots and reject unrelated or malformed evidence', () => {
@@ -1383,17 +1462,20 @@ test('captain instruction cards scroll and load later server pages without losin
   const instructions = Array.from({ length: 6 }, (_, index) => ({
     ...syntheticInstruction(now), id: `captain-instruction-${index}`, message: `Instruction ${index + 1}`,
   }))
+  let acknowledgedInstruction: CaptainInstruction | null = null
   const requestedPages: number[] = []
   await context.route('**/api/v1/planning/captain/instructions?*', route => {
     const query = new URL(route.request().url()).searchParams
     const pageNumber = Number(query.get('page'))
     requestedPages.push(pageNumber)
-    return route.fulfill({ json: { items: pageNumber === 0 ? instructions.slice(0, 5) : instructions.slice(5),
+    return route.fulfill({ json: { items: pageNumber === 0 ? instructions.slice(0, 5) : [acknowledgedInstruction ?? instructions[5]],
       page: pageNumber, totalItems: instructions.length, totalPages: 2, serverTime: now.toISOString() } })
   })
-  await context.route('**/api/v1/planning/captain/instructions/captain-instruction-5/acknowledgements', route => route.fulfill({
-    json: { ...instructions[5], status: 'ACKNOWLEDGED', acknowledgedAt: now.toISOString(), applicableUntil: new Date(now.getTime() + 300_000).toISOString() },
-  }))
+  await context.route('**/api/v1/planning/captain/instructions/captain-instruction-5/acknowledgements', route => {
+    acknowledgedInstruction = { ...instructions[5], status: 'ACKNOWLEDGED', acknowledgedAt: now.toISOString(),
+      applicableUntil: new Date(now.getTime() + 300_000).toISOString() }
+    return route.fulfill({ json: acknowledgedInstruction })
+  })
   await login(page)
   const display = page.getByRole('region', { name: 'Controller instructions', exact: true })
   const viewport = display.getByRole('region', { name: 'Captain instructions', exact: true })
@@ -1406,11 +1488,15 @@ test('captain instruction cards scroll and load later server pages without losin
   expect(visibleCards).toBeLessThanOrEqual(4)
   await display.getByRole('button', { name: 'Load more captain instructions', exact: true }).click()
   await expect(viewport.getByText('Instruction 6', { exact: true })).toBeVisible()
+  const pageZeroRequests = requestedPages.filter(pageNumber => pageNumber === 0).length
   await viewport.getByRole('button', { name: 'Acknowledge', exact: true }).last().click()
+  await expect.poll(() => requestedPages.filter(pageNumber => pageNumber === 0).length).toBeGreaterThan(pageZeroRequests)
+  await expect(viewport.locator('[data-slot="card"]')).toHaveCount(5)
+  await display.getByRole('button', { name: 'Load more captain instructions', exact: true }).click()
   await expect(viewport.getByText(/^Acknowledged /)).toHaveCount(1)
   await expect(viewport.getByText('Instruction 6', { exact: true })).toBeVisible()
   await expect(viewport.locator('[data-slot="card"]')).toHaveCount(6)
-  expect(requestedPages).toContain(1)
+  expect(requestedPages.filter(pageNumber => pageNumber === 1)).toHaveLength(2)
 })
 
 test('controller reviews a service-direction broadcast and sends only the reviewed captain recipients', async ({ page, context }) => {

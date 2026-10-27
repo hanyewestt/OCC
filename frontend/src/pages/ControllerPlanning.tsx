@@ -359,11 +359,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
             </DialogContent>
           </Dialog>
           <AlertDialog open={discardOpen} onOpenChange={open => { if (!open) setDiscardOpen(false) }}>
-            <AlertDialogContent onEscapeKeyDown={event => {
-              event.preventDefault()
-              event.stopPropagation()
-              setDiscardOpen(false)
-            }} onCloseAutoFocus={event => {
+            <AlertDialogContent onCloseAutoFocus={event => {
               if (editorOpen) { event.preventDefault(); firstBusReference.current?.focus() }
             }}>
               <AlertDialogHeader>
