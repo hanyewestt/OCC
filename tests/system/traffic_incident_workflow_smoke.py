@@ -1,4 +1,4 @@
-"""Verify DataMall traffic incidents flow through Ingestion, Disruption and Planning."""
+"""Verify live traffic incidents complete Planning without proposing bus advisories."""
 
 from __future__ import annotations
 
@@ -90,20 +90,24 @@ def main() -> int:
           (SELECT count(*) FROM ingestion.traffic_incident_observation
              WHERE classification='OBSERVATION_ONLY' AND message='SYNTHETIC: road works near test junction')::text || '|' ||
           (SELECT count(*) FROM planning.planning_request
-             WHERE event_type='TRAFFIC_INCIDENT' AND producer='disruption' AND status='COMPLETED'
-               AND policy_outcome='TRAFFIC_INCIDENT_NO_OPERATIONAL_ACTION')::text
+             WHERE event_type='TRAFFIC_INCIDENT' AND producer='disruption' AND status='COMPLETED')::text || '|' ||
+          (SELECT count(*) FROM planning.advisory_proposal proposal
+             JOIN planning.planning_request request ON request.event_id=proposal.event_id
+             WHERE request.event_type='TRAFFIC_INCIDENT' AND request.producer='disruption')::text
     """
 
     def completed_pipeline():
         values = compose_query(args.compose_project, query).split("|")
-        if len(values) != 3:
+        if len(values) != 4:
             raise AssertionError("Workflow database returned an unexpected verification result")
         counts = tuple(int(value) for value in values)
-        return counts if all(value > 0 for value in counts) else None
+        if counts[3] != 0:
+            raise AssertionError("Live traffic incidents produced bus advisories without an active demo run")
+        return counts if all(value > 0 for value in counts[:3]) else None
 
     counts = wait_for(completed_pipeline,
-        "raw/normalized observation and Planning no-action policy are persisted", args.timeout)
-    print(f"PASS provider incidents={counts[1]}, completed no-action requests={counts[2]}")
+        "raw/normalized observation and completed Planning request are persisted", args.timeout)
+    print(f"PASS provider incidents={counts[1]}, completed Planning requests={counts[2]}, bus advisories={counts[3]}")
     return 0
 
 
