@@ -9,5 +9,6 @@ public record PendingRecommendationPageResponse(
         int page,
         int size,
         long totalItems,
-        int totalPages) {
+        int totalPages, String mode, java.util.UUID demoRunId) {
+
 }

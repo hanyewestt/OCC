@@ -28,12 +28,14 @@ class RecommendationDecisionServiceTest {
     @Mock
     private RecommendationRecordPort recommendations;
 
+    @Mock private com.csd.occ.planning.diagnosis.domain.PlanningScopeService scopes;
     private RecommendationRecord actionableRecommendation;
 
     @BeforeEach
     void createActionableRecommendation() {
         actionableRecommendation = org.mockito.Mockito.mock(RecommendationRecord.class);
         var recommendation = org.mockito.Mockito.mock(ValidatedMitigationRecommendation.class);
+        lenient().when(actionableRecommendation.diagnosis()).thenReturn(org.mockito.Mockito.mock(BunchingRootCauseDiagnosis.class));
         lenient().when(actionableRecommendation.classification()).thenReturn(SourceClassification.SIMULATION);
         lenient().when(actionableRecommendation.recommendation()).thenReturn(recommendation);
         lenient().when(recommendation.status()).thenReturn(RecommendationStatus.RECOMMENDED);
@@ -112,9 +114,20 @@ class RecommendationDecisionServiceTest {
         assertThat(result.controllerRationale()).isEqualTo("A shorter hold reduces passenger delay.");
     }
 
+    @Test
+    void cannotApproveARecommendationAfterChangingDataScope() {
+        var service = service();
+        when(recommendations.findByIdempotencyKey(RECOMMENDATION_ID)).thenReturn(Optional.of(actionableRecommendation));
+        when(scopes.includesDiagnosis(org.mockito.ArgumentMatchers.any())).thenReturn(false);
+        assertThatThrownBy(() -> service.decide(RECOMMENDATION_ID, RecommendationDecisionAction.APPROVED,
+                "controller", java.util.List.of(), null)).isInstanceOf(RecommendationDecisionService.RecommendationNotActionableException.class);
+        org.mockito.Mockito.verifyNoInteractions(decisions);
+    }
+
     private RecommendationDecisionService service() {
+        org.mockito.Mockito.lenient().when(scopes.includesDiagnosis(org.mockito.ArgumentMatchers.any())).thenReturn(true);
         return new RecommendationDecisionService(decisions, recommendations,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                Clock.fixed(NOW, ZoneOffset.UTC), scopes);
     }
 
 }

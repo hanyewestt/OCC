@@ -1,4 +1,4 @@
-limit_req_zone $binary_remote_addr zone=occ_api:${OCC_NGINX_RATE_LIMIT_ZONE_SIZE} rate=${OCC_NGINX_RATE_LIMIT_PER_SECOND};
+limit_req_zone $binary_remote_addr zone=occ_api:10m rate=20r/s;
 
 server {
     listen ${OCC_NGINX_HTTPS_INTERNAL_PORT} ssl;

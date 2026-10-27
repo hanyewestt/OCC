@@ -57,6 +57,7 @@ public class DiagnosisRequest {
     public String failureCode() { return failureCode; }
     public String policyOutcome() { return policyOutcome; }
     public Instant createdAt() { return createdAt; }
+    public Instant updatedAt() { return updatedAt; }
 
     public void claim(Instant until, Instant now) {
         status = DiagnosisRequestStatus.PROCESSING.name();

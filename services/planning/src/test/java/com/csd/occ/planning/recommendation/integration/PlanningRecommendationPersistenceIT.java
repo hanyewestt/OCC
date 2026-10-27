@@ -84,6 +84,20 @@ class PlanningRecommendationPersistenceIT {
     @Autowired private PlatformTransactionManager transactionManager;
     @Autowired private ApplicationContext applicationContext;
 
+    @Test
+    @org.junit.jupiter.api.condition.EnabledIfSystemProperty(named = "occ.exportOpenapi", matches = "true")
+    void exportsGeneratedContract() throws Exception {
+        String contract = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .get("http://localhost:6769/v3/api-docs").with(
+                        org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt()
+                                .authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        java.nio.file.Path output = java.nio.file.Path.of("openapi", "planning.json");
+        java.nio.file.Files.createDirectories(output.getParent());
+        java.nio.file.Files.writeString(output, contract);
+    }
+
     @BeforeEach
     void clearPlanningRecommendationRows() {
         jdbc.update("DELETE FROM planning.model_invocation_record");
@@ -103,6 +117,23 @@ class PlanningRecommendationPersistenceIT {
     }
 
     @Test
+    void pendingQueueUsesTheRetainedDiagnosisRunRatherThanAllSimulationHistory() throws Exception {
+        String request = validRequest();
+        submit(request);
+        UUID diagnosisId = UUID.fromString(json.readTree(request).path("diagnosis").path("diagnosisId").asText());
+        UUID requestId = UUID.randomUUID();
+        UUID runId = UUID.randomUUID();
+        jdbc.update("INSERT INTO planning.planning_request (id,event_type,producer,event_id,schema_version,status,attempt_count,next_attempt_at,created_at,updated_at,version) VALUES (?,'BUS_BUNCHING','disruption',?,'planning-event-v1','COMPLETED',0,now(),now(),now(),0)", requestId, UUID.randomUUID());
+        jdbc.update("INSERT INTO planning.diagnosis_result (id,request_id,cause_code,likely_cause,confidence,evidence_support_score,supporting_evidence_ids,limitations,confidence_components,evidence_snapshot,evidence_snapshot_hash,provider,model,prompt_version,schema_version,completed_at) VALUES (?,?,'UNKNOWN','Retained diagnosis',0,0,'[]'::jsonb,'[]'::jsonb,'{}'::jsonb,?::jsonb,?,'GOOGLE_GENAI','synthetic-model','v1','v1',now())",
+                diagnosisId, requestId, "{\"event\":{\"classification\":\"SIMULATION\",\"demoRunId\":\"" + runId + "\"}}", "a".repeat(64));
+        var records = applicationContext.getBean(com.csd.occ.planning.recommendation.domain.RecommendationRecordPort.class);
+        assertThat(records.findPendingForRun(runId, 0, 10)).hasSize(1);
+        assertThat(records.countPendingForRun(runId)).isEqualTo(1);
+        assertThat(records.findPendingForRun(UUID.randomUUID(), 0, 10)).isEmpty();
+        assertThat(records.countPendingForRun(UUID.randomUUID())).isZero();
+    }
+
+    @Test
     void deterministicFixtureRunsThroughTheInProcessPlanningAdapter() throws Exception {
         var result = submit(validRequest());
         var response = json.readTree(result.responseJson());
@@ -112,7 +143,7 @@ class PlanningRecommendationPersistenceIT {
         assertThat(response.get("mitigationType").asText()).isEqualTo("HOLD");
         assertThat(response.get("adjustmentSeconds").asInt()).isEqualTo(120);
         assertThat(response.get("targetBusReference").asText()).isEqualTo("SBS5898U");
-        assertThat(response.get("controlStopCode").asText()).isEqualTo("44241");
+        assertThat(response.get("controlStopCode").asText()).isEqualTo("44251");
         assertThat(response.get("expectedImpact").get("headwayAfterSeconds").asInt()).isEqualTo(341);
     }
 

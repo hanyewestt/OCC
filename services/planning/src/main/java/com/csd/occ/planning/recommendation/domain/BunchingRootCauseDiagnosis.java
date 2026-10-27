@@ -20,10 +20,8 @@ public record BunchingRootCauseDiagnosis(
         if (likelyCause.length() > 1_000) {
             throw new IllegalArgumentException("likelyCause must be at most 1000 characters");
         }
-        Objects.requireNonNull(confidence, "confidence is required");
-        if (confidence.compareTo(BigDecimal.ZERO) < 0 || confidence.compareTo(BigDecimal.ONE) > 0) {
-            throw new IllegalArgumentException("confidence must be between zero and one");
-        }
+        // Deprecated compatibility input: never feed a legacy score into rules or AI prompts.
+        confidence = null;
         evidenceIds = List.copyOf(evidenceIds);
         if (evidenceIds.isEmpty() || evidenceIds.size() > 100
                 || evidenceIds.stream().anyMatch(value -> value == null || value.isBlank() || value.length() > 200)) {

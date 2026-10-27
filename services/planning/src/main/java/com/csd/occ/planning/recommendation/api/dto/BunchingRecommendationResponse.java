@@ -1,5 +1,6 @@
 package com.csd.occ.planning.recommendation.api.dto;
 
+import com.csd.occ.planning.diagnosis.domain.DiagnosisSummaryPolicy;
 import com.csd.occ.planning.recommendation.domain.IncidentType;
 import com.csd.occ.planning.recommendation.domain.MitigationType;
 import com.csd.occ.planning.recommendation.domain.RecommendationStatus;
@@ -27,7 +28,8 @@ public record BunchingRecommendationResponse(
     public static BunchingRecommendationResponse from(
             UUID requestId,
             SourceClassification classification,
-            ValidatedMitigationRecommendation recommendation) {
+            ValidatedMitigationRecommendation recommendation,
+            DiagnosisSummaryPolicy.Summary diagnosisSummary) {
         return new BunchingRecommendationResponse(
                 requestId,
                 recommendation.recommendationId(),
@@ -38,8 +40,19 @@ public record BunchingRecommendationResponse(
                 recommendation.targetBusReference(),
                 recommendation.controlStopCode(),
                 recommendation.adjustmentSeconds(),
-                RecommendationExplanationResponse.from(recommendation.explanation()),
+                RecommendationExplanationResponse.from(recommendation.explanation(), diagnosisSummary),
                 RecommendationImpactResponse.from(recommendation.expectedImpact()),
                 recommendation.evidenceIds());
+    }
+
+    public static BunchingRecommendationResponse from(
+            UUID requestId,
+            SourceClassification classification,
+            ValidatedMitigationRecommendation recommendation) {
+        return new BunchingRecommendationResponse(requestId, recommendation.recommendationId(), classification,
+                recommendation.incidentType(), recommendation.status(), recommendation.mitigationType(),
+                recommendation.targetBusReference(), recommendation.controlStopCode(), recommendation.adjustmentSeconds(),
+                RecommendationExplanationResponse.from(recommendation.explanation()),
+                RecommendationImpactResponse.from(recommendation.expectedImpact()), recommendation.evidenceIds());
     }
 }

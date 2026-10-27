@@ -1,3 +1,4 @@
+# Defaults live here; placeholders preserve existing environment-variable aliases.
 spring:
   application:
     name: disruption
@@ -19,7 +20,7 @@ spring:
     create-schemas: false
     locations: classpath:db/migration
 server:
-  port: ${OCC_DISRUPTION_INTERNAL_PORT}
+  port: ${OCC_DISRUPTION_INTERNAL_PORT:8002}
 management:
   endpoints:
     web:
@@ -49,6 +50,14 @@ occ:
       ingestion-token: ${OCC_DISRUPTION_TO_INGESTION_PEER_TOKEN}
       planning-token: ${OCC_DISRUPTION_TO_PLANNING_PEER_TOKEN}
   disruption:
+    hazards:
+      enabled: ${OCC_DISRUPTION_HAZARD_ENABLED:true}
+      poll-interval: ${OCC_DISRUPTION_HAZARD_POLL_INTERVAL:10s}
+      stale-after: ${OCC_DISRUPTION_HAZARD_STALE_AFTER:48h}
+      absence-limit: ${OCC_DISRUPTION_HAZARD_ABSENCE_LIMIT:2}
+      absence-period: ${OCC_DISRUPTION_HAZARD_ABSENCE_PERIOD:48h}
+      state-retention: ${OCC_DISRUPTION_HAZARD_STATE_RETENTION:30d}
+      association-radius-km: ${OCC_DISRUPTION_HAZARD_ASSOCIATION_RADIUS_KM:0.5}
     consumer-enabled: ${OCC_DISRUPTION_CONSUMER_ENABLED:true}
     threshold: ${OCC_DISRUPTION_THRESHOLD:90s}
     stale-after: ${OCC_DISRUPTION_STALE_AFTER:120s}
@@ -79,3 +88,4 @@ occ:
       page-size: ${OCC_DISRUPTION_TRAFFIC_POLL_PAGE_SIZE:100}
       stale-after: ${OCC_DISRUPTION_TRAFFIC_STALE_AFTER:5m}
       clear-after-successful-absences: ${OCC_DISRUPTION_TRAFFIC_CLEAR_AFTER_SUCCESSFUL_ABSENCES:2}
+      minimum-absence-period: ${OCC_DISRUPTION_TRAFFIC_MINIMUM_ABSENCE_PERIOD:2m}

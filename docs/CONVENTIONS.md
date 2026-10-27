@@ -178,7 +178,11 @@ Bind config to these, never `@Value` on a field.
 
 **Security config** as a `SecurityFilterChain` bean using the lambda DSL, in `infrastructure/security/`. Protected APIs validate tokens from the configured identity provider and enforce the required `ADMIN`, `CONTROLLER` or `CAPTAIN` role server-side.
 
-**Configuration keys** are kebab-case under an `occ.` prefix: `occ.reservation.expiry`. Important Spring Boot runtime and operational values must not be hard-coded directly in `application.yml` or `application-local.yml`. Bind them through environment-variable placeholders (for example, `${OCC_INGESTION_POLL_INTERVAL}`) and define the values in the centralized environment configuration documented by `.env.example` and the deployment secret/config store. This includes connection URLs, credentials, ports, timeouts, polling intervals, thresholds, feature flags and other values that vary by environment. YAML may retain stable application structure and safe defaults only where an omitted environment value is intentionally supported and documented.
+**Configuration keys** are kebab-case under an `occ.` prefix: `occ.reservation.expiry`. Externalize deployment-specific values and intentional operational controls (connection URLs, credentials, ports, external API keys, peer tokens, and top-level feature flags) into the deployment environment and document them in the repository-root `.env.example`. Internal algorithm heuristics, math constants, buffer limits, retry backoffs, and baseline operational timings belong as safe, documented defaults in Java records or service `application.yml` files.
+
+Spring Boot relaxed binding permits environment overrides using the property path: replace dots with underscores, remove hyphens, and uppercase (for example, `occ.diagnosis.worker-interval` becomes `OCC_DIAGNOSIS_WORKERINTERVAL`). Retain explicit placeholders for existing aliases such as `OCC_PLANNING_DIAGNOSIS_WORKER_INTERVAL`; these names cannot be inferred by relaxed binding. Their defaults remain in `application.yml`, without listing every tuning option in `.env.example` or forwarding it in the base Compose file. For an exceptional Compose override, inject the property into the owning service's `environment` with an additional Compose file; adding it only to the root `.env` does not pass it into a container. Coordinate related overrides, such as Ingestion's polling cadence and Gateway's frontend freshness interval.
+
+Name host-facing settings `*_PUBLIC_URL` or `*_PORT`, and container-facing settings `*_INTERNAL_URL` or `*_INTERNAL_PORT`. Core-service host ports start at `6767` and internal ports at `8001`, incrementing per service. Compose calls use service DNS and internal ports. PostgreSQL uses host port `5432` and pgAdmin uses `6700` by default.
 
 **Secrets** are supplied through the environment or the deployment's configured secret store. Never commit credentials, bake them into container images, or expose them through API responses or logs. Automated tests use synthetic values or credentials supplied by their fixtures and containers; they must never read production secrets. Nothing sensitive is committed, including in `application-local.yml`.
 
@@ -295,5 +299,5 @@ Never log a password, token, MFA secret, verification code, or session identifie
 ## 9. Git workflow
 
 Follow the repository-wide [`commit-convention.md`](commit-convention.md)
-for commit messages and Git workflow. Before committing service code, run
+for commit messages and Git workflow. Before committing service (Java/Spring Boot) code, run
 `mvn verify` and state what was or was not verified in the commit body.

@@ -25,8 +25,8 @@ public class HttpBunchingEventFactsAdapter implements EventFactsPort {
             EventResponse response = client.get().uri("/internal/v1/disruption/events/{eventId}", eventId)
                     .retrieve().body(EventResponse.class);
             if (response == null) throw new DiagnosisFailureException("EMPTY_EVENT_FACTS", true);
-            if (!"SIMULATION".equals(response.classification()))
-                throw new DiagnosisFailureException("NON_SIMULATION_EVENT", false);
+            if (!com.csd.occ.planning.diagnosis.domain.PlanningScope.valid(response.classification(), response.demoRunId()))
+                throw new DiagnosisFailureException("INVALID_EVENT_SCOPE", false);
             if (!"OPENED".equals(response.action()) || response.expectedHeadwaySeconds() == null
                     || response.observedHeadwaySeconds() == null || response.observedHeadwaySeconds().size() < 2
                     || response.observedHeadwaySeconds().size() > 10)

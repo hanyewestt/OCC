@@ -46,6 +46,16 @@ The service binds to `OCC_DISRUPTION_INTERNAL_PORT` in Compose and uses
 peer URLs use distinct internal/public variables so Compose traffic uses service
 DNS while host-native runs use `localhost`.
 
+Operational parameters—such as detection thresholds (`occ.disruption.threshold: 90s`),
+stale limits (`120s`), headway baselines (`600s`), worker delivery intervals, batch sizes,
+and hazard association/absence rules—are configured with safe canonical defaults in
+`application.yml`. They can be overridden via standard Spring Boot relaxed binding (`OCC_*`
+environment variables) when necessary. Deployment credentials, ports, and peer tokens are
+inventoried in the repository-root `.env.example`.
+Existing aliases, including `OCC_DISRUPTION_HAZARD_ENABLED`, remain supported.
+Inject optional Compose overrides into the service's `environment` with an
+additional Compose file; placing them only in the root `.env` does not forward them.
+
 To refresh the checked-in OpenAPI contract, start the local Compose stack, put a
 short-lived ADMIN or CONTROLLER access token in `OCC_OPENAPI_EXPORT_TOKEN` for the
 current shell only, then run from the repository root:
@@ -58,3 +68,50 @@ Remove-Item Env:OCC_OPENAPI_EXPORT_TOKEN
 
 This updates `services/disruption/openapi/disruption.json` from the running API.
 Never save the token in `.env` or commit it.
+
+### Shared Planning data scope
+
+The existing consumer selection also controls Planning's active data scope.
+Known-direction live bunching and simulation bunching require two fresh, distinct
+poll confirmations before an event is submitted to Planning. Each submission retains
+its observation IDs and classification; live events have no demo run ID. The expected
+headway baseline uses `OCC_DISRUPTION_EXPECTED_HEADWAY` in both modes. Candidates
+older than `OCC_DISRUPTION_STALE_AFTER` or predating a return to Live are discarded.
+Unknown-direction detections remain observational alerts and are not sent for diagnosis.
+
+### Multi-hazard lifecycle and candidate exposure
+
+The disruption service consumes the independent flood, rail and approved
+roadworks polls by default. The existing `OCC_DISRUPTION_HAZARD_ENABLED` override
+remains supported. `OCC_DISRUPTION_HAZARD_POLL_INTERVAL` controls consumption;
+`OCC_DISRUPTION_HAZARD_STALE_AFTER` reports feed freshness without clearing an
+incident. Feed status is included in `GET /api/v1/disruption/hazards`.
+
+The `kind=ROADWORKS` list filter includes approved roadworks and traffic-feed
+roadwork entries (case-insensitive `Roadwork`, `Road Works` or `Roadworks`).
+The `kind=TRAFFIC_INCIDENT` filter excludes those roadworks. Filtering happens
+before pagination; omitting `kind` returns each current hazard once. Returned
+`kind` fields retain their source classification, so traffic-feed roadworks
+still carry `TRAFFIC_INCIDENT` and keep their existing traffic lifecycle.
+
+Roadworks are retired by absence only after both
+`OCC_DISRUPTION_HAZARD_ABSENCE_LIMIT` complete snapshots and
+`OCC_DISRUPTION_HAZARD_ABSENCE_PERIOD` have elapsed. Incomplete/failed polls do
+not count. Traffic uses its own `OCC_DISRUPTION_TRAFFIC_CLEAR_AFTER_SUCCESSFUL_ABSENCES`
+and `OCC_DISRUPTION_TRAFFIC_MINIMUM_ABSENCE_PERIOD` rules. Flood cancellation,
+rail recovery and documented source expiry have their own lifecycle handling.
+Absence is reported as “No longer reported,” never as verified clearance.
+
+Cleared hazard identities are retained for `OCC_DISRUPTION_HAZARD_STATE_RETENTION`
+(30 days by default). This bounds per-poll state scans while suppressing stale
+source replays throughout that window; the immutable disruption events remain
+available after the operational state row is removed.
+
+Candidate stop proximity uses `OCC_DISRUPTION_HAZARD_ASSOCIATION_RADIUS_KM` and
+the separately imported station references from Ingestion. Associations are
+evidence for controller review only; they do not confirm road impact, safety,
+closure or available capacity. In simulation mode, downstream stop occurrences
+are compared with the assigned synthetic fleet progress. The controller API
+remains available at `GET /api/v1/disruption/hazards` and
+`GET /api/v1/disruption/hazards/{id}`; Planning reads the latter through a
+directed peer capability.

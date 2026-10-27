@@ -9,9 +9,11 @@ public record DiagnosisView(UUID diagnosisId, DiagnosisRequestStatus status, Str
                             Double evidenceSupportScore, List<String> evidenceIds, List<String> limitations,
                             Instant completedAt, String eventType, UUID eventId, String producer,
                             String recommendationDeliveryStatus,
-                            String recommendationDeliveryFailureCode) {
+                            String recommendationDeliveryFailureCode,
+                            List<DiagnosisEvidenceDetail> evidenceDetails) {
     public DiagnosisView {
         evidenceIds = evidenceIds == null ? List.of() : List.copyOf(evidenceIds);
         limitations = limitations == null ? List.of() : List.copyOf(limitations);
+        evidenceDetails = evidenceDetails == null ? List.of() : List.copyOf(evidenceDetails);
     }
 }

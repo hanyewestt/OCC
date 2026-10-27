@@ -27,8 +27,7 @@ public class JacksonPlanningEventSubmissionAdapter implements PlanningEventSubmi
 
     @Override
     public EncodedPlanningEventSubmission encode(AlertEvent event) {
-        if (!"OPENED".equals(event.action()) || !"SIMULATION".equals(event.classification())
-                || event.demoRunId() == null || event.expectedHeadwaySeconds() == null
+        if (!"OPENED".equals(event.action()) || !validScope(event.classification(), event.demoRunId()) || event.expectedHeadwaySeconds() == null
                 || event.firstObservedHeadwaySeconds() == null || event.secondObservedHeadwaySeconds() == null
                 || event.firstConfirmingAt() == null || event.secondConfirmingAt() == null
                 || event.detectionRuleVersion() == null || event.confirmingObservationIds().size() != 4) {
@@ -47,6 +46,26 @@ public class JacksonPlanningEventSubmissionAdapter implements PlanningEventSubmi
                 "BUS_BUNCHING", "disruption", event.id(), event.alertId(), event.classification(), event.demoRunId(),
                 event.triggeredAt(), event.detectionRuleVersion(), evidenceIds, facts);
         return encode(submission);
+    }
+
+    @Override
+    public EncodedPlanningEventSubmission encodeHazard(com.csd.occ.disruption.hazard.domain.HazardEventSnapshot facts) {
+        return encode(new PlanningEventSubmission(PlanningEventSubmission.SCHEMA_VERSION, "HAZARD", "disruption",
+                facts.eventId(), facts.disruptionId(), facts.classification(), facts.demoRunId(), facts.eventAt(),
+                "hazard-observation-v1", List.of(facts.sourceObservationId().toString()), null, null, facts));
+    }
+
+    @Override
+    public com.csd.occ.disruption.hazard.domain.HazardEventSnapshot decodeHazard(String payloadJson) {
+        try {
+            PlanningEventSubmission submission = json.readValue(payloadJson, PlanningEventSubmission.class);
+            validate(submission, submission.eventId());
+            if (!"HAZARD".equals(submission.eventType()))
+                throw new IllegalArgumentException("Stored event is not a hazard snapshot");
+            return submission.hazardSnapshot();
+        } catch (JacksonException malformed) {
+            throw new IllegalArgumentException("Stored hazard event evidence is invalid", malformed);
+        }
     }
 
     @Override
@@ -83,8 +102,8 @@ public class JacksonPlanningEventSubmissionAdapter implements PlanningEventSubmi
         }
         if ("BUS_BUNCHING".equals(submission.eventType())) {
             var facts = submission.eventSnapshot();
-            if (!"SIMULATION".equals(submission.classification()) || submission.demoRunId() == null || facts == null
-                    || submission.trafficSnapshot() != null
+            if (!validScope(submission.classification(), submission.demoRunId()) || facts == null
+                    || submission.trafficSnapshot() != null || submission.hazardSnapshot() != null
                     || !Objects.equals(submission.eventId(), facts.eventId())
                     || !Objects.equals(submission.disruptionId(), facts.bunchingEventId())
                     || !Objects.equals(submission.classification(), facts.classification())
@@ -96,7 +115,7 @@ public class JacksonPlanningEventSubmissionAdapter implements PlanningEventSubmi
         }
         if ("TRAFFIC_INCIDENT".equals(submission.eventType())) {
             TrafficIncidentPlanningSnapshot facts = submission.trafficSnapshot();
-            if (facts == null || submission.eventSnapshot() != null
+            if (facts == null || submission.eventSnapshot() != null || submission.hazardSnapshot() != null
                     || !Objects.equals(submission.eventId(), facts.eventId())
                     || !Objects.equals(submission.disruptionId(), facts.disruptionId())
                     || !Objects.equals(submission.classification(), facts.classification())
@@ -107,7 +126,26 @@ public class JacksonPlanningEventSubmissionAdapter implements PlanningEventSubmi
                 throw new IllegalArgumentException("Persisted traffic Planning event identity is invalid");
             return;
         }
+        if ("HAZARD".equals(submission.eventType())) {
+            var facts = submission.hazardSnapshot();
+            if (facts == null || submission.eventSnapshot() != null || submission.trafficSnapshot() != null
+                    || !validScope(submission.classification(), submission.demoRunId())
+                    || !Objects.equals(submission.eventId(), facts.eventId())
+                    || !Objects.equals(submission.disruptionId(), facts.disruptionId())
+                    || !Objects.equals(submission.classification(), facts.classification())
+                    || !Objects.equals(submission.demoRunId(), facts.demoRunId())
+                    || !Objects.equals(submission.detectedAt(), facts.eventAt())
+                    || !"hazard-observation-v1".equals(submission.detectionRuleVersion())
+                    || !Objects.equals(submission.evidenceIds(), List.of(facts.sourceObservationId().toString())))
+                throw new IllegalArgumentException("Persisted hazard event identity is invalid");
+            return;
+        }
         throw new IllegalArgumentException("Persisted Planning event type is unsupported");
+    }
+
+    private boolean validScope(String classification, UUID runId) {
+        return "SIMULATION".equals(classification) && runId != null
+                || "OBSERVATION_ONLY".equals(classification) && runId == null;
     }
 
     private String sha256(String value) {

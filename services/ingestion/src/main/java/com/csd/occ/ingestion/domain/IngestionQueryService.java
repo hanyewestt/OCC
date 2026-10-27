@@ -27,8 +27,10 @@ public class IngestionQueryService {
         this.clock = clock;
     }
 
-    public Page<CurrentBusArrivalView> currentArrivals(String stopCode, String serviceId, Pageable pageable) {
-        return arrivals.findCurrent(blankToNull(stopCode), blankToNull(serviceId), pageable);
+    public Page<CurrentBusArrivalView> currentArrivals(String stopCode, String serviceId, String stopName,
+            String sortBy, String sortDirection, Pageable pageable) {
+        return arrivals.findCurrent(blankToNull(stopCode), blankToNull(serviceId), containsPattern(stopName),
+                sortBy, sortDirection, pageable);
     }
 
     public Page<BusArrivalObservation> arrivalHistory(String stopCode, String serviceId, Instant from, Instant to,
@@ -55,6 +57,11 @@ public class IngestionQueryService {
     }
 
     private String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value;
+        return value == null || value.isBlank() ? null : value.strip();
+    }
+
+    private String containsPattern(String value) {
+        String normalized = blankToNull(value);
+        return normalized == null ? null : "%" + normalized.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%";
     }
 }

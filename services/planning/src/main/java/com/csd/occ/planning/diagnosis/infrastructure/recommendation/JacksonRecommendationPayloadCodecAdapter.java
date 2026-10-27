@@ -20,7 +20,7 @@ public class JacksonRecommendationPayloadCodecAdapter implements RecommendationP
                 new BunchingEvent(event.bunchingEventId(), event.serviceId(), event.directionId(),
                         event.monitoredStopCode(), event.status(), event.expectedHeadwaySeconds(),
                         event.observedHeadwaySeconds(), event.firstConfirmedAt(), event.evidenceIds()),
-                new Diagnosis(diagnosis.id(), diagnosis.likelyCause(), BigDecimal.valueOf(diagnosis.confidence()),
+                new Diagnosis(diagnosis.id(), diagnosis.likelyCause(), null,
                         diagnosis.supportingEvidenceIds(), diagnosis.limitations()));
         try { return json.writeValueAsString(body); }
         catch (Exception failure) { throw new IllegalStateException("Cannot encode recommendation request", failure); }

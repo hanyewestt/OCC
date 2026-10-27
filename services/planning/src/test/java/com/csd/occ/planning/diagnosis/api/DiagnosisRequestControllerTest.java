@@ -21,6 +21,8 @@ import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestService;
 import com.csd.occ.planning.diagnosis.domain.EventType;
 import com.csd.occ.planning.diagnosis.domain.ProducerEventSubmission;
 import com.csd.occ.planning.diagnosis.domain.TrafficIncidentEventFacts;
+import com.csd.occ.planning.advisory.domain.AdvisoryProposalRepository;
+import com.csd.occ.planning.advisory.domain.IssuedInstructionRepository;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -48,6 +50,8 @@ class DiagnosisRequestControllerTest {
     @Autowired MockMvc mvc;
     @MockitoBean DiagnosisRequestService requests;
     @MockitoBean DiagnosisQueryService query;
+    @MockitoBean AdvisoryProposalRepository proposals;
+    @MockitoBean IssuedInstructionRepository instructions;
 
     @Test
     void exposesTerminalFailureByEventBeforeADiagnosisExists() throws Exception {

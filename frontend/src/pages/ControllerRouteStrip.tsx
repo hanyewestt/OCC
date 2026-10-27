@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import type { Arrival, BunchingAlert, DemoRun, PageResult, RouteDirection, RoutePositionDirection, RoutePositions } from '@/lib/api'
+import { formatSgtTime } from '@/lib/time'
 import {
   alignArrivalsToPositionEvidence, arrivalDirectionMatches, estimateRouteHeadways, etaFallbacksForRoute, formatGap, gapSeverity,
   groupRouteIncidents, linkIncidentToPosition, oldestStopDataAgeSeconds, placeArrivalAtPositionEvidence,
   positionSourceFreshness, positionSourceIsStale, routeKey, routePositionEvidenceDescription,
-  routePositionSnapshotIsDisplayed,
-  routeStopDistances, ROUTE_STRIP_GAP_SEVERITY,
-  type IncidentStripLink, type RouteIncident,
+  routePositionSnapshotIsDisplayed, routeStopDistances, routeDestination, ROUTE_STRIP_GAP_SEVERITY,
+  type IncidentStripLink, type RouteDestination, type RouteIncident,
 } from '@/lib/route-strip'
 import { DataMessage } from './ControllerViews'
 import type { Resource } from './ControllerPage'
@@ -22,9 +21,9 @@ type Props = {
   pollIntervalSeconds: number
   incidentGapToleranceSeconds: number
   lastUpdated: string
-  controllerRefreshIntervalSeconds: number
   loading: boolean
   fetchStopArrivals: (route: RouteDirection, stopCode: string, signal: AbortSignal) => Promise<Arrival[]>
+  fetchStopName: (stopCode: string) => Promise<string | null>
 }
 
 type PositionSnapshot = {
@@ -38,6 +37,13 @@ const leftPadding = 64
 const noAlerts: BunchingAlert[] = []
 const noRoutes: RouteDirection[] = []
 const noPositionSnapshots: RoutePositions[] = []
+
+function destinationText(destination: RouteDestination, referenceStopNames: Map<string, string | null>) {
+  if (destination.status === 'unavailable') return 'Destination unavailable'
+  if (destination.status === 'multiple') return 'Multiple destinations'
+  const stopName = destination.stopName || referenceStopNames.get(destination.stopCode)
+  return `Towards ${stopName || `stop ${destination.stopCode}`}`
+}
 
 function stopNameLines(name: string | null) {
   const words = name?.trim().split(/\s+/).filter(Boolean) ?? []
@@ -54,21 +60,8 @@ function stopNameLines(name: string | null) {
   return lines
 }
 
-function shortAge(seconds: number) {
-  if (seconds < 10) return 'just now'
-  if (seconds < 60) return `${seconds} sec ago`
-  const minutes = Math.floor(seconds / 60)
-  const remaining = seconds % 60
-  return remaining < 10 ? `${minutes} min ago` : `${minutes} min ${remaining} sec ago`
-}
-
 function pairKey(frontOrder: number, followingOrder: number) {
   return `${frontOrder}:${followingOrder}`
-}
-
-function clockTime(value: string) {
-  const parsed = Date.parse(value)
-  return Number.isFinite(parsed) ? new Date(parsed).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'
 }
 
 function formatDistance(meters: number | null) {
@@ -76,8 +69,9 @@ function formatDistance(meters: number | null) {
   return meters >= 1_000 ? `${(meters / 1_000).toFixed(1)} km apart` : `${meters} m apart`
 }
 
-function RouteRow({ route, snapshot, arrivals, routes, incidents, showPositions, nowMs, lastUpdated, fetchStopArrivals }: {
+function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, showPositions, nowMs, lastUpdated, fetchStopArrivals }: {
   route: RouteDirection
+  destination: string
   snapshot?: PositionSnapshot
   arrivals: Arrival[]
   routes: RouteDirection[]
@@ -237,7 +231,7 @@ function RouteRow({ route, snapshot, arrivals, routes, incidents, showPositions,
   return <div className="border-b last:border-b-0">
     <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-4 pt-4">
       <div>
-        <h3 className="text-sm font-medium">Service {route.serviceId} · Direction {route.directionId}</h3>
+        <h3 className="text-sm font-medium">Service {route.serviceId} · {destination}</h3>
         {position && buses.length > 0 ? <p className="mt-1 text-xs text-muted-foreground">
           {buses.length === 1
             ? '1 distinct feed-supported bus estimate displayed · physical vehicle identity remains unresolved'
@@ -250,12 +244,12 @@ function RouteRow({ route, snapshot, arrivals, routes, incidents, showPositions,
       <div className="flex flex-col items-start text-xs text-muted-foreground sm:items-end">
         <span>{route.operator} · {route.stops.length} stops</span>
         <span>{snapshot?.sourceObservedAt
-          ? `Source observations ${clockTime(snapshot.sourceObservedAt)}`
-          : snapshot ? `Computed ${clockTime(snapshot.computedAt)} · source time unavailable` : 'Position source unavailable'}</span>
+          ? `Source observations ${formatSgtTime(snapshot.sourceObservedAt)}`
+          : snapshot ? `Computed ${formatSgtTime(snapshot.computedAt)} · source time unavailable` : 'Position source unavailable'}</span>
       </div>
     </div>
     <div className="max-w-full overflow-x-auto px-2 pb-3 pt-1">
-      <svg role="group" aria-label={`Service ${route.serviceId}, direction ${route.directionId}, approximate bus positions and headways`}
+      <svg role="group" aria-label={`Service ${route.serviceId}, ${destination}, ${route.operator}, direction ${route.directionId}, approximate bus positions and headways`}
         width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="block max-w-none">
         <line x1={leftPadding - 22} y1={routeY} x2={leftPadding + routeSpan + 22} y2={routeY}
           stroke="var(--border)" strokeWidth="4" strokeLinecap="round" />
@@ -351,7 +345,7 @@ function RouteRow({ route, snapshot, arrivals, routes, incidents, showPositions,
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h4 className="text-sm font-medium">Next arrivals at {selectedStop?.description || `Stop ${selectedStopCode}`}</h4>
         <span className="text-xs text-muted-foreground">Stop {selectedStopCode} · Service {route.serviceId}, direction {route.directionId}
-          {selectedFeedFetchedAt ? ` · ${selectedEvidence.status === 'aligned' ? 'Overlay source' : 'Latest stop feed'} ${new Date(selectedFeedFetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : ''}</span>
+          {selectedFeedFetchedAt != null ? ` · ${selectedEvidence.status === 'aligned' ? 'Overlay source' : 'Latest stop feed'} ${formatSgtTime(new Date(selectedFeedFetchedAt).toISOString())}` : ''}</span>
       </div>
       <p className="mt-1 text-xs text-muted-foreground">Purple dots show only in-band selected-stop observations used by the displayed blue position sweep, at the backend-selected route occurrence. Details retain the raw coordinate’s physical offset from route geometry. They do not identify a physical bus.</p>
       {selectedStopLoading ? <p className="mt-2 text-sm text-muted-foreground">Loading latest arrivals…</p> : selectedStopError ?
@@ -380,58 +374,24 @@ function RouteRow({ route, snapshot, arrivals, routes, incidents, showPositions,
   </div>
 }
 
-function IncidentPanel({ incidents, loading, error, showHistorical, onToggleHistorical, simulation }: {
-  incidents: PositionedIncident[]
-  loading: boolean
-  error: string
-  showHistorical: boolean
-  onToggleHistorical: () => void
-  simulation: boolean
-}) {
-  const historical = incidents.filter(incident => incident.historical)
-  const current = incidents.filter(incident => !incident.historical)
-  const visible = showHistorical ? incidents : current
-  return <Card aria-labelledby="bunching-incidents-title">
-    <CardContent className="space-y-4 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 id="bunching-incidents-title" className="font-medium">Bunching incidents</h3>
-          <p className="mt-1 text-xs text-muted-foreground">Adjacent stop alerts with similar gaps are grouped as one incident. Estimated bus positions do not identify physical vehicles.</p>
-          {simulation && <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">Simulation incidents; not live events.</p>}
-        </div>
-        <Button type="button" variant="outline" size="sm" aria-pressed={showHistorical} onClick={onToggleHistorical}>
-          {showHistorical ? 'Hide' : 'Show'} historical ({historical.length})
-        </Button>
-      </div>
-      {error && !loading && <p role="status" className="text-sm text-amber-700 dark:text-amber-400">{error}</p>}
-      {loading ? <p role="status" className="text-sm text-muted-foreground">Loading incidents…</p> : visible.length === 0 ?
-        <p className="text-sm text-muted-foreground">{showHistorical ? 'No incidents to show.' : historical.length ? 'No current incidents. Historical incidents are hidden.' : 'No bunching incidents.'}</p> :
-        <ul className="space-y-3">
-          {visible.map(incident => <li key={incident.id} className="rounded-lg border p-3">
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <strong className="text-sm">Service {incident.serviceId} · Direction {incident.directionId ?? 'unknown'}</strong>
-              <span className="text-xs text-muted-foreground">Detected {shortAge(incident.ageSeconds)}</span>
-              {incident.historical && <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">Historical</span>}
-              {simulation && <span className="rounded-full border px-2 py-0.5 text-xs text-amber-700 dark:text-amber-400">Simulation</span>}
-            </div>
-            <p className="mt-2 text-sm">{incident.stopNames.join(' → ')}</p>
-            <p className="mt-1 text-xs text-muted-foreground">Stops {incident.stopCodes.join(' · ')} · {incident.alerts.length} alert{incident.alerts.length === 1 ? '' : 's'}
-              {incident.gapSeconds === null ? '' : ` · Typical saved gap ${formatGap(incident.gapSeconds)}`}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{incident.stripLink
-              ? `Linked to estimated buses #${incident.stripLink.frontOrder}→#${incident.stripLink.followingOrder} near stop ${incident.stripLink.stopCode} (${incident.stripLink.match === 'evidence' ? 'shared source evidence' : 'approximate position match'}).`
-              : 'Not linked to current estimated positions; alert and route markers remain separate.'}</p>
-          </li>)}
-        </ul>}
-    </CardContent>
-  </Card>
-}
-
 export function ControllerRouteStrip({ alerts, run, stops, positions, arrivals, pollIntervalSeconds, incidentGapToleranceSeconds, lastUpdated,
-  controllerRefreshIntervalSeconds, loading, fetchStopArrivals }: Props) {
-  const [showHistorical, setShowHistorical] = useState(false)
+  loading, fetchStopArrivals, fetchStopName }: Props) {
+  const [selectedRouteKey, setSelectedRouteKey] = useState('')
+  const [referenceStopNames, setReferenceStopNames] = useState<{
+    fetcher: Props['fetchStopName']; names: Map<string, string | null>
+  } | null>(null)
+  const stopNameRequests = useRef(new WeakMap<Props['fetchStopName'], Map<string, Promise<string | null>>>())
   const simulationRun = run.data && run.data.status !== 'CLOSED' ? run.data : null
   const events = simulationRun ? simulationRun.alerts : alerts.data?.items ?? noAlerts
   const routes = stops.data ?? noRoutes
+  const routeKeys = routes.map(routeKey)
+  const [previousRouteKeys, setPreviousRouteKeys] = useState(routeKeys)
+  // Keep the user's choice through data refreshes, but reset it if that route identity disappears.
+  if (routeKeys.length !== previousRouteKeys.length || routeKeys.some((key, index) => key !== previousRouteKeys[index])) {
+    setPreviousRouteKeys(routeKeys)
+    if (selectedRouteKey && !routeKeys.includes(selectedRouteKey)) setSelectedRouteKey(routeKeys[0] ?? '')
+  }
+  const selectedRoute = routes.find(route => routeKey(route) === selectedRouteKey) ?? routes[0]
   const nowMs = Date.parse(lastUpdated) || 0
   const currentPositions = positions.data ?? noPositionSnapshots
   const displayedPositionSnapshots = useMemo(() => currentPositions.filter(snapshot =>
@@ -457,42 +417,86 @@ export function ControllerRouteStrip({ alerts, run, stops, positions, arrivals, 
     }
   }), [incidents, routes, positionByRoute, simulationRun])
 
-  const positionFreshness = positionSourceFreshness(displayedPositionSnapshots, nowMs)
-  const positionStale = displayedPositionSnapshots.some(snapshot => positionSourceIsStale(snapshot, nowMs))
-  const positionSourceUnavailable = displayedPositionSnapshots.length > 0 && positionFreshness.unavailableCount > 0
-  const arrivalSourceAgeSeconds = oldestStopDataAgeSeconds(arrivals.data ?? [], routes, nowMs)
-  const arrivalSourceAgeLimitSeconds = displayedPositionSnapshots.length
-    ? Math.min(...displayedPositionSnapshots.map(snapshot => snapshot.maxSourceAgeSeconds)) : null
+  const routeDestinations = useMemo(() => new Map(routes.map(route => [
+    routeKey(route), arrivals.error ? { status: 'unavailable' } as const : routeDestination(route, routes, arrivals.data ?? []),
+  ])), [routes, arrivals.data, arrivals.error])
+  const externalStopCodes = useMemo(() => [...new Set([...routeDestinations.values()]
+    .filter((destination): destination is Extract<RouteDestination, { status: 'resolved' }> =>
+      destination.status === 'resolved' && !destination.stopName)
+    .map(destination => destination.stopCode))], [routeDestinations])
+  useEffect(() => {
+    if (!externalStopCodes.length) return
+    let active = true
+    const cached = stopNameRequests.current.get(fetchStopName) ?? new Map<string, Promise<string | null>>()
+    stopNameRequests.current.set(fetchStopName, cached)
+    const loadName = async (stopCode: string) => {
+      let request = cached.get(stopCode)
+      if (!request) {
+        request = fetchStopName(stopCode).then(name => name?.trim() || null)
+        request.catch(() => cached.delete(stopCode))
+        cached.set(stopCode, request)
+      }
+      try { return [stopCode, await request] as const }
+      catch { return [stopCode, null] as const }
+    }
+    void Promise.all(externalStopCodes.map(loadName)).then(entries => {
+      if (active) {
+        setReferenceStopNames(previous => ({
+          fetcher: fetchStopName,
+          names: new Map([...(previous?.fetcher === fetchStopName ? previous.names : []), ...entries]),
+        }))
+      }
+    })
+    return () => { active = false }
+  }, [externalStopCodes, fetchStopName])
+  const stopNames = referenceStopNames?.fetcher === fetchStopName ? referenceStopNames.names : new Map<string, string | null>()
+  const selectedPositionSnapshots = useMemo(() => selectedRoute ? currentPositions.filter(snapshot =>
+    routePositionSnapshotIsDisplayed(snapshot, [selectedRoute])) : [], [currentPositions, selectedRoute])
+  const positionFreshness = positionSourceFreshness(selectedPositionSnapshots, nowMs)
+  const positionStale = selectedPositionSnapshots.some(snapshot => positionSourceIsStale(snapshot, nowMs))
+  const positionSourceUnavailable = selectedPositionSnapshots.length > 0 && positionFreshness.unavailableCount > 0
+  const arrivalSourceAgeSeconds = selectedRoute
+    ? oldestStopDataAgeSeconds(arrivals.data ?? [], [selectedRoute], nowMs) : null
+  const arrivalSourceAgeLimitSeconds = selectedPositionSnapshots.length
+    ? Math.min(...selectedPositionSnapshots.map(snapshot => snapshot.maxSourceAgeSeconds)) : null
   const arrivalFallbackStale = arrivalSourceAgeSeconds !== null && arrivalSourceAgeLimitSeconds !== null
     && arrivalSourceAgeSeconds > arrivalSourceAgeLimitSeconds
-  const incidentError = run.error || (simulationRun ? '' : alerts.error)
   const routeError = stops.error && routes.length ? 'Some route references could not be loaded; available routes are shown.' : stops.error
   const dataError = [positions.error, arrivals.error].filter(Boolean).join(' ')
 
   return <section aria-labelledby="route-strip-title" className="space-y-4">
     <div>
-      <h2 id="route-strip-title" className="font-medium">Live route strip</h2>
+      <h2 id="route-strip-title" className="font-medium">Approximate Live Route Strip</h2>
       <p className="mt-1 text-xs text-muted-foreground">Stops are evenly spaced for readability; bus positions are approximate along the ordered route. Numbers are order estimates, not vehicle identities.</p>
-      {simulationRun && <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">Simulation incident data is shown separately; the strip keeps live position estimates.</p>}
+      {simulationRun && <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">Simulation alerts · route positions remain live.</p>}
       <p className="mt-1 text-xs text-muted-foreground">Gaps use same-poll arrival times when available; otherwise time is estimated from position and speed, or shown as distance only.</p>
-      <p className="mt-1 text-xs text-muted-foreground">Last updated {lastUpdated ? clockTime(lastUpdated) : 'not yet updated'} · Refreshes every {controllerRefreshIntervalSeconds} seconds.</p>
-      {positions.error && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">{positions.error} Showing the last available estimates.</p>}
-      {arrivals.error && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">Some current arrivals could not be loaded for ETA headway fallback.</p>}
-      {positionStale && <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">At least one displayed blue position exceeds its configured source-age limit; treat those positions as stale.</p>}
-      {positionSourceUnavailable && <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">Source-observation time is unavailable for {positionFreshness.unavailableCount} displayed position snapshot{positionFreshness.unavailableCount === 1 ? '' : 's'}; blue-position freshness cannot be confirmed.</p>}
-      {arrivalFallbackStale && <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">At least one stop’s latest arrival data exceeds the configured position-source age limit; same-stop ETA headway fallback may be stale.</p>}
+      {positions.error && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">Estimated positions could not be refreshed; showing available estimates.</p>}
+      {arrivals.error && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">Route arrivals are incomplete; destinations and same-stop gaps may be unavailable.</p>}
+      {positionStale && <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">The displayed blue position exceeds its configured source-age limit; treat it as stale.</p>}
+      {positionSourceUnavailable && <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">Source-observation time is unavailable for the displayed position; blue-position freshness cannot be confirmed.</p>}
+      {arrivalFallbackStale && <p role="status" className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">At least one stop’s latest arrival data exceeds the position-source age limit; same-stop ETA headway fallback may be stale.</p>}
       {dataError && !positionStale && !arrivalFallbackStale && positionFreshness.oldestAgeSeconds === null && arrivalSourceAgeSeconds === null &&
         <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">Current source data is unavailable; no fresh estimates can be confirmed.</p>}
       {routeError && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">{routeError}</p>}
     </div>
 
     {!routes.length ? <DataMessage error={stops.error || 'Route reference data is unavailable.'} loading={loading} empty={false}>Route reference data is unavailable.</DataMessage> : <>
+      <div className="flex flex-wrap items-center gap-3">
+        <label htmlFor="route-strip-selector" className="text-sm font-medium">Route</label>
+        <select id="route-strip-selector" aria-label="Route" value={selectedRoute ? routeKey(selectedRoute) : ''}
+          onChange={event => setSelectedRouteKey(event.target.value)}
+          className="h-10 min-w-64 max-w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          {routes.map(route => <option key={routeKey(route)} value={routeKey(route)}>
+            {`Service ${route.serviceId} · ${destinationText(routeDestinations.get(routeKey(route)) ?? { status: 'unavailable' }, stopNames)} · ${route.operator}`}
+          </option>)}
+        </select>
+      </div>
       <Card className="overflow-hidden">
-        <div>
-          {routes.map(route => <RouteRow key={routeKey(route)} route={route} snapshot={positionByRoute.get(routeKey(route))}
-            arrivals={arrivals.data ?? []} routes={routes} incidents={positionedIncidents} showPositions
-            nowMs={nowMs} lastUpdated={lastUpdated} fetchStopArrivals={fetchStopArrivals} />)}
-        </div>
+        {selectedRoute && <RouteRow key={routeKey(selectedRoute)} route={selectedRoute}
+          destination={destinationText(routeDestinations.get(routeKey(selectedRoute)) ?? { status: 'unavailable' }, stopNames)}
+          snapshot={positionByRoute.get(routeKey(selectedRoute))} arrivals={arrivals.data ?? []} routes={routes}
+          incidents={positionedIncidents} showPositions nowMs={nowMs}
+          lastUpdated={lastUpdated} fetchStopArrivals={fetchStopArrivals} />}
         <CardContent className="flex flex-wrap gap-x-5 gap-y-2 border-t py-3 text-xs text-muted-foreground">
           {Object.entries(ROUTE_STRIP_GAP_SEVERITY).map(([key, severity]) => <span key={key} className="inline-flex items-center gap-2">
             <span className={`size-2.5 rounded-full ${severity.legendClassName}`} aria-hidden="true" />{severity.shortLabel}
@@ -503,8 +507,6 @@ export function ControllerRouteStrip({ alerts, run, stops, positions, arrivals, 
           <span className="inline-flex items-center gap-2"><span className="size-2.5 rounded-full bg-destructive" aria-hidden="true" />Incident linked by service, direction, time and stop position</span>
         </CardContent>
       </Card>
-      <IncidentPanel incidents={positionedIncidents} loading={loading} error={incidentError}
-        showHistorical={showHistorical} onToggleHistorical={() => setShowHistorical(value => !value)} simulation={!!simulationRun} />
     </>}
   </section>
 }

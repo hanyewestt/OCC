@@ -19,8 +19,53 @@ import org.springframework.http.ProblemDetail;
 @Tag(name = "Root-cause diagnoses")
 public class DiagnosisController {
     private final DiagnosisQueryService diagnoses;
+    private final com.csd.occ.planning.diagnosis.domain.PlanningScopeService scopes;
 
-    public DiagnosisController(DiagnosisQueryService diagnoses) { this.diagnoses = diagnoses; }
+    public DiagnosisController(DiagnosisQueryService diagnoses, com.csd.occ.planning.diagnosis.domain.PlanningScopeService scopes) {
+        this.diagnoses = diagnoses; this.scopes = scopes;
+    }
+
+    @GetMapping
+    @Operation(operationId = "listActivePlanningDiagnoses", summary = "List live diagnoses or diagnoses for the active simulation run")
+    @ApiResponse(responseCode = "200", description = "Scoped diagnosis lifecycle and results, newest first")
+    @ApiResponse(responseCode = "400", description = "Invalid page bounds")
+    @ApiResponse(responseCode = "401", description = "Authentication required")
+    @ApiResponse(responseCode = "403", description = "ADMIN or CONTROLLER role required")
+    @ApiResponse(responseCode = "503", description = "Shared data selection is unavailable")
+    public com.csd.occ.planning.diagnosis.api.dto.PlanningDiagnosisPageResponse list(
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "0") int page,
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "50") int size) {
+        return com.csd.occ.planning.diagnosis.api.dto.PlanningDiagnosisPageResponse.from(scopes.list(page, size));
+    }
+
+    @GetMapping("/hazard-requests")
+    @Operation(operationId = "listActiveHazardRequests", summary = "List pending and failed hazard processing in the active scope")
+    @ApiResponse(responseCode = "200", description = "Latest unfinished hazard request per disruption, newest first")
+    @ApiResponse(responseCode = "400", description = "Invalid page bounds")
+    @ApiResponse(responseCode = "401", description = "Authentication required")
+    @ApiResponse(responseCode = "403", description = "ADMIN or CONTROLLER role required")
+    @ApiResponse(responseCode = "503", description = "Shared data selection is unavailable")
+    public com.csd.occ.planning.diagnosis.api.dto.PlanningHazardRequestPageResponse listHazardRequests(
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "0") int page,
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "50") int size) {
+        return com.csd.occ.planning.diagnosis.api.dto.PlanningHazardRequestPageResponse.from(
+                scopes.listHazardRequests(page, size));
+    }
+
+    @GetMapping("/hazard-history")
+    @Operation(operationId = "listHazardProcessingHistory", summary = "List completed and terminally failed hazard processing",
+            description = "Controller/admin only. Latest terminal request per disruption in the selected live or active simulation scope, ordered by completion time newest first. Page defaults to 0; size defaults to 50 (1–100). Pending, processing and retryable failures are excluded. Uses existing operational retention.")
+    @ApiResponse(responseCode = "200", description = "Scoped terminal processing history")
+    @ApiResponse(responseCode = "400", description = "Invalid page bounds")
+    @ApiResponse(responseCode = "401", description = "Authentication required")
+    @ApiResponse(responseCode = "403", description = "ADMIN or CONTROLLER role required")
+    @ApiResponse(responseCode = "503", description = "Shared data selection is unavailable")
+    public com.csd.occ.planning.diagnosis.api.dto.PlanningHazardHistoryPageResponse listHazardHistory(
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "0") int page,
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "50") int size) {
+        return com.csd.occ.planning.diagnosis.api.dto.PlanningHazardHistoryPageResponse.from(
+                scopes.listHazardHistory(page, size));
+    }
 
     @GetMapping("/{diagnosisId}")
     @Operation(operationId = "getDiagnosis", summary = "Get a diagnosis result when processing has completed")
@@ -33,6 +78,7 @@ public class DiagnosisController {
                 view.causeSubtype(), view.likelyCause(), view.confidence(), view.evidenceSupportScore(),
                 view.evidenceIds(), view.limitations(), view.completedAt(), view.eventType(), view.eventId(), view.producer(),
                 view.recommendationDeliveryStatus(),
-                view.recommendationDeliveryFailureCode());
+                view.recommendationDeliveryFailureCode(), view.evidenceDetails().stream()
+                        .map(com.csd.occ.planning.diagnosis.api.dto.DiagnosisEvidenceDetailResponse::from).toList());
     }
 }

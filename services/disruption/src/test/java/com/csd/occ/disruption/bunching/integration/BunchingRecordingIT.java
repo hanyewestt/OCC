@@ -52,7 +52,7 @@ class BunchingRecordingIT {
     @Autowired PlatformTransactionManager transactions;
 
     @BeforeEach void reset() {
-        jdbc.execute("TRUNCATE disruption.planning_outbox, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption, disruption.source_processing_state");
+        jdbc.execute("TRUNCATE disruption.hazard_state, disruption.planning_outbox, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption, disruption.source_processing_state");
         jdbc.update("UPDATE disruption.consumer_state SET mode='LIVE', demo_run_id=NULL, last_sequence=0, updated_at=? WHERE id=1", Timestamp.from(NOW));
     }
 
@@ -85,12 +85,21 @@ class BunchingRecordingIT {
     }
 
     @Test void deferredSourceCanBeProcessedAndReplayedAfterRestart() {
-        var snapshot = snapshot(60);
+        jdbc.update("UPDATE disruption.consumer_state SET updated_at=? WHERE id=1", Timestamp.from(NOW.minusSeconds(60)));
+        var source = snapshot(60);
+        var snapshot = new ArrivalSnapshot(source.rawObservationId(), source.pollRunId(), source.referenceVersionId(),
+                NOW.minusSeconds(1), source.arrivals());
         states.save(new com.csd.occ.disruption.bunching.domain.SourceProcessingState(snapshot.rawObservationId(), NOW, null));
         assertEquals(RecordedBunching.Outcome.RECORDED, service.record(snapshot, THRESHOLD, Duration.ofSeconds(120)).outcome());
         assertEquals("PROCESSED", states.findById(snapshot.rawObservationId()).orElseThrow().status());
         assertEquals(RecordedBunching.Outcome.ALREADY_RECORDED, service.record(snapshot, THRESHOLD, Duration.ofSeconds(120)).outcome());
+        // Known-direction episodes require two distinct polls; replaying the first cannot confirm it.
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM disruption.disruption_event", Integer.class));
+        var confirmation = snapshot(60);
+        assertEquals(RecordedBunching.Outcome.RECORDED, service.record(confirmation, THRESHOLD, Duration.ofSeconds(120)).outcome());
+        assertEquals(RecordedBunching.Outcome.ALREADY_RECORDED, service.record(confirmation, THRESHOLD, Duration.ofSeconds(120)).outcome());
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM disruption.disruption_event", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM disruption.planning_outbox", Integer.class));
     }
 
     private ArrivalSnapshot snapshot(int gap) {
