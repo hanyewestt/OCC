@@ -6,7 +6,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "occ.frontend")
 public record FrontendProperties(URI projectUrl, String publishableKey, Duration controllerRefreshInterval,
-                                 Duration ingestionPollInterval, Duration routeIncidentGapTolerance) {
+                                 Duration ingestionPollInterval, Duration routeIncidentGapTolerance,
+                                 Duration captainRefreshInterval, Duration publicNoticeRefreshInterval) {
     public FrontendProperties {
         if (publishableKey != null && !publishableKey.isBlank()
                 && !publishableKey.startsWith("sb_publishable_")) {
@@ -15,6 +16,8 @@ public record FrontendProperties(URI projectUrl, String publishableKey, Duration
         requireAtLeastOneSecond(controllerRefreshInterval, "controller refresh interval");
         requireAtLeastOneSecond(ingestionPollInterval, "ingestion poll interval");
         requireAtLeastOneSecond(routeIncidentGapTolerance, "route incident gap tolerance");
+        requireAtLeastOneSecond(captainRefreshInterval, "captain refresh interval");
+        requireAtLeastOneSecond(publicNoticeRefreshInterval, "public notice refresh interval");
     }
 
     private static void requireAtLeastOneSecond(Duration value, String name) {

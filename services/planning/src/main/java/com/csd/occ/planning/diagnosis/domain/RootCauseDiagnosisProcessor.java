@@ -13,8 +13,6 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class RootCauseDiagnosisProcessor {
-    private static final String UNKNOWN_CAUSE = "Available evidence does not identify a supported contributing cause.";
-    private static final String LOW_CONFIDENCE_LIMITATION = "Evidence-support score is below the configured review threshold; use human review.";
     private final DiagnosisRequestRepository requests;
     private final EventFactsPort eventFacts;
     private final ContextEvidencePort evidenceContext;
@@ -22,7 +20,8 @@ public class RootCauseDiagnosisProcessor {
     private final SnapshotCodecPort snapshots;
     private final RecommendationPayloadCodecPort payloads;
     private final DiagnosisCompletionService completion;
-    private final BunchingEvidenceSupportPolicy confidencePolicy = new BunchingEvidenceSupportPolicy();
+    private final BunchingEvidenceSupportPolicy associations = new BunchingEvidenceSupportPolicy();
+    private final DiagnosisSummaryPolicy summaries = new DiagnosisSummaryPolicy();
     private final RetryBackoffPolicy retryBackoff = new RetryBackoffPolicy();
     private final DiagnosisPolicySettings settings;
     private final Clock clock;
@@ -48,17 +47,19 @@ public class RootCauseDiagnosisProcessor {
                     || event.confirmingObservationIds().stream().filter(java.util.Objects::nonNull).distinct().count() < 2)
                 throw new DiagnosisFailureException("INCOMPLETE_EVENT_FACTS", false);
             RootCauseContext context = bound(retained == null ? evidenceContext.findContext(event) : retained.context(), event);
-            if (!event.demoRunId().equals(context.demoRunId()) || !"SIMULATION".equals(context.classification()))
+            if (!PlanningScope.valid(event.classification(), event.demoRunId())
+                    || !java.util.Objects.equals(event.demoRunId(), context.demoRunId())
+                    || !event.classification().equals(context.classification()))
                 throw new DiagnosisFailureException("EVIDENCE_PROVENANCE_MISMATCH", false);
             Instant latestConfirmationAt = event.confirmingObservationTimes().getLast();
-            if (context.arrivals().stream().anyMatch(arrival -> !"SIMULATION".equals(arrival.classification())
-                    || !event.demoRunId().equals(arrival.demoRunId())
+            if (context.arrivals().stream().anyMatch(arrival -> !event.classification().equals(arrival.classification())
+                    || !java.util.Objects.equals(event.demoRunId(), arrival.demoRunId())
                     || !event.serviceId().equals(arrival.serviceId())
                     || !event.monitoredStopCode().equals(arrival.stopCode())
                     || !java.util.Objects.equals(event.directionId(), arrival.directionId())
                     || arrival.fetchedAt() == null || arrival.fetchedAt().isAfter(latestConfirmationAt))
-                    || context.incidents().stream().anyMatch(incident -> !"SIMULATION".equals(incident.classification())
-                    || !event.demoRunId().equals(incident.demoRunId()) || incident.fetchedAt() == null
+                    || context.incidents().stream().anyMatch(incident -> !event.classification().equals(incident.classification())
+                    || !java.util.Objects.equals(event.demoRunId(), incident.demoRunId()) || incident.fetchedAt() == null
                     || incident.fetchedAt().isAfter(event.firstConfirmedAt())
                     || incident.observedAt() != null && incident.observedAt().isAfter(event.firstConfirmedAt())))
                 throw new DiagnosisFailureException("EVIDENCE_PROVENANCE_MISMATCH", false);
@@ -82,7 +83,7 @@ public class RootCauseDiagnosisProcessor {
 
             List<String> feedback = List.of();
             ModelOutput output = null;
-            BunchingEvidenceSupportPolicy.ScoredEvidence score = null;
+            BunchingEvidenceSupportPolicy.AssociatedEvidence association = null;
             for (int attempt = 1; attempt <= 2; attempt++) {
                 RootCauseModelPort.ModelCallResult call;
                 try {
@@ -98,7 +99,7 @@ public class RootCauseDiagnosisProcessor {
                 try {
                     output = call.output();
                     validateOutput(output, snapshot);
-                    score = confidencePolicy.score(event, context, output, settings.evidenceLookback(),
+                    association = associations.associate(event, context, output, settings.evidenceLookback(),
                             settings.evidenceRadiusKm());
                     invocationDetails.add(withOutcome(call.invocation(), "VALID"));
                     break;
@@ -108,17 +109,20 @@ public class RootCauseDiagnosisProcessor {
                     if (attempt == 2) throw new DiagnosisFailureException("MODEL_OUTPUT_INVALID", false, invalid);
                 }
             }
-            if (output == null || score == null) throw new DiagnosisFailureException("MODEL_OUTPUT_INVALID", false);
-            double confidence = java.math.BigDecimal.valueOf(score.score())
-                    .setScale(3, java.math.RoundingMode.DOWN).doubleValue();
-            List<String> limitations = limitations(output, context, confidence);
-            String likelyCause = "UNKNOWN".equals(score.causeCode()) ? UNKNOWN_CAUSE : output.likelyCause().trim();
+            if (output == null || association == null) throw new DiagnosisFailureException("MODEL_OUTPUT_INVALID", false);
+            List<String> limitations = limitations(output, context, association);
+            String likelyCause = summaries.summarize(association.causeCode(), association.causeSubtype(),
+                    association.evidenceIds(), snapshot).likelyCause();
             UUID diagnosisId = UUID.randomUUID();
-            RootCauseDiagnosis diagnosis = new RootCauseDiagnosis(diagnosisId, request.id(), score.causeCode(),
-                    score.causeSubtype(), likelyCause, confidence, confidence, score.evidenceIds(),
-                    limitations, score.components(), snapshotJson, snapshotHash, "GOOGLE_GENAI",
+            RootCauseDiagnosis diagnosis = new RootCauseDiagnosis(diagnosisId, request.id(), association.causeCode(),
+                    association.causeSubtype(), likelyCause, null, null, association.evidenceIds(),
+                    limitations, null, snapshotJson, snapshotHash, "GOOGLE_GENAI",
                     invocationDetails.getLast().model(), invocationDetails.getLast().promptVersion(),
                     invocationDetails.getLast().schemaVersion(), clock.instant());
+            if ("OBSERVATION_ONLY".equals(event.classification())) {
+                completion.completeAdvisory(request.id(), diagnosis, invocationDetails, snapshotHash);
+                return;
+            }
             UUID deliveryId = UUID.randomUUID();
             String payload = payloads.encode(deliveryId, event, diagnosis, event.classification());
             completion.complete(request.id(), diagnosis, invocationDetails, snapshotHash, payload, deliveryId);
@@ -141,7 +145,8 @@ public class RootCauseDiagnosisProcessor {
                 incident.classification(), incident.demoRunId()))
                 .filter(incident -> {
                     Instant relevantAt = incident.observedAt() == null ? incident.fetchedAt() : incident.observedAt();
-                    return relevantAt != null && !relevantAt.isBefore(cutoff)
+                    return incident.fetchedAt() != null && !incident.fetchedAt().isAfter(event.firstConfirmedAt())
+                            && relevantAt != null && !relevantAt.isBefore(cutoff)
                             && !relevantAt.isAfter(event.firstConfirmedAt());
                 })
                 .sorted(java.util.Comparator.comparing(incident -> incident.observedAt() == null
@@ -175,11 +180,14 @@ public class RootCauseDiagnosisProcessor {
             throw new IllegalArgumentException("causeSubtype is limited to 100 characters");
     }
 
-    private List<String> limitations(ModelOutput output, RootCauseContext context, double score) {
-        List<String> values = new ArrayList<>(output.limitations());
+    private List<String> limitations(ModelOutput output, RootCauseContext context, BunchingEvidenceSupportPolicy.AssociatedEvidence association) {
+        List<String> values = context.missingFields().stream().map(field -> "Missing evidence field: " + field)
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        values.addAll(association.limitations());
+        if ("OBSERVATION_ONLY".equals(context.classification()))
+            values.add("Live diagnosis only: validated vehicle assignments, control stops and crowd-safety inputs are unavailable; no operational instruction is issued.");
         if ("UNKNOWN".equals(output.causeCode())) values.add("No contextual evidence supported a specific cause.");
-        context.missingFields().stream().map(field -> "Missing evidence field: " + field).forEach(values::add);
-        if (score < settings.confidenceThreshold()) values.add(LOW_CONFIDENCE_LIMITATION);
+        values.addAll(output.limitations());
         return values.stream().filter(value -> value != null && !value.isBlank()).distinct().limit(20).toList();
     }
 
@@ -198,7 +206,9 @@ public class RootCauseDiagnosisProcessor {
 
     private String truncate(String value, int limit) {
         if (value == null) return null;
-        return value.length() <= limit ? value : value.substring(0, limit);
+        if (value.length() <= limit) return value;
+        int end = Character.isHighSurrogate(value.charAt(limit - 1)) ? limit - 1 : limit;
+        return value.substring(0, end).stripTrailing();
     }
 
     private String hash(String value) {

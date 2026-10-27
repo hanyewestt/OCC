@@ -31,6 +31,7 @@ public class TrafficIncidentState {
         observedAt = incident.observedAt();
         fetchedAt = incident.fetchedAt();
         sourceObservationId = incident.id();
+        sourceRevision = 1;
         lastPollRunId = poll.pollRunId();
         this.snapshotHash = snapshotHash;
         status = "ACTIVE";
@@ -52,11 +53,17 @@ public class TrafficIncidentState {
     private Instant observedAt;
     private Instant fetchedAt;
     private UUID sourceObservationId;
+    @Column(name = "source_revision", nullable = false)
+    private long sourceRevision;
     private UUID lastPollRunId;
     @Column(name = "snapshot_hash", columnDefinition = "char(64)", length = 64)
     @JdbcTypeCode(SqlTypes.CHAR) private String snapshotHash;
     private String status;
     private int absenceCount;
+    // Null until a complete scoped snapshot first omits this incident.
+    private Instant firstAbsentAt;
+    // Null for current incidents; absence retirement is not verified clearance.
+    private String inactiveReason;
     private Instant openedAt;
     private Instant updatedAt;
     private Instant clearedAt;
@@ -78,9 +85,12 @@ public class TrafficIncidentState {
     public Instant observedAt() { return observedAt; }
     public Instant fetchedAt() { return fetchedAt; }
     public UUID sourceObservationId() { return sourceObservationId; }
+    public long sourceRevision() { return sourceRevision; }
     public UUID lastPollRunId() { return lastPollRunId; }
     public String snapshotHash() { return snapshotHash; }
     public int absenceCount() { return absenceCount; }
+    public Instant firstAbsentAt() { return firstAbsentAt; }
+    public String inactiveReason() { return inactiveReason; }
     public Instant openedAt() { return openedAt; }
     public Instant updatedAt() { return updatedAt; }
     public UUID disruptionId() { return disruptionId; }
@@ -95,9 +105,12 @@ public class TrafficIncidentState {
         observedAt = incident.observedAt();
         fetchedAt = incident.fetchedAt();
         sourceObservationId = incident.id();
+        sourceRevision++;
         lastPollRunId = poll.pollRunId();
         snapshotHash = hash;
         absenceCount = 0;
+        firstAbsentAt = null;
+        inactiveReason = null;
         lastProcessedPollAt = poll.completedAt();
         updatedAt = now;
     }
@@ -111,16 +124,20 @@ public class TrafficIncidentState {
             lastPollRunId = poll.pollRunId();
         }
         absenceCount = 0;
+        firstAbsentAt = null;
+        inactiveReason = null;
         lastProcessedPollAt = poll.completedAt();
     }
 
     public void markAbsent(Instant completedAt) {
         absenceCount++;
+        if (firstAbsentAt == null) firstAbsentAt = completedAt;
         lastProcessedPollAt = completedAt;
     }
 
     public void clear(Instant completedAt) {
         status = "CLEARED";
+        inactiveReason = "NO_LONGER_REPORTED";
         clearedAt = completedAt;
         updatedAt = completedAt;
     }
@@ -128,6 +145,7 @@ public class TrafficIncidentState {
     public void reopen(UUID newDisruptionId, TrafficIncidentPollPort.TrafficIncidentPoll poll,
             TrafficIncidentPollPort.TrafficIncidentFact incident, String hash, Instant now) {
         disruptionId = newDisruptionId;
+        sourceRevision = 0;
         status = "ACTIVE";
         openedAt = now;
         clearedAt = null;

@@ -16,7 +16,7 @@ import java.util.UUID;
 public record BunchingRootCauseDiagnosisRequest(
         @NotNull UUID diagnosisId,
         @NotBlank @Size(max = 1_000) String likelyCause,
-        @NotNull @DecimalMin("0.0") @DecimalMax("1.0") BigDecimal confidence,
+        @Schema(description = "Deprecated compatibility input; ignored", nullable = true, deprecated = true) BigDecimal confidence,
         @NotEmpty @Size(max = 100) List<@NotBlank @Size(max = 200) String> evidenceIds,
         @NotNull @Size(max = 20) List<@NotBlank @Size(max = 500) String> limitations) {
 

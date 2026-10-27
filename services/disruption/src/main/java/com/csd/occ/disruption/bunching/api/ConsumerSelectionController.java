@@ -27,6 +27,19 @@ public class ConsumerSelectionController {
 
     public ConsumerSelectionController(ConsumerSelectionService selections) { this.selections = selections; }
 
+    @org.springframework.web.bind.annotation.GetMapping(produces = MediaType.APPLICATION_JSON_VALUE,
+            consumes = MediaType.ALL_VALUE)
+    @Operation(operationId = "getPlanningConsumerSelection", summary = "Get the shared live or simulation data selection")
+    @ApiResponse(responseCode = "200", description = "Current consumer selection; requires the Planning peer token")
+    @ApiResponse(responseCode = "401", description = "Valid Planning peer token required")
+    @ApiResponse(responseCode = "403", description = "Other authenticated principals cannot read this peer endpoint")
+    public ConsumerSelectionResponse current() {
+        var selected = selections.current();
+        return new ConsumerSelectionResponse(selected.mode(), selected.demoRunId());
+    }
+
+    public record ConsumerSelectionResponse(String mode, UUID demoRunId) { }
+
     @PutMapping
     @ResponseStatus(HttpStatus.NO_CONTENT)
     @Operation(operationId = "selectBunchingConsumer", summary = "Select exactly one live or simulation feed")

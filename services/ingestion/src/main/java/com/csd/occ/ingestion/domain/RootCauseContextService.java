@@ -25,24 +25,39 @@ public class RootCauseContextService {
     @Transactional(readOnly = true)
     public RootCauseContextSnapshot find(UUID runId, Instant at, String serviceId, String stopCode,
                                          Integer directionId, List<UUID> observationIds) {
-        if (at == null || serviceId == null || serviceId.isBlank() || stopCode == null || stopCode.isBlank())
+        return findScoped(runId, at, serviceId, stopCode, directionId, observationIds);
+    }
+
+    @Transactional(readOnly = true)
+    public RootCauseContextSnapshot findLive(Instant at, String serviceId, String stopCode,
+            Integer directionId, List<UUID> observationIds) {
+        return findScoped(null, at, serviceId, stopCode, directionId, observationIds);
+    }
+
+    private RootCauseContextSnapshot findScoped(UUID runId, Instant at, String serviceId, String stopCode,
+            Integer directionId, List<UUID> observationIds) {
+        String classification = runId == null ? "OBSERVATION_ONLY" : "SIMULATION";
+        if (directionId == null || directionId < 1 || at == null || serviceId == null || serviceId.isBlank() || stopCode == null || stopCode.isBlank())
             throw new IllegalArgumentException("at, serviceId and stopCode are required");
         if (observationIds == null || observationIds.size() < 2 || observationIds.size() > 10)
             throw new IllegalArgumentException("arrivalObservationIds must contain between 2 and 10 IDs");
         if (observationIds.stream().distinct().count() != observationIds.size())
             throw new IllegalArgumentException("arrivalObservationIds must be unique");
-        DemoRun run = runs.findById(runId).orElseThrow(() -> new DemoRunNotFoundException(runId));
-        if (run.expiredAt(clock.instant().minus(configuration.retention()))) throw new DemoRunNotFoundException(runId);
-        if (!"SIMULATION".equals(run.classification()))
-            throw new IllegalArgumentException("Only SIMULATION run context can be used for diagnosis");
+        Instant cutoff = clock.instant().minus(configuration.retention());
+        if (runId == null && (at.isBefore(cutoff) || at.isAfter(clock.instant())))
+            throw new IllegalArgumentException("Evidence time is outside the retained observation window");
+        if (runId != null) {
+            DemoRun run = runs.findById(runId).orElseThrow(() -> new DemoRunNotFoundException(runId));
+            if (run.expiredAt(cutoff)) throw new DemoRunNotFoundException(runId);
+        }
         List<BusArrivalObservation> found = arrivals.findAllById(observationIds);
         if (found.size() != observationIds.size()) throw new IllegalArgumentException("One or more arrival observations do not exist");
-        if (found.stream().anyMatch(arrival -> !"SIMULATION".equals(arrival.getClassification())
-                || !runId.equals(arrival.getDemoRunId())))
+        if (found.stream().anyMatch(arrival -> !classification.equals(arrival.getClassification())
+                || !Objects.equals(runId, arrival.getDemoRunId())))
             throw new IllegalArgumentException("Arrival observations must belong to the requested simulation run");
         if (found.stream().anyMatch(arrival -> !serviceId.equals(arrival.getServiceId())
                 || !stopCode.equals(arrival.getStopCode()) || !Objects.equals(directionId, arrival.getDirectionId())
-                || arrival.getFetchedAt() == null || arrival.getFetchedAt().isAfter(at)))
+                || arrival.getFetchedAt() == null || arrival.getFetchedAt().isAfter(at) || runId == null && arrival.getFetchedAt().isBefore(cutoff)))
             throw new IllegalArgumentException("Arrival observations must match the confirmed event and its time window");
 
         List<String> missing = new ArrayList<>();
@@ -56,14 +71,17 @@ public class RootCauseContextService {
                     arrival.getClassification(), arrival.getDemoRunId(), arrival.getReferenceVersionId());
         }).toList();
 
-        List<RootCauseContextSnapshot.RootCauseIncident> incidentEvidence = incidents
-                .findByDemoRunIdOrderByFetchedAtDesc(runId).stream()
-                .filter(incident -> "SIMULATION".equals(incident.classification()))
+        List<TrafficIncidentObservation> scopedIncidents = runId == null
+                ? incidents.findByClassificationAndDemoRunIdIsNullAndFetchedAtBetweenOrderByFetchedAtDesc(
+                        classification, cutoff, at, org.springframework.data.domain.PageRequest.of(0, 50))
+                : incidents.findByDemoRunIdOrderByFetchedAtDesc(runId);
+        List<RootCauseContextSnapshot.RootCauseIncident> incidentEvidence = scopedIncidents.stream()
+                .filter(incident -> classification.equals(incident.classification()))
                 .filter(incident -> incident.observedAt() == null || !incident.observedAt().isAfter(at))
                 .filter(incident -> !incident.fetchedAt().isAfter(at))
                 .limit(50)
                 .map(incident -> {
-                    if (!runId.equals(incident.demoRunId()))
+                    if (!Objects.equals(runId, incident.demoRunId()))
                         throw new IllegalArgumentException("Traffic incidents must belong to the requested simulation run");
                     if (incident.latitude() == null || incident.longitude() == null)
                         missing.add("incident-location:" + incident.id());
@@ -79,6 +97,6 @@ public class RootCauseContextService {
         if (reference == null) missing.add("reference-version");
         if (referenceVersions.size() > 1) missing.add("mixed-reference-versions");
         if (incidentEvidence.isEmpty()) missing.add("traffic-incidents");
-        return new RootCauseContextSnapshot("SIMULATION", run.id(), reference, arrivalEvidence, incidentEvidence, missing);
+        return new RootCauseContextSnapshot(classification, runId, reference, arrivalEvidence, incidentEvidence, missing);
     }
 }

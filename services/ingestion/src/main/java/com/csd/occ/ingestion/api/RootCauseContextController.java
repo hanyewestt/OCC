@@ -20,14 +20,14 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping(value = "/internal/v1/ingestion/demo-runs", produces = MediaType.APPLICATION_JSON_VALUE)
+@RequestMapping(value = "/internal/v1/ingestion", produces = MediaType.APPLICATION_JSON_VALUE)
 @Tag(name = "Planning context")
 public class RootCauseContextController {
     private final RootCauseContextService contexts;
 
     public RootCauseContextController(RootCauseContextService contexts) { this.contexts = contexts; }
 
-    @GetMapping("/{demoRunId}/planning-context")
+    @GetMapping("/demo-runs/{demoRunId}/planning-context")
     @Operation(operationId = "getSimulationPlanningContext", summary = "Get simulation evidence for a confirmed event")
     @ApiResponse(responseCode = "200", description = "Simulation-scoped evidence context")
     @ApiResponse(responseCode = "400", description = "Evidence observations do not match the simulation event",
@@ -39,7 +39,22 @@ public class RootCauseContextController {
             @RequestParam("directionId") Integer directionId,
             @Parameter(description = "Two to ten WQAP-2-owned arrival observation IDs")
             @RequestParam("arrivalObservationIds") List<UUID> arrivalObservationIds) {
-        var context = contexts.find(demoRunId, at, serviceId, stopCode, directionId, arrivalObservationIds);
+        return response(contexts.find(demoRunId, at, serviceId, stopCode, directionId, arrivalObservationIds));
+    }
+
+    @GetMapping("/planning-context")
+    @Operation(operationId = "getLivePlanningContext", summary = "Get retained live evidence for a confirmed event")
+    @ApiResponse(responseCode = "200", description = "Observation-only evidence; requires the Planning peer token")
+    @ApiResponse(responseCode = "400", description = "Missing, expired, mixed-scope or mismatched evidence")
+    @ApiResponse(responseCode = "401", description = "Valid Planning peer token required")
+    @ApiResponse(responseCode = "403", description = "Other authenticated principals cannot access peer evidence")
+    public RootCauseContextResponse live(@RequestParam Instant at, @RequestParam String serviceId,
+            @RequestParam String stopCode, @RequestParam Integer directionId,
+            @RequestParam List<UUID> arrivalObservationIds) {
+        return response(contexts.findLive(at, serviceId, stopCode, directionId, arrivalObservationIds));
+    }
+
+    private RootCauseContextResponse response(com.csd.occ.ingestion.domain.RootCauseContextSnapshot context) {
         return new RootCauseContextResponse(context.classification(), context.demoRunId(), context.referenceVersionId(),
                 context.arrivals().stream().map(value -> new RootCauseContextResponse.ArrivalEvidenceResponse(
                         value.evidenceId(), value.observationId(), value.rawObservationId(), value.pollRunId(),

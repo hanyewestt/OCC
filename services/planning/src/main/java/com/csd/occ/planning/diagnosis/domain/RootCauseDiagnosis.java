@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.UUID;
 
 public record RootCauseDiagnosis(UUID id, UUID requestId, String causeCode, String causeSubtype,
-                                 String likelyCause, double confidence, double evidenceSupportScore,
+                                 String likelyCause, Double confidence, Double evidenceSupportScore,
                                  List<String> supportingEvidenceIds, List<String> limitations,
                                  ConfidenceComponents confidenceComponents, String evidenceSnapshot,
                                  String evidenceSnapshotHash, String provider, String model,

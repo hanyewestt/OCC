@@ -35,10 +35,15 @@ public class IngestionSecurityConfig {
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/prometheus").hasRole("ADMIN")
                         .requestMatchers("/actuator/**").denyAll()
+                        .requestMatchers(HttpMethod.GET, "/internal/v1/ingestion/demo-fleet",
+                                "/internal/v1/ingestion/bus-routes/*", "/internal/v1/ingestion/stations/*")
+                        .hasAnyAuthority(PeerCapabilityAuthenticationFilter.DISRUPTION_AUTHORITY,
+                                PeerCapabilityAuthenticationFilter.PLANNING_AUTHORITY)
                         .requestMatchers(HttpMethod.GET, "/internal/v1/arrival-snapshots/**",
-                                "/internal/v1/demo-runs/*/arrival-snapshots/**", "/internal/v1/traffic-incident-polls")
+                                "/internal/v1/demo-runs/*/arrival-snapshots/**", "/internal/v1/traffic-incident-polls", "/internal/v1/hazard-polls")
                         .hasAuthority(PeerCapabilityAuthenticationFilter.DISRUPTION_AUTHORITY)
-                        .requestMatchers(HttpMethod.GET, "/internal/v1/ingestion/demo-runs/*/planning-context")
+                        .requestMatchers(HttpMethod.GET, "/internal/v1/ingestion/demo-runs/*/planning-context",
+                                "/internal/v1/ingestion/planning-context")
                         .hasAuthority(PeerCapabilityAuthenticationFilter.PLANNING_AUTHORITY)
                         .requestMatchers("/internal/v1/**").denyAll()
                         // Bus captains read pacing on their On Board Unit; every other API stays controller-only.

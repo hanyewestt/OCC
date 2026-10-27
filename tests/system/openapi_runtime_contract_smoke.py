@@ -192,7 +192,9 @@ def fetch_contract(
     command.append(url)
     last_status = "no response"
     for _ in range(30):
-        response = subprocess.run(command, cwd=root, capture_output=True, text=True, check=False)
+        response = subprocess.run(
+            command, cwd=root, capture_output=True, text=True, encoding="utf-8", check=False
+        )
         if response.returncode == 0:
             try:
                 return json.loads(response.stdout)
@@ -223,7 +225,12 @@ def main() -> int:
     env_file = args.env_file if args.env_file.is_absolute() else root / args.env_file
     compose = compose_base(args.compose_project, env_file)
     config = subprocess.run(
-        compose + ["config", "--format", "json"], cwd=root, capture_output=True, text=True, check=False
+        compose + ["config", "--format", "json"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
     )
     if config.returncode != 0:
         raise SystemExit("Unable to resolve the test Compose configuration")

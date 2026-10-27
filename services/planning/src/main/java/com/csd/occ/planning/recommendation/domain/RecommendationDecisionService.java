@@ -11,21 +11,23 @@ public class RecommendationDecisionService {
     private final RecommendationDecisionPort decisions;
     private final RecommendationRecordPort recommendations;
     private final Clock clock;
+    private final com.csd.occ.planning.diagnosis.domain.PlanningScopeService scopes;
 
     public RecommendationDecisionService(
             RecommendationDecisionPort decisions,
             RecommendationRecordPort recommendations,
-            Clock clock) {
+            Clock clock, com.csd.occ.planning.diagnosis.domain.PlanningScopeService scopes) {
         this.decisions = decisions;
         this.recommendations = recommendations;
-        this.clock = clock;
+        this.clock = clock; this.scopes = scopes;
     }
 
     public RecommendationDecision decide(UUID recommendationId, RecommendationDecisionAction action,
             String actorSubject, List<ControllerBusInstruction> overrideInstructions, String controllerRationale) {
         RecommendationRecord recommendation = recommendations.findByIdempotencyKey(recommendationId)
                 .orElseThrow(() -> new RecommendationNotFoundException(recommendationId));
-        if (recommendation.classification() != SourceClassification.SIMULATION
+        if (!scopes.includesDiagnosis(recommendation.diagnosis().diagnosisId())
+                || recommendation.classification() != SourceClassification.SIMULATION
                 || recommendation.recommendation().status() != RecommendationStatus.RECOMMENDED) {
             throw new RecommendationNotActionableException(recommendationId);
         }

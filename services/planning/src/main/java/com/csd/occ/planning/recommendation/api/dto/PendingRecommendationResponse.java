@@ -1,6 +1,7 @@
 package com.csd.occ.planning.recommendation.api.dto;
 
 import com.csd.occ.planning.recommendation.domain.RecommendationRecord;
+import com.csd.occ.planning.diagnosis.domain.DiagnosisSummaryPolicy;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;
 import java.util.List;
@@ -27,6 +28,11 @@ public record PendingRecommendationResponse(
         RecommendationImpactResponse expectedImpact) {
 
     public static PendingRecommendationResponse from(RecommendationRecord record) {
+        return from(record, null);
+    }
+
+    public static PendingRecommendationResponse from(RecommendationRecord record,
+            DiagnosisSummaryPolicy.Summary diagnosisSummary) {
         var event = record.bunchingEvent();
         var recommendation = record.recommendation();
         List<Integer> observed = event.observedHeadwaySeconds();
@@ -46,7 +52,7 @@ public record PendingRecommendationResponse(
                 record.mitigationContext().affectedBusReferences(),
                 recommendation.controlStopCode(),
                 recommendation.adjustmentSeconds(),
-                RecommendationExplanationResponse.from(recommendation.explanation()),
+                RecommendationExplanationResponse.from(recommendation.explanation(), diagnosisSummary),
                 RecommendationImpactResponse.from(recommendation.expectedImpact()));
     }
 }

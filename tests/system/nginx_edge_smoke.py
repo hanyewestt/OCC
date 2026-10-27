@@ -47,8 +47,8 @@ def main() -> int:
         if response.code != 404 or response.read() != (root / "frontend/dist/404.html").read_bytes():
             raise AssertionError("Unknown website route does not serve the custom 404 artifact")
     print("PASS custom website error page retains HTTP 404")
-    for route in ("/", "/login", "/controller", "/controller/disruptions",
-                  "/controller/planning", "/controller/audit", "/captain", "/401", "/403"):
+    for route in ("/", "/login", "/notices", "/controller", "/controller/disruptions",
+                  "/controller/planning", "/controller/audit", "/captain", "/401", "/403", "/404"):
         with urllib.request.urlopen(base_url + route, context=ssl._create_unverified_context(), timeout=10) as response:
             if response.read() != html or "text/html" not in response.headers.get("Content-Type", ""):
                 raise AssertionError(f"{route}: response differs from the React entry HTML")
@@ -78,6 +78,9 @@ def main() -> int:
         ("edge health", "/_occ_edge_health", 204, None, "GET"),
         ("public frontend configuration", "/frontend-config", 200, None, "GET"),
         ("React login page", "/login", 200, None, "GET"),
+        ("anonymous public notice read", "/api/v1/planning/public/notices?page=0&size=1", 200, None, "GET"),
+        ("public notice management requires a token", "/api/v1/planning/notices?page=0&size=1", 401, None, "GET"),
+        ("captain instructions require a token", "/api/v1/planning/captain/instructions?page=0&size=1", 401, None, "GET"),
         ("protected API without token", "/api/v1/arrivals?page=0&size=1", 401, None, "GET"),
         ("forged peer token cannot authorize a public API", "/api/v1/arrivals", 401,
          {"X-OCC-Peer-Token": "forged"}, "GET"),
@@ -113,6 +116,27 @@ def main() -> int:
             for page, allowed in (("controller", "controller"), ("captain", "captain")):
                 assert_status(base_url, f"{role} page access {page}", f"/api/v1/auth/access/{page}",
                               200 if role == allowed else 403, headers)
+        captain_token = (token_dir / "captain.jwt").read_text(encoding="utf-8").strip()
+        controller_token = (token_dir / "controller.jwt").read_text(encoding="utf-8").strip()
+        assert_status(base_url, "CAPTAIN can read assigned instruction inbox",
+                      "/api/v1/planning/captain/instructions?page=0&size=1", 200,
+                      {"Authorization": f"Bearer {captain_token}"})
+        assert_status(base_url, "CAPTAIN cannot read controller advisories",
+                      "/api/v1/planning/advisories?page=0&size=1", 403,
+                      {"Authorization": f"Bearer {captain_token}"})
+        assert_status(base_url, "CONTROLLER cannot read captain instruction inbox",
+                      "/api/v1/planning/captain/instructions?page=0&size=1", 403,
+                      {"Authorization": f"Bearer {controller_token}"})
+        assert_status(base_url, "CONTROLLER can read planning advisories",
+                      "/api/v1/planning/advisories?page=0&size=1", 200,
+                      {"Authorization": f"Bearer {controller_token}"})
+        unknown_instruction = "00000000-0000-0000-0000-000000000001"
+        assert_status(base_url, "CAPTAIN acknowledgement is ownership checked",
+                      f"/api/v1/planning/captain/instructions/{unknown_instruction}/acknowledgements",
+                      404, {"Authorization": f"Bearer {captain_token}"}, "POST")
+        assert_status(base_url, "CONTROLLER cannot acknowledge a captain instruction",
+                      f"/api/v1/planning/captain/instructions/{unknown_instruction}/acknowledgements",
+                      403, {"Authorization": f"Bearer {controller_token}"}, "POST")
         invalid_token = (token_dir / "invalid-signature.jwt").read_text(encoding="utf-8").strip()
         assert_status(base_url, "tampered ES256 signature is rejected", "/api/v1/arrivals?page=0&size=1", 401,
                       {"Authorization": f"Bearer {invalid_token}"})

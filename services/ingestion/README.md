@@ -4,6 +4,57 @@ Polls DataMall bus arrivals and traffic incidents and records observations for a
 
 ## Demo replay
 
+## Additional hazards
+
+Flood, rail and approved roadworks use independent `OCC_INGESTION_FLOOD_*`,
+`OCC_INGESTION_RAIL_*` and `OCC_INGESTION_ROADWORKS_*` enablement, interval,
+initial-delay and stale-after settings. All default disabled. Shared bounded
+concurrency uses Spring's `OCC_INGESTION_SCHEDULER_POOL_SIZE` (8 workers), so a
+slow feed does not serialize all independent polls. Shared bounded
+pagination uses `OCC_INGESTION_HAZARD_PAGE_SIZE` (500) and
+`OCC_INGESTION_HAZARD_MAX_PAGES` (10); date-only/local provider timestamps use
+`OCC_INGESTION_HAZARD_SOURCE_TIMEZONE` (Asia/Singapore). Flood coverage is a
+broadcast radius, not flooded-road geometry; approved work does not imply closure.
+Migration V022 stores flood, rail and roadworks observations in a separate
+`ingestion.hazard_observation` table and moves existing rows out of the traffic
+table. The legacy traffic table and its coordinate constraints are restored so a
+rollback to the preceding application can read traffic observations safely. Keep
+the migrated database when rolling back; the preceding application ignores the
+additional-hazard table, and a roll-forward resumes reading it.
+`/internal/v1/hazard-polls` exposes
+completed additional-feed polls to the Disruption peer, including incomplete polls.
+Original page bodies are stored as JSON strings in a JSON array, preserving even
+malformed provider text without logging credentials. The checksum covers the JSON
+array encoded with the application mapper: decode/re-encode the page strings
+before verification because PostgreSQL JSONB normalizes outer whitespace.
+Retention covers all kinds.
+The metrics `occ.ingestion.hazard.latest_poll_outcome` and
+`occ.ingestion.hazard.latest_poll_success_age_seconds` use the bounded `feed`
+label (`FLOOD`, `RAIL_DISRUPTION`, `ROADWORKS`); outcome values are 1 for
+success, 0.5 for partial, 0 for failed and -1 before the first completed poll.
+No bus, account, incident or run identifiers are metric labels.
+
+An optional `OCC_INGESTION_STATION_REFERENCE_LOCATION` imports a separately
+versioned station JSON document on startup, bounded by
+`OCC_INGESTION_STATION_REFERENCE_MAX_BYTES`. Blank skips import. The document is
+`{"stations":[{"code":"NE1","name":"HarbourFront","latitude":1.265,"longitude":103.821}]}`.
+Use provider reference data and make the configured file/resource available in
+the container. Station coordinates may both be null; unresolved stations stay
+unresolved. Each imported station retains the source document checksum.
+
+### Demo identity
+
+Set `OCC_DEMO_CAPTAIN_USER_ID` to the stable Supabase UUID of `captain1@occ.com`
+to bind `demo-190-b` to that account when preparing a new run. Blank leaves buses
+unassigned and does not prevent replay. Assignments are immutable for a run;
+configuration changes apply to the next run. Scenario bus IDs equal the existing
+stable trip IDs; always pair them with the run ID. Email and captain codes never
+authorize access. `/internal/v1/ingestion/demo-fleet?demoRunId=<uuid>&page=0&size=20`
+accepts Planning/Disruption peer capabilities and returns current assignments and
+simulation progress. Closed/preparing runs expose no current buses. Speed context
+is a synthetic fixture (30 km/h, permitted 5 km/h reduction for 300 seconds),
+not vehicle telemetry. Unresolved route occurrences have null progress.
+
 The React frontend currently provides login and role-access checks only. Replay remains available through the protected APIs below for ADMIN and CONTROLLER accounts. Its persisted runtime state starts disabled, so the replay scheduler does no work and bunching remains live until a run starts. The mode can be toggled while ingestion is running; no restart is needed:
 
 ```http
@@ -87,41 +138,18 @@ Compose runs the `ingestion-migrate` Flyway job before starting the service; Hib
 
 If the active reference topology is absent, the scheduler first retries the reference import and target seeding. If that import fails, it skips the poll cycle without sending per-stop arrival requests; the terminal log records the single import failure.
 
-The arrival poller is enabled by `OCC_INGESTION_BUS_ARRIVAL_ENABLED` (default `true`);
-set it to `false` in an isolated test stack to prevent calls to DataMall. When enabled,
-its schedule is externally configurable: `OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL`
-and `OCC_INGESTION_BUS_ARRIVAL_INITIAL_DELAY` default to `60s`; retention cleanup uses
-`OCC_INGESTION_RETENTION_INTERVAL=1h` after `OCC_INGESTION_RETENTION_INITIAL_DELAY=5m`.
-Poll intervals are validated from 1 second to 1 hour and retention intervals from
-1 minute to 24 hours. DataMall calls use a 5-second connect timeout and 20-second
-response timeout by default (`OCC_DATAMALL_CONNECT_TIMEOUT` and
-`OCC_DATAMALL_RESPONSE_TIMEOUT`); accepted ranges are 100ms–30s and 100ms–2m.
-Each decoded response is capped at 5,000,000 bytes by default through
-`OCC_DATAMALL_MAX_RESPONSE_BYTES` (accepted range 1,024–20,000,000 bytes).
-Oversized responses fail before parsing or persistence; a later incident-page
-failure leaves the accumulated snapshot marked incomplete.
-LTA Traffic Incidents are polled by a separate scheduler every two minutes by
-default, matching the provider's published update frequency. Control it with
-`OCC_INGESTION_TRAFFIC_INCIDENT_ENABLED`,
-`OCC_INGESTION_TRAFFIC_INCIDENT_POLL_INTERVAL` (minimum `2m`), and
-`OCC_INGESTION_TRAFFIC_INCIDENT_INITIAL_DELAY`. The adapter follows the current
-DataMall response limit with `$skip` pagination: `OCC_DATAMALL_TRAFFIC_INCIDENT_PAGE_SIZE`
-defaults to `500` and `OCC_DATAMALL_TRAFFIC_INCIDENT_MAX_PAGES` defaults to `10`.
-If every configured page is full, or a response exceeds the configured page
-size, the poll is marked partial so Disruption cannot clear active
-incidents from a truncated snapshot. The raw observation preserves every
-successful page response; normalized incident rows reference that observation.
-The DataMall contract has no incident ID, so the stable source key is derived
-from incident type and coordinates rounded to the database's seven decimal
-places. A duplicate type/location with conflicting facts also makes the poll
-partial. The normalized `observedAt` is null because the provider does not
-return an observation timestamp; `fetchedAt` records when OCC received the
-snapshot. These pagination limits follow [LTA DataMall API User Guide v6.10,
-section 2.18](https://datamall.lta.gov.sg/content/dam/datamall/datasets/LTA_DataMall_API_User_Guide.pdf?ref=public_apis),
-which documents a 500-record response limit and `$skip` paging; update the
-settings if LTA changes that provider limit.
-All values are inventoried in the repository-root `.env.example` and passed to Compose
-through the ingestion service environment.
+The arrival poller is enabled by default (`occ.ingestion.schedule.bus-arrival-enabled=true`);
+set `OCC_INGESTION_BUS_ARRIVAL_ENABLED=false` in an isolated test stack to prevent calls to DataMall.
+Operational timings, retry bounds, and pagination limits are configured with safe canonical defaults
+in `application.yml`: the bus arrival poller defaults to a 60-second interval with a 60-second initial delay,
+while retention cleanup runs every hour after an initial 5-minute delay. DataMall HTTP calls use a default
+5-second connect timeout and 20-second response timeout, with a 5,000,000-byte response limit.
+LTA Traffic Incidents are polled every two minutes by default, matching the provider's update frequency,
+with 500-record `$skip` pages (up to 10 pages). All operational parameters can be tuned via standard
+Spring Boot relaxed binding or the retained legacy environment aliases when necessary.
+In Compose, inject optional overrides into the service with an additional Compose file;
+the base stack no longer forwards tuning values from the root `.env`. Deployment credentials, ports,
+and monitored services are inventoried in the repository-root `.env.example`.
 
 ### Polling coverage and bus-bunching coverage
 
@@ -151,7 +179,7 @@ With the service running in Compose, browse the interactive API at `http://local
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/v1/arrivals?stopCode=&serviceId=&page=&size=` | Latest complete per-stop arrival snapshot |
+| `GET /api/v1/arrivals?stopCode=&serviceId=&stopName=&sortBy=&sortDirection=&page=&size=` | Latest complete per-stop arrival snapshot; stop-name search and stop-name/arrival-time sorting apply across the matching result set before pagination |
 | `GET /api/v1/arrivals/history?stopCode=&serviceId=&from=&to=&page=&size=` | Retained normalized observation history |
 | `GET /api/v1/feed-status` | Poll freshness and failures by stop |
 | `GET /api/v1/poll-runs?page=&size=` | Poll audit runs |
@@ -161,6 +189,12 @@ With the service running in Compose, browse the interactive API at `http://local
 | `GET /api/v1/bus-stops?page=&size=` | Bus stops in the active reference topology |
 | `GET /api/v1/bus-stops/{stopCode}` | One bus stop by stop code |
 | `GET /api/v1/route-positions?service=190` | Recent, direction-scoped position estimates for a bus service |
+
+For current arrivals, `stopName` searches across the matching result set before
+pagination. `sortBy` accepts `arrival` (the default) or `stopName`, and
+`sortDirection` accepts `asc` (the default) or `desc`; invalid values return
+HTTP 400. This lets the controller search or sort the complete current set while
+still loading bounded pages.
 
 Route positions are temporary order-based estimates, not vehicle identities. The
 service filters out missing/zero coordinates and readings older than
@@ -181,6 +215,14 @@ to its cluster. The controller uses shared IDs in saved bunching evidence for a
 stronger alert-to-position link; these IDs identify source records, not buses.
 
 The machine-readable OpenAPI document is at `/v3/api-docs`.
+
+Current arrivals can be filtered by a trimmed, case-insensitive literal substring
+of the version-matched stop name through `stopName`. It is combined with the exact
+`stopCode` and `serviceId` filters before pagination. `sortBy` accepts `arrival`
+(default) or `stopName`; `sortDirection` accepts `asc` (default) or `desc`.
+Missing arrival times and unresolved stop names remain last in either direction.
+Equal sort values use service, visit order and observation ID as deterministic
+tie-breakers. Page size remains bounded to 200.
 
 ### Bus captain pacing (WQAP-68)
 
@@ -279,3 +321,13 @@ V015 retires ingestion's obsolete cross-schema bunching views; V016 removes chil
 import timestamps; V017 records topology retirement. `current_bus_arrival` stays.
 Existing deployments must use the administrator-only reserved-schema procedure
 in [the reduction verification document](../../docs/plans/database-reduction-verification.md).
+
+### Live and simulation Planning evidence
+
+The Planning peer can read `/internal/v1/ingestion/planning-context` for live
+observations or `/internal/v1/ingestion/demo-runs/{demoRunId}/planning-context`
+for simulation observations. Both require the exact confirming arrival observation
+IDs and reject mixed scope, route or direction evidence. Live evidence must remain
+inside `OCC_INGESTION_RETENTION`; no current-provider request or synthetic fixture is
+substituted when retained observations are missing. Public JWTs and the Disruption
+peer token cannot read the live Planning evidence endpoint.

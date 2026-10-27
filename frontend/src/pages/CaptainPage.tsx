@@ -1,12 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { signOut } from '@/lib/auth'
 import { cn } from '@/lib/utils'
 import { classify, clockText, deltaText, gapFlex, initialScenario, sampleGaps,
   scenarios, SAMPLE_REFRESH_MS, SAMPLE_TARGET_SECONDS, type GapState, type Scenario } from '@/lib/obu-pacing'
 import { groupStops, sampleUpcomingStops, skipLabel } from '@/lib/skip-stops'
+import { CaptainInstructions } from './CaptainInstructions'
+import { usePageRefresh } from '@/lib/page-refresh'
+import { PageRefreshStatus } from '@/components/PageRefreshStatus'
 
 const states: Record<GapState, { symbol: string; label: string; color: string }> = {
   close: { symbol: '▲', label: 'TOO CLOSE', color: 'text-red-700 dark:text-red-400' },
@@ -48,10 +52,11 @@ function UpcomingStops() {
   return <section aria-labelledby="upcoming-stops-heading" className="space-y-4 rounded-xl border bg-card p-4 sm:p-6">
     <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
       <h2 id="upcoming-stops-heading" className="text-xl font-bold">Upcoming stops</h2>
-      <p className="text-sm text-muted-foreground">Sample skip-stop instructions. No live instructions.</p>
+      <p className="text-sm text-muted-foreground">Sample stops · no live instructions.</p>
       <p className="text-lg font-semibold sm:ml-auto">{skipped === 0 ? 'No stops to skip' : `${skipLabel(skipped)} on this trip`}</p>
     </div>
-    <ol aria-label="Upcoming stops in route order" className="space-y-2">
+    <ScrollArea role="region" aria-label="Upcoming stops in route order" tabIndex={0} className="max-h-[26rem]">
+    <ol aria-label="Upcoming stops in route order" className="space-y-2 p-1 pr-3.5">
       {segments.map(segment => segment.kind === 'stop'
         ? <li key={segment.stop.stopCode} className="flex items-center gap-3 px-4 py-2 text-lg">
           <span aria-hidden="true" className="size-3 shrink-0 rounded-full bg-foreground" />
@@ -70,14 +75,18 @@ function UpcomingStops() {
             </li>)}
           </ol>
         </li>)}
-    </ol>
+    </ol></ScrollArea>
   </section>
 }
 
-export function CaptainPage({ email }: { email: string }) {
+export function CaptainPage({ email, token, refreshIntervalSeconds }: { email: string; token: string; refreshIntervalSeconds: number }) {
   const { search } = useLocation()
   const [sample, setSample] = useState(() => ({ scenario: initialScenario(search), tick: 0 }))
   const [theme, setTheme] = useState(initialTheme)
+  const [instructionPending, setInstructionPending] = useState(false)
+  const [lastInstructionRefresh, setLastInstructionRefresh] = useState<string | null>(null)
+  const instructionRefresh = useRef<(signal: AbortSignal) => Promise<void>>(() => Promise.resolve())
+  const { requestRefresh, isRefreshing } = usePageRefresh(refreshIntervalSeconds, signal => instructionRefresh.current(signal), instructionPending, token)
   const gaps = sampleGaps(sample.scenario, sample.tick)
 
   useEffect(() => {
@@ -93,15 +102,20 @@ export function CaptainPage({ email }: { email: string }) {
   return <section aria-label="Captain pacing display" data-theme={theme}
     className={cn('w-full max-w-7xl space-y-6 rounded-xl border bg-background p-4 text-foreground sm:p-6', theme === 'night' && 'dark')}>
     <header className="flex flex-wrap items-center justify-between gap-4 border-b pb-4">
-      <div><h1 className="text-2xl font-semibold">Captain</h1>
+      <div className="space-y-3"><h1 className="text-2xl font-semibold">Captain</h1>
+        <PageRefreshStatus lastSuccessAt={lastInstructionRefresh} intervalSeconds={refreshIntervalSeconds} />
         <p role="status" className="text-sm text-muted-foreground">Access verified</p></div>
       <div className="flex flex-wrap gap-2">
+        <Button variant="outline" disabled={instructionPending || isRefreshing} onClick={() => { void requestRefresh() }}>
+          {isRefreshing ? 'Refreshing…' : 'Refresh'}</Button>
         <Button variant="outline" onClick={() => setTheme(current => current === 'night' ? 'day' : 'night')}>
           {theme === 'night' ? 'Day mode' : 'Night mode'}</Button>
         <Button variant="outline" onClick={() => void signOut()}>Sign out</Button>
       </div>
     </header>
 
+    <CaptainInstructions key={token} token={token} registerRefresh={callback => { instructionRefresh.current = callback }}
+      onPendingChange={setInstructionPending} onSaved={() => { void requestRefresh('mutation') }} onRefreshTimeChange={setLastInstructionRefresh} />
     <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
       <div><p className="text-xl font-bold">Service 190 · Direction 1</p>
         <p className="text-sm text-muted-foreground">DEMO-190-B</p></div>
@@ -139,7 +153,7 @@ export function CaptainPage({ email }: { email: string }) {
     </div>
     <UpcomingStops />
     <footer className="space-y-1 border-t pt-4 text-sm text-muted-foreground">
-      <p>Built-in samples update every 10 seconds. No live bus data.</p>
+      <p>Sample data · no live bus feed.</p>
       <p className="break-all">Signed in as {email} · Role: Captain</p>
     </footer>
   </section>

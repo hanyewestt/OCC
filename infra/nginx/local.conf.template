@@ -1,10 +1,28 @@
-limit_req_zone $binary_remote_addr zone=occ_api:${OCC_NGINX_RATE_LIMIT_ZONE_SIZE} rate=${OCC_NGINX_RATE_LIMIT_PER_SECOND};
+limit_req_zone $binary_remote_addr zone=occ_api:10m rate=20r/s;
 
 server {
     listen ${OCC_NGINX_HTTP_INTERNAL_PORT};
     server_name ${OCC_NGINX_SERVER_NAME};
     server_tokens off;
     include /etc/nginx/conf.d/routes.inc;
+
+    # Resolve optional pgAdmin at request time so tools need not be running.
+    set $occ_pgadmin_upstream ${OCC_PGADMIN_INTERNAL_URL};
+    location = /pgadmin { return 302 /pgadmin/; }
+    location ^~ /pgadmin/ {
+        rewrite ^/pgadmin/(.*)$ /$1 break;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Script-Name /pgadmin;
+        proxy_set_header X-Scheme $scheme;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Forwarded "";
+        proxy_set_header Authorization "";
+        proxy_set_header X-OCC-Peer-Token "";
+        proxy_pass $occ_pgadmin_upstream$uri$is_args$args;
+        proxy_redirect off;
+    }
 
     location = /auth-test { return 404; }
     location ^~ /auth-test/ { return 404; }

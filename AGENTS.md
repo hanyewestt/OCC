@@ -1,14 +1,24 @@
-
 # Agent Instructions
 
 ## Engineering Standards
 
 - Deliver final, durable fixes rather than temporary workarounds.
+- Write minimal, efficient code. Prefer built-in operators, standard library
+  functions, and existing utilities over new classes, methods, or abstractions
+  that do the same thing. For example, use `x + y` instead of an `add(x, y)`
+  wrapper. Add abstractions only when they provide meaningful behavior or clarity.
 - Follow [docs/CONVENTIONS.md](docs/CONVENTIONS.md) for all service work.
 - Follow [docs/commit-convention.md](docs/commit-convention.md) for commits.
   Append `[skip ci]` to the commit subject when no service or frontend code is
   edited, including documentation-only and local development launcher changes.
   Still run checks relevant to the changed files.
+- Before reporting work complete, run the relevant automated test suites and
+  make sure all applicable tests pass. Investigate every failed or skipped test;
+  fix failures and determine whether skips are intentional, documenting any
+  remaining justified skips.
+- Verify behavior with the relevant automated tests in the codebase and by
+  exercising the feature in the running application. Report what was exercised
+  and any verification that could not be completed.
 
 ## Frontend Standards
 
@@ -28,42 +38,22 @@
 
 ## Configuration
 
-- Treat every value that can vary by deployment or may need to change without a
-  code release as external configuration. This includes URLs, ports, database
-  connection settings, credentials, API keys, timeouts, retry delays, schedules,
-  polling intervals, thresholds, retention periods, feature flags, batch sizes,
-  and operational limits.
-- Use environment variables as the deployment interface. Bind service settings
-  through typed `@ConfigurationProperties`; do not introduce hard-coded Java
-  constants or `@Value` fields for operational settings.
-- Keep one local inventory in the repository-root `.env.example`. Every supported
-  environment variable must be named, described, and given a non-secret example
-  or safe documented default there. The real `.env` remains ignored; deployment
-  supplies the same values through its environment and secret/config store.
-- Every configurable value in `application.yml` or a profile-specific YAML file
-  must be expressed through an environment-variable placeholder and represented
-  in `.env.example`, including placeholders with fallback defaults such as
-  `${OCC_AREA_LIMIT:100}`. A fallback is allowed only when intentional, safe, and
-  documented; it is not a substitute for adding the variable to the central
-  inventory.
-- `application.yml` may retain only stable application structure, true invariants,
-  and safe documented defaults. It must never contain credentials, API keys, or
-  deployment-specific endpoints. Do not turn a true internal invariant into a
-  runtime knob merely to satisfy this rule.
-- When adding or changing a runtime setting, update its environment binding,
-  `.env.example`, and the relevant README in the same change. Preserve existing
-  environment-variable compatibility unless an explicit migration is approved.
-- Use descriptive configuration names that state both purpose and network boundary.
-  Do not reuse one URL or port variable for host/public and container/internal
-  traffic. Name host-facing settings `*_PUBLIC_URL` or `*_PORT`, and name
-  Compose-only settings `*_INTERNAL_URL` or `*_INTERNAL_PORT`.
-- Allocate core-service ports consistently: public host ports start at `6767` and
-  increment by one for each subsequent core service (`6767`, `6768`, ...);
-  corresponding container-internal ports start at `8001` and increment by one
-  (`8001`, `8002`, ...). Compose services communicate through service DNS and
-  internal ports, never through host-published ports. Keep supporting-service
-  host ports at their conventional defaults (for example PostgreSQL on `5432`),
-  except pgAdmin, which is published on `6700`.
+- Externalize deployment-specific values and intentional operational controls;
+  keep internal application wiring and invariants in code.
+- Use documented environment variables for ordinary deployment settings and the
+  deployment's secret mechanism (such as mounted secrets or secret stores) for
+  credentials.
+- Follow [docs/CONVENTIONS.md](docs/CONVENTIONS.md) for typed binding, validation,
+  defaults, naming, and networking.
+- Document project-supported settings in the repository-root `.env.example` using
+  non-secret examples; keep the real `.env` ignored. Do not document internal
+  algorithm heuristics, math constants, buffer limits, domain invariants, or
+  generic framework properties there; keep those as defaults in Java records or
+  application configuration.
+- Validate required settings at startup. Use safe, documented defaults for optional
+  settings.
+- Update configuration documentation when settings change and preserve existing
+  environment-variable compatibility.
 
 ## API Changes
 
@@ -73,3 +63,5 @@
 
 - [The Twelve-Factor App: Config](https://12factor.net/config)
 - [Spring Boot externalized configuration](https://docs.spring.io/spring-boot/reference/features/external-config.html)
+- [Docker secrets in Compose](https://docs.docker.com/compose/how-tos/use-secrets/)
+- [Docker Compose networking](https://docs.docker.com/compose/how-tos/networking/)

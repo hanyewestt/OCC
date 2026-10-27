@@ -9,9 +9,16 @@ import java.util.UUID;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record ProducerEventSubmission(String schemaVersion, EventType eventType, String producer, UUID eventId,
         UUID disruptionId, String classification, UUID demoRunId, Instant detectedAt, String detectionRuleVersion,
-        List<String> evidenceIds, BunchingEventFacts eventSnapshot, TrafficIncidentEventFacts trafficSnapshot) {
+        List<String> evidenceIds, BunchingEventFacts eventSnapshot, TrafficIncidentEventFacts trafficSnapshot,
+        com.csd.occ.planning.advisory.domain.HazardEventFacts hazardSnapshot) {
     public ProducerEventSubmission {
         evidenceIds = evidenceIds == null ? null : List.copyOf(evidenceIds);
+    }
+    public ProducerEventSubmission(String schemaVersion, EventType eventType, String producer, UUID eventId,
+            UUID disruptionId, String classification, UUID demoRunId, Instant detectedAt, String detectionRuleVersion,
+            List<String> evidenceIds, BunchingEventFacts eventSnapshot, TrafficIncidentEventFacts trafficSnapshot) {
+        this(schemaVersion, eventType, producer, eventId, disruptionId, classification, demoRunId, detectedAt,
+                detectionRuleVersion, evidenceIds, eventSnapshot, trafficSnapshot, null);
     }
 
     public ProducerEventSubmission(String schemaVersion, EventType eventType, String producer, UUID eventId,

@@ -41,6 +41,27 @@ class BunchingRecommendationPolicyTest {
     }
 
     @Test
+    void legacyDiagnosisConfidenceCannotAlterHoldOrDwellRecommendations() {
+        var original = diagnosis();
+        for (FollowingBusState state : List.of(FollowingBusState.READY_TO_DEPART,
+                FollowingBusState.BOARDING_AT_CONTROL_STOP)) {
+            var context = validatedContext(state, 120, 75);
+            var baseline = policy.evaluate(RECOMMENDATION_ID, SourceClassification.SIMULATION,
+                    confirmedEvent(), original, context, impact());
+            assertThat(baseline).isPresent();
+            for (BigDecimal legacyScore : java.util.Arrays.asList(BigDecimal.ZERO, BigDecimal.ONE, null)) {
+                var legacy = new BunchingRootCauseDiagnosis(original.diagnosisId(), original.likelyCause(),
+                        legacyScore, original.evidenceIds(), original.limitations());
+                assertThat(legacy.confidence()).isNull();
+                var actual = policy.evaluate(RECOMMENDATION_ID, SourceClassification.SIMULATION,
+                        confirmedEvent(), legacy, context, impact());
+                assertThat(actual).isEqualTo(baseline);
+                assertThat(actual.orElseThrow().explanation().diagnosisConfidence()).isNull();
+            }
+        }
+    }
+
+    @Test
     void boardingBusReceivesValidatedDwellAdjustment() {
         Optional<ValidatedMitigationRecommendation> result = policy.evaluate(
                 RECOMMENDATION_ID,

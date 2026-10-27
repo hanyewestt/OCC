@@ -12,6 +12,7 @@ import com.csd.occ.ingestion.domain.FeedStatus;
 import com.csd.occ.ingestion.domain.IngestionQueryService;
 import com.csd.occ.ingestion.domain.PollRun;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -47,12 +48,27 @@ public class ArrivalController {
     @Operation(operationId = "listCurrentArrivals", summary = "List latest arrival predictions by stop or service")
     @ApiResponses({@ApiResponse(responseCode = "200", description = "Current arrivals returned",
             content = @Content(schema = @Schema(implementation = ArrivalPageResponse.class))),
-            @ApiResponse(responseCode = "400", description = "Invalid pagination parameters",
+            @ApiResponse(responseCode = "400", description = "Invalid pagination or sort parameters",
             content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))})
     public PageResponse<ArrivalResponse> currentArrivals(@RequestParam(required = false) String stopCode,
-            @RequestParam(required = false) String serviceId, @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(required = false) String serviceId,
+            @Parameter(description = "Trimmed, case-insensitive literal substring of the versioned stop name")
+            @RequestParam(required = false) String stopName,
+            @Parameter(description = "Sort by arrival time or stop name",
+                    schema = @Schema(allowableValues = {"arrival", "stopName"}, defaultValue = "arrival"))
+            @RequestParam(defaultValue = "arrival") String sortBy,
+            @Parameter(description = "Sort direction", schema = @Schema(allowableValues = {"asc", "desc"}, defaultValue = "asc"))
+            @RequestParam(defaultValue = "asc") String sortDirection,
+            @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "50") @Min(1) @Max(200) int size) {
-        return page(queries.currentArrivals(stopCode, serviceId, PageRequest.of(page, size)), this::currentResponse);
+        if (!List.of("arrival", "stopName").contains(sortBy)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "sortBy must be arrival or stopName");
+        }
+        if (!List.of("asc", "desc").contains(sortDirection)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "sortDirection must be asc or desc");
+        }
+        return page(queries.currentArrivals(stopCode, serviceId, stopName, sortBy, sortDirection,
+                PageRequest.of(page, size)), this::currentResponse);
     }
 
     @GetMapping("/arrivals/history")
@@ -100,7 +116,7 @@ public class ArrivalController {
     }
 
     private ArrivalResponse currentResponse(CurrentBusArrivalView value) {
-        return new ArrivalResponse(value.getId(), value.getStopCode(), value.getServiceId(), value.getOperator(),
+        return new ArrivalResponse(value.getId(), value.getStopCode(), value.getStopName(), value.getServiceId(), value.getOperator(),
                 value.getDirectionId(), value.getVisitOrder(), value.getVisitNumber(), value.getEstimatedArrivalAt(), value.getOriginCode(),
                 value.getDestinationCode(), value.getMonitored(), value.getLatitude(), value.getLongitude(),
                 value.getLoadCategory(), value.getFeature(), value.getVehicleType(), value.getFetchedAt(),
@@ -108,7 +124,7 @@ public class ArrivalController {
     }
 
     private ArrivalResponse historyResponse(BusArrivalObservation value) {
-        return new ArrivalResponse(value.getId(), value.getStopCode(), value.getServiceId(), value.getOperator(),
+        return new ArrivalResponse(value.getId(), value.getStopCode(), null, value.getServiceId(), value.getOperator(),
                 value.getDirectionId(), value.getVisitOrder(), value.getVisitNumber(), value.getEstimatedArrivalAt(), value.getOriginCode(),
                 value.getDestinationCode(), value.getMonitored(), value.getLatitude(), value.getLongitude(),
                 value.getLoadCategory(), value.getFeature(), value.getVehicleType(), value.getFetchedAt(), null,

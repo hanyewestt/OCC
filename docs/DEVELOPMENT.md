@@ -178,14 +178,33 @@ session and page permission before role content appears. Captain uses the
 `CAPTAIN` claim. Persistent sessions and local-scope sign-out are
 described in [authentication](AUTHENTICATION.md).
 
-`/401` and `/403` are SPA error screens served as HTML with HTTP 200; they do
-not replace API responses. APIs keep their actual 401/403 status and bodies.
+`/401`, `/403` and `/404` are explicit SPA error screens served as HTML with
+HTTP 200, including when authentication is unavailable. They do not replace
+API responses. APIs keep their actual error status and bodies.
 Unknown website URLs return HTTP 404 with a separately built `404.html` that
 reuses the same error layout and needs no auth bootstrap. Missing assets remain
 404s, and internal/management routes remain blocked. Keep the React route list
 and Nginx's explicit allowlist aligned when adding a screen.
 
 ## Development and troubleshooting
+
+### Page data refresh
+
+Controller, Captain and public notices use the shared `page-refresh` scheduler
+with their existing public runtime refresh intervals. Each page has one cycle:
+manual refresh and polling update the same relevant collections, and the next
+poll waits until the current cycle finishes. Controller Disruptions refreshes
+both bunching detections and multi-hazard conditions. Planning and Audit refresh
+their visible decision, instruction and notice collections. Captain polls assigned
+instructions; its pacing samples and countdowns use local display timers.
+
+Successful saves request reconciliation through the same page cycle. Polling
+pauses while a save is pending, and editor drafts survive background refresh.
+Collection rows remain visible during a same-scope refresh or temporary failure;
+the last successful refresh timestamp advances only after a successful first-page
+refresh, not after loading additional pages. A successful refresh returns the
+collection to its first page. Authentication and configuration retain their own
+existing lifecycles.
 
 After Java, dependency, Dockerfile or migration changes, run the start action
 again to rebuild changed images. To rebuild only Gateway, use Compose directly:
@@ -234,25 +253,56 @@ Nginx explicitly allows each route; unknown controller paths still return 404.
 All four share Gateway's controller access verification. API permissions remain
 enforced by the backend.
 
-Dashboard data loads on entry and manual Refresh. Arrivals are paginated live
-records (50 per page); live bunching displays up to 200 open detections and
-reports truncation. An active demo switches the detection view to simulation
-events, while arrivals stay explicitly live. Detection rows show the reference
-stop name (with code retained), direction and Bus 1/2/3 prediction slots from
-the saved detection evidence. They never substitute current arrivals for missing
-historical predictions. Missing slots show No prediction; invalid evidence shows
-Unavailable, and failed stop enrichment does not hide detections.
-The Planning page retrieves the
-current demo's recommendation and reads/writes its existing decision endpoint.
-The audit page retrieves that same saved decision, including after reload.
-There is no full mitigation queue or historical audit listing endpoint yet;
-these views explicitly cover only the current simulation. Traffic disruptions
-and AI audit logs are labelled placeholders. Use Start simulation / Return to
-live in the dashboard header to call the existing demo-run start/close APIs.
-The dashboard refreshes after a mode change. These controls switch the shared
-backend detection mode, not just the current browser's view; arrivals remain live.
-No new runtime settings, services or migrations are
-needed for this dashboard.
+Dashboard data loads on entry and manual Refresh. Its **Approximate Live Route
+Strip** shows one selected service and destination stop name at a time; the
+selector changes the route without hiding the route legend or estimated-position
+warnings. Approximate position markers are derived from recent arrivals and are
+not physical vehicle tracking. The Overview keeps the bunching detection count;
+the grouped **Bunching incidents** collection is on Disruptions.
+
+Current bus arrivals stay Live in both modes. The table shows stop name and code,
+searches stop names across the backend result set, and sorts by stop name or
+arrival time in either direction. Ten compact rows are visible at a time, with
+scrolling loading later pages. Other compact operational lists follow the same
+10-row limit; larger diagnosis, processing, recommendation, advisory, instruction
+and notice cards show at most four cards before scrolling. Short lists size to
+their content. Visible times use a 24-hour clock in SGT, and refresh text uses
+`Last updated … SGT · Refreshes every … seconds`.
+
+Planning & mitigation scopes diagnoses and recommendations to the selected
+Live or Simulation mode. Diagnosis rows use contextual processing states and a
+short possible-contributor summary. The **Evidence and limitations** disclosure
+contains bounded source facts and explains what the data does not establish.
+Controllers enter replacement instructions in a modal; dirty drafts require
+explicit discard confirmation, while errors keep the draft available to retry.
+The API still validates recommendation freshness and records the controller's
+decision. The audit page retrieves the saved decision, including after reload.
+There is no historical audit listing endpoint yet; the audit view covers the
+current simulation. Traffic disruptions and AI audit logs are labelled
+placeholders.
+
+Use Start simulation / Return to live in the dashboard header to call the
+existing demo-run start/close APIs. The dashboard refreshes after a mode change.
+These controls switch the shared backend detection mode, not just the current
+browser's view; arrivals remain live. Browser journeys use synthetic Supabase
+and API responses and do not create real approval records. To verify the real
+local flow:
+
+1. Start the stack with `docker compose --env-file .env up -d --build --wait`.
+2. Sign in to `/controller`, start a fresh simulation, then open
+   `/controller/planning` and wait for the current diagnosis and recommendation.
+3. Inspect the diagnosis summary and its **Evidence and limitations** disclosure.
+   Choose an eligible recommendation assigned to the captain configured by
+   `OCC_DEMO_CAPTAIN_USER_ID`, preview the OBU instruction, and approve and send it.
+4. In a separate browser session, sign in as that captain and open `/captain`.
+   Confirm the instruction appears, acknowledge it, and verify its receipt status.
+5. On the controller page, draft and publish a notice, verify it on `/notices`,
+   then withdraw it from notice history.
+
+This demonstrates the synthetic local workflow only; it does not prove external
+provider behavior. To avoid live-feed requests during this check, set
+`OCC_INGESTION_BUS_ARRIVAL_ENABLED=false` and
+`OCC_INGESTION_TRAFFIC_INCIDENT_ENABLED=false` in the shell before Compose starts.
 
 The controller browser tests use synthetic Supabase and operational API
 responses, including decisions, conflicts, API errors, mobile navigation and
@@ -298,6 +348,15 @@ For metrics endpoints, see [Monitoring](MONITORING.md).
 
 Start optional pgAdmin with `.\scripts\app.ps1 start-pgadmin` (PowerShell)
 or `bash scripts/app.sh start-pgadmin` (Bash).
+Open [pgAdmin through the local proxy](http://localhost/pgadmin/), adjusting the
+port to `OCC_NGINX_PORT`, or use its direct loopback port at
+[localhost:6700](http://localhost:6700) (`PGADMIN_PORT`). Sign in with
+`PGADMIN_DEFAULT_EMAIL` and `PGADMIN_DEFAULT_PASSWORD` from your local `.env`.
+`OCC_PGADMIN_INTERNAL_URL` defaults to `http://pgadmin:80` and controls only the
+local Nginx upstream. The local override connects pgAdmin to both the database
+and edge networks so Nginx can reach it and Docker can publish its host port.
+The `/pgadmin/` route exists only in the local HTTP proxy configuration; production
+does not expose it. Nginx can start while the optional pgAdmin container is stopped.
 
 ## Run tests
 
@@ -376,3 +435,13 @@ Use `OCC_SUPABASE_TEST_CAPTAIN_EMAIL` and `OCC_SUPABASE_TEST_CAPTAIN_PASSWORD`
 from root `.env.example` for the CAPTAIN account. The smoke runner expects the
 actual JWT role to be CAPTAIN; invoke it with the `CAPTAIN` account label.
 See [authentication](AUTHENTICATION.md) for session refresh behavior.
+
+### Planning follows the shared data selection
+
+The existing Start simulation / Return to live control also selects the Planning
+queue and root-cause diagnoses. Live diagnoses are advisory and never reuse the
+simulation mitigation fixture. Switching modes clears ineligible queue selections;
+the server rejects decisions from inactive simulation runs. The Planning screen
+refreshes using `OCC_CONTROLLER_DATA_REFRESH_INTERVAL`. Diagnosis and recommendation
+records retain their original classification even if a model response completes
+after switching modes.

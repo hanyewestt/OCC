@@ -25,11 +25,18 @@ public record CreateDiagnosisEventSubmission(
         @NotBlank String detectionRuleVersion,
         @NotNull @Size(min = 1, max = 100) List<@NotBlank @Size(max = 200) String> evidenceIds,
         @Valid BunchingEventFacts eventSnapshot,
-        @Valid TrafficIncidentEventFactsRequest trafficSnapshot) {
+        @Valid TrafficIncidentEventFactsRequest trafficSnapshot,
+        @Valid com.csd.occ.planning.advisory.domain.HazardEventFacts hazardSnapshot) {
+    public CreateDiagnosisEventSubmission(String schemaVersion, EventType eventType, String producer, UUID eventId,
+            UUID disruptionId, String classification, UUID demoRunId, Instant detectedAt, String detectionRuleVersion,
+            List<String> evidenceIds, BunchingEventFacts eventSnapshot, TrafficIncidentEventFactsRequest trafficSnapshot) {
+        this(schemaVersion, eventType, producer, eventId, disruptionId, classification, demoRunId, detectedAt,
+                detectionRuleVersion, evidenceIds, eventSnapshot, trafficSnapshot, null);
+    }
 
     public ProducerEventSubmission toDomain() {
         return new ProducerEventSubmission(schemaVersion, eventType, producer, eventId, disruptionId, classification,
                 demoRunId, detectedAt, detectionRuleVersion, evidenceIds, eventSnapshot,
-                trafficSnapshot == null ? null : trafficSnapshot.toDomain());
+                trafficSnapshot == null ? null : trafficSnapshot.toDomain(), hazardSnapshot);
     }
 }

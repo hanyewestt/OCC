@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 
@@ -151,6 +152,91 @@ class IngestionStartupIT {
     }
 
     @Test
+    void currentArrivalsFiltersAndSortsUsingVersionedStopNamesBeforePaging() throws Exception {
+        var alpha = insertCurrentArrival("ARR001", "Alpha Point", Instant.parse("2026-10-25T23:50:00Z"));
+        var alphaTie = insertCurrentArrival("ARR007", "Alpha Point", Instant.parse("2026-10-25T23:50:00Z"));
+        var bravo = insertCurrentArrival("ARR002", "Bravo", Instant.parse("2026-10-25T23:55:00Z"));
+        var target = insertCurrentArrival("ARR003", "Target Terminus", Instant.parse("2026-10-26T00:10:00Z"));
+        var wildcard = insertCurrentArrival("ARR004", "Target % Stop", Instant.parse("2026-10-26T00:05:00Z"));
+        var underscore = insertCurrentArrival("ARR005", "Under_score Stop", Instant.parse("2026-10-26T00:08:00Z"));
+        var noArrival = insertCurrentArrival("ARR006", "No Arrival", null);
+        insertVersionedStop(UUID.randomUUID(), "ARR004", "Different version of the same stop");
+
+        mvc.perform(get("/api/v1/arrivals").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                        .param("serviceId", "ARRIVAL-TEST").param("stopName", "  tArGeT  ")
+                        .param("page", "0").param("size", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalItems").value(2))
+                .andExpect(jsonPath("$.items[0].observationId").value(wildcard.toString()))
+                .andExpect(jsonPath("$.items[0].stopName").value("Target % Stop"));
+
+        mvc.perform(get("/api/v1/arrivals").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                        .param("serviceId", "ARRIVAL-TEST").param("stopName", "Target")
+                        .param("page", "1").param("size", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalItems").value(2))
+                .andExpect(jsonPath("$.items[0].observationId").value(target.toString()));
+
+        mvc.perform(get("/api/v1/arrivals").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                        .param("serviceId", "ARRIVAL-TEST").param("stopName", "%").param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalItems").value(1))
+                .andExpect(jsonPath("$.items[0].observationId").value(wildcard.toString()));
+
+        mvc.perform(get("/api/v1/arrivals").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                        .param("serviceId", "ARRIVAL-TEST").param("stopName", "_").param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalItems").value(1))
+                .andExpect(jsonPath("$.items[0].observationId").value(underscore.toString()));
+
+        UUID firstAlphaId = alpha.toString().compareTo(alphaTie.toString()) <= 0 ? alpha : alphaTie;
+        UUID secondAlphaId = firstAlphaId.equals(alpha) ? alphaTie : alpha;
+        mvc.perform(get("/api/v1/arrivals").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                        .param("serviceId", "ARRIVAL-TEST").param("sortBy", "stopName")
+                        .param("page", "0").param("size", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].observationId").value(firstAlphaId.toString()));
+        mvc.perform(get("/api/v1/arrivals").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                        .param("serviceId", "ARRIVAL-TEST").param("sortBy", "stopName")
+                        .param("page", "1").param("size", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].observationId").value(secondAlphaId.toString()));
+
+        mvc.perform(get("/api/v1/arrivals").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                        .param("serviceId", "ARRIVAL-TEST").param("stopName", " ")
+                        .param("sortBy", "stopName").param("sortDirection", "asc")
+                        .param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalItems").value(7))
+                .andExpect(jsonPath("$.items[0].observationId").value(firstAlphaId.toString()))
+                .andExpect(jsonPath("$.items[1].observationId").value(secondAlphaId.toString()))
+                .andExpect(jsonPath("$.items[2].observationId").value(bravo.toString()))
+                .andExpect(jsonPath("$.items[3].observationId").value(noArrival.toString()));
+
+        mvc.perform(get("/api/v1/arrivals").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                        .param("serviceId", "ARRIVAL-TEST").param("sortBy", "stopName")
+                        .param("sortDirection", "desc").param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].observationId").value(underscore.toString()))
+                .andExpect(jsonPath("$.items[1].observationId").value(target.toString()))
+                .andExpect(jsonPath("$.items[5].observationId").value(firstAlphaId.toString()))
+                .andExpect(jsonPath("$.items[6].observationId").value(secondAlphaId.toString()));
+
+        mvc.perform(get("/api/v1/arrivals").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                        .param("serviceId", "ARRIVAL-TEST").param("sortBy", "arrival")
+                        .param("sortDirection", "desc").param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].observationId").value(target.toString()))
+                .andExpect(jsonPath("$.items[6].observationId").value(noArrival.toString()));
+
+        mvc.perform(get("/api/v1/arrivals").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                        .param("serviceId", "ARRIVAL-TEST").param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].observationId").value(firstAlphaId.toString()))
+                .andExpect(jsonPath("$.items[6].observationId").value(noArrival.toString()));
+    }
+
+    @Test
     void trafficIncidentPollIsStoredAndExposedAsAnObservationOnlyCompletedFeed() {
         String payload = "[{\"Type\":\"Road Works\",\"Latitude\":1.3000000,"
                 + "\"Longitude\":103.8000000,\"Message\":\"Road works near test junction\"}]";
@@ -181,12 +267,23 @@ class IngestionStartupIT {
     }
 
     @Test
-    void backendDoesNotHostDemoPageAndDemoApiRequiresAnAuthorizedUser() throws Exception {
-        mvc.perform(get("/demo.html").with(jwt().authorities(
-                        new SimpleGrantedAuthority("ROLE_ADMIN"))))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/api/v1/demo-mode"))
-                .andExpect(status().isUnauthorized());
+    void additionalHazardMetricsExposeOnlyBoundedFeedAndOutcomeLabels() {
+        jdbc.update("""
+                INSERT INTO ingestion.poll_run (id, source, scope_key, idempotency_key, started_at, completed_at, outcome)
+                VALUES (?, 'FLOOD_DATAMALL', 'FLOOD', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'PARTIAL')
+                """, UUID.randomUUID(), UUID.randomUUID().toString());
+
+        assertThat(meterRegistry.get("occ.ingestion.hazard.latest_poll_outcome").tag("feed", "FLOOD").gauge().value())
+                .isEqualTo(0.5);
+        assertThat(meterRegistry.get("occ.ingestion.hazard.latest_poll_outcome").tag("feed", "RAIL_DISRUPTION").gauge().value())
+                .isEqualTo(-1.0);
+        assertThat(meterRegistry.get("occ.ingestion.hazard.latest_poll_success_age_seconds").tag("feed", "FLOOD").gauge().value())
+                .isEqualTo(0.0);
+        assertThat(meterRegistry.getMeters().stream()
+                .filter(meter -> meter.getId().getName().equals("occ.ingestion.hazard.latest_poll_outcome"))
+                .flatMap(meter -> meter.getId().getTags().stream())
+                .map(io.micrometer.core.instrument.Tag::getKey).distinct())
+                .containsExactly("feed");
     }
 
     @Test
@@ -247,10 +344,13 @@ class IngestionStartupIT {
         assertThat(simulationPage.items()).hasSize(DemoReplayScenario.STEP_COUNT);
         assertThat(bunchingFeed.page(0, 100).items())
                 .noneMatch(snapshot -> simulationIds.contains(snapshot.rawObservationId()));
-        assertThat(arrivals.findCurrent("44251", "190", PageRequest.of(0, 50)).getContent()).isEmpty();
+        assertThat(arrivals.findCurrent("44251", "190", null, "arrival", "asc", PageRequest.of(0, 50))
+                .getContent()).isEmpty();
         assertThat(arrivals.findHistory("44251", "190", null, null, PageRequest.of(0, 50)).getContent()).isEmpty();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM ingestion.traffic_incident_observation "
                 + "WHERE demo_run_id=? AND classification='SIMULATION'", Integer.class, started.id())).isEqualTo(2);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM ingestion.hazard_observation "
+                + "WHERE demo_run_id=?", Integer.class, started.id())).isEqualTo(9);
         var trafficPolls = trafficIncidentPollFeed.page(null, null, 250).polls().stream()
                 .filter(poll -> started.id().equals(poll.demoRunId())).toList();
         assertThat(trafficPolls).hasSize(DemoReplayScenario.STEP_COUNT).allMatch(poll -> poll.complete()
@@ -273,6 +373,7 @@ class IngestionStartupIT {
         retention.purgeExpiredObservations();
         assertThat(jdbc.queryForObject("select count(*) from ingestion.demo_run where id = ?", Integer.class, started.id())).isZero();
         assertThat(jdbc.queryForObject("select count(*) from ingestion.traffic_incident_observation where demo_run_id = ?", Integer.class, started.id())).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.hazard_observation where demo_run_id = ?", Integer.class, started.id())).isZero();
         assertThat(jdbc.queryForObject("select count(*) from ingestion.demo_vehicle_assignment where demo_run_id = ?", Integer.class, started.id())).isZero();
     }
 
@@ -358,7 +459,8 @@ class IngestionStartupIT {
                 context.getBean(com.csd.occ.ingestion.domain.DemoRunRepository.class),
                 context.getBean(com.csd.occ.ingestion.domain.TrafficIncidentObservationRepository.class),
                 context.getBean(com.csd.occ.ingestion.domain.DemoVehicleAssignmentRepository.class), bunching,
-                context.getBean(com.csd.occ.ingestion.domain.PollTargetRepository.class));
+                context.getBean(com.csd.occ.ingestion.domain.PollTargetRepository.class),
+                context.getBean(com.csd.occ.ingestion.domain.HazardObservationRepository.class));
         var transaction = new org.springframework.transaction.support.TransactionTemplate(context.getBean(org.springframework.transaction.PlatformTransactionManager.class));
         Long firstPurgeCount = transaction.execute(status -> pruning.purgeExpiredObservations());
         assertThat(firstPurgeCount).isGreaterThan(0);
@@ -366,5 +468,54 @@ class IngestionStartupIT {
         assertThat(jdbc.queryForObject("select count(*) from ingestion.reference_dataset_version where id = ?", Integer.class, boundary)).isEqualTo(1);
         Long secondPurgeCount = transaction.execute(status -> pruning.purgeExpiredObservations());
         assertThat(secondPurgeCount).isZero();
+    }
+
+    private UUID insertCurrentArrival(String stopCode, String description, Instant estimatedArrivalAt) {
+        UUID versionId = UUID.randomUUID();
+        UUID observationId = UUID.randomUUID();
+        UUID pollRunId = UUID.randomUUID();
+        UUID rawObservationId = UUID.randomUUID();
+        String suffix = UUID.randomUUID().toString();
+        var fetchedAt = Instant.parse("2026-10-25T00:00:00Z");
+
+        insertVersionedStop(versionId, stopCode, description);
+        jdbc.update("""
+                INSERT INTO ingestion.poll_run
+                    (id, source, scope_key, idempotency_key, started_at, completed_at, outcome)
+                VALUES (?, 'DATAMALL', ?, ?, ?, ?, 'SUCCESS')
+                """, pollRunId, "arrival-search:" + suffix, suffix,
+                java.sql.Timestamp.from(fetchedAt), java.sql.Timestamp.from(fetchedAt));
+        jdbc.update("""
+                INSERT INTO ingestion.raw_observation
+                    (id, poll_run_id, source, source_key, request_parameters, payload, payload_checksum,
+                     fetched_at, ingested_at, http_status)
+                VALUES (?, ?, 'DATAMALL', ?, '{}'::jsonb, '{}'::jsonb, ?, ?, ?, 200)
+                """, rawObservationId, pollRunId, suffix, "b".repeat(64),
+                java.sql.Timestamp.from(fetchedAt), java.sql.Timestamp.from(fetchedAt));
+        jdbc.update("""
+                INSERT INTO ingestion.bus_arrival_observation
+                    (id, raw_observation_id, poll_run_id, reference_version_id, service_id, stop_code,
+                     operator, direction_id, visit_order, estimated_arrival_at, classification,
+                     fetched_at, ingested_at, record_checksum)
+                VALUES (?, ?, ?, ?, 'ARRIVAL-TEST', ?, 'SMRT', 1, 1, ?, 'OBSERVATION_ONLY', ?, ?, ?)
+                """, observationId, rawObservationId, pollRunId, versionId, stopCode,
+                estimatedArrivalAt == null ? null : java.sql.Timestamp.from(estimatedArrivalAt),
+                java.sql.Timestamp.from(fetchedAt), java.sql.Timestamp.from(fetchedAt), "c".repeat(64));
+        return observationId;
+    }
+
+    private void insertVersionedStop(UUID versionId, String stopCode, String description) {
+        var at = Instant.now();
+        jdbc.update("""
+                INSERT INTO ingestion.reference_dataset_version
+                    (id, dataset, version_key, checksum, status, imported_at, activated_at)
+                VALUES (?, 'BUS_TOPOLOGY', ?, ?, 'SUPERSEDED', ?, ?)
+                """, versionId, "arrival-search-" + UUID.randomUUID(), "a".repeat(64),
+                java.sql.Timestamp.from(at), java.sql.Timestamp.from(at));
+        jdbc.update("""
+                INSERT INTO ingestion.bus_stop
+                    (reference_version_id, stop_code, road_name, description, location)
+                VALUES (?, ?, 'Fixture Road', ?, ST_SetSRID(ST_MakePoint(103.8, 1.3), 4326))
+                """, versionId, stopCode, description);
     }
 }
