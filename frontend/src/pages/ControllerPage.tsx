@@ -108,6 +108,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const [switching, setSwitching] = useState(false)
   const [modeError, setModeError] = useState('')
   const modeRequestRef = useRef<AbortController | null>(null)
+  const liveRequestGenerationRef = useRef(0)
   const switchingRef = useRef(false)
   const requestKey = `${token}:${pathname}`
   const loading = loaded !== requestKey || switching
@@ -175,8 +176,9 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       throw error
     }
   }, diagnosis => diagnosis.requestId, scopeVerified && pathname === '/controller/planning')
-  const requestLiveData = useCallback(async (signal: AbortSignal): Promise<LiveData | null> => {
-    return loadLiveData(token, signal)
+  const requestLiveData = useCallback(async (signal: AbortSignal) => {
+    const generation = ++liveRequestGenerationRef.current
+    return { generation, data: await loadLiveData(token, signal) }
   }, [token])
   const fetchStopArrivals = useCallback(async (route: RouteDirection, stopCode: string, signal: AbortSignal): Promise<Arrival[]> => {
     const params = new URLSearchParams({ stopCode, serviceId: route.serviceId, page: '0', size: '50' })
@@ -215,10 +217,12 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         data: routeDirections(results.flatMap(result => result.data ? [result.data] : [])),
         error: results.some(result => result.error) ? 'Unable to load all route references.' : '',
       })) : Promise.resolve(null)
-    const [live, nextRun, nextRouteStops] = await Promise.all([
+    const [liveRequest, nextRun, nextRouteStops] = await Promise.all([
       pathname === '/controller' ? requestLiveData(signal) : Promise.resolve(null), runPromise, routePromise,
     ])
     if (signal.aborted) return false
+    const liveIsCurrent = !liveRequest || liveRequest.generation === liveRequestGenerationRef.current
+    const live = liveIsCurrent ? liveRequest?.data ?? null : null
     if (live) {
       setRouteArrivals(previous => live.routeArrivals.error && previous.data ? { ...previous, error: live.routeArrivals.error } : live.routeArrivals)
       setRoutePositions(previous => {
@@ -234,7 +238,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     setRun(resolvedRun)
     if (nextRouteStops) { routeReference.current = nextRouteStops; setRouteStops(nextRouteStops) }
     setLoaded(requestKey)
-    if (!nextRun.error && !live?.routeArrivals.error && !live?.positions.error && !nextRouteStops?.error) {
+    if (liveIsCurrent && !nextRun.error && !live?.routeArrivals.error && !live?.positions.error && !nextRouteStops?.error) {
       setShellRefreshTime({ key: requestKey, at: new Date().toISOString() })
     }
     return previousMode !== (resolvedRun.data?.id ?? 'LIVE')

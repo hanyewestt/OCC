@@ -62,9 +62,11 @@ public class BusArrivalService {
             return;
         }
         UUID routePositionPollCycleId = UUID.randomUUID();
+        long idempotencyMinuteBucket = Instant.now(clock).getEpochSecond() / 60;
         for (PollTarget target : enabledTargets) {
             Instant now = Instant.now(clock);
-            String idempotencyKey = target.getSource() + "-" + target.getScopeKey() + "-" + now.getEpochSecond() / 60;
+            String idempotencyKey = target.getSource() + "-" + target.getScopeKey() + "-"
+                    + idempotencyMinuteBucket;
             if (runs.findByIdempotencyKey(idempotencyKey).isPresent()) {
                 log.debug("Skipping duplicate polling bucket for {}", target.getScopeKey());
                 continue;
@@ -166,8 +168,8 @@ public class BusArrivalService {
     }
 
     /**
-     * Bus Arrival omits Direction, while BusRoutes supplies a fixed direction for each route stop.
-     * Where a stop is served in both directions, terminal codes disambiguate it without guessing.
+     * Bus Arrival may omit Direction, while BusRoutes supplies a fixed direction for each route stop.
+     * Where a stop is served in both directions, the ordered journey stops disambiguate it without guessing.
      */
     private Integer resolveDirectionId(UUID referenceVersionId, PollTarget target, BusArrivalPrediction prediction,
             Map<String, List<BusRouteStop>> routes) {
@@ -185,17 +187,27 @@ public class BusArrivalService {
         directions.entrySet().removeIf(entry -> entry.getValue().stream()
                 .noneMatch(routeStop -> target.getStopCode().equals(routeStop.stopCode())));
         if (directions.size() == 1) return directions.keySet().iterator().next().intValue();
-        List<Integer> terminalMatches = directions.entrySet().stream()
-                .filter(entry -> matchesTerminals(entry.getValue(), prediction.originCode(), prediction.destinationCode()))
+        List<Integer> journeyMatches = directions.entrySet().stream()
+                .filter(entry -> matchesJourney(entry.getValue(), target.getStopCode(),
+                        prediction.originCode(), prediction.destinationCode()))
                 .map(entry -> entry.getKey().intValue())
                 .toList();
-        return terminalMatches.size() == 1 ? terminalMatches.getFirst() : null;
+        return journeyMatches.size() == 1 ? journeyMatches.getFirst() : null;
     }
 
-    private boolean matchesTerminals(List<BusRouteStop> route, String originCode, String destinationCode) {
-        return originCode != null && destinationCode != null
-                && originCode.equals(route.getFirst().stopCode())
-                && destinationCode.equals(route.getLast().stopCode());
+    private boolean matchesJourney(List<BusRouteStop> route, String currentStopCode, String originCode,
+            String destinationCode) {
+        if (originCode == null || destinationCode == null) return false;
+        for (int origin = 0; origin < route.size(); origin++) {
+            if (!originCode.equals(route.get(origin).stopCode())) continue;
+            for (int current = origin; current < route.size(); current++) {
+                if (!currentStopCode.equals(route.get(current).stopCode())) continue;
+                for (int destination = current; destination < route.size(); destination++) {
+                    if (destinationCode.equals(route.get(destination).stopCode())) return true;
+                }
+            }
+        }
+        return false;
     }
 
     private void updateFeedStatus(PollTarget target, Instant now, boolean success, String message) {

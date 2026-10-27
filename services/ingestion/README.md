@@ -190,29 +190,65 @@ With the service running in Compose, browse the interactive API at `http://local
 | `GET /api/v1/bus-stops/{stopCode}` | One bus stop by stop code |
 | `GET /api/v1/route-positions?service=190` | Recent, direction-scoped position estimates for a bus service |
 
-For current arrivals, `stopName` searches across the matching result set before
-pagination. `sortBy` accepts `arrival` (the default) or `stopName`, and
-`sortDirection` accepts `asc` (the default) or `desc`; invalid values return
-HTTP 400. This lets the controller search or sort the complete current set while
-still loading bounded pages.
+Route positions are temporary evidence-based estimates, not registered vehicle
+identities. The service filters missing or zero coordinates and observations
+older than two bus-arrival poll cycles, then uses only the newest completed
+eligible poll cycle. Other completed cycles inside that bounded window contribute
+only a co-occurrence veto: coordinate identities previously returned together in
+one raw stop snapshot cannot later be linked. They never contribute displayed
+buses, and an empty newest completed cycle remains empty instead of falling back
+to an older sweep.
 
-Route positions are temporary order-based estimates, not vehicle identities. The
-service filters out missing/zero coordinates and readings older than
-`OCC_INGESTION_ROUTE_POSITION_MAX_POLL_AGE_CYCLES` bus-arrival poll cycles
-(default `2`). It snaps remaining coordinates to a line built from the ordered
-stop coordinates because the active reference data contains stop points but no
-road-level route polyline. The line can cut across road bends; treat the result
-as an approximate route position. Readings within
-`OCC_INGESTION_ROUTE_POSITION_CLUSTER_TOLERANCE_M` (default `150` m) are
-clustered, and a prior-cycle match estimates speed up to
-`OCC_INGESTION_ROUTE_POSITION_SPEED_CAP_MPS` (default `16.7` m/s). These are
-starting tolerances, not proof that observations came from the same physical
-bus. The response groups estimates by operator and direction and gives each
-position an uncertainty radius with a 50 m minimum. The UI refresh interval is
-based on `OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL` and clamped to 30–60 seconds.
-Each estimated position also returns the arrival observation IDs that contributed
-to its cluster. The controller uses shared IDs in saved bunching evidence for a
-stronger alert-to-position link; these IDs identify source records, not buses.
+Within each operator and direction, an exact provider coordinate plus origin,
+destination and visit number forms one atomic identity version. Compatible
+versions that never occur in the same stop snapshot may be linked when they are
+within 25 m and their ETA profiles, normalized at 7 m/s, differ by no more than
+20 seconds. Versions returned together in a snapshot are always treated as
+separate buses. The estimator also preserves the largest multiplicity reported
+by any one stop snapshot, so repeated or co-located buses are not collapsed.
+`visitOrder` is only queue order at a stop and is not treated as a vehicle
+identifier. This short-range linkage is limited to the replay-validated route
+lines 190 direction 1 and 190 direction 2.
+
+Some provider coordinates can change while the stops in one service poll cycle
+are still being queried. For 190 direction 1, coordinated refresh-boundary
+reconciliation requires an unambiguous coordinated set of matches within 250 m
+and five seconds. It tolerates no more than 250 ms of timestamp overlap, caps the
+ETA-profile residual at 75 seconds, and accepts fitted ETA-profile slopes only
+from 0.02 through 2.0 seconds per metre. Ambiguous matches and any pair that
+co-occurs in a stop snapshot remain separate.
+
+Coordinates are projected onto a line built from the ordered stop coordinates
+because the active reference data contains stop points but no road-level route
+polyline. The line can cut across road bends, so the displayed distance remains
+approximate. For a circular route whose first and last stop repeat, the same
+coordinate can project to several route occurrences. With at least three
+distinct stops, the estimator selects an occurrence by comparing provider ETAs
+with forward distances using a nominal speed of 7 m/s. It admits occurrence
+candidates within 150 m of the nearest route segment. With insufficient evidence
+it retains the nearest projection, which is also the behavior for non-circular
+routes.
+
+Circular routes may report separate coordinate versions for the same bus around
+the repeated start/end phase. On 972 direction 1, a unique pair can share
+occurrence-selection evidence without merging either estimate when it did not
+co-occur, is within 250 m, has at most 2,000 m of route-phase separation, and has
+no more than 75 seconds of ETA error. Sharing phase evidence changes only
+occurrence selection; it never reduces the number of displayed buses.
+
+The response groups estimates by operator and direction. Each interval uses a
+50 m half-width, matching the blue position rectangle in the route UI. The UI
+refresh is clamped to 30–60 seconds. Each estimate also returns audit source
+arrival observation IDs and the position-evidence observation IDs that justify
+its displayed location. These IDs can link saved bunching evidence to an
+estimate, but they identify records rather than physical buses. At response
+level, `sourcePollCycleId` identifies the selected provider poll cycle and
+`sourceObservedAt` is the newest source reading time in that cycle. `computedAt`
+is deliberately separate: it is the time the API calculated the response.
+`maxSourceAgeSeconds` exposes the estimator's source-age limit so clients do not
+duplicate it. Source fields are `null` when the newest completed cycle contains
+no usable readings. The current estimator does not extrapolate buses between
+polls.
 
 The machine-readable OpenAPI document is at `/v3/api-docs`.
 

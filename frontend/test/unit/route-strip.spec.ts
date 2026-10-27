@@ -1,9 +1,10 @@
 import { expect, test } from '@playwright/test'
-import type { Arrival, BunchingAlert, RouteDirection, RoutePositionDirection, RouteStop } from '../../src/lib/api'
+import type { Arrival, BunchingAlert, RouteDirection, RoutePositionDirection, RoutePositions, RouteStop } from '../../src/lib/api'
 import {
-  arrivalDirectionMatches, arrivalGaps, estimateRouteHeadways, etaFallbacksForRoute, formatGap, gapSeverity, groupRouteIncidents,
-  linkIncidentToPosition, oldestStopDataAgeSeconds, projectCoordinateToRoute, routeStopDistances, tightestArrivalGap,
-  routeDestination,
+  alignArrivalsToPositionEvidence, arrivalDirectionMatches, arrivalGaps, estimateRouteHeadways, etaFallbacksForRoute, formatGap, gapSeverity,
+  groupRouteIncidents, linkIncidentToPosition, oldestStopDataAgeSeconds, placeArrivalAtPositionEvidence,
+  positionSourceFreshness, positionSourceIsStale, projectCoordinateToRoute, routePositionEvidenceDescription,
+  routeDestination, routePositionSnapshotIsDisplayed, routeStopDistances, tightestArrivalGap,
 } from '../../src/lib/route-strip'
 
 const now = Date.parse('2026-10-23T04:00:20Z')
@@ -149,12 +150,37 @@ test('ETA fallback links exact source observations at their next shared stop', (
   ]
 
   const fallbacks = etaFallbacksForRoute(route, [route], arrivals, buses, 2_224, now, 120)
+  const olderArrivals = arrivals.map(arrival => ({ ...arrival, fetchedAt: '2026-10-23T03:58:50Z' }))
 
   expect(fallbacks).toEqual([{ seconds: 60, stopCode: 'B01' }, { seconds: 120, stopCode: 'B01' }])
+  expect(etaFallbacksForRoute(route, [route], olderArrivals, buses, 2_224, now, 120)).toEqual(fallbacks)
+  expect(etaFallbacksForRoute(route, [route], olderArrivals, buses, 2_224, now, 60)).toEqual([
+    { seconds: null, stopCode: '' }, { seconds: null, stopCode: '' },
+  ])
   expect(estimateRouteHeadways(buses, fallbacks)).toEqual([
     { frontOrder: 1, followingOrder: 2, seconds: 60, distanceMeters: 300, source: 'same-stop-eta', etaStopCode: 'B01' },
     { frontOrder: 2, followingOrder: 3, seconds: 120, distanceMeters: 300, source: 'same-stop-eta', etaStopCode: 'B01' },
   ])
+})
+
+test('ETA fallback uses marker-position evidence instead of shared circular scoring evidence', () => {
+  const route = makeRoute(1, ['A01', 'B01'])
+  const arrivals: Arrival[] = [
+    { observationId: 'front', serviceId: '190', stopCode: 'B01', operator: 'SMRT', directionId: 1,
+      visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:02:00Z', fetchedAt: '2026-10-23T04:00:10Z', loadCategory: null },
+    { observationId: 'following', serviceId: '190', stopCode: 'B01', operator: 'SMRT', directionId: 1,
+      visitOrder: 2, estimatedArrivalAt: '2026-10-23T04:03:00Z', fetchedAt: '2026-10-23T04:00:10Z', loadCategory: null },
+  ]
+  const sharedAuditEvidence = ['front', 'following']
+  const buses = [
+    { order: 1, distanceAlongRouteM: 900, uncertaintyM: 50, speedMps: null,
+      evidenceObservationIds: sharedAuditEvidence, positionEvidenceObservationIds: ['front'] },
+    { order: 2, distanceAlongRouteM: 800, uncertaintyM: 50, speedMps: null,
+      evidenceObservationIds: sharedAuditEvidence, positionEvidenceObservationIds: ['following'] },
+  ]
+
+  expect(etaFallbacksForRoute(route, [route], arrivals, buses, 1_112, now, 120))
+    .toEqual([{ seconds: 60, stopCode: 'B01' }])
 })
 
 test('05039 replay retains all three close buses and shows the 94 second same-stop ETA gap', () => {
@@ -215,7 +241,7 @@ test('incident links only to a plausible same-direction bus pair at the same tim
   const alert = makeAlert({ stopCode: 'B01' })
   const incident = groupRouteIncidents([alert], [route], now, 60, 20)[0]
   const position: RoutePositionDirection = {
-    serviceId: '190', operator: 'SMRT', directionId: 1, routeLengthM: 2_224,
+    operator: 'SMRT', directionId: 1, routeLengthM: 2_224,
     buses: [
       { order: 1, distanceAlongRouteM: 1_800, uncertaintyM: 70, speedMps: 5 },
       { order: 2, distanceAlongRouteM: 1_000, uncertaintyM: 70, speedMps: 5 },
@@ -224,11 +250,11 @@ test('incident links only to a plausible same-direction bus pair at the same tim
   const computedAt = '2026-10-23T04:00:20Z'
 
   expect(routeStopDistances(route, position.routeLengthM).hasGeometry).toBe(true)
-  expect(linkIncidentToPosition(incident, route, position, computedAt, 60)).toEqual({
+  expect(linkIncidentToPosition(incident, route, position, computedAt, 120)).toEqual({
     frontOrder: 1, followingOrder: 2, stopCode: 'B01', match: 'approximate',
   })
-  expect(linkIncidentToPosition(incident, { ...route, directionId: 2 }, position, computedAt, 60)).toBeNull()
-  expect(linkIncidentToPosition(incident, route, position, '2026-10-23T04:05:00Z', 60)).toBeNull()
+  expect(linkIncidentToPosition(incident, { ...route, directionId: 2 }, position, computedAt, 120)).toBeNull()
+  expect(linkIncidentToPosition(incident, route, position, '2026-10-23T04:05:00Z', 120)).toBeNull()
 })
 
 test('projects a reported arrival coordinate onto the nearest route segment', () => {
@@ -248,16 +274,22 @@ test('links an incident by its exact bunching observation evidence when both mar
   }) })
   const incident = groupRouteIncidents([alert], [route], now, 60, 20)[0]
   const position: RoutePositionDirection = {
-    serviceId: '190', operator: 'SMRT', directionId: 1, routeLengthM: 2_224,
+    operator: 'SMRT', directionId: 1, routeLengthM: 2_224,
     buses: [
-      { order: 1, distanceAlongRouteM: 1_180, uncertaintyM: 100, speedMps: 5, evidenceObservationIds: ['obs-lead'] },
-      { order: 2, distanceAlongRouteM: 1_050, uncertaintyM: 100, speedMps: 5, evidenceObservationIds: ['obs-follow'] },
+      { order: 1, distanceAlongRouteM: 1_180, uncertaintyM: 100, speedMps: 5,
+        evidenceObservationIds: ['obs-lead', 'obs-follow'], positionEvidenceObservationIds: ['obs-lead'] },
+      { order: 2, distanceAlongRouteM: 1_050, uncertaintyM: 100, speedMps: 5,
+        evidenceObservationIds: ['obs-lead', 'obs-follow'], positionEvidenceObservationIds: ['obs-follow'] },
     ],
   }
 
-  expect(linkIncidentToPosition(incident, route, position, '2026-10-23T04:00:20Z', 60)).toEqual({
+  expect(linkIncidentToPosition(incident, route, position, '2026-10-23T04:00:20Z', 120)).toEqual({
     frontOrder: 1, followingOrder: 2, stopCode: 'B01', match: 'evidence',
   })
+  expect(linkIncidentToPosition(incident, route, position, '2026-10-23T04:01:40Z', 120)).toEqual({
+    frontOrder: 1, followingOrder: 2, stopCode: 'B01', match: 'evidence',
+  })
+  expect(linkIncidentToPosition(incident, route, position, '2026-10-23T04:01:40Z', 60)).toBeNull()
 })
 
 test('freshness checks each stop’s newest observation rather than the newest record overall', () => {
@@ -273,4 +305,145 @@ test('freshness checks each stop’s newest observation rather than the newest r
   ]
 
   expect(oldestStopDataAgeSeconds(arrivals, [route], now)).toBe(130)
+})
+
+test('newer arrivals do not mask a stale blue-position source sweep', () => {
+  const route = makeRoute(1, ['A01'])
+  const arrival: Arrival = {
+    observationId: 'fresh-arrival', serviceId: '190', stopCode: 'A01', operator: 'SMRT', directionId: 1,
+    visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:05:00Z', fetchedAt: '2026-10-23T04:00:15Z', loadCategory: null,
+  }
+  const positionSnapshots: RoutePositions[] = [{
+    serviceId: '190', computedAt: '2026-10-23T04:00:20Z', sourceObservedAt: '2026-10-23T03:57:00Z',
+    sourcePollCycleId: 'stale-cycle', refreshIntervalSeconds: 60, maxSourceAgeSeconds: 120, directions: [],
+  }]
+
+  expect(oldestStopDataAgeSeconds([arrival], [route], now)).toBe(5)
+  expect(positionSourceFreshness(positionSnapshots, now)).toEqual({ oldestAgeSeconds: 200, unavailableCount: 0 })
+})
+
+test('position freshness uses the oldest displayed source time and reports unavailable timestamps', () => {
+  const snapshots: RoutePositions[] = [
+    { serviceId: '190', computedAt: '2026-10-23T04:00:20Z', sourceObservedAt: '2026-10-23T03:59:50Z', refreshIntervalSeconds: 60, maxSourceAgeSeconds: 120, directions: [] },
+    { serviceId: '972', computedAt: '2026-10-23T04:00:20Z', sourceObservedAt: '2026-10-23T03:58:20Z', refreshIntervalSeconds: 60, maxSourceAgeSeconds: 120, directions: [] },
+    { serviceId: '858', computedAt: '2026-10-23T04:00:20Z', sourceObservedAt: null, refreshIntervalSeconds: 60, maxSourceAgeSeconds: 120, directions: [] },
+  ]
+
+  expect(positionSourceFreshness(snapshots, now)).toEqual({ oldestAgeSeconds: 120, unavailableCount: 1 })
+})
+
+test('position staleness uses the backend-configured source-age limit', () => {
+  const snapshot: RoutePositions = {
+    serviceId: '190', computedAt: '2026-10-23T04:00:20Z',
+    sourceObservedAt: '2026-10-23T03:58:50Z', refreshIntervalSeconds: 60,
+    maxSourceAgeSeconds: 120, directions: [],
+  }
+
+  expect(positionSourceIsStale(snapshot, now)).toBe(false)
+  expect(positionSourceIsStale({ ...snapshot, maxSourceAgeSeconds: 60 }, now)).toBe(true)
+})
+
+test('displayed position snapshots match service from the root response rather than the direction payload', () => {
+  const snapshot: RoutePositions = {
+    serviceId: '190', computedAt: '2026-10-23T04:00:20Z', sourceObservedAt: '2026-10-23T04:00:10Z',
+    refreshIntervalSeconds: 60, maxSourceAgeSeconds: 120,
+    directions: [{ operator: 'SMRT', directionId: 1, routeLengthM: 2_224, buses: [] }],
+  }
+
+  expect(routePositionSnapshotIsDisplayed(snapshot, [makeRoute(1)])).toBe(true)
+  expect(routePositionSnapshotIsDisplayed(snapshot, [{ ...makeRoute(1), serviceId: '972' }])).toBe(false)
+})
+
+test('selected-stop overlays retain only observations from the displayed position sweep', () => {
+  const makeArrival = (observationId: string, fetchedAt: string): Arrival => ({
+    observationId, serviceId: '190', stopCode: 'B01', operator: 'SMRT', directionId: 1,
+    visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:05:00Z', fetchedAt, loadCategory: null,
+  })
+  const sourceObservation = makeArrival('source-cycle-bus-1', '2026-10-23T04:00:10Z')
+  const newerObservation = makeArrival('newer-cycle-bus-1', '2026-10-23T04:00:40Z')
+  const buses = [{
+    order: 1, distanceAlongRouteM: 1_000, uncertaintyM: 50, speedMps: null,
+    evidenceObservationIds: [sourceObservation.observationId, 'boundary-linkage'],
+    positionEvidenceObservationIds: [sourceObservation.observationId], supportingStopCount: 2,
+  }]
+
+  expect(alignArrivalsToPositionEvidence([newerObservation, sourceObservation], buses)).toEqual({
+    arrivals: [sourceObservation], status: 'aligned',
+  })
+  expect(alignArrivalsToPositionEvidence([newerObservation], buses)).toEqual({
+    arrivals: [], status: 'different-sweep',
+  })
+  expect(alignArrivalsToPositionEvidence([], buses)).toEqual({ arrivals: [], status: 'no-arrivals' })
+})
+
+test('selected-stop alignment reports missing evidence instead of treating a new feed as position evidence', () => {
+  const arrival: Arrival = {
+    observationId: 'newer-cycle-bus-1', serviceId: '190', stopCode: 'B01', operator: 'SMRT', directionId: 1,
+    visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:05:00Z', fetchedAt: '2026-10-23T04:00:40Z', loadCategory: null,
+  }
+  const buses = [{ order: 1, distanceAlongRouteM: 1_000, uncertaintyM: 50, speedMps: null }]
+
+  expect(alignArrivalsToPositionEvidence([arrival], buses)).toEqual({
+    arrivals: [], status: 'evidence-unavailable',
+  })
+})
+
+test('position evidence descriptions separate confirmed multiplicity from unresolved vehicle identity', () => {
+  const description = routePositionEvidenceDescription({
+    order: 2, distanceAlongRouteM: 900, uncertaintyM: 70, speedMps: null,
+    evidenceObservationIds: ['a', 'b'], positionEvidenceObservationIds: ['a'], supportingStopCount: 2,
+  }, 3)
+
+  expect(description).toContain('supports 3 distinct bus estimates')
+  expect(description).toContain('1 in-band source observation')
+  expect(description).toContain('Track evidence spans 2 stops')
+  expect(description).toContain('1 additional linkage observation')
+  expect(description).toContain('Physical vehicle identity remains unresolved')
+  expect(routePositionEvidenceDescription({
+    order: 1, distanceAlongRouteM: 900, uncertaintyM: 70, speedMps: null,
+  }, 1)).toContain('Position-specific source evidence is unavailable')
+})
+
+test('boundary linkage evidence cannot place a selected-stop overlay outside the blue interval', () => {
+  const makeArrival = (observationId: string): Arrival => ({
+    observationId, serviceId: '190', stopCode: 'B01', operator: 'SMRT', directionId: 1,
+    visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:05:00Z', fetchedAt: '2026-10-23T04:00:10Z', loadCategory: null,
+  })
+  const boundaryLinkage = makeArrival('old-boundary-linkage')
+  const inBandPosition = makeArrival('current-in-band-position')
+  const buses = [{
+    order: 1, distanceAlongRouteM: 1_000, uncertaintyM: 50, speedMps: null,
+    evidenceObservationIds: [boundaryLinkage.observationId, inBandPosition.observationId],
+    positionEvidenceObservationIds: [inBandPosition.observationId], supportingStopCount: 2,
+  }]
+
+  expect(alignArrivalsToPositionEvidence([boundaryLinkage], buses)).toEqual({
+    arrivals: [], status: 'linkage-only',
+  })
+  expect(alignArrivalsToPositionEvidence([inBandPosition], buses)).toEqual({
+    arrivals: [inBandPosition], status: 'aligned',
+  })
+})
+
+test('repeated-route evidence uses the backend-selected occurrence while retaining raw coordinate offset', () => {
+  const route = makeRoute(1, ['A01', 'B01', 'A01'])
+  route.stops[2] = { ...route.stops[0], stopSequence: 3, distanceKm: 32 }
+  const arrival: Arrival = {
+    observationId: 'circular-position', serviceId: '190', stopCode: 'A01', operator: 'SMRT', directionId: 1,
+    visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:05:00Z', fetchedAt: '2026-10-23T04:00:10Z', loadCategory: null,
+    latitude: route.stops[0].latitude, longitude: (route.stops[0].longitude ?? 103.75) + 0.0001,
+  }
+  const buses = [{
+    order: 1, distanceAlongRouteM: 31_950, uncertaintyM: 50, speedMps: null,
+    evidenceObservationIds: [arrival.observationId], positionEvidenceObservationIds: [arrival.observationId],
+    supportingStopCount: 1,
+  }]
+
+  const placement = placeArrivalAtPositionEvidence(arrival, buses, route, 32_000)
+
+  expect(placement?.displayDistanceAlongRouteM).toBe(31_950)
+  expect(placement?.rawProjection?.distanceAlongRouteM).toBeCloseTo(0, 0)
+  expect(placement?.rawProjection?.offsetMeters).toBeGreaterThan(5)
+  expect(placement?.rawProjection?.offsetMeters).toBeLessThan(20)
+  expect(placement!.displayDistanceAlongRouteM - placement!.rawProjection!.distanceAlongRouteM).toBeGreaterThan(30_000)
 })

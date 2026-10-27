@@ -58,4 +58,3 @@ class AdvisorySchemaTest {
                 .isEqualTo("#/components/schemas/" + item);
     }
 }
-
