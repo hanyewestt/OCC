@@ -15,6 +15,7 @@ class OperationalConfigurationTest {
     @Test
     void omittedOperationalVariablesUseDefaults() {
         Binder binder = configuration(Map.of());
+        assertThat(binder.bind("occ.disruption.hazards", HazardProperties.class).get().enabled()).isTrue();
         assertThat(binder.bind("occ.disruption.poll-interval", Duration.class).get()).isEqualTo(Duration.ofSeconds(1));
         assertThat(binder.bind("occ.disruption.planning.delivery-interval", Duration.class).get()).isEqualTo(Duration.ofSeconds(2));
     }

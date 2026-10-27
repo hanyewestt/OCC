@@ -3,6 +3,7 @@ package com.csd.occ.disruption.hazard.api;
 import com.csd.occ.disruption.hazard.api.dto.HazardResponse;
 import com.csd.occ.disruption.hazard.domain.HazardReadService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import java.util.UUID;
 import org.springframework.web.bind.annotation.*;
 
@@ -12,7 +13,8 @@ public class HazardController {
     public HazardController(HazardReadService hazards) { this.hazards = hazards; }
     @GetMapping("/api/v1/disruption/hazards")
     @Operation(operationId = "listHazards", summary = "List current hazards and candidate synthetic bus exposure")
-    public HazardResponse.PageResponse list(@RequestParam(required = false) String kind,
+    public HazardResponse.PageResponse list(@Parameter(description = "Filter category: ROADWORKS includes approved roadworks and traffic-feed Roadwork/Road Works entries; TRAFFIC_INCIDENT excludes those roadworks. Omit for all hazards. Source kind values are preserved in returned items.")
+            @RequestParam(required = false) String kind,
             @RequestParam(defaultValue = "0") int page, @RequestParam(defaultValue = "20") int size) {
         var result = hazards.list(kind, page, size);
         return new HazardResponse.PageResponse(result.items().stream().map(HazardResponse::from).toList(), page, size,

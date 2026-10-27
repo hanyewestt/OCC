@@ -18,7 +18,10 @@ public interface DisruptionRepository extends JpaRepository<Disruption, UUID> {
               else cast(h.facts->>'effectiveUntil' as timestamptz) end > :now)
         union all
         select t.disruption_id,t.updated_at from disruption.traffic_incident_state t
-        where t.status='ACTIVE' and coalesce(:kind,'TRAFFIC_INCIDENT')='TRAFFIC_INCIDENT'
+        where t.status='ACTIVE'
+          and (cast(:kind as text) is null or :kind=case
+            when lower(replace(t.incident_type,' ','')) in ('roadwork','roadworks') then 'ROADWORKS'
+            else 'TRAFFIC_INCIDENT' end)
           and (t.classification='OBSERVATION_ONLY' or t.demo_run_id=:runId)
         """;
     @Query(value = "select c.disruption_id from (" + CURRENT_HAZARDS + ") c order by c.updated_at desc,c.disruption_id",
