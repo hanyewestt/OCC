@@ -19,4 +19,10 @@ public class Disruption {
     private Instant openedAt;
     private Instant updatedAt;
     private Instant clearedAt;
+    public UUID id() { return id; }
+    public String kind() { return kind; }
+    public String classification() { return classification; }
+    public UUID demoRunId() { return demoRunId; }
+    public String status() { return status; }
+    public Instant updatedAt() { return updatedAt; }
 }

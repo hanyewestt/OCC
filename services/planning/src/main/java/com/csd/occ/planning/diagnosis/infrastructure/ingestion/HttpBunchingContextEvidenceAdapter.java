@@ -27,16 +27,17 @@ public class HttpBunchingContextEvidenceAdapter implements ContextEvidencePort {
     public RootCauseContext findContext(BunchingEventFacts event) {
         try {
             ContextResponse result = client.get().uri(uri -> uri
-                    .path("/internal/v1/ingestion/demo-runs/{demoRunId}/planning-context")
+                    .path(event.demoRunId() == null ? "/internal/v1/ingestion/planning-context"
+                            : "/internal/v1/ingestion/demo-runs/{demoRunId}/planning-context")
                     .queryParam("at", event.confirmingObservationTimes().getLast())
                     .queryParam("serviceId", event.serviceId())
                     .queryParam("stopCode", event.monitoredStopCode())
                     .queryParam("directionId", event.directionId())
                     .queryParam("arrivalObservationIds", event.confirmingObservationIds().toArray())
-                    .build(event.demoRunId()))
+                    .build(event.demoRunId() == null ? new Object[0] : new Object[] {event.demoRunId()}))
                     .retrieve().body(ContextResponse.class);
-            if (result == null || !"SIMULATION".equals(result.classification())
-                    || !event.demoRunId().equals(result.demoRunId()))
+            if (result == null || !event.classification().equals(result.classification())
+                    || !java.util.Objects.equals(event.demoRunId(), result.demoRunId()))
                 throw new DiagnosisFailureException("EVIDENCE_PROVENANCE_MISMATCH", false);
             List<UUID> requestedIds = event.confirmingObservationIds().stream().distinct().sorted().toList();
             List<UUID> returnedIds = result.arrivals().stream().map(ArrivalEvidence::observationId)

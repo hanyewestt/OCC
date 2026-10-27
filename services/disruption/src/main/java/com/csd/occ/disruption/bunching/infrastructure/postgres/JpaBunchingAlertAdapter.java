@@ -35,13 +35,15 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
     private final PlanningEventSubmissionPort planningSubmissions;
     private final DisruptionRepository disruptions;
     private final BunchingConfirmationProperties confirmation;
+    private final com.csd.occ.disruption.bunching.infrastructure.config.BunchingProperties properties;
     private final BunchingAlertPolicy policy = new BunchingAlertPolicy();
 
     public JpaBunchingAlertAdapter(AlertProcessingStateRepository states, AlertEventRepository events,
                                    BunchingEvidencePort evidence, Clock clock, ConsumerSelectionService selection,
                                    DiagnosisOutboxRepository diagnosisOutbox,
                                    PlanningEventSubmissionPort planningSubmissions,
-                                   BunchingConfirmationProperties confirmation, DisruptionRepository disruptions) {
+                                   BunchingConfirmationProperties confirmation, DisruptionRepository disruptions,
+                                   com.csd.occ.disruption.bunching.infrastructure.config.BunchingProperties properties) {
         this.states = states;
         this.events = events;
         this.evidence = evidence;
@@ -49,7 +51,7 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
         this.selection = selection;
         this.diagnosisOutbox = diagnosisOutbox;
         this.planningSubmissions = planningSubmissions;
-        this.confirmation = confirmation;
+        this.confirmation = confirmation; this.properties = properties;
         this.disruptions = disruptions;
     }
 
@@ -68,7 +70,12 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
                 .sorted(Comparator.comparing((BunchingEvaluation.GroupEvaluation group) -> group.group().serviceId())
                         .thenComparing(group -> group.group().stopCode())
                         .thenComparingInt(group -> group.group().directionId().orElse(UNSPECIFIED_DIRECTION)))
-                .forEach(result -> triggerLive(evaluation, result));
+                .forEach(result -> {
+                    if (result.reason() == BunchingEvaluation.Reason.STALE_SNAPSHOT
+                            || result.reason() == BunchingEvaluation.Reason.FUTURE_SNAPSHOT) return;
+                    if (result.group().directionId().isPresent()) triggerConfirmed(evaluation, result, null);
+                    else triggerLive(evaluation, result);
+                });
     }
 
     private void triggerLive(BunchingEvaluation evaluation, BunchingEvaluation.GroupEvaluation result) {
@@ -97,16 +104,21 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
                 .sorted(Comparator.comparing((BunchingEvaluation.GroupEvaluation group) -> group.group().serviceId())
                         .thenComparing(group -> group.group().stopCode())
                         .thenComparingInt(group -> group.group().directionId().orElse(UNSPECIFIED_DIRECTION)))
-                .forEach(result -> triggerDemo(evaluation, result, runId));
+                .forEach(result -> triggerConfirmed(evaluation, result, runId));
     }
 
-    private void triggerDemo(BunchingEvaluation evaluation, BunchingEvaluation.GroupEvaluation result, UUID runId) {
+    private void triggerConfirmed(BunchingEvaluation evaluation, BunchingEvaluation.GroupEvaluation result, UUID runId) {
         int direction = result.group().directionId().orElse(UNSPECIFIED_DIRECTION);
         String service = result.group().serviceId(); String stop = result.group().stopCode();
         states.insertIfAbsent(UUID.randomUUID(), runId, service, stop, direction, Instant.EPOCH);
         AlertProcessingState previous = states.findWithLock(runId, service, stop, direction).orElseThrow();
         Instant fetchedAt = evaluation.snapshot().fetchedAt();
         if (!fetchedAt.isAfter(previous.lastFetchedAt())) return;
+        Instant selectedAt = selection.current().selectedAt();
+        if (runId == null && selectedAt != null && previous.pendingDetectedAt() != null
+                && previous.pendingDetectedAt().isBefore(selectedAt)) previous.clearCandidate();
+        if (previous.pendingDetectedAt() != null
+                && previous.pendingDetectedAt().isBefore(fetchedAt.minus(properties.staleAfter()))) previous.clearCandidate();
         if (result.reason() == BunchingEvaluation.Reason.STALE_SNAPSHOT
                 || result.reason() == BunchingEvaluation.Reason.FUTURE_SNAPSHOT) {
             previous.update(fetchedAt, previous.activeAlertId(), previous.leadingObservationId(), previous.followingObservationId());
@@ -139,7 +151,7 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
             int secondHeadway = Math.toIntExact(current.gap().toSeconds());
             AlertEvent event = saveEvent(new AlertEvent(episode, "OPENED", service, stop, direction,
                     evaluation.snapshot().rawObservationId(), evaluation.snapshot().pollRunId(), fetchedAt, confirmedAt,
-                    evidence.encodeAlert(evaluation, result), "SIMULATION", runId,
+                    evidence.encodeAlert(evaluation, result), runId == null ? "OBSERVATION_ONLY" : "SIMULATION", runId,
                     current.leadingObservationId(), current.followingObservationId(), confirmation.expectedHeadwaySeconds(),
                     previous.pendingHeadwaySeconds(), secondHeadway, previous.pendingDetectedAt(), fetchedAt,
                     previous.pendingLeadingObservationId(), previous.pendingFollowingObservationId(),
@@ -158,7 +170,7 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
         if (transition == BunchingAlertPolicy.Transition.CLEARED) {
             AlertEvent event = saveEvent(new AlertEvent(episode, transition.name(), service, stop, direction,
                     evaluation.snapshot().rawObservationId(), evaluation.snapshot().pollRunId(), fetchedAt, clock.instant(),
-                    evidence.encodeAlert(evaluation, result), "SIMULATION", runId, previous.leadingObservationId(),
+                    evidence.encodeAlert(evaluation, result), runId == null ? "OBSERVATION_ONLY" : "SIMULATION", runId, previous.leadingObservationId(),
                     previous.followingObservationId()));
             events.notifyListeners(event.id().toString());
             previous.update(fetchedAt, null, null, null);

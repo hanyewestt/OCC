@@ -57,7 +57,7 @@ public class ReferenceTopologyController {
     @ApiResponses(@ApiResponse(responseCode = "404", description = "Bus service or active reference topology not found",
             content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class))))
     public BusRouteResponse busRoute(@PathVariable String serviceId) {
-        return queries.busRoute(serviceId).map(this::routeResponse)
+        return queries.busRoute(serviceId).map(BusRouteResponse::from)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Bus service not found"));
     }
 
@@ -85,15 +85,6 @@ public class ReferenceTopologyController {
 
     private BusRouteSummaryResponse routeSummaryResponse(ReferenceTopologyPort.BusRouteSummary route) {
         return new BusRouteSummaryResponse(route.serviceId(), route.operator(), route.category());
-    }
-
-    private BusRouteResponse routeResponse(ReferenceTopologyPort.BusRoute route) {
-        return new BusRouteResponse(route.serviceId(), route.operators().stream().map(operator ->
-                new BusRouteOperatorResponse(operator.operator(), operator.category(), operator.directions().stream()
-                        .map(direction -> new BusRouteDirectionResponse(direction.directionId(), direction.stops().stream()
-                                .map(stop -> new BusRouteStopResponse(stop.stopCode(), stop.roadName(), stop.description(),
-                                        stop.latitude(), stop.longitude(), stop.stopSequence(), stop.distanceKm()))
-                                .toList())).toList())).toList());
     }
 
     private BusStopResponse stopResponse(ReferenceTopologyPort.BusStop stop) {

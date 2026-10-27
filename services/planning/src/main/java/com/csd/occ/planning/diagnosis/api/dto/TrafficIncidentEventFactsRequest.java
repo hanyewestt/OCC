@@ -17,6 +17,7 @@ public record TrafficIncidentEventFactsRequest(
         @NotBlank @Size(max = 30) String classification,
         UUID demoRunId,
         @NotNull UUID sourceObservationId,
+        Long sourceRevision,
         @NotNull UUID pollRunId,
         @NotBlank @Size(max = 40) String source,
         @NotBlank @Size(min = 64, max = 64) String sourceIncidentKey,
@@ -27,9 +28,17 @@ public record TrafficIncidentEventFactsRequest(
         Instant observedAt,
         @NotNull Instant fetchedAt,
         @NotNull Instant eventAt) {
+    public TrafficIncidentEventFactsRequest(UUID eventId, UUID disruptionId, String action, String classification,
+            UUID demoRunId, UUID sourceObservationId, UUID pollRunId, String source, String sourceIncidentKey,
+            String incidentType, String message, BigDecimal latitude, BigDecimal longitude, Instant observedAt,
+            Instant fetchedAt, Instant eventAt) {
+        this(eventId, disruptionId, action, classification, demoRunId, sourceObservationId, null, pollRunId, source,
+                sourceIncidentKey, incidentType, message, latitude, longitude, observedAt, fetchedAt, eventAt);
+    }
+
     public TrafficIncidentEventFacts toDomain() {
         return new TrafficIncidentEventFacts(eventId, disruptionId, action, classification, demoRunId,
-                sourceObservationId, pollRunId, source, sourceIncidentKey, incidentType, message,
+                sourceObservationId, sourceRevision, pollRunId, source, sourceIncidentKey, incidentType, message,
                 latitude, longitude, observedAt, fetchedAt, eventAt);
     }
 }

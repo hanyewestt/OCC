@@ -8,6 +8,26 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface DisruptionRepository extends JpaRepository<Disruption, UUID> {
+    String CURRENT_HAZARDS = """
+        select h.disruption_id,h.updated_at from disruption.hazard_state h
+        where h.status <> 'CLEARED' and h.kind=coalesce(:kind,h.kind)
+          and (h.classification='OBSERVATION_ONLY' or h.demo_run_id=:runId)
+          and (h.facts->>'effectiveUntil' is null or
+            case when jsonb_typeof(h.facts->'effectiveUntil')='number'
+              then to_timestamp((h.facts->>'effectiveUntil')::double precision)
+              else cast(h.facts->>'effectiveUntil' as timestamptz) end > :now)
+        union all
+        select t.disruption_id,t.updated_at from disruption.traffic_incident_state t
+        where t.status='ACTIVE'
+          and (cast(:kind as text) is null or :kind=case
+            when lower(replace(t.incident_type,' ','')) in ('roadwork','roadworks') then 'ROADWORKS'
+            else 'TRAFFIC_INCIDENT' end)
+          and (t.classification='OBSERVATION_ONLY' or t.demo_run_id=:runId)
+        """;
+    @Query(value = "select c.disruption_id from (" + CURRENT_HAZARDS + ") c order by c.updated_at desc,c.disruption_id",
+            countQuery = "select count(*) from (" + CURRENT_HAZARDS + ") c", nativeQuery = true)
+    org.springframework.data.domain.Page<UUID> findCurrentHazardIds(String kind, UUID runId, Instant now,
+                                                                  org.springframework.data.domain.Pageable page);
     @Modifying
     @Query(value = """
             INSERT INTO disruption.disruption (id, kind, classification, demo_run_id, status, opened_at, updated_at, cleared_at)

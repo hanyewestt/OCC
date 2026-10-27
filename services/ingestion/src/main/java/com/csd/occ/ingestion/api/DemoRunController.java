@@ -86,6 +86,6 @@ public class DemoRunController {
     }
 
     private static DemoVehicleResponse vehicle(com.csd.occ.ingestion.domain.DemoVehicleDetails value) {
-        return new DemoVehicleResponse(value.registrationNumber(), value.operator(), value.vehicleType(), value.captainCode());
+        return new DemoVehicleResponse(value.registrationNumber(), value.operator(), value.vehicleType(), value.captainCode(), value.busId());
     }
 }

@@ -49,7 +49,7 @@ class ClasspathBunchingMitigationContextAdapterTest {
             assertThat(value.mitigationType()).isEqualTo(MitigationType.HOLD);
             assertThat(value.adjustmentSeconds()).isEqualTo(120);
             assertThat(value.targetBusReference()).isEqualTo("SBS5898U");
-            assertThat(value.controlStopCode()).isEqualTo("44241");
+            assertThat(value.controlStopCode()).isEqualTo("44251");
             assertThat(value.expectedImpact().headwayAfterSeconds()).isEqualTo(341);
             assertThat(value.expectedImpact().queueAfterPassengers()).isEqualTo(24);
             assertThat(value.expectedImpact().passengerMinutesAfter())

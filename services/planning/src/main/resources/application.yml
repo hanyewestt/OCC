@@ -1,3 +1,4 @@
+# Defaults live here; placeholders preserve existing environment-variable aliases.
 spring:
   application:
     name: planning
@@ -50,6 +51,12 @@ management:
 
 occ:
   planning:
+    advisory:
+      max-speed-reduction-kmh: ${OCC_PLANNING_ADVISORY_MAX_SPEED_REDUCTION_KMH:10}
+      max-duration-seconds: ${OCC_PLANNING_ADVISORY_MAX_DURATION_SECONDS:900}
+      max-subsequent-stops: ${OCC_PLANNING_ADVISORY_MAX_SUBSEQUENT_STOPS:10}
+      acknowledgement-window: ${OCC_PLANNING_ADVISORY_ACKNOWLEDGEMENT_WINDOW:5m}
+      retention: ${OCC_PLANNING_ADVISORY_RETENTION:${OCC_INGESTION_RETENTION:12h}}
     gemini:
       base-url: ${OCC_PLANNING_GEMINI_BASE_URL:}
   security:
@@ -84,7 +91,7 @@ occ:
       location: ${OCC_PLANNING_RECOMMENDATION_FIXTURE_LOCATION:classpath:fixtures/bunching-mitigation-context.json}
   diagnosis:
     retention:
-      duration: ${OCC_INGESTION_RETENTION:12h}
+      duration: ${OCC_PLANNING_DIAGNOSIS_RETENTION_DURATION:${OCC_INGESTION_RETENTION:12h}}
       interval: ${OCC_PLANNING_DIAGNOSIS_RETENTION_INTERVAL:1h}
       initial-delay: ${OCC_PLANNING_DIAGNOSIS_RETENTION_INITIAL_DELAY:5m}
     audit:

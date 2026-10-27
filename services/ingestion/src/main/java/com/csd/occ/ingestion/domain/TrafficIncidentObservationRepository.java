@@ -4,6 +4,8 @@ import java.util.UUID;
 import java.util.Collection;
 import org.springframework.data.jpa.repository.JpaRepository;
 public interface TrafficIncidentObservationRepository extends JpaRepository<TrafficIncidentObservation, UUID> {
+    List<TrafficIncidentObservation> findByClassificationAndDemoRunIdIsNullAndFetchedAtBetweenOrderByFetchedAtDesc(
+            String classification, java.time.Instant from, java.time.Instant to, org.springframework.data.domain.Pageable pageable);
     long deleteByDemoRunId(UUID demoRunId);
     @org.springframework.data.jpa.repository.Modifying
     @org.springframework.data.jpa.repository.Query("delete from TrafficIncidentObservation row where row.classification = 'OBSERVATION_ONLY' and row.fetchedAt < :cutoff")

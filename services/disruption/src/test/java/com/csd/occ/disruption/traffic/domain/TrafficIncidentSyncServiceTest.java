@@ -73,15 +73,39 @@ class TrafficIncidentSyncServiceTest {
                 "SIMULATION", demoRun, SOURCE, KEY)).thenReturn(Optional.of(saved));
 
         Instant secondAt = firstAt.plusSeconds(1);
+        var unchangedReceipt = fact(UUID.randomUUID(), KEY, "Lane obstruction", "blocked lane", firstAt.minusSeconds(1),
+                secondAt, "SIMULATION", demoRun);
         service.process(poll(UUID.randomUUID(), secondAt, "SIMULATION", demoRun, true, "SUCCESS",
-                List.of(fact(UUID.randomUUID(), KEY, "Lane obstruction", "blocked lane", firstAt.minusSeconds(1),
-                        secondAt, "SIMULATION", demoRun))), FRESHNESS, 2);
+                List.of(unchangedReceipt)), FRESHNESS, 2);
 
         verify(events, times(1)).save(any(TrafficIncidentEvent.class));
         verify(planningOutbox, times(1)).save(any());
         assertThat(saved.isActive()).isTrue();
         assertThat(saved.absenceCount()).isZero();
         assertThat(saved.message()).isEqualTo("blocked lane");
+        assertThat(saved.sourceRevision()).isEqualTo(1);
+        assertThat(saved.sourceObservationId()).isEqualTo(unchangedReceipt.id());
+    }
+
+    @Test
+    void changedTrafficFactsIncrementTheSemanticRevision() {
+        UUID demoRun = UUID.randomUUID();
+        Instant firstAt = NOW.minusSeconds(10);
+        var original = fact(UUID.randomUUID(), KEY, "Lane obstruction", "blocked lane", firstAt,
+                "SIMULATION", demoRun);
+        service.process(poll(UUID.randomUUID(), firstAt, "SIMULATION", demoRun, true, "SUCCESS", List.of(original)),
+                FRESHNESS, 2);
+        var state = org.mockito.ArgumentCaptor.forClass(TrafficIncidentState.class);
+        verify(states).save(state.capture());
+        when(states.findByClassificationAndDemoRunIdAndSourceAndSourceIncidentKey(
+                "SIMULATION", demoRun, SOURCE, KEY)).thenReturn(Optional.of(state.getValue()));
+
+        service.process(poll(UUID.randomUUID(), firstAt.plusSeconds(1), "SIMULATION", demoRun, true, "SUCCESS",
+                List.of(fact(UUID.randomUUID(), KEY, "Lane obstruction", "two lanes blocked", firstAt.plusSeconds(1),
+                        "SIMULATION", demoRun))), FRESHNESS, 2);
+
+        assertThat(state.getValue().sourceRevision()).isEqualTo(2);
+        assertThat(state.getValue().sourceObservationId()).isNotEqualTo(original.id());
     }
 
     @Test

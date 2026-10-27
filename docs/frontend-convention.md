@@ -71,6 +71,9 @@ coverage, test reports and saved sessions. Never put secrets in `public/`.
 - Reuse project components first, then shadcn components or blocks. Compose
   them before considering custom primitives. Do not recreate buttons, dialogs,
   inputs or tables that the chosen components cover.
+- Use `lucide-react`, the icon library configured for shadcn/ui, for interface
+  icons instead of hand-drawn SVGs. Give icon-only controls an accessible label
+  and hide decorative icons from assistive technology with `aria-hidden="true"`.
 - Add only needed shadcn components. Keep business logic and API calls outside
   `components/ui/`. Avoid wrappers that only rename existing components.
 - Use Tailwind utilities in JSX. Keep shared theme tokens in `src/index.css`;
@@ -104,9 +107,32 @@ coverage, test reports and saved sessions. Never put secrets in `public/`.
 - Handle expired sessions (`401`), forbidden actions (`403`), validation and
   conflicts with useful feedback. Backend services enforce permissions;
   hiding a button is only a UI convenience.
-- Format UTC timestamps for display. Label simulation versus observation-only
-  data. Add a query library only if repeated fetching, polling or caching becomes
+- Keep UTC timestamps in API requests and storage; display instants in SGT with
+  a 24-hour clock and an explicit `SGT` suffix. Label `OBSERVATION_ONLY` data as
+  Live and simulation data as Simulation without changing their API values.
+  Add a query library only if repeated fetching, polling or caching becomes
   difficult to manage with the existing code.
+
+For operational collections, keep backend paging as the source of truth and use
+the shared paged-collection hook for progressive scrolling where the endpoint is
+paginated. Show no more than 10 compact rows or four larger cards in a collection
+viewport, while keeping later pages reachable. Give each collection its own key,
+loading/error state and refresh behavior so stale responses cannot mix different
+filters or modes. Keep table headings keyboard-accessible when they control
+sorting. Use the existing Dialog and AlertDialog primitives for multi-field
+controller edits; preserve drafts on validation or API errors, confirm before
+discarding changed values, and block duplicate or stale submissions.
+
+Each data page owns one refresh cycle through `lib/page-refresh.ts`. Its manual
+Refresh action and timer refresh the same enabled resources. Schedule the next
+poll after the complete cycle settles, coalesce repeated clicks, and request a
+follow-up cycle after mutations. Pause polling while saving, cancel obsolete
+requests on scope changes, and preserve editor drafts during background refresh.
+Keep existing rows and the last successful refresh timestamp if a same-scope
+refresh fails; retry page zero for refresh failures and the failed page for
+load-more failures. Loading another page must not advance the refresh timestamp.
+Captain sample animation and instruction countdown timers update local display
+state independently of data polling.
 
 [React state](https://react.dev/learn/choosing-the-state-structure),
 [Effects](https://react.dev/learn/you-might-not-need-an-effect).

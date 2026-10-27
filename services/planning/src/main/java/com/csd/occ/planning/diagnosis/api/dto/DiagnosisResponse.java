@@ -11,7 +11,12 @@ public record DiagnosisResponse(UUID diagnosisId, DiagnosisRequestStatus status,
                                 Instant completedAt, String eventType, UUID eventId, String producer,
                                 @io.swagger.v3.oas.annotations.media.Schema(description = "Current delivery status; null once completed operational delivery state expires")
                                 String recommendationDeliveryStatus,
-                                String recommendationDeliveryFailureCode) {
+                                String recommendationDeliveryFailureCode,
+                                @io.swagger.v3.oas.annotations.media.ArraySchema(maxItems = 50,
+                                        arraySchema = @io.swagger.v3.oas.annotations.media.Schema(
+                                                description = "Bounded source facts; IDs are technical provenance"))
+                                List<DiagnosisEvidenceDetailResponse> evidenceDetails) {
     public DiagnosisResponse { evidenceIds = evidenceIds == null ? List.of() : List.copyOf(evidenceIds);
-        limitations = limitations == null ? List.of() : List.copyOf(limitations); }
+        limitations = limitations == null ? List.of() : List.copyOf(limitations);
+        evidenceDetails = evidenceDetails == null ? List.of() : List.copyOf(evidenceDetails); }
 }

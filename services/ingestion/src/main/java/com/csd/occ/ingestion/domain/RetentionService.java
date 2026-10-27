@@ -21,12 +21,14 @@ public class RetentionService {
     private final DemoVehicleAssignmentRepository assignments;
     private final BunchingControlPort bunching;
     private final PollTargetRepository targets;
+    private final HazardObservationRepository hazards;
 
     public RetentionService(BusArrivalObservationRepository arrivals, RawObservationRepository rawObservations,
             PollRunRepository runs, ReferenceDatasetVersionRepository versions, BusRouteStopRepository routeStops,
             BusServiceRepository services, BusStopRepository stops, PollingConfigurationPort configuration, Clock clock,
             DemoRunRepository demos, TrafficIncidentObservationRepository incidents,
-            DemoVehicleAssignmentRepository assignments, BunchingControlPort bunching, PollTargetRepository targets) {
+            DemoVehicleAssignmentRepository assignments, BunchingControlPort bunching, PollTargetRepository targets,
+            HazardObservationRepository hazards) {
         this.arrivals = arrivals;
         this.rawObservations = rawObservations;
         this.runs = runs;
@@ -38,6 +40,7 @@ public class RetentionService {
         this.clock = clock;
         this.demos = demos; this.incidents = incidents; this.assignments = assignments; this.bunching = bunching;
         this.targets = targets;
+        this.hazards = hazards;
     }
 
     @Transactional
@@ -46,12 +49,14 @@ public class RetentionService {
         versions.lockTopology();
         long deletedRows = arrivals.deleteExpiredLiveObservations(cutoff);
         deletedRows += incidents.deleteExpiredLive(cutoff);
+        deletedRows += hazards.deleteExpiredLive(cutoff);
         deletedRows += rawObservations.deleteExpiredLiveObservations(cutoff);
         var protectedRuns = bunching.protectedDemoRuns();
         for (var run : demos.findExpired(cutoff)) {
             if (protectedRuns.contains(run.id())) continue;
             deletedRows += arrivals.deleteByDemoRunId(run.id());
             deletedRows += incidents.deleteByDemoRunId(run.id());
+            deletedRows += hazards.deleteByDemoRunId(run.id());
             deletedRows += rawObservations.deleteByDemoRunId(run.id());
             deletedRows += assignments.deleteByIdDemoRunId(run.id());
             deletedRows += runs.deleteByDemoRunId(run.id());

@@ -290,7 +290,7 @@ public class DataMallAdapter implements BusArrivalPort, BusReferencePort, Traffi
         return message == null ? "unknown error" : message.substring(0, Math.min(message.length(), 300));
     }
 
-    private ResponseEntity<String> get(String path) {
+    ResponseEntity<String> get(String path) {
         return restClient.get().uri(path).header("AccountKey", properties.accountKey())
                 .exchange((request, response) -> ResponseEntity.status(response.getStatusCode())
                         .headers(headers -> headers.addAll(response.getHeaders()))
