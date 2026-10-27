@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
+import { RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type PageResult, type PendingRecommendation, type RouteDirection, type RoutePositions, type PlanningDiagnosisPage } from '@/lib/api'
@@ -314,14 +315,17 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     <div className="min-w-0 flex-1">
       <header className="sticky top-0 z-10 flex min-h-16 flex-wrap items-center justify-between gap-3 border-b bg-background px-5 py-3 md:px-8">
         <h1 className="text-xl font-bold tracking-tight">{current.title}</h1>
-        <div className="flex flex-wrap items-center gap-4"><span role="status" className={`flex items-center gap-2 text-xs font-medium ${simulation ? 'text-amber-700 dark:text-amber-400' : !loading && !run.error ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground'}`}><span className="size-1.5 rounded-full bg-current" />{mode}</span>
+        <div className="flex flex-wrap items-center gap-4">
+          <Button variant="outline" size="icon" aria-label="Refresh" title="Refresh page" aria-busy={loading || isRefreshing}
+            disabled={loading || collectionsLoading || advisoryPending || planningPending || isRefreshing} onClick={() => { void requestRefresh() }}>
+            <RefreshCw aria-hidden="true" className={loading || isRefreshing ? 'motion-safe:animate-spin' : undefined} />
+          </Button>
+          <span role="status" className={`flex items-center gap-2 text-xs font-medium ${simulation ? 'text-amber-700 dark:text-amber-400' : !loading && !run.error ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground'}`}><span className="size-1.5 rounded-full bg-current" />{mode}</span>
           <Button variant="outline" disabled={loading || isRefreshing || advisoryPending || planningPending || !!run.error} onClick={() => void switchMode()}>{switching ? 'Switching…' : simulation ? 'Return to live' : 'Start simulation'}</Button>
         </div>
       </header>
       <div className="mx-auto max-w-7xl space-y-7 p-5 md:p-8">
-        <div className="flex flex-wrap items-start justify-between gap-4"><div>
-          <PageRefreshStatus lastSuccessAt={lastPageRefresh} intervalSeconds={controllerRefreshIntervalSeconds} /></div>
-          <Button variant="outline" disabled={loading || collectionsLoading || advisoryPending || planningPending || isRefreshing} onClick={() => { void requestRefresh() }}>{loading || isRefreshing ? 'Refreshing…' : 'Refresh'}</Button></div>
+        <PageRefreshStatus lastSuccessAt={lastPageRefresh} intervalSeconds={controllerRefreshIntervalSeconds} />
         {run.error && !loading && <p role="alert" className="text-sm text-destructive">{run.error} Simulation state could not be verified.</p>}
         {modeError && <p role="alert" className="text-sm text-destructive">{modeError}</p>}
         {pathname === '/controller' && <>

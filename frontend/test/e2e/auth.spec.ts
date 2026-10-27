@@ -122,6 +122,8 @@ async function expectPageRefreshStatus(page: Page, intervalSeconds: number) {
   if (new URL(page.url()).pathname.startsWith('/controller')) {
     const title = page.locator('header').getByRole('heading', { level: 1 })
     await expect(title).toHaveCount(1)
+    await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toHaveCount(1)
+    await expect(page.locator('header').getByRole('button', { name: 'Refresh', exact: true })).toBeVisible()
     await expect(title).toHaveCSS('font-weight', '700')
     await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1)
   }
