@@ -33,8 +33,10 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
   const hazardsEnabled = view === 'hazards' || edit !== null || draft !== null
 
   const collectionKey = token
-  const hazards = usePagedCollection<Hazard, PageResult<Hazard>>(collectionKey, async (page, signal) => {
+  const hazardKind = view === 'hazards' ? kind : ''
+  const hazards = usePagedCollection<Hazard, PageResult<Hazard>>(`${collectionKey}:${hazardKind}`, async (page, signal) => {
     const params = new URLSearchParams({ page: String(page), size: '100' })
+    if (hazardKind) params.set('kind', hazardKind)
     try {
       const result = await apiRequest<HazardPageResponse>(`/api/v1/disruption/hazards?${params}`, token, signal)
       if (!result) throw new Error('Hazard response was empty.')
@@ -196,21 +198,20 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
     } finally { if (!controller.signal.aborted) setPending(false) }
   }
   const pendingAdvisories = advisories.items.filter(advisory => advisory.status === 'PENDING')
-  const filteredHazards = hazards.items.filter(hazard => !kind || hazard.kind === kind)
   return <section aria-label="Multi-hazard advisories" className="space-y-5 border-t pt-6">
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">{view === 'hazards' ? 'Multi-hazard conditions' : view === 'audit' ? 'Instruction and notice history' : 'Captain and public advisories'}</h2>
       <Button asChild variant="outline"><Link to="/notices" target="_blank" rel="noreferrer">Public notice board</Link></Button></div>
     {actionError && <p role="alert" className="rounded-lg border p-3 text-sm">{actionError}</p>}
     {view === 'hazards' && <>
       <div className="max-w-xs space-y-2"><Label htmlFor="hazard-kind">Hazard type</Label><select id="hazard-kind" value={kind} onChange={e => setKind(e.target.value)} className="h-9 w-full rounded-md border bg-background px-3 text-sm">
-        <option value="">All types</option>{['TRAFFIC_INCIDENT', 'FLOOD', 'RAIL_DISRUPTION', 'ROADWORKS'].map(value => <option key={value}>{value}</option>)}
+        <option value="">All types</option>{[['TRAFFIC_INCIDENT', 'Traffic Incidents'], ['FLOOD', 'Floods'], ['RAIL_DISRUPTION', 'Rail Disruptions'], ['ROADWORKS', 'Roadworks']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </select></div>
       {hazards.isLoading && !hazards.latestPage && <p role="status" className="text-sm text-muted-foreground">Loading hazards…</p>}
       {hazards.error !== null && !hazards.items.length && <p role="alert" className="text-sm text-destructive">Hazards are unavailable.</p>}
-      {!hazards.isLoading && hazards.error === null && hazards.latestPage && !filteredHazards.length && <p className="text-sm text-muted-foreground">{kind ? 'No hazards found for the selected type.' : 'No hazards found.'}</p>}
-      {!!filteredHazards.length && <ScrollArea role="region" aria-label="Hazard conditions" tabIndex={0} className="h-[32rem] rounded-lg border"
+      {!hazards.isLoading && hazards.error === null && hazards.latestPage && !hazards.items.length && <p className="text-sm text-muted-foreground">{kind ? 'No hazards found for the selected type.' : 'No hazards found.'}</p>}
+      {!!hazards.items.length && <ScrollArea role="region" aria-label="Hazard conditions" tabIndex={0} className="h-[32rem] rounded-lg border"
         viewportProps={{ onScroll: hazards.onScroll }}>
-        <div className="space-y-3 p-1 pr-3.5">{filteredHazards.map(h => <Card key={h.disruptionId} className="min-h-28"><CardContent className="space-y-3">
+        <div className="space-y-3 p-1 pr-3.5">{hazards.items.map(h => <Card key={h.disruptionId} className="min-h-28"><CardContent className="space-y-3">
           <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{h.facts.title}</h3><p className="text-xs text-muted-foreground">{h.status} · {dataClassificationLabel(h.classification)}</p></div>
           <p className="text-sm">{h.facts.description}</p>{h.facts.instruction && <p className="text-sm font-medium">{h.facts.instruction}</p>}
           <p className="text-xs text-muted-foreground">Updated {formatSgtDateTime(h.updatedAt)} · Exposure uses simulated progress.</p>

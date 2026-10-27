@@ -69,17 +69,17 @@ occ:
       max-pages: ${OCC_INGESTION_HAZARD_MAX_PAGES:10}
       source-timezone: ${OCC_INGESTION_HAZARD_SOURCE_TIMEZONE:Asia/Singapore}
       flood:
-        enabled: ${OCC_INGESTION_FLOOD_ENABLED:false}
+        enabled: ${OCC_INGESTION_FLOOD_ENABLED:true}
         interval: ${OCC_INGESTION_FLOOD_INTERVAL:3m}
         initial-delay: ${OCC_INGESTION_FLOOD_INITIAL_DELAY:30s}
         stale-after: ${OCC_INGESTION_FLOOD_STALE_AFTER:10m}
       rail:
-        enabled: ${OCC_INGESTION_RAIL_ENABLED:false}
+        enabled: ${OCC_INGESTION_RAIL_ENABLED:true}
         interval: ${OCC_INGESTION_RAIL_INTERVAL:1m}
         initial-delay: ${OCC_INGESTION_RAIL_INITIAL_DELAY:30s}
         stale-after: ${OCC_INGESTION_RAIL_STALE_AFTER:5m}
       roadworks:
-        enabled: ${OCC_INGESTION_ROADWORKS_ENABLED:false}
+        enabled: ${OCC_INGESTION_ROADWORKS_ENABLED:true}
         interval: ${OCC_INGESTION_ROADWORKS_INTERVAL:24h}
         initial-delay: ${OCC_INGESTION_ROADWORKS_INITIAL_DELAY:30s}
         stale-after: ${OCC_INGESTION_ROADWORKS_STALE_AFTER:48h}

@@ -1727,17 +1727,73 @@ test('page refresh status retains its successful time after arrival refresh fail
 
 test('controller names an empty filtered hazard list', async ({ page, context }) => {
   await mockAuth(context, 'CONTROLLER')
-  await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: {
-    items: [{ disruptionId: 'flood-hazard', kind: 'FLOOD', status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
+  await context.route('**/api/v1/disruption/hazards?*', route => {
+    const items = [{ disruptionId: 'flood-hazard', kind: 'FLOOD', status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
       updatedAt: '2026-10-25T04:00:00Z', facts: { title: 'Flood report', description: 'Water reported near Example Stop.', instruction: null, effectiveUntil: null },
-      exposures: [], limitations: [] }],
-    page: 0, size: 100, totalElements: 1, feeds: [],
-  } }))
+      exposures: [], limitations: [] }]
+    const kind = new URL(route.request().url()).searchParams.get('kind')
+    const matching = items.filter(item => !kind || item.kind === kind)
+    return route.fulfill({ json: { items: matching, page: 0, size: 100, totalElements: matching.length, feeds: [] } })
+  })
 
   await login(page)
   await page.goto('/controller/disruptions')
   await page.getByLabel('Hazard type', { exact: true }).selectOption('TRAFFIC_INCIDENT')
   await expect(page.getByText('No hazards found for the selected type.', { exact: true })).toBeVisible()
+})
+
+test('controller filters hazard pages through the API with readable category names', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const items = [
+    ['traffic-one', 'TRAFFIC_INCIDENT', 'Vehicle Breakdown'],
+    ['traffic-two', 'TRAFFIC_INCIDENT', 'Accident'],
+    ['flood-one', 'FLOOD', 'Flood report'],
+    ['rail-one', 'RAIL_DISRUPTION', 'Rail report'],
+    ['works-one', 'ROADWORKS', 'Approved roadworks'],
+    ['works-two', 'ROADWORKS', 'Later roadworks'],
+    ['traffic-works', 'TRAFFIC_INCIDENT', 'Roadwork'],
+  ].map(([disruptionId, kind, title]) => ({ disruptionId, kind, status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
+    updatedAt: '2026-10-25T04:00:00Z', facts: { title, description: 'Provider report.', instruction: null, effectiveUntil: null }, exposures: [], limitations: [] }))
+  await context.route('**/api/v1/disruption/hazards?*', route => {
+    const params = new URL(route.request().url()).searchParams
+    const kind = params.get('kind')
+    const matching = items.filter(item => !kind ||
+      (item.kind === 'TRAFFIC_INCIDENT' && item.facts.title === 'Roadwork' ? 'ROADWORKS' : item.kind) === kind)
+    const currentPage = Number(params.get('page'))
+    return route.fulfill({ json: { items: matching.slice(currentPage, currentPage + 1), page: currentPage, size: 1, totalElements: matching.length, feeds: [] } })
+  })
+  await login(page)
+  await page.goto('/controller/disruptions')
+  const filter = page.getByLabel('Hazard type', { exact: true })
+  await expect(filter.locator('option')).toHaveText(['All types', 'Traffic Incidents', 'Floods', 'Rail Disruptions', 'Roadworks'])
+  const hazards = page.getByRole('region', { name: 'Hazard conditions', exact: true })
+  for (const [kind, title] of [['ROADWORKS', 'Approved roadworks'], ['FLOOD', 'Flood report'], ['RAIL_DISRUPTION', 'Rail report'], ['TRAFFIC_INCIDENT', 'Vehicle Breakdown']]) {
+    const response = page.waitForResponse(response => {
+      const url = new URL(response.url())
+      return url.pathname.endsWith('/disruption/hazards') && url.searchParams.get('kind') === kind && url.searchParams.get('page') === '0'
+    })
+    await filter.selectOption(kind)
+    await response
+    await expect(hazards.getByRole('heading')).toHaveText([title])
+  }
+  await filter.selectOption('ROADWORKS')
+  await expect(hazards.getByRole('heading')).toHaveText(['Approved roadworks'])
+  await page.getByRole('button', { name: 'Load more hazards', exact: true }).click()
+  await expect(hazards.getByRole('heading')).toHaveText(['Approved roadworks', 'Later roadworks'])
+  await page.getByRole('button', { name: 'Load more hazards', exact: true }).click()
+  await expect(hazards.getByRole('heading')).toHaveText(['Approved roadworks', 'Later roadworks', 'Roadwork'])
+  await expect(page.getByRole('button', { name: 'Load more hazards', exact: true })).toHaveCount(0)
+  await filter.selectOption('TRAFFIC_INCIDENT')
+  await expect(hazards.getByRole('heading')).toHaveText(['Vehicle Breakdown'])
+  await page.getByRole('button', { name: 'Load more hazards', exact: true }).click()
+  await expect(hazards.getByRole('heading')).toHaveText(['Vehicle Breakdown', 'Accident'])
+  await expect(page.getByRole('button', { name: 'Load more hazards', exact: true })).toHaveCount(0)
+  await filter.selectOption('ROADWORKS')
+  await expect(hazards.getByRole('heading')).toHaveText(['Approved roadworks'])
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(hazards.getByRole('heading')).toHaveText(['Approved roadworks'])
+  await filter.selectOption('')
+  await expect(hazards.getByRole('heading')).toHaveText(['Vehicle Breakdown'])
 })
 
 test('controller scrolls hazard conditions beyond the visible cards', async ({ page, context }) => {

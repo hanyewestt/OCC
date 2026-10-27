@@ -14,6 +14,8 @@ import com.csd.occ.disruption.hazard.domain.HazardReassessmentService;
 import com.csd.occ.disruption.hazard.domain.HazardStateRepository;
 import com.csd.occ.disruption.hazard.domain.HazardSyncService;
 import com.csd.occ.disruption.hazard.domain.HazardTransitPort;
+import com.csd.occ.disruption.traffic.domain.TrafficIncidentPollPort;
+import com.csd.occ.disruption.traffic.domain.TrafficIncidentSyncService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -72,7 +74,52 @@ class HazardLifecycleIT {
     @Autowired HazardReadService hazardReads;
     @Autowired HazardReassessmentService reassessment;
     @Autowired ConsumerSelectionService selections;
+    @Autowired TrafficIncidentSyncService trafficSynchronization;
     @MockitoBean HazardTransitPort transit;
+
+    @Test
+    void roadworksFilterIncludesTrafficRoadworksExclusivelyBeforePagination() {
+        process("ROADWORKS", poll("ROADWORKS", NOW, "SUCCESS", true, null,
+                List.of(fact("ROADWORKS", "approved-work", "OBSERVED", null, null, List.of()))));
+        process("FLOOD", poll("FLOOD", NOW, "SUCCESS", true, null,
+                List.of(fact("FLOOD", "flood", "OBSERVED", null, null, List.of()))));
+        var types = List.of("Roadwork", "Road Works", "ROADWORKS", "Accident", "Vehicle Breakdown", "Roadwork");
+        var incidents = java.util.stream.IntStream.range(0, types.size()).mapToObj(index ->
+                new TrafficIncidentPollPort.TrafficIncidentFact(UUID.randomUUID(), UUID.randomUUID(),
+                        String.format("%064d", index), types.get(index), "Reported condition",
+                        new java.math.BigDecimal("1.3"), new java.math.BigDecimal("103.8"),
+                        NOW, NOW, "OBSERVATION_ONLY", null)).toList();
+        trafficSynchronization.process(new TrafficIncidentPollPort.TrafficIncidentPoll(UUID.randomUUID(),
+                "TRAFFIC_INCIDENTS", "SUCCESS", true, "OBSERVATION_ONLY", null, NOW, NOW, incidents), FRESHNESS, 2);
+        jdbc.update("UPDATE disruption.traffic_incident_state SET status='CLEARED', cleared_at=updated_at WHERE source_incident_key=?",
+                String.format("%064d", 5));
+        var otherRun = UUID.randomUUID();
+        var simulated = new TrafficIncidentPollPort.TrafficIncidentFact(UUID.randomUUID(), UUID.randomUUID(),
+                "a".repeat(64), "Roadwork", "Other simulation", new java.math.BigDecimal("1.3"),
+                new java.math.BigDecimal("103.8"), NOW, NOW, "SIMULATION", otherRun);
+        trafficSynchronization.process(new TrafficIncidentPollPort.TrafficIncidentPoll(UUID.randomUUID(),
+                "TRAFFIC_INCIDENTS", "SUCCESS", true, "SIMULATION", otherRun, NOW, NOW.plusSeconds(1), List.of(simulated)), FRESHNESS, 2);
+
+        var first = hazardReads.list("ROADWORKS", 0, 2);
+        var second = hazardReads.list("ROADWORKS", 1, 2);
+        assertThat(first.totalElements()).isEqualTo(4);
+        assertThat(second.totalElements()).isEqualTo(4);
+        assertThat(first.items()).hasSize(2);
+        assertThat(second.items()).hasSize(2);
+        assertThat(java.util.stream.Stream.concat(first.items().stream(), second.items().stream())
+                .map(item -> item.facts().title()).toList())
+                .containsExactlyInAnyOrder("Synthetic hazard", "Roadwork", "Road Works", "ROADWORKS");
+        var traffic = hazardReads.list("TRAFFIC_INCIDENT", 0, 20);
+        assertThat(traffic.totalElements()).isEqualTo(2);
+        assertThat(traffic.items()).extracting(item -> item.facts().title())
+                .containsExactlyInAnyOrder("Accident", "Vehicle Breakdown");
+        var all = hazardReads.list(null, 0, 20);
+        assertThat(all.totalElements()).isEqualTo(7);
+        assertThat(all.items()).extracting(HazardReadService.View::disruptionId).doesNotHaveDuplicates();
+        assertThat(hazardReads.list("FLOOD", 0, 20).totalElements()).isEqualTo(1);
+        selections.select("DEMO", otherRun);
+        assertThat(hazardReads.list("ROADWORKS", 0, 20).totalElements()).isEqualTo(5);
+    }
 
     @BeforeEach
     void resetRows() {
@@ -82,6 +129,7 @@ class HazardLifecycleIT {
                 + "disruption.hazard_state, disruption.hazard_feed_health, disruption.traffic_incident_state, "
                 + "disruption.disruption_processing_state, disruption.disruption");
         jdbc.update("UPDATE disruption.hazard_checkpoint SET completed_at=NULL, poll_run_id=NULL");
+        jdbc.update("UPDATE disruption.traffic_poll_checkpoint SET completed_at=NULL, poll_run_id=NULL WHERE id=1");
     }
 
     @Test
