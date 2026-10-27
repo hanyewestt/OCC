@@ -8,7 +8,7 @@ Polls DataMall bus arrivals and traffic incidents and records observations for a
 
 Flood, rail and approved roadworks use independent `OCC_INGESTION_FLOOD_*`,
 `OCC_INGESTION_RAIL_*` and `OCC_INGESTION_ROADWORKS_*` enablement, interval,
-initial-delay and stale-after settings. All default disabled. Shared bounded
+initial-delay and stale-after settings. All default enabled. Shared bounded
 concurrency uses Spring's `OCC_INGESTION_SCHEDULER_POOL_SIZE` (8 workers), so a
 slow feed does not serialize all independent polls. Shared bounded
 pagination uses `OCC_INGESTION_HAZARD_PAGE_SIZE` (500) and

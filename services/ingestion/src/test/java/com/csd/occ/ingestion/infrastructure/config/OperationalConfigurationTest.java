@@ -15,6 +15,10 @@ class OperationalConfigurationTest {
     @Test
     void omittedOperationalVariablesUseDefaults() {
         Binder binder = configuration(Map.of());
+        HazardFeedProperties hazards = binder.bind("occ.ingestion.hazards", HazardFeedProperties.class).get();
+        assertThat(hazards.flood().enabled()).isTrue();
+        assertThat(hazards.rail().enabled()).isTrue();
+        assertThat(hazards.roadworks().enabled()).isTrue();
         assertThat(binder.bind("occ.ingestion.schedule", IngestionScheduleProperties.class).get().busArrivalPollInterval())
                 .isEqualTo(Duration.ofSeconds(60));
         assertThat(binder.bind("occ.ingestion.route-positions", RoutePositionProperties.class).get().clusterToleranceMeters())

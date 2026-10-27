@@ -82,11 +82,17 @@ Unknown-direction detections remain observational alerts and are not sent for di
 ### Multi-hazard lifecycle and candidate exposure
 
 The disruption service consumes the independent flood, rail and approved
-roadworks polls only when `OCC_DISRUPTION_HAZARD_ENABLED=true`. Keep the feed
-disabled until Ingestion and Disruption have both been deployed with the new
-contracts. `OCC_DISRUPTION_HAZARD_POLL_INTERVAL` controls consumption;
+roadworks polls by default. The existing `OCC_DISRUPTION_HAZARD_ENABLED` override
+remains supported. `OCC_DISRUPTION_HAZARD_POLL_INTERVAL` controls consumption;
 `OCC_DISRUPTION_HAZARD_STALE_AFTER` reports feed freshness without clearing an
 incident. Feed status is included in `GET /api/v1/disruption/hazards`.
+
+The `kind=ROADWORKS` list filter includes approved roadworks and traffic-feed
+roadwork entries (case-insensitive `Roadwork`, `Road Works` or `Roadworks`).
+The `kind=TRAFFIC_INCIDENT` filter excludes those roadworks. Filtering happens
+before pagination; omitting `kind` returns each current hazard once. Returned
+`kind` fields retain their source classification, so traffic-feed roadworks
+still carry `TRAFFIC_INCIDENT` and keep their existing traffic lifecycle.
 
 Roadworks are retired by absence only after both
 `OCC_DISRUPTION_HAZARD_ABSENCE_LIMIT` complete snapshots and
