@@ -334,17 +334,17 @@ ADMIN token:
 | Route / endpoint | Nginx response | Reason |
 | --- | --- | --- |
 | `/internal` and `/internal/**` | `404` in local and production | Private service-to-service APIs; no public Gateway route |
-| `/actuator` and `/actuator/**` | `404` in local and production | Health, metrics and management access is separate from the public app |
+| `/actuator` and `/actuator/**` | `404` in local and production | Health and management access is separate from the public app |
 | `/v3/api-docs` and `/v3/api-docs/**` | `404` in local and production | OpenAPI documents are restricted to direct development service access |
 | `/swagger-ui.html` and `/swagger-ui/**` | `404` in local and production | Swagger is a developer interface, not a public app page |
 | `/auth-test` and `/auth-test/**` | `404` in local and production | Retired temporary authentication page |
 
 Direct backend, Gateway, PostgreSQL and pgAdmin ports are not published by the
 production configuration. Local development port access still follows each
-service's authentication rules; for example, readiness is anonymous on the
-direct service port, whereas Prometheus requires ADMIN. Protected operational
-APIs return `401` for missing/invalid tokens and `403` for insufficient roles.
-For metrics endpoints, see [Monitoring](MONITORING.md).
+service's authentication rules. Readiness is anonymous on the direct service
+port. Only Actuator health endpoints are exposed; Prometheus export and custom
+metrics instrumentation are not enabled. Protected operational APIs return
+`401` for missing/invalid tokens and `403` for insufficient roles.
 
 Start optional pgAdmin with `.\scripts\app.ps1 start-pgadmin` (PowerShell)
 or `bash scripts/app.sh start-pgadmin` (Bash).
@@ -426,7 +426,6 @@ See [testing](TESTING.md) for system tests and CI.
 - [Authentication](AUTHENTICATION.md): public configuration, roles and sessions.
 - [Testing](TESTING.md): service tests, browser tests and CI.
 - [Deployment](DEPLOYMENT.md): container topology and production HTTPS.
-- [Monitoring](MONITORING.md): metrics and diagnostic access.
 - [Frontend conventions](frontend-convention.md) and [service conventions](CONVENTIONS.md).
 
 ### Captain live-auth test configuration
