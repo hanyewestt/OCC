@@ -4,7 +4,6 @@ import com.csd.occ.planning.recommendation.api.dto.RecommendationDecisionRequest
 import com.csd.occ.planning.recommendation.api.dto.RecommendationDecisionResponse;
 import com.csd.occ.planning.recommendation.api.dto.RecommendationDecisionPageResponse;
 import com.csd.occ.planning.recommendation.domain.RecommendationDecisionService;
-import io.micrometer.core.instrument.MeterRegistry;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -32,11 +31,9 @@ import org.springframework.http.ResponseEntity;
 public class RecommendationDecisionController {
     private static final Logger log = LoggerFactory.getLogger(RecommendationDecisionController.class);
     private final RecommendationDecisionService decisions;
-    private final MeterRegistry metrics;
 
-    public RecommendationDecisionController(RecommendationDecisionService decisions, MeterRegistry metrics) {
+    public RecommendationDecisionController(RecommendationDecisionService decisions) {
         this.decisions = decisions;
-        this.metrics = metrics;
     }
 
     @PostMapping("/{recommendationId}/decision")
@@ -55,20 +52,12 @@ public class RecommendationDecisionController {
             var decision = decisions.decide(recommendationId, request.action(), jwt.getSubject(),
                     request.overrideInstructions().stream().map(instruction -> instruction.toDomain()).toList(),
                     request.controllerRationale());
-            metrics.counter("occ.planning.recommendation.decision", "action", request.action().name(),
-                    "result", "accepted_or_replayed").increment();
             log.info("Recommendation decision recorded: recommendationId={} action={}",
                     recommendationId, request.action());
             return RecommendationDecisionResponse.from(decision);
         } catch (RecommendationDecisionService.RecommendationDecisionConflictException exception) {
-            metrics.counter("occ.planning.recommendation.decision", "action", request.action().name(),
-                    "result", "conflict").increment();
             log.warn("Recommendation decision conflict: recommendationId={} action={}",
                     recommendationId, request.action());
-            throw exception;
-        } catch (RecommendationDecisionService.RecommendationNotActionableException exception) {
-            metrics.counter("occ.planning.recommendation.decision", "action", request.action().name(),
-                    "result", "not_actionable").increment();
             throw exception;
         }
     }

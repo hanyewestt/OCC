@@ -71,18 +71,18 @@ class GatewayAuthorizationTest {
     }
 
     @Test
-    void exposesPrometheusMetricsOnlyToAdministrators() throws Exception {
-        mvc.perform(get("/actuator/prometheus"))
-                .andExpect(status().isUnauthorized());
-        mvc.perform(get("/actuator/prometheus")
-                        .with(jwt().jwt(token -> token.claim("occ_role", "CONTROLLER"))
-                                .authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"))))
-                .andExpect(status().isForbidden());
+    void deniesRemovedMetricsEndpointEvenToAdministrators() throws Exception {
         mvc.perform(get("/actuator/prometheus")
                         .with(jwt().jwt(token -> token.claim("occ_role", "ADMIN"))
                                 .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void keepsReadinessAvailableWithoutAuthentication() throws Exception {
+        mvc.perform(get("/actuator/health/readiness"))
                 .andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("jvm_memory_used_bytes")));
+                .andExpect(content().json("{\"status\":\"UP\"}"));
     }
 
     @Test

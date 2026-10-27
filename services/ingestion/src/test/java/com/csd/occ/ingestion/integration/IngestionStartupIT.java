@@ -43,7 +43,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -83,30 +82,18 @@ class IngestionStartupIT {
     @MockitoBean BunchingControlPort bunching;
     @Autowired JdbcTemplate jdbc;
     @Autowired MockMvc mvc;
-    @Autowired MeterRegistry meterRegistry;
     @Autowired PollRunRepository runs;
     @Autowired RawObservationRepository observations;
     @Autowired BusArrivalObservationRepository arrivals;
 
     @Test
-    void exposesFeedMetricsOnlyToAdministrators() throws Exception {
-        jdbc.update("""
-                INSERT INTO ingestion.feed_status
-                    (source, scope_key, status, last_attempt_at, consecutive_failures, stale_after_seconds, updated_at)
-                VALUES ('METRICS_TEST', 'scope', 'FAILED', CURRENT_TIMESTAMP, 1, 60, CURRENT_TIMESTAMP)
-                ON CONFLICT (source, scope_key) DO UPDATE SET status = 'FAILED', last_success_at = NULL
-                """);
-
-        assertThat(meterRegistry.get("occ.ingestion.feed.unhealthy_count").gauge().value())
-                .isGreaterThanOrEqualTo(1.0);
-        mvc.perform(get("/actuator/prometheus")).andExpect(status().isUnauthorized());
-        mvc.perform(get("/actuator/prometheus").with(jwt()
-                        .jwt(token -> token.claim("occ_role", "ADMIN"))
-                        .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
-                .andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.allOf(
-                        org.hamcrest.Matchers.containsString("occ_ingestion_feed_unhealthy_count"),
-                        org.hamcrest.Matchers.containsString("occ_ingestion_retention_deleted_rows_total"))));
+    void keepsReadinessAvailableAndDeniesRemovedMetricsEndpoint() throws Exception {
+        mvc.perform(get("/actuator/health/readiness"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+        mvc.perform(get("/actuator/prometheus").with(
+                        org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt()
+                                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isForbidden());
     }
     @Autowired BusArrivalService polling;
     @Autowired BunchingFeedService bunchingFeed;
@@ -147,8 +134,6 @@ class IngestionStartupIT {
             assertThat(observation.getFetchedAt()).isNotNull();
         });
         assertThat(bunchingFeed.page(0, 100).items()).hasSize(1);
-        assertThat(meterRegistry.get("occ.ingestion.arrival.feed_sequence").gauge().value())
-                .isGreaterThan(0.0);
     }
 
     @Test
@@ -262,28 +247,6 @@ class IngestionStartupIT {
         assertThat(jdbc.queryForObject("SELECT payload FROM ingestion.raw_observation "
                 + "WHERE poll_run_id=?", String.class, pollId))
                 .contains("Road Works", "Road works near test junction");
-        assertThat(meterRegistry.get("occ.ingestion.traffic_incident.latest_poll_success").gauge().value())
-                .isEqualTo(1.0);
-    }
-
-    @Test
-    void additionalHazardMetricsExposeOnlyBoundedFeedAndOutcomeLabels() {
-        jdbc.update("""
-                INSERT INTO ingestion.poll_run (id, source, scope_key, idempotency_key, started_at, completed_at, outcome)
-                VALUES (?, 'FLOOD_DATAMALL', 'FLOOD', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'PARTIAL')
-                """, UUID.randomUUID(), UUID.randomUUID().toString());
-
-        assertThat(meterRegistry.get("occ.ingestion.hazard.latest_poll_outcome").tag("feed", "FLOOD").gauge().value())
-                .isEqualTo(0.5);
-        assertThat(meterRegistry.get("occ.ingestion.hazard.latest_poll_outcome").tag("feed", "RAIL_DISRUPTION").gauge().value())
-                .isEqualTo(-1.0);
-        assertThat(meterRegistry.get("occ.ingestion.hazard.latest_poll_success_age_seconds").tag("feed", "FLOOD").gauge().value())
-                .isEqualTo(0.0);
-        assertThat(meterRegistry.getMeters().stream()
-                .filter(meter -> meter.getId().getName().equals("occ.ingestion.hazard.latest_poll_outcome"))
-                .flatMap(meter -> meter.getId().getTags().stream())
-                .map(io.micrometer.core.instrument.Tag::getKey).distinct())
-                .containsExactly("feed");
     }
 
     @Test

@@ -10,7 +10,6 @@ import com.csd.occ.planning.recommendation.domain.RecommendationDecisionAction;
 import com.csd.occ.planning.recommendation.domain.ControllerBusInstruction;
 import com.csd.occ.planning.advisory.domain.AdvisoryProposalRepository;
 import com.csd.occ.planning.advisory.domain.IssuedInstructionRepository;
-import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -20,8 +19,6 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.TestConstructor;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
@@ -41,7 +38,7 @@ import com.csd.occ.planning.infrastructure.security.SupabaseRoleConverter;
         "occ.security.peer.disruption-to-planning-token=test-disruption-peer-token",
         "occ.security.peer.ingestion-to-planning-token=test-ingestion-peer-token"
 })
-@Import({PlanningSecurityConfig.class, SupabaseRoleConverter.class, BunchingRecommendationControllerTest.MeterConfiguration.class})
+@Import({PlanningSecurityConfig.class, SupabaseRoleConverter.class})
 @TestConstructor(autowireMode = TestConstructor.AutowireMode.ALL)
 class BunchingRecommendationControllerTest {
     private static final UUID EVENT_ID = UUID.fromString("c5934f15-4a65-4e94-87ea-a5a64a7dd4c1");
@@ -63,14 +60,6 @@ class BunchingRecommendationControllerTest {
 
     @MockitoBean private AdvisoryProposalRepository proposals;
     @MockitoBean private IssuedInstructionRepository instructions;
-
-    @TestConfiguration(proxyBeanMethods = false)
-    static class MeterConfiguration {
-        @Bean
-        MeterRegistry meterRegistry() {
-            return new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
-        }
-    }
 
     BunchingRecommendationControllerTest(MockMvcTester mvc) {
         this.mvc = mvc;
