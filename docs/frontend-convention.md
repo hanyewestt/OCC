@@ -71,6 +71,9 @@ coverage, test reports and saved sessions. Never put secrets in `public/`.
 - Reuse project components first, then shadcn components or blocks. Compose
   them before considering custom primitives. Do not recreate buttons, dialogs,
   inputs or tables that the chosen components cover.
+- Use `lucide-react`, the icon library configured for shadcn/ui, for interface
+  icons instead of hand-drawn SVGs. Give icon-only controls an accessible label
+  and hide decorative icons from assistive technology with `aria-hidden="true"`.
 - Add only needed shadcn components. Keep business logic and API calls outside
   `components/ui/`. Avoid wrappers that only rename existing components.
 - Use Tailwind utilities in JSX. Keep shared theme tokens in `src/index.css`;
