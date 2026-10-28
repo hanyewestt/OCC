@@ -21,6 +21,50 @@ Maven Wrapper. Use the Node.js version pinned in the repository-root `.nvmrc`
 server and browser tests. The app start scripts build the frontend on the host, so Node
 is required even when Java services are built entirely in Docker.
 
+## Service memory and native diagnostics
+
+Compose budgets Ingestion at 640 MiB and Disruption/Planning at 512 MiB, each
+with a 192 MiB maximum Java heap. Gateway has 384 MiB with a 128 MiB heap. Heaps start at 32 MiB. These
+small-service defaults use Serial GC and expose two CPUs to JVM ergonomics;
+`ActiveProcessorCount` does not impose a Docker CPU quota. Database pools allow
+four connections per business service and keep one idle connection.
+
+Override `OCC_<SERVICE>_MEMORY_LIMIT` and `OCC_<SERVICE>_JAVA_TOOL_OPTIONS` in the
+root `.env` when sizing a deployment. The latter replaces the complete JVM
+option string. Leave room above `-Xmx` for class metadata, native allocations,
+thread stacks and diagnostic overhead. Hikari settings can be overridden through
+Spring's normal `SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE` and
+`SPRING_DATASOURCE_HIKARI_MINIMUMIDLE` environment variables in a Compose override;
+adding arbitrary variables to `.env` alone does not inject them into containers.
+Recreate affected containers after changing their environment or memory budget.
+
+Native Memory Tracking (NMT) summary is enabled in the default JVM options.
+It reports JVM allocations, not total resident RAM or all third-party native
+allocations. `reserved` is address space; `committed` is backed allocation and
+must not be confused with Docker's working-set measurement. NMT has overhead;
+remove `-XX:NativeMemoryTracking=summary` from the full option override to disable
+it, or use `detail` when allocation-site diagnostics are needed. Changing the
+tracking mode requires a restart.
+
+Runtime images contain a JRE rather than `jcmd`. On a local Docker engine, use
+the pinned matching JDK as an ephemeral helper sharing only the target PID
+namespace. This command works in PowerShell and Bash; replace `local-ingestion-1`
+with the target container name for a different project or service:
+
+```shell
+docker stats --no-stream
+docker run --rm --network none --pid=container:local-ingestion-1 --user 10001:10001 --cap-drop ALL --entrypoint /opt/java/openjdk/bin/jcmd eclipse-temurin:25.0.4.1_1-jdk-noble@sha256:589ff4cc3f71aab462e7048a47a0d10edf57fbccde3fceea2281e610bf5880b4 1 VM.native_memory summary scale=MB
+```
+
+Use `GC.heap_info` instead of `VM.native_memory summary scale=MB` to inspect heap
+occupancy. For growth over an operation, run `VM.native_memory baseline`, exercise
+the workload, then run `VM.native_memory summary.diff scale=MB`. Keep the helper
+JDK version aligned with `BUILD_IMAGE` in `infra/java.Dockerfile`. NMT supplements
+health checks; it does not expose a network management endpoint.
+
+See [the measured memory comparison](PERFORMANCE.md) for the workload, before/after
+results, native-memory breakdown and limits of the measurement.
+
 ## First-time configuration
 
 Create the ignored root `.env` only if it does not already exist:

@@ -7,6 +7,8 @@ spring:
     username: ${OCC_DISRUPTION_DB_USERNAME}
     password: ${OCC_DISRUPTION_DB_PASSWORD}
     hikari:
+      maximum-pool-size: 4
+      minimum-idle: 1
       transaction-isolation: TRANSACTION_READ_COMMITTED
   jpa:
     open-in-view: false

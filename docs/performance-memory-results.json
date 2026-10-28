@@ -1,0 +1,318 @@
+{
+  "date": "2026-10-28",
+  "baseline_revision": "cc6d994",
+  "workload": {
+    "virtual_users": 4,
+    "duration_seconds": 120,
+    "endpoints": 10,
+    "providers": "repository synthetic stubs",
+    "scope": "four JVMs and isolated PostgreSQL; excludes Nginx, providers and load generator",
+    "sampling_wait_seconds": 5
+  },
+  "runs": {
+    "baseline": {
+      "sample_count": 18,
+      "memory_mib": {
+        "gateway": {
+          "median": 297.4,
+          "peak": 300.1
+        },
+        "disruption": {
+          "median": 484.0,
+          "peak": 490.5
+        },
+        "planning": {
+          "median": 560.4,
+          "peak": 572.3
+        },
+        "ingestion": {
+          "median": 642.9,
+          "peak": 645.3
+        },
+        "postgres": {
+          "median": 202.35,
+          "peak": 204.5
+        }
+      },
+      "jvm_total_mib": {
+        "median": 1984.2,
+        "peak": 2007.4
+      },
+      "jvm_and_postgres_mib": {
+        "median": 2188.0,
+        "peak": 2209.7
+      },
+      "requests": 2040,
+      "request_error_rate": 0,
+      "request_rate": 16.894298796487497,
+      "overall_p95_ms": 30.934757949999998,
+      "endpoint_p95_ms": {
+        "live-bunching-alerts": 25.304078699999994,
+        "planning-recommendation": 27.314475749999993,
+        "disruption-alerts": 18.316265,
+        "bus-stop": 18.244761049999987,
+        "bus-route": 25.825712199999998,
+        "demo-run-recommendation": 42.6879686,
+        "arrivals": 18.201131049999994,
+        "demo-mode": 15.969950849999995,
+        "active-demo-run": 15.9204338,
+        "demo-run-status": 33.1580837
+      },
+      "workflow": {
+        "demoRunId": "d4df0262-6e79-4306-bb7a-7b4936e7a9d9",
+        "bunchingEventId": "08d4c313-4068-42b2-a2c0-10b9243b3a20",
+        "recommendationId": "1694e8c6-bf54-459d-b9e6-9b295df00a08",
+        "simulationReadyMs": 5399,
+        "recommendationReadyMs": 13852
+      },
+      "nmt_committed_kib": {
+        "ingestion": {
+          "Java Heap": 146432,
+          "Class": 20123,
+          "Metaspace": 106572,
+          "GC": 70748,
+          "Thread": 7748,
+          "Code": 63550,
+          "Native Memory Tracking": 9537
+        },
+        "disruption": {
+          "Java Heap": 142336,
+          "Class": 19266,
+          "Metaspace": 101511,
+          "GC": 70447,
+          "Thread": 4790,
+          "Code": 58795,
+          "Native Memory Tracking": 9181
+        },
+        "planning": {
+          "Java Heap": 199680,
+          "Class": 20666,
+          "Metaspace": 110538,
+          "GC": 71600,
+          "Thread": 4451,
+          "Code": 59235,
+          "Native Memory Tracking": 9896
+        },
+        "gateway": {
+          "Java Heap": 75776,
+          "Class": 9592,
+          "Metaspace": 55159,
+          "GC": 68731,
+          "Thread": 5117,
+          "Code": 36035,
+          "Native Memory Tracking": 4965
+        }
+      },
+      "allocator": {
+        "ingestion": [
+          "C-Heap outstanding allocations: 121808K, retained: 353499K"
+        ],
+        "disruption": [
+          "C-Heap outstanding allocations: 115318K, retained: 139001K"
+        ],
+        "planning": [
+          "C-Heap outstanding allocations: 122729K, retained: 143938K"
+        ],
+        "gateway": [
+          "C-Heap outstanding allocations: 84104K, retained: 72627K"
+        ]
+      },
+      "sample_interval_median_seconds": 6.66
+    },
+    "tuned": {
+      "sample_count": 18,
+      "memory_mib": {
+        "gateway": {
+          "median": 248.0,
+          "peak": 261.3
+        },
+        "planning": {
+          "median": 380.6,
+          "peak": 394.1
+        },
+        "disruption": {
+          "median": 415.0,
+          "peak": 420.0
+        },
+        "ingestion": {
+          "median": 439.05,
+          "peak": 443.9
+        },
+        "postgres": {
+          "median": 129.4,
+          "peak": 133.7
+        }
+      },
+      "jvm_total_mib": {
+        "median": 1483.95,
+        "peak": 1517.3
+      },
+      "jvm_and_postgres_mib": {
+        "median": 1614.4,
+        "peak": 1644.7
+      },
+      "requests": 2040,
+      "request_error_rate": 0,
+      "request_rate": 16.910444409233154,
+      "overall_p95_ms": 31.533010099999995,
+      "endpoint_p95_ms": {
+        "active-demo-run": 15.1118989,
+        "arrivals": 19.5466686,
+        "demo-run-recommendation": 49.370865949999995,
+        "demo-mode": 17.40294225,
+        "disruption-alerts": 20.886560449999998,
+        "live-bunching-alerts": 27.420651799999998,
+        "demo-run-status": 40.57532864999999,
+        "planning-recommendation": 27.19195275,
+        "bus-route": 21.688305099999997,
+        "bus-stop": 16.3732643
+      },
+      "workflow": {
+        "demoRunId": "b8143ac3-87a2-4a7f-80bb-8c6b4b585090",
+        "bunchingEventId": "2ad0d6cf-e1f2-485a-a181-7e815f546e59",
+        "recommendationId": "a73f07fa-b9d8-4c9f-861d-cafa3766ca81",
+        "simulationReadyMs": 4291,
+        "recommendationReadyMs": 13842
+      },
+      "nmt_committed_kib": {
+        "ingestion": {
+          "Java Heap": 125640,
+          "Class": 20296,
+          "Metaspace": 106116,
+          "GC": 434,
+          "Thread": 7509,
+          "Code": 67977,
+          "Native Memory Tracking": 9448
+        },
+        "disruption": {
+          "Java Heap": 128872,
+          "Class": 19313,
+          "Metaspace": 101102,
+          "GC": 442,
+          "Thread": 4427,
+          "Code": 53752,
+          "Native Memory Tracking": 8714
+        },
+        "planning": {
+          "Java Heap": 110852,
+          "Class": 20774,
+          "Metaspace": 109832,
+          "GC": 394,
+          "Thread": 4060,
+          "Code": 52743,
+          "Native Memory Tracking": 9400
+        },
+        "gateway": {
+          "Java Heap": 73028,
+          "Class": 9787,
+          "Metaspace": 54967,
+          "GC": 266,
+          "Thread": 4343,
+          "Code": 37201,
+          "Native Memory Tracking": 4903
+        }
+      },
+      "allocator": {
+        "ingestion": [
+          "C-Heap outstanding allocations: 88248K, retained: 46415K"
+        ],
+        "disruption": [
+          "C-Heap outstanding allocations: 79639K, retained: 42000K"
+        ],
+        "planning": [
+          "C-Heap outstanding allocations: 88318K, retained: 37669K"
+        ],
+        "gateway": [
+          "C-Heap outstanding allocations: 51623K, retained: 39432K"
+        ]
+      },
+      "sample_interval_median_seconds": 6.45
+    },
+    "arena": {
+      "sample_count": 18,
+      "memory_mib": {
+        "gateway": {
+          "median": 246.25,
+          "peak": 256.7
+        },
+        "planning": {
+          "median": 398.05,
+          "peak": 407.8
+        },
+        "disruption": {
+          "median": 407.45,
+          "peak": 411.8
+        },
+        "ingestion": {
+          "median": 435.15,
+          "peak": 440.1
+        },
+        "postgres": {
+          "median": 126.1,
+          "peak": 127.6
+        }
+      },
+      "jvm_total_mib": {
+        "median": 1486.7,
+        "peak": 1515.9
+      },
+      "jvm_and_postgres_mib": {
+        "median": 1612.55,
+        "peak": 1640.9
+      },
+      "requests": 2040,
+      "request_error_rate": 0,
+      "request_rate": 16.895892496974714,
+      "overall_p95_ms": 33.8549948,
+      "endpoint_p95_ms": {
+        "demo-run-status": 41.81970359999999,
+        "bus-route": 23.20423005,
+        "demo-run-recommendation": 47.38398745,
+        "active-demo-run": 16.580590049999994,
+        "live-bunching-alerts": 31.671095149999996,
+        "planning-recommendation": 24.47142945,
+        "arrivals": 18.838319449999993,
+        "disruption-alerts": 19.480564749999996,
+        "demo-mode": 16.412965599999996,
+        "bus-stop": 19.166769749999997
+      },
+      "workflow": {
+        "demoRunId": "927803e0-c7b4-4daa-99af-f4a9f3884c5c",
+        "bunchingEventId": "b00c3e3d-c1af-45c9-badc-2e450302d95c",
+        "recommendationId": "ea8fc7ba-1a8e-4a16-8bf6-57907536912d",
+        "simulationReadyMs": 4348,
+        "recommendationReadyMs": 2269
+      },
+      "sample_interval_median_seconds": 7.24
+    }
+  },
+  "verification": {
+    "maven_command": "mvnw clean verify -Docc.exportOpenapi=true",
+    "result": "BUILD SUCCESS",
+    "tests": 589,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "normal_stack_readiness": "all four healthy",
+    "nginx_and_auth_smoke": "passed",
+    "nmt_summary_and_baseline_diff": "passed",
+    "live_poll_observation": {
+      "successful_bus_arrival_polls_in_checked_window": 354,
+      "flood": "SUCCESS",
+      "rail": "SUCCESS",
+      "traffic": "SUCCESS",
+      "roadworks": "PARTIAL / HTTP 200 / incomplete_feed; same result in earlier records"
+    },
+    "final_ingestion_container_limit_mib": 640,
+    "benchmark_ingestion_container_limit_mib": 512
+  },
+  "normal_stack_snapshot_mib": {
+    "ingestion": 466.1,
+    "gateway": 220.2,
+    "planning": 367.4,
+    "disruption": 421.5,
+    "nginx": 26.29,
+    "postgres": 285.4
+  },
+  "normal_stack_snapshot_total_mib": 1786.89
+}

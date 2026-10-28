@@ -129,8 +129,10 @@ services:
   ingestion:
     image: occ-ingestion:local
     restart: unless-stopped
+    mem_limit: ${OCC_INGESTION_MEMORY_LIMIT:-640m}
     environment:
       <<: *supabase-environment
+      JAVA_TOOL_OPTIONS: ${OCC_INGESTION_JAVA_TOOL_OPTIONS:--Xms32m -Xmx192m -XX:+UseSerialGC -XX:ActiveProcessorCount=2 -XX:NativeMemoryTracking=summary}
       OCC_INGESTION_INTERNAL_PORT: ${OCC_INGESTION_INTERNAL_PORT:-8001}
       OCC_INGESTION_DB_INTERNAL_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}
       OCC_INGESTION_DB_USERNAME: ${OCC_INGESTION_DB_USERNAME:-occ_ingestion}
@@ -160,8 +162,10 @@ services:
   disruption:
     image: occ-disruption:local
     restart: unless-stopped
+    mem_limit: ${OCC_DISRUPTION_MEMORY_LIMIT:-512m}
     environment:
       <<: *supabase-environment
+      JAVA_TOOL_OPTIONS: ${OCC_DISRUPTION_JAVA_TOOL_OPTIONS:--Xms32m -Xmx192m -XX:+UseSerialGC -XX:ActiveProcessorCount=2 -XX:NativeMemoryTracking=summary}
       OCC_DISRUPTION_INTERNAL_PORT: ${OCC_DISRUPTION_INTERNAL_PORT:-8002}
       OCC_DISRUPTION_DB_INTERNAL_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}
       OCC_DISRUPTION_DB_USERNAME: ${OCC_DISRUPTION_DB_USERNAME:-occ_disruption}
@@ -188,8 +192,10 @@ services:
   planning:
     image: occ-planning:local
     restart: unless-stopped
+    mem_limit: ${OCC_PLANNING_MEMORY_LIMIT:-512m}
     environment:
       <<: *supabase-environment
+      JAVA_TOOL_OPTIONS: ${OCC_PLANNING_JAVA_TOOL_OPTIONS:--Xms32m -Xmx192m -XX:+UseSerialGC -XX:ActiveProcessorCount=2 -XX:NativeMemoryTracking=summary}
       OCC_PLANNING_INTERNAL_PORT: ${OCC_PLANNING_INTERNAL_PORT:-8003}
       OCC_PLANNING_DB_INTERNAL_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}
       OCC_PLANNING_DB_USERNAME: ${OCC_PLANNING_DB_USERNAME:-occ_planning}
@@ -221,8 +227,10 @@ services:
   gateway:
     image: occ-gateway:local
     restart: unless-stopped
+    mem_limit: ${OCC_GATEWAY_MEMORY_LIMIT:-384m}
     environment:
       <<: *supabase-environment
+      JAVA_TOOL_OPTIONS: ${OCC_GATEWAY_JAVA_TOOL_OPTIONS:--Xms32m -Xmx128m -XX:+UseSerialGC -XX:ActiveProcessorCount=2 -XX:NativeMemoryTracking=summary}
       SUPABASE_SB_PUBLISHABLE: ${SUPABASE_SB_PUBLISHABLE:-}
       OCC_GATEWAY_INTERNAL_PORT: ${OCC_GATEWAY_INTERNAL_PORT:-8004}
       OCC_INGESTION_INTERNAL_URL: http://ingestion:${OCC_INGESTION_INTERNAL_PORT:-8001}
