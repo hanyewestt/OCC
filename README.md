@@ -9,10 +9,13 @@ incident diagnosis and recovery planning.
 The web app currently provides sign-in and a minimal page for each supported
 operating role. These pages verify authentication and role access; operational
 controls, incident views and dispatch workflows are not yet part of the React frontend.
-The Captain page includes an OBU pacing display with built-in sample headways,
-scenario controls and day/night mode, and an upcoming-stops list that groups
-each run of consecutive skipped stops into one instruction. It does not use
-live backend data.
+The Captain page shows controller instructions to acknowledge first, then the
+route of the simulation bus assigned to the captain: the service and terminal,
+the stop just left, the next stop with its time, the following stops with
+distance-based estimates, and the terminal. Below the route, pacing shows that
+bus's gap to the bus ahead and behind from the backend pacing service. Day and
+night modes are available. Everything comes from the backend; there is no
+built-in sample data.
 
 ## Pages and access
 
@@ -24,14 +27,13 @@ live backend data.
 | `/controller/disruptions` | Bunching detections and traffic placeholder | `CONTROLLER` only |
 | `/controller/planning` | Current simulation recommendation and approval/rejection | `CONTROLLER` only |
 | `/controller/audit` | Current simulation decision and AI audit placeholder | `CONTROLLER` only |
-| `/captain` | Captain OBU pacing display and grouped skipped stops with built-in sample data | `CAPTAIN` only |
+| `/captain` | Controller instructions, the assigned bus route and its pacing | `CAPTAIN` only |
 | `/401` | Sign-in required screen with a sign-in action | Public error screen |
 | `/403` | Access denied screen with available recovery actions | Public error screen |
 | Unknown website URL | Page not found with a return-home action | HTTP 404 |
 
-OBU sample scenarios: append `?scenario=on-target`, `bunched`, `gap-ahead` or
-`no-bus-behind` to `/captain`. Pacing values are
-generated in the browser; the React app still verifies the session and role.
+The captain's bus comes from the current simulation run's assignment to that
+account (`OCC_DEMO_CAPTAIN_USER_ID`); without one, the page says no bus is assigned.
 
 ## App components
 

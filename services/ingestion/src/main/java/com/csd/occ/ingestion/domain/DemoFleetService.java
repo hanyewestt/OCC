@@ -36,7 +36,8 @@ public class DemoFleetService {
         }).toList(), found.getTotalElements(), page, size);
     }
 
-    private Optional<DemoFleetSnapshot.Progress> progress(DemoVehicleAssignment assignment) {
+    /** Latest synthetic route progress for one simulation bus; also used for the captain route view. */
+    public Optional<DemoFleetSnapshot.Progress> progress(DemoVehicleAssignment assignment) {
         return arrivals.findFirstByDemoRunIdAndTripIdAndClassificationOrderByFetchedAtDescIdDesc(
                 assignment.id().demoRunId(), assignment.id().tripId(), "SIMULATION").flatMap(arrival -> {
             var candidates = topology.busRoute(arrival.getReferenceVersionId(), assignment.serviceId()).stream()

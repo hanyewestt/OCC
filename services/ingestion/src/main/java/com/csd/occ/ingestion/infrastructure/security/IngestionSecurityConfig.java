@@ -49,6 +49,8 @@ public class IngestionSecurityConfig {
                         // Bus captains read pacing on their On Board Unit; every other API stays controller-only.
                         .requestMatchers(HttpMethod.GET, "/api/v1/pacing-snapshots/latest",
                                 "/api/v1/pacing-snapshots/stream").hasAnyRole("ADMIN", "CONTROLLER", "CAPTAIN")
+                        // A captain reads only their own assigned bus; the actor is always the token subject.
+                        .requestMatchers(HttpMethod.GET, "/api/v1/captain-routes/current").hasRole("CAPTAIN")
                         .requestMatchers("/api/v1/**").hasAnyRole("ADMIN", "CONTROLLER")
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")
                         .hasAnyRole("ADMIN", "CONTROLLER")

@@ -44,6 +44,8 @@ public class GatewaySecurityConfig {
                     authorize.requestMatchers("/api/v1/planning/captain/**").denyAll();
                     authorize.requestMatchers(HttpMethod.GET, "/api/v1/pacing-snapshots/latest",
                             "/api/v1/pacing-snapshots/stream").hasAnyRole("ADMIN", "CONTROLLER", "CAPTAIN");
+                    // A captain reads only their own assigned bus; the actor is always the token subject.
+                    authorize.requestMatchers(HttpMethod.GET, "/api/v1/captain-routes/current").hasRole("CAPTAIN");
                     authorize.requestMatchers("/api/v1/**").hasAnyRole("ADMIN", "CONTROLLER");
                     authorize.requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")
                             .hasAnyRole("ADMIN", "CONTROLLER");

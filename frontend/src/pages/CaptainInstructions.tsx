@@ -3,11 +3,18 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
-import { ApiError, apiRequest, type CaptainInstruction, type PageResult } from '@/lib/api'
+import { ApiError, apiRequest, type CaptainInstruction, type InstructionType, type PageResult } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { dataClassificationLabel } from '@/lib/presentation'
 import { formatSgtDateTime } from '@/lib/time'
+import { acknowledgementTimeLeft, instructionHeadline, instructionState } from '@/lib/captain-instructions'
+import { cn } from '@/lib/utils'
+import { Ban, CircleCheck, Clock, Gauge, Hand, TrendingDown, TriangleAlert, type LucideIcon } from 'lucide-react'
 import { usePagedCollection } from '@/lib/paged-collection'
+
+const instructionIcons: Record<InstructionType, LucideIcon> = {
+  HOLD: Hand, DWELL_ADJUSTMENT: Clock, REDUCE_SPEED: Gauge, SLOW_DOWN_NEAR_STOPS: TrendingDown, BE_CAUTIOUS: TriangleAlert,
+}
 
 type CaptainInstructionPage = PageResult<CaptainInstruction> & { receivedAt: number }
 
@@ -61,23 +68,51 @@ export function CaptainInstructions({ token, registerRefresh, onPendingChange, o
       if (!controller.signal.aborted) { setPending(null); onSaved() }
     }
   }
+  const actionCount = collection.items.filter(item => instructionState(item, serverNow) === 'action').length
   return <section aria-labelledby="captain-instructions-heading" className="space-y-4">
-    <h2 id="captain-instructions-heading" className="text-xl font-semibold">Controller instructions</h2>
-    {actionError && <p role="alert" className="rounded-lg border p-3 text-sm">{actionError}</p>}
+    <div className="flex flex-wrap items-baseline justify-between gap-2">
+      <h2 id="captain-instructions-heading" className="text-xl font-semibold">Controller instructions</h2>
+      {actionCount > 0 && <p role="status" className="font-bold text-amber-800 dark:text-amber-300">
+        {actionCount === 1 ? '1 instruction needs acknowledgement' : `${actionCount} instructions need acknowledgement`}</p>}
+    </div>
+    {actionError && <p role="alert" className="rounded-lg border-2 border-red-700 p-3 font-medium text-red-800 dark:border-red-400 dark:text-red-300">{actionError}</p>}
     {collection.isLoading && !collection.latestPage && <p role="status" className="text-sm text-muted-foreground">Loading instructions…</p>}
     {collection.error !== null && !collection.items.length && <p role="alert" className="rounded-lg border p-3 text-sm">Instructions are unavailable.</p>}
     {!collection.isLoading && collection.error === null && collection.latestPage && !collection.items.length && <p className="text-sm text-muted-foreground">No current instructions for your assigned bus.</p>}
-    {!!collection.items.length && <ScrollArea role="region" aria-label="Captain instructions" tabIndex={0} className="max-h-[28rem]"
-      viewportProps={{ onScroll: collection.onScroll }}><div className="space-y-3 p-1 pr-3.5">{collection.items.map(item => <Card key={item.id} className="min-h-28"><CardContent className="space-y-4">
-        <p className="text-xs font-medium text-muted-foreground">Simulation · {item.busId} · Hazard: {dataClassificationLabel(item.hazardClassification)}</p>
-        <p className="text-2xl font-semibold leading-snug">{item.message}</p>
-        {item.acknowledgedAt ? <div role="status" className="space-y-1 text-sm">
-          <p>Acknowledged {formatSgtDateTime(item.acknowledgedAt)}</p>
-          {item.applicableUntil && <p>{serverNow === null ? 'OCC checks the advisory window.'
-            : `${Math.max(0, Math.floor((Date.parse(item.applicableUntil) - serverNow) / 1000))} sec remaining · advisory window`}</p>}
-        </div> : <Button size="lg" disabled={pending !== null || serverNow !== null && serverNow >= Date.parse(item.acknowledgementDeadline)}
-          onClick={() => void acknowledge(item.id)}>{pending === item.id ? 'Saving…' : 'Acknowledge'}</Button>}
-      </CardContent></Card>)}</div></ScrollArea>}
+    {!!collection.items.length && <ScrollArea role="region" aria-label="Captain instructions" tabIndex={0} className="max-h-[32rem]"
+      viewportProps={{ onScroll: collection.onScroll }}><div className="space-y-3 p-1 pr-3.5">{collection.items.map(item => {
+        const state = instructionState(item, serverNow)
+        const Icon = instructionIcons[item.type]
+        const timeLeft = state === 'action' ? acknowledgementTimeLeft(item.acknowledgementDeadline, serverNow) : null
+        return <Card key={item.id} data-state={state} className={cn('min-h-28 shadow-none',
+          state === 'action' ? 'border-4 border-amber-700 bg-amber-50 dark:border-amber-400 dark:bg-amber-950/40'
+            : 'border-2 opacity-90')}><CardContent className="space-y-4">
+          <p className="text-xs font-medium text-muted-foreground">Simulation · {item.busId} · Hazard: {dataClassificationLabel(item.hazardClassification)}</p>
+          <div className="flex items-start gap-3">
+            <Icon aria-hidden="true" className={cn('mt-1 shrink-0', state === 'action' ? 'size-9 text-amber-800 dark:text-amber-300' : 'size-6 text-muted-foreground')} />
+            <div className="min-w-0 space-y-1">
+              <p className={cn('font-black uppercase leading-tight', state === 'action' ? 'text-[clamp(1.75rem,5vw,2.75rem)]' : 'text-xl')}>
+                {instructionHeadline(item.type, item.parameters)}</p>
+              <p className={cn('leading-snug', state === 'action' ? 'text-xl font-semibold' : 'text-base text-muted-foreground')}>{item.message}</p>
+            </div>
+          </div>
+          {state === 'acknowledged' && <div role="status" className="space-y-1">
+            <p className="flex items-center gap-2 text-lg font-bold text-green-800 dark:text-green-300">
+              <CircleCheck aria-hidden="true" className="size-6 shrink-0" /><span>Acknowledged {formatSgtDateTime(item.acknowledgedAt)}</span></p>
+            {item.applicableUntil && <p className="text-sm">{serverNow === null ? 'OCC checks the advisory window.'
+              : `${Math.max(0, Math.floor((Date.parse(item.applicableUntil) - serverNow) / 1000))} sec remaining · advisory window`}</p>}
+          </div>}
+          {state === 'action' && <div className="space-y-2">
+            <Button size="lg" className="h-16 w-full text-xl font-bold" disabled={pending !== null}
+              onClick={() => void acknowledge(item.id)}>{pending === item.id ? 'Saving…' : 'Acknowledge'}</Button>
+            {timeLeft && <p className="text-center text-sm font-medium tabular-nums">Acknowledge within {timeLeft}</p>}
+          </div>}
+          {state === 'closed' && <p className="flex items-center gap-2 font-semibold text-muted-foreground">
+            <Clock aria-hidden="true" className="size-5 shrink-0" />Acknowledgement window closed. Contact the controller if you still need this instruction.</p>}
+          {state === 'cancelled' && <p className="flex items-center gap-2 font-semibold text-muted-foreground">
+            <Ban aria-hidden="true" className="size-5 shrink-0" />Cancelled by the controller{item.inactiveReason ? ` · ${item.inactiveReason.replaceAll('_', ' ').toLowerCase()}` : ''}.</p>}
+        </CardContent></Card>
+      })}</div></ScrollArea>}
     {collection.latestPage && collection.latestPage.totalItems > collection.items.length && <p className="text-xs text-muted-foreground">Showing {collection.items.length} of {collection.latestPage.totalItems} instructions.</p>}
     <PagedCollectionControls label="captain instructions" hasItems={!!collection.items.length} hasMore={collection.hasMore}
       isLoadingMore={collection.isLoadingMore} error={collection.error} refreshError={collection.refreshError} reload={collection.reload} loadNext={collection.loadNext} />
