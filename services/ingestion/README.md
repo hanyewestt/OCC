@@ -62,6 +62,9 @@ approached). The approached stop carries the simulation's `PREDICTED` arrival;
 later stops get `ESTIMATED` arrivals from route distance at the same synthetic
 speed. Progress fetched `OCC_INGESTION_STALE_AFTER_SECONDS` or longer ago gives
 the route without a position. A captain with no current assignment gets `204`.
+`pacing` carries that bus's gap ahead and behind from the latest pacing cycle,
+matched on its registration; it is `null` before the first cycle or when the bus
+is not in fresh pacing predictions.
 
 The React frontend currently provides login and role-access checks only. Replay remains available through the protected APIs below for ADMIN and CONTROLLER accounts. Its persisted runtime state starts disabled, so the replay scheduler does no work and bunching remains live until a run starts. The mode can be toggled while ingestion is running; no restart is needed:
 

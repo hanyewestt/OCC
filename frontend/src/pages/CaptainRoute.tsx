@@ -4,6 +4,7 @@ import { ApiError, apiRequest, type CaptainRoute, type CaptainRouteStop } from '
 import { signOut } from '@/lib/auth'
 import { compactStops, distanceText, routeProgress, stopName } from '@/lib/captain-route'
 import { formatSgtClock, formatSgtTime } from '@/lib/time'
+import { CaptainPacing } from './CaptainPacing'
 
 const ROUTE_PATH = '/api/v1/captain-routes/current'
 // Like an on-board unit, show the next few stops and the terminal; the rest is one tap away.
@@ -67,7 +68,7 @@ export function CaptainRouteView({ token, registerRefresh }: {
   const listed = showFullRoute ? progress.ahead : compact.shown
   const nextArrival = progress.next ? arrivalText(progress.next) : null
   const nextDistance = progress.last && progress.next ? distanceText(progress.last, progress.next) : null
-  return <section aria-labelledby="route-heading" className="space-y-4 rounded-xl border bg-card p-4 sm:p-6">
+  return <><section aria-labelledby="route-heading" className="space-y-4 rounded-xl border bg-card p-4 sm:p-6">
     <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
       <h2 id="route-heading" className="text-[clamp(1.25rem,3.5vw,2rem)] font-black">
         Service {route.bus.serviceId} <span aria-hidden="true">→</span><span className="sr-only">towards</span> {terminal ? stopName(terminal) : 'terminal'}</h2>
@@ -112,4 +113,5 @@ export function CaptainRouteView({ token, registerRefresh }: {
       {route.position.observedAt && `Position from ${formatSgtTime(route.position.observedAt)}. `}
       Times marked est. are estimated from route distance.</p>
   </section>
+  <CaptainPacing pacing={route.pacing} /></>
 }
