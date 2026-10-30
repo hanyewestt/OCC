@@ -1,8 +1,10 @@
 package com.csd.occ.ingestion.api;
 
 import com.csd.occ.ingestion.api.dto.CaptainRouteResponse;
+import com.csd.occ.ingestion.api.dto.PacingGapResponse;
 import com.csd.occ.ingestion.domain.CaptainRoute;
 import com.csd.occ.ingestion.domain.CaptainRouteService;
+import com.csd.occ.ingestion.domain.PacingGap;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -52,6 +54,15 @@ public class CaptainRouteController {
                         item.stop().distanceKm(), item.arrivalAt().orElse(null),
                         item.arrivalKind().map(Enum::name).orElse(null))).toList(),
                 new CaptainRouteResponse.Position(position.source().name(), position.lastStopSequence().orElse(null),
-                        position.nextStopSequence().orElse(null), position.observedAt().orElse(null)));
+                        position.nextStopSequence().orElse(null), position.observedAt().orElse(null)),
+                route.pacing().map(pacing -> new CaptainRouteResponse.Pacing(
+                        pacing.metric().targetHeadway().toSeconds(),
+                        pacing.metric().ahead().map(CaptainRouteController::gap).orElse(null),
+                        pacing.metric().behind().map(CaptainRouteController::gap).orElse(null),
+                        pacing.metric().observedAt(), pacing.calculatedAt())).orElse(null));
+    }
+
+    private static PacingGapResponse gap(PacingGap gap) {
+        return new PacingGapResponse(gap.headway().toSeconds(), gap.state().name());
     }
 }

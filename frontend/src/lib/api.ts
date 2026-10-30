@@ -142,7 +142,12 @@ export type CaptainRoute = {
     source: 'SIMULATION' | 'UNAVAILABLE'; lastStopSequence: number | null
     nextStopSequence: number | null; observedAt: string | null
   }
+  pacing: {
+    targetHeadwaySeconds: number; ahead: PacingGap | null; behind: PacingGap | null
+    observedAt: string; calculatedAt: string
+  } | null
 }
+export type PacingGap = { headwaySeconds: number; state: 'TOO_CLOSE' | 'ON_TARGET' | 'TOO_FAR' }
 
 // All dashboard requests stay on the same origin. Null represents a documented
 // empty response, never a failed request or an assumed count of zero.

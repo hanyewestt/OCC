@@ -22,18 +22,21 @@ public class CaptainRouteService {
     private final BusArrivalObservationRepository arrivals;
     private final ReferenceTopologyQueryService topology;
     private final PollingConfigurationPort polling;
+    private final PacingService pacing;
     private final Clock clock;
     private final CaptainRoutePolicy policy = new CaptainRoutePolicy();
 
     public CaptainRouteService(DemoRunRepository runs, DemoVehicleAssignmentRepository assignments,
                                DemoFleetService fleet, BusArrivalObservationRepository arrivals,
-                               ReferenceTopologyQueryService topology, PollingConfigurationPort polling, Clock clock) {
+                               ReferenceTopologyQueryService topology, PollingConfigurationPort polling,
+                               PacingService pacing, Clock clock) {
         this.runs = runs;
         this.assignments = assignments;
         this.fleet = fleet;
         this.arrivals = arrivals;
         this.topology = topology;
         this.polling = polling;
+        this.pacing = pacing;
         this.clock = clock;
     }
 
@@ -62,7 +65,24 @@ public class CaptainRouteService {
                         value.observedAt(), value.assumedSpeedKmh())));
         var plan = policy.plan(stops, progress, clock.instant(), Duration.ofSeconds(polling.staleAfterSeconds()));
         return Optional.of(new CaptainRoute(assignment.busId(), assignment.vehicleRegistrationNumber(),
-                assignment.serviceId(), assignment.directionId(), plan.stops(), plan.position()));
+                assignment.serviceId(), assignment.directionId(), plan.stops(), plan.position(), pacing(assignment)));
+    }
+
+    /** Pacing identifies simulation buses by registration, so only this captain's bus is returned. */
+    private Optional<CaptainRoute.Pacing> pacing(DemoVehicleAssignment assignment) {
+        PacingSnapshot snapshot;
+        try {
+            snapshot = pacing.latest();
+        } catch (PacingUnavailableException exception) {
+            return Optional.empty();
+        }
+        return snapshot.metrics().stream()
+                .filter(metric -> "SIMULATION".equals(metric.classification())
+                        && metric.vehicleReference().equals(assignment.vehicleRegistrationNumber())
+                        && metric.serviceId().equals(assignment.serviceId())
+                        && metric.directionId() == assignment.directionId())
+                .findFirst()
+                .map(metric -> new CaptainRoute.Pacing(metric, snapshot.calculatedAt()));
     }
 
     private static Optional<UUID> parse(String subject) {

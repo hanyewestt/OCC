@@ -12,10 +12,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.csd.occ.ingestion.api.error.GlobalExceptionHandler;
 import com.csd.occ.ingestion.domain.CaptainRoute;
 import com.csd.occ.ingestion.domain.CaptainRouteService;
+import com.csd.occ.ingestion.domain.PacingGap;
+import com.csd.occ.ingestion.domain.PacingMetric;
+import com.csd.occ.ingestion.domain.PacingState;
 import com.csd.occ.ingestion.domain.ReferenceTopologyPort;
 import com.csd.occ.ingestion.infrastructure.security.IngestionSecurityConfig;
 import com.csd.occ.ingestion.infrastructure.security.SupabaseRoleConverter;
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -60,9 +64,13 @@ class CaptainRouteControllerTest {
                         Optional.of(CaptainRoute.ArrivalKind.PREDICTED)),
                 new CaptainRoute.Stop(stop(9, "44241", "Opp Lompang Rd"), Optional.of(ARRIVAL.plusSeconds(120)),
                         Optional.of(CaptainRoute.ArrivalKind.ESTIMATED)));
+        var pacing = new PacingMetric("SBS5898U", "SIMULATION", "44251", "190", 1, Duration.ofSeconds(180),
+                Optional.of(new PacingGap(Duration.ofSeconds(45), PacingState.TOO_CLOSE)), Optional.empty(),
+                ARRIVAL.minusSeconds(65));
         when(routes.current(CAPTAIN)).thenReturn(Optional.of(new CaptainRoute("demo-190-b", "SBS5898U", "190", 1, stops,
                 new CaptainRoute.Position(CaptainRoute.Position.Source.SIMULATION, Optional.of(7), Optional.of(8),
-                        Optional.of(ARRIVAL.minusSeconds(65))))));
+                        Optional.of(ARRIVAL.minusSeconds(65))),
+                Optional.of(new CaptainRoute.Pacing(pacing, ARRIVAL.minusSeconds(60))))));
 
         mvc.perform(get(PATH).with(user(CAPTAIN).roles("CAPTAIN"))).andExpect(status().isOk())
                 .andExpect(jsonPath("$.classification").value("SIMULATION"))
@@ -76,7 +84,12 @@ class CaptainRouteControllerTest {
                 .andExpect(jsonPath("$.stops[2].arrivalKind").value("ESTIMATED"))
                 .andExpect(jsonPath("$.position.source").value("SIMULATION"))
                 .andExpect(jsonPath("$.position.lastStopSequence").value(7))
-                .andExpect(jsonPath("$.position.nextStopSequence").value(8));
+                .andExpect(jsonPath("$.position.nextStopSequence").value(8))
+                .andExpect(jsonPath("$.pacing.targetHeadwaySeconds").value(180))
+                .andExpect(jsonPath("$.pacing.ahead.headwaySeconds").value(45))
+                .andExpect(jsonPath("$.pacing.ahead.state").value("TOO_CLOSE"))
+                .andExpect(jsonPath("$.pacing.behind").isEmpty())
+                .andExpect(jsonPath("$.pacing.calculatedAt").value("2026-10-27T14:00:00Z"));
         verify(routes).current(CAPTAIN);
     }
 

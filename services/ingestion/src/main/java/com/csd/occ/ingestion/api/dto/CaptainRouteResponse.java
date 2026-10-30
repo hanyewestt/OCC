@@ -12,7 +12,21 @@ public record CaptainRouteResponse(
                 allowableValues = {"SIMULATION"}, requiredMode = Schema.RequiredMode.REQUIRED) String classification,
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED) Bus bus,
         @Schema(description = "Stops in route order", requiredMode = Schema.RequiredMode.REQUIRED) List<Stop> stops,
-        @Schema(requiredMode = Schema.RequiredMode.REQUIRED) Position position) {
+        @Schema(requiredMode = Schema.RequiredMode.REQUIRED) Position position,
+        @Schema(description = "This bus's gaps from the latest pacing cycle; null when no pacing is available for it",
+                nullable = true, requiredMode = Schema.RequiredMode.REQUIRED) Pacing pacing) {
+
+    @Schema(name = "CaptainRoutePacing")
+    public record Pacing(
+            @Schema(example = "180", requiredMode = Schema.RequiredMode.REQUIRED) long targetHeadwaySeconds,
+            @Schema(description = "Gap to the bus ahead; null when no bus ahead is in the same prediction set",
+                    nullable = true, requiredMode = Schema.RequiredMode.REQUIRED) PacingGapResponse ahead,
+            @Schema(description = "Gap to the bus behind; null when no bus behind is in the same prediction set",
+                    nullable = true, requiredMode = Schema.RequiredMode.REQUIRED) PacingGapResponse behind,
+            @Schema(description = "When the predictions behind these gaps were fetched (UTC)",
+                    requiredMode = Schema.RequiredMode.REQUIRED) Instant observedAt,
+            @Schema(description = "When the pacing cycle ran (UTC)", requiredMode = Schema.RequiredMode.REQUIRED)
+            Instant calculatedAt) {}
 
     @Schema(name = "CaptainRouteBus")
     public record Bus(
