@@ -22,6 +22,50 @@ class PublicNoticeServiceTest {
     private final PublicNoticeService service = new PublicNoticeService(notices, context, drafts, Clock.fixed(NOW, ZoneOffset.UTC));
 
     @Test
+    void reviewedContentIsSavedOnlyAsADraftWithSourceProvenance() {
+        when(context.hazard(disruptionId)).thenReturn(hazard("ACTIVE", "Use caution.", NOW.plusSeconds(3600)));
+        when(notices.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        var saved = service.draft(UUID.randomUUID(), disruptionId, "Reviewed title", "Water reported. Use caution.",
+                List.of("190"), List.of("Example Stop"), NOW, NOW.plusSeconds(3600), "verified-controller");
+        assertThat(saved.status()).isEqualTo("DRAFT");
+        assertThat(saved.classification()).isEqualTo("OBSERVATION_ONLY");
+        assertThat(saved.demoRunId()).isNull();
+        assertThat(saved.title()).isEqualTo("Reviewed title");
+        assertThat(saved.message()).isEqualTo("Water reported. Use caution.");
+        assertThat(saved.publishedAt()).isNull();
+        verifyNoInteractions(drafts);
+    }
+
+    @Test
+    void clearedSourcesMissingRestrictionsAndExcessiveValidityCannotBeSaved() {
+        when(context.hazard(disruptionId)).thenReturn(hazard("CLEARED", null, NOW.plusSeconds(3600)));
+        assertThatThrownBy(() -> service.draft(UUID.randomUUID(), disruptionId, "Flood update", "Use caution.",
+                List.of(), List.of(), NOW, NOW.plusSeconds(600), "controller"))
+                .isInstanceOf(AdvisoryConflictException.class);
+        when(context.hazard(disruptionId)).thenReturn(hazard("ACTIVE", "Avoid this road.", NOW.plusSeconds(3600)));
+        assertThatThrownBy(() -> service.draft(UUID.randomUUID(), disruptionId, "Flood update", "Use caution.",
+                List.of(), List.of(), NOW, NOW.plusSeconds(600), "controller"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("source instruction");
+        assertThatThrownBy(() -> service.draft(UUID.randomUUID(), disruptionId, "Flood update", "Avoid this road.",
+                List.of(), List.of(), NOW, NOW.plusSeconds(3601), "controller"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("source expiry");
+        verify(notices, never()).save(any());
+    }
+
+    @Test
+    void invalidTimeWindowsAndBlankServiceValuesCannotReachPersistence() {
+        for (Instant until : List.of(NOW.minusSeconds(1), NOW, NOW.plusSeconds(60))) {
+            assertThatThrownBy(() -> service.draft(UUID.randomUUID(), disruptionId, "Flood update", "Use caution.",
+                    List.of("190"), List.of("Example Stop"), NOW.plusSeconds(60), until, "controller"))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThatThrownBy(() -> service.draft(UUID.randomUUID(), disruptionId, "Flood update", "Use caution.",
+                List.of(" "), List.of(), NOW, NOW.plusSeconds(600), "controller"))
+                .isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(context, notices);
+    }
+
+    @Test
     void noticeSuggestionUsesCurrentSourceFactsForControllerReview() {
         var hazard = hazard("ACTIVE", null, NOW.plusSeconds(3600));
         var suggestion = new AdvisoryDraftPort.NoticeSuggestion("Flood alert", "Provider report",
@@ -31,6 +75,7 @@ class PublicNoticeServiceTest {
 
         assertThat(service.suggest(disruptionId)).isSameAs(suggestion);
         verify(drafts).suggestNotice(hazard);
+        verifyNoInteractions(notices);
     }
 
     @Test

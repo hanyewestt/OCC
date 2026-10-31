@@ -1611,6 +1611,7 @@ test('controller manages public notices on a dedicated page below planning', asy
   await page.getByRole('button', { name: 'Refresh', exact: true }).click()
   await expect.poll(() => noticeReads).toBeGreaterThan(beforeRefresh)
   const afterRefresh = noticeReads
+  await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled()
   await page.clock.runFor(31000)
   await expect.poll(() => noticeReads).toBeGreaterThan(afterRefresh)
   await page.getByRole('button', { name: 'Draft notice', exact: true }).click()
@@ -1730,6 +1731,119 @@ test('late notice suggestions cannot overwrite the selected hazard draft', async
 
   await expect(advisories.getByLabel('Title', { exact: true })).toHaveValue('Hazard B')
   await expect(advisories.getByLabel('Passenger message', { exact: true })).toHaveValue('Message for hazard B.')
+})
+
+test('changing notice source clears prior passenger scope and validates the new schedule before saving', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const hazardA = '00000000-0000-4000-8000-000000000301'
+  const hazardB = '00000000-0000-4000-8000-000000000302'
+  await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: {
+    items: [hazardA, hazardB].map((id, index) => ({ disruptionId: id, kind: 'FLOOD', status: 'ACTIVE',
+      classification: 'OBSERVATION_ONLY', demoRunId: null, updatedAt: '2026-10-31T04:00:00Z',
+      facts: { title: `Hazard ${index ? 'B' : 'A'}`, description: `Message ${index ? 'B' : 'A'}.`, instruction: null, effectiveUntil: null },
+      exposures: [], limitations: [] })), page: 0, size: 100, totalElements: 2, feeds: [],
+  } }))
+  const saved: Record<string, unknown>[] = []
+  await context.route('**/api/v1/planning/notices', route => {
+    saved.push(route.request().postDataJSON())
+    return route.fulfill({ json: { ...saved.at(-1), status: 'DRAFT' } })
+  })
+  await login(page)
+  await page.goto('/controller/notices')
+  await page.getByRole('button', { name: 'Draft notice', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'New notice draft', exact: true })
+  await editor.getByLabel('Source hazard', { exact: true }).selectOption(hazardA)
+  await editor.getByLabel('Services (comma separated)', { exact: true }).fill('190')
+  await editor.getByLabel('Locations (comma separated)', { exact: true }).fill('Stop A')
+  await editor.getByLabel('Starts (SGT)', { exact: true }).fill('2030-01-01T15:00')
+  await editor.getByLabel('Expires (SGT)', { exact: true }).fill('2030-01-01T16:00')
+  await editor.getByLabel('Source hazard', { exact: true }).selectOption(hazardB)
+  await expect(editor.getByLabel('Title', { exact: true })).toHaveValue('Hazard B')
+  await expect(editor.getByLabel('Passenger message', { exact: true })).toHaveValue('Message B.')
+  for (const field of ['Services (comma separated)', 'Locations (comma separated)', 'Starts (SGT)', 'Expires (SGT)']) {
+    await expect(editor.getByLabel(field, { exact: true })).toHaveValue('')
+  }
+  await editor.getByLabel('Services (comma separated)', { exact: true }).fill('972, 190')
+  await editor.getByLabel('Locations (comma separated)', { exact: true }).fill('Stop B')
+  await editor.getByLabel('Starts (SGT)', { exact: true }).fill('2030-01-01T16:00')
+  await editor.getByLabel('Expires (SGT)', { exact: true }).fill('2030-01-01T15:00')
+  await editor.getByRole('button', { name: 'Save draft', exact: true }).click()
+  await expect(editor.getByRole('alert')).toHaveText('Expiry must be after the start time.')
+  expect(saved).toHaveLength(0)
+  await editor.getByLabel('Expires (SGT)', { exact: true }).fill('2030-01-01T17:00')
+  await editor.getByRole('button', { name: 'Save draft', exact: true }).click()
+  await expect(editor).toHaveCount(0)
+  expect(saved).toHaveLength(1)
+  expect(saved[0]).toMatchObject({ disruptionId: hazardB, title: 'Hazard B', message: 'Message B.',
+    services: ['972', '190'], locations: ['Stop B'], effectiveFrom: '2030-01-01T08:00:00.000Z', effectiveUntil: '2030-01-01T09:00:00.000Z' })
+})
+
+test('failed notice suggestions preserve manual wording and allow retry without publishing', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const disruptionId = '00000000-0000-4000-8000-000000000303'
+  await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: { items: [{
+    disruptionId, kind: 'FLOOD', status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
+    updatedAt: '2026-10-31T04:00:00Z', facts: { title: 'Source report', description: 'Water reported.', instruction: null, effectiveUntil: null },
+    exposures: [], limitations: [],
+  }], page: 0, size: 100, totalElements: 1, feeds: [] } }))
+  let failed = true
+  let writes = 0
+  await context.route('**/api/v1/planning/notices/**', route => {
+    if (!route.request().url().endsWith('/suggestions')) {
+      writes++
+      return route.fulfill({ status: 500 })
+    }
+    return failed ? route.fulfill({ status: 503, json: { detail: 'Wording suggestions are unavailable. Review the source and try again.' } })
+      : route.fulfill({ json: { title: 'Passenger update', message: 'Water reported near Stop A.', services: ['190'], locations: ['Stop A'], generator: 'SOURCE_FACTS' } })
+  })
+  await login(page)
+  await page.goto('/controller/notices')
+  await page.getByRole('button', { name: 'Draft notice', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'New notice draft', exact: true })
+  await editor.getByLabel('Source hazard', { exact: true }).selectOption(disruptionId)
+  await editor.getByLabel('Title', { exact: true }).fill('My reviewed title')
+  await editor.getByRole('button', { name: 'Suggest passenger wording', exact: true }).click()
+  await expect(editor.getByRole('alert')).toContainText('Wording suggestions are unavailable.')
+  await expect(editor.getByLabel('Title', { exact: true })).toHaveValue('My reviewed title')
+  failed = false
+  await editor.getByRole('button', { name: 'Suggest passenger wording', exact: true }).click()
+  await expect(editor.getByLabel('Title', { exact: true })).toHaveValue('Passenger update')
+  await expect(editor.getByRole('alert')).toHaveCount(0)
+  await editor.getByLabel('Passenger message', { exact: true }).fill('Reviewed passenger message.')
+  await expect(editor.getByLabel('Passenger message', { exact: true })).toHaveValue('Reviewed passenger message.')
+  expect(writes).toBe(0)
+})
+
+test('controller repairs a saved notice by copying it into a separate draft', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const original = { id: '00000000-0000-4000-8000-000000000304', disruptionId: '00000000-0000-4000-8000-000000000305',
+    title: 'Original draft', message: 'Water reported.', services: ['190'], locations: ['Example Stop'],
+    classification: 'OBSERVATION_ONLY', demoRunId: null, status: 'DRAFT', effectiveFrom: '2026-10-31T04:00:00Z',
+    effectiveUntil: '2026-10-31T05:00:00Z', publishedAt: null, withdrawnAt: null }
+  await context.route('**/api/v1/planning/notices?*', route => route.fulfill({ json: {
+    items: [original], page: 0, totalItems: 1, totalPages: 1,
+  } }))
+  let saved: Record<string, unknown> | undefined
+  await context.route('**/api/v1/planning/notices', route => {
+    saved = route.request().postDataJSON()
+    return route.fulfill({ json: { ...saved, status: 'DRAFT' } })
+  })
+  await login(page)
+  await page.goto('/controller/notices')
+  await page.getByRole('button', { name: 'Copy to new draft', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'New notice draft', exact: true })
+  await expect(editor.getByLabel('Title', { exact: true })).toHaveValue(original.title)
+  await expect(editor.getByLabel('Source hazard', { exact: true })).toHaveValue(original.disruptionId)
+  await expect(editor.getByLabel('Services (comma separated)', { exact: true })).toHaveValue('190')
+  await expect(editor.getByLabel('Starts (SGT)', { exact: true })).toHaveValue('')
+  await editor.getByLabel('Title', { exact: true }).fill('Revised draft')
+  await editor.getByLabel('Starts (SGT)', { exact: true }).fill('2030-01-01T15:00')
+  await editor.getByLabel('Expires (SGT)', { exact: true }).fill('2030-01-01T16:00')
+  await editor.getByRole('button', { name: 'Save draft', exact: true }).click()
+  await expect(editor).toHaveCount(0)
+  expect(saved).toMatchObject({ disruptionId: original.disruptionId, title: 'Revised draft', message: original.message })
+  expect(saved?.id).not.toBe(original.id)
+  await expect(page.getByRole('heading', { name: original.title, exact: true })).toBeVisible()
 })
 
 test('controller reviews the server preview before issuing an edited instruction', async ({ page, context }) => {
