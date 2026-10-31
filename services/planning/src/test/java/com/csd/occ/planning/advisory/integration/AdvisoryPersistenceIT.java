@@ -616,6 +616,24 @@ class AdvisoryPersistenceIT {
     }
 
     @Test
+    void anonymousPublicResponseContainsPassengerContentWithoutManagementMetadata() throws Exception {
+        var live = source(false);
+        var visible = draft(live, UUID.randomUUID(), MESSAGE);
+        notices.publish(visible.id(), "private-controller-subject");
+        draft(live, UUID.randomUUID(), "Private draft message");
+        var response = mvc.perform(get("/api/v1/planning/public/notices"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalItems").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(visible.id().toString()))
+                .andExpect(jsonPath("$.items[0].message").value(MESSAGE))
+                .andExpect(jsonPath("$.items[0].services[0]").value("190"))
+                .andExpect(jsonPath("$.items[0].locations[0]").value("School"))
+                .andExpect(jsonPath("$.items[0].publishedAt").value(NOW.toString()));
+        for (String field : List.of("disruptionId", "demoRunId", "createdBy", "publishedBy", "sourceEvidence", "replacementId", "status", "version"))
+            response.andExpect(jsonPath("$.items[0]." + field).doesNotExist());
+    }
+
+    @Test
     void publicReadsExcludeDraftsWithdrawalsExpiredAndSyntheticNotices() {
         var live = source(false);
         var visible = draft(live, UUID.randomUUID(), MESSAGE); notices.publish(visible.id(), "controller");

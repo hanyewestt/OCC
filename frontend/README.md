@@ -36,6 +36,12 @@ Published notices can be corrected or withdrawn. A correction publishes immediat
 and replaces the old notice atomically; future start times are rejected. Failed
 publication or correction requests keep the current notice/draft available to retry.
 
+The anonymous `/notices` board retains its existing notices and last successful
+refresh time when a refresh fails. Retry reloads page zero for refresh errors or
+the failed later page for paging errors. The notice region supports keyboard
+scrolling, announces loading/results, and wraps long passenger content on narrow
+screens. Public reads and board timing configuration do not require staff sign-in.
+
 See the [app overview and route table](../README.md#pages-and-access) for page
 behavior and permissions. Setup, Vite development, builds, environment settings
 and test commands are in [the development guide](../docs/DEVELOPMENT.md).

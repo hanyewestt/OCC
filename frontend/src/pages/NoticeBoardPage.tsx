@@ -55,7 +55,9 @@ export function NoticeBoardPage() {
   const { requestRefresh } = usePageRefresh(refreshIntervalSeconds, collection.refresh, !configReady || collection.isLoading, collectionKey)
   const lastUpdated = collection.lastSuccessAt
   const loading = !configReady && !configError || collection.isLoading
-  const error = configError || (collection.error instanceof Error ? collection.error.message : collection.error !== null ? 'Service advisories are unavailable.' : '')
+  const error = configError || (!collection.items.length
+    ? collection.error instanceof Error ? collection.error.message : collection.error !== null ? 'Service advisories are unavailable.' : ''
+    : '')
   const retry = () => configError ? setConfigRetry(value => value + 1) : void requestRefresh()
 
   return <main className="min-h-svh bg-background text-foreground">
@@ -70,12 +72,17 @@ export function NoticeBoardPage() {
         <p className="text-sm text-muted-foreground">Approved notices about affected services and stops.</p>
       </div><Button variant="outline" disabled={loading} onClick={retry}>Refresh</Button></div>
       {classification === 'SIMULATION' && <p role="status" className="rounded-lg border bg-muted p-3 text-sm font-medium">Simulation · Demonstration notices</p>}
-      {loading && <p role="status" className="text-sm text-muted-foreground">Loading notices…</p>}
+      <p role="status" aria-atomic="true" className={loading ? 'text-sm text-muted-foreground' : 'sr-only'}>
+        {loading ? collection.items.length ? 'Refreshing notices…' : 'Loading notices…'
+          : !configError && collection.error === null && collection.latestPage ? `Service advisories loaded: ${collection.items.length}.` : ''}
+      </p>
       {error && <div role="alert" className="space-y-3 rounded-xl border p-5"><p>{error}</p><Button variant="outline" onClick={retry}>Try again</Button></div>}
       {!loading && !error && collection.latestPage && !collection.items.length && <Card><CardContent className="text-sm text-muted-foreground">No current service advisories.</CardContent></Card>}
-      {!!collection.items.length && <ScrollArea role="region" aria-label="Public service advisories" tabIndex={0} className="max-h-[34rem]"
-        viewportProps={{ onScroll: collection.onScroll }}><div className="grid gap-4 p-1 pr-3.5 md:grid-cols-2">{collection.items.map(notice => <Card key={notice.id} className="min-h-56">
-        <CardContent className="space-y-4">
+      {!!collection.items.length && <ScrollArea className="max-h-[34rem]"
+        viewportProps={{ role: 'region', 'aria-label': 'Public service advisories', tabIndex: 0,
+          'aria-busy': collection.isLoading || collection.isLoadingMore, onScroll: collection.onScroll }}>
+        <div className="grid gap-4 p-1 pr-3.5 md:grid-cols-2">{collection.items.map(notice => <Card key={notice.id} className="min-h-56 min-w-0">
+        <CardContent className="space-y-4 [overflow-wrap:anywhere]">
           <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground">{dataClassificationLabel(notice.classification)}</p>
             <h2 className="text-lg font-semibold">{notice.title}</h2></div>
           <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{notice.message}</p>
@@ -85,8 +92,8 @@ export function NoticeBoardPage() {
         </CardContent>
       </Card>)}</div></ScrollArea>}
       {collection.latestPage && collection.latestPage.totalItems > collection.items.length && <p className="text-xs text-muted-foreground">Showing {collection.items.length} of {collection.latestPage.totalItems} notices.</p>}
-      <PagedCollectionControls label="service advisories" hasItems={!!collection.items.length} hasMore={collection.hasMore}
-        isLoadingMore={collection.isLoadingMore} error={collection.error} refreshError={collection.refreshError} reload={collection.reload} loadNext={collection.loadNext} />
+      {!!collection.items.length && <PagedCollectionControls label="service advisories" hasItems hasMore={collection.hasMore}
+        isLoadingMore={collection.isLoadingMore} error={collection.error} refreshError={collection.refreshError} reload={retry} loadNext={collection.loadNext} />}
     </div>
   </main>
 }
