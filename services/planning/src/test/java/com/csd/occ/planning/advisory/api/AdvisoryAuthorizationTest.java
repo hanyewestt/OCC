@@ -49,6 +49,49 @@ class AdvisoryAuthorizationTest {
     @MockitoBean IssuedInstructionRepository issuedInstructions;
 
     @Test
+    void controllersAndAdminsSaveReviewedDraftsWithOnlyTheVerifiedActor() {
+        UUID id = UUID.randomUUID();
+        UUID sourceId = UUID.randomUUID();
+        Instant from = Instant.parse("2026-10-31T04:00:00Z");
+        Instant until = from.plusSeconds(3600);
+        var notice = mock(PublicNotice.class);
+        when(notice.id()).thenReturn(id);
+        when(notice.status()).thenReturn("DRAFT");
+        when(notices.draft(id, sourceId, "Flood update", "Use caution.", List.of("190"), List.of("School"),
+                from, until, "verified-controller")).thenReturn(notice);
+        String body = """
+                {"id":"%s","disruptionId":"%s","title":"Flood update","message":"Use caution.",
+                "services":["190"],"locations":["School"],"effectiveFrom":"%s","effectiveUntil":"%s"}
+                """.formatted(id, sourceId, from, until);
+        for (String role : List.of("CONTROLLER", "ADMIN")) {
+            assertThat(mvc.post().uri("/api/v1/planning/notices")
+                    .with(jwt().jwt(token -> token.subject("verified-controller"))
+                            .authorities(new SimpleGrantedAuthority("ROLE_" + role)))
+                    .header("X-Actor-Subject", "forged-controller").contentType(MediaType.APPLICATION_JSON).content(body).exchange())
+                    .hasStatusOk().bodyJson().extractingPath("$.status").isEqualTo("DRAFT");
+        }
+        verify(notices, times(2)).draft(id, sourceId, "Flood update", "Use caution.", List.of("190"), List.of("School"),
+                from, until, "verified-controller");
+        verify(notices, never()).publish(any(), any());
+    }
+
+    @Test
+    void invalidDraftFieldsReturnValidationProblemsWithoutSaving() {
+        String valid = """
+                {"id":"%s","disruptionId":"%s","title":"Flood update","message":"Use caution.",
+                "services":["190"],"locations":["School"],"effectiveFrom":"2026-10-31T04:00:00Z","effectiveUntil":"2026-10-31T05:00:00Z"}
+                """.formatted(UUID.randomUUID(), UUID.randomUUID());
+        for (String body : List.of(valid.replace("Flood update", " "), valid.replace("Use caution.", "x".repeat(2001)),
+                valid.replace("[\"190\"]", "null"), valid.replace("[\"School\"]", "[\"\"]"))) {
+            assertThat(mvc.post().uri("/api/v1/planning/notices")
+                    .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                    .contentType(MediaType.APPLICATION_JSON).content(body).exchange())
+                    .hasStatus(400).bodyJson().extractingPath("$.type").isEqualTo("urn:occ:problem:request-validation");
+        }
+        verifyNoInteractions(notices);
+    }
+
+    @Test
     void anonymousVisitorsCanReadPublishedNoticesButCannotManageThem() {
         when(notices.current("OBSERVATION_ONLY", null, 0, 20)).thenReturn(Page.empty());
         UUID sourceId = UUID.randomUUID();

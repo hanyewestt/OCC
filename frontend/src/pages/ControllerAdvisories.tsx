@@ -348,6 +348,10 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
         const body = { id: draft.id, disruptionId: draft.disruptionId, title: draft.title, message: draft.message,
           services: draft.services.split(',').map(s => s.trim()).filter(Boolean), locations: draft.locations.split(',').map(s => s.trim()).filter(Boolean),
           effectiveFrom: sgtDateTimeInputToUtc(draft.from), effectiveUntil: sgtDateTimeInputToUtc(draft.until) }
+        if (body.effectiveUntil <= body.effectiveFrom) {
+          setActionError('Expiry must be after the start time.')
+          return
+        }
         setNoticeSaving(true)
         void submit(draft.previousId ? `/api/v1/planning/notices/${draft.previousId}/replacements` : '/api/v1/planning/notices', body)
           .then(saved => { if (saved) updateDraft(null) }).finally(() => setNoticeSaving(false))
@@ -355,8 +359,12 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
         {actionError && <p role="alert" className="text-sm text-destructive">{actionError}</p>}
         <div className="space-y-2"><Label htmlFor="notice-source">Source hazard</Label><select id="notice-source" required className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={draft.disruptionId} disabled={!!draft.previousId} onChange={e => {
           const source = hazards.items.find(h => h.disruptionId === e.target.value)
-          updateDraft({ ...draft, disruptionId: e.target.value, title: source?.facts.title ?? '', message: [source?.facts.description, source?.facts.instruction].filter(Boolean).join('\n') })
-        }}><option value="">Select a hazard</option>{hazards.items.map(h => <option key={h.disruptionId} value={h.disruptionId}>{h.facts.title} · {dataClassificationLabel(h.classification)}</option>)}</select>
+          setActionError('')
+          updateDraft({ ...draft, disruptionId: e.target.value, title: source?.facts.title ?? '', message: [source?.facts.description, source?.facts.instruction].filter(Boolean).join('\n'),
+            services: '', locations: '', from: '', until: '' })
+        }}><option value="">Select a hazard</option>
+        {draft.disruptionId && !hazards.items.some(h => h.disruptionId === draft.disruptionId) && <option value={draft.disruptionId}>Saved notice source</option>}
+        {hazards.items.map(h => <option key={h.disruptionId} value={h.disruptionId}>{h.facts.title} · {dataClassificationLabel(h.classification)}</option>)}</select>
         <PagedCollectionControls label="source hazards" hasItems={!!hazards.items.length} hasMore={hazards.hasMore}
           isLoadingMore={hazards.isLoadingMore} error={hazards.error} refreshError={hazards.refreshError} reload={hazards.reload} loadNext={hazards.loadNext} /></div>
         <Button type="button" variant="outline" disabled={pending || !draft.disruptionId || hazards.items.find(h => h.disruptionId === draft.disruptionId)?.status === 'CLEARED'} onClick={() => void suggestNotice()}>Suggest passenger wording</Button>
@@ -375,7 +383,9 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       {!!notices.items.length && <ScrollArea role="region" aria-label="Managed notices" tabIndex={0} className="max-h-[32rem]"
         viewportProps={{ onScroll: notices.onScroll }}><div className="space-y-3 p-1 pr-3.5">{notices.items.map(n => <Card key={n.id} className="min-h-28"><CardContent className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-medium">{n.title}</h4><p className="text-xs text-muted-foreground">{dataClassificationLabel(n.classification)} · {n.status}</p></div><p className="whitespace-pre-wrap text-sm">{n.message}</p>
-          <div className="flex flex-wrap gap-2">{n.status === 'DRAFT' && <Button disabled={pending} onClick={() => void submit(`/api/v1/planning/notices/${n.id}/publications`)}>Publish notice</Button>}
+          <div className="flex flex-wrap gap-2">{n.status === 'DRAFT' && <><Button disabled={pending} onClick={() => void submit(`/api/v1/planning/notices/${n.id}/publications`)}>Publish notice</Button>
+            <Button variant="outline" disabled={pending} onClick={() => openDraft({ id: crypto.randomUUID(), disruptionId: n.disruptionId, title: n.title, message: n.message,
+              services: n.services.join(', '), locations: n.locations.join(', '), from: '', until: '' })}>Copy to new draft</Button></>}
             {n.status === 'PUBLISHED' && <><Button variant="outline" disabled={pending} onClick={() => void submit(`/api/v1/planning/notices/${n.id}/withdrawals`)}>Withdraw notice</Button>
               <Button variant="outline" disabled={pending} onClick={() => openDraft({ id: crypto.randomUUID(), previousId: n.id, disruptionId: n.disruptionId, title: n.title, message: n.message, services: n.services.join(', '), locations: n.locations.join(', '), from: '', until: '' })}>Correct notice</Button></>}
             {n.classification === 'SIMULATION' && n.demoRunId && <Button asChild variant="outline"><Link target="_blank" rel="noreferrer" to={`/notices?classification=SIMULATION&demoRunId=${encodeURIComponent(n.demoRunId)}`}>Preview simulation board</Link></Button>}
