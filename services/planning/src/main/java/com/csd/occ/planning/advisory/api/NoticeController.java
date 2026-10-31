@@ -92,6 +92,7 @@ public class NoticeController {
     @io.swagger.v3.oas.annotations.security.SecurityRequirements
     @Operation(operationId = "listPublishedNotices", summary = "Read current approved passenger notices anonymously",
             description = "No authentication required. Default OBSERVATION_ONLY excludes all synthetic notices. SIMULATION requires demoRunId. "
+                    + "Explicit run previews remain available after run closure until the notice expires or is withdrawn; they never appear in Live or another run. "
                     + "Only published notices within [effectiveFrom,effectiveUntil) appear. page defaults 0; size defaults 20 (1–100).")
     @ApiResponse(responseCode = "200", description = "Approved current passenger-facing notices", content = @Content(mediaType = "application/json", schema = @Schema(implementation = PublishedNoticeResponse.PageResponse.class)))
     @ApiResponse(responseCode = "400", description = "Invalid classification, run scope or pagination", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = org.springframework.http.ProblemDetail.class)))

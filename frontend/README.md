@@ -41,6 +41,13 @@ refresh time when a refresh fails. Retry reloads page zero for refresh errors or
 the failed later page for paging errors. The notice region supports keyboard
 scrolling, announces loading/results, and wraps long passenger content on narrow
 screens. Public reads and board timing configuration do not require staff sign-in.
+The default board is explicitly Live. Simulation previews require a valid run ID
+and carry a demonstration label; changing scopes clears prior content and ignores
+late responses. Invalid scopes offer a link back to Live rather than falling back
+silently. Closed-run previews remain scoped demonstrations until expiry/withdrawal.
+Controller notice history includes all scopes and identifies each simulation run.
+Copied drafts show their original scope, expired drafts cannot be published, and
+correction scheduling is prefilled in SGT independently of the browser timezone.
 
 See the [app overview and route table](../README.md#pages-and-access) for page
 behavior and permissions. Setup, Vite development, builds, environment settings

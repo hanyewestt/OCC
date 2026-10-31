@@ -616,6 +616,44 @@ class AdvisoryPersistenceIT {
     }
 
     @Test
+    void closedRunPreviewsStayIsolatedFromLiveAndOtherRunsUntilExpiryOrWithdrawal() {
+        var first = draft(hazard, UUID.randomUUID(), "Run A demonstration");
+        notices.publish(first.id(), "controller");
+        var liveSource = source(false);
+        var live = draft(liveSource, UUID.randomUUID(), "Live passenger notice");
+        notices.publish(live.id(), "controller");
+        var another = source(true);
+        UUID otherRun = UUID.randomUUID();
+        var otherSource = new AdvisoryContextPort.Hazard(another.disruptionId(), another.kind(), another.status(), null,
+                "SIMULATION", otherRun, another.sourceObservationId(), NOW, another.facts(), another.exposures(), another.limitations());
+        sources.put(otherSource.disruptionId(), otherSource);
+        var second = draft(otherSource, UUID.randomUUID(), "Run B demonstration");
+        notices.publish(second.id(), "controller");
+
+        reconciliation.runClosed(run);
+        assertThat(notices.current("OBSERVATION_ONLY", null, 0, 20).getContent())
+                .extracting(PublicNotice::id).containsExactly(live.id());
+        assertThat(notices.current("SIMULATION", run, 0, 20).getContent())
+                .extracting(PublicNotice::id).containsExactly(first.id());
+        assertThat(notices.current("SIMULATION", otherRun, 0, 20).getContent())
+                .extracting(PublicNotice::id).containsExactly(second.id());
+        notices.withdraw(first.id());
+        assertThat(notices.current("SIMULATION", run, 0, 20)).isEmpty();
+        assertThat(notices.current("SIMULATION", otherRun, 0, 20).getContent())
+                .extracting(PublicNotice::id).containsExactly(second.id());
+    }
+
+    @Test
+    void anonymousScopeErrorsNeverFallBackToAnotherNoticeScope() throws Exception {
+        for (String query : List.of("classification=LIVE", "classification=SIMULATION", "classification=SIMULATION&demoRunId=bad-id",
+                "classification=OBSERVATION_ONLY&demoRunId=" + run)) {
+            mvc.perform(get("/api/v1/planning/public/notices?" + query))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(content().contentTypeCompatibleWith("application/problem+json"));
+        }
+    }
+
+    @Test
     void anonymousPublicResponseContainsPassengerContentWithoutManagementMetadata() throws Exception {
         var live = source(false);
         var visible = draft(live, UUID.randomUUID(), MESSAGE);
