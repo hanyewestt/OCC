@@ -2,8 +2,8 @@ package com.csd.occ.planning.advisory.domain;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
-import java.util.Objects;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -29,7 +29,7 @@ public class PublicNoticeService {
             List<String> locations, Instant from, Instant until, String actor) {
         if (id == null || disruptionId == null || title == null || title.isBlank() || title.length() > 160
                 || message == null || message.isBlank() || message.length() > 2000 || from == null || until == null
-                || !until.isAfter(from) || !until.isAfter(clock.instant()) || services == null || locations == null
+                || !until.isAfter(from) || services == null || locations == null
                 || services.size() > 100 || locations.size() > 100
                 || java.util.stream.Stream.concat(services.stream(), locations.stream()).anyMatch(v -> v == null || v.isBlank() || v.length() > 250))
             throw new IllegalArgumentException("Valid notice content and validity interval required");
@@ -41,6 +41,7 @@ public class PublicNoticeService {
                     && n.effectiveFrom().equals(from) && n.effectiveUntil().equals(until)) return n;
             throw new AdvisoryConflictException("Notice identity already has different content");
         }
+        if (!until.isAfter(clock.instant())) throw new IllegalArgumentException("Notice validity must not have expired");
         var hazard = context.hazard(disruptionId);
         if ("CLEARED".equals(hazard.status())) throw new AdvisoryConflictException("Source is no longer current");
         if (hazard.facts().effectiveUntil() != null && until.isAfter(hazard.facts().effectiveUntil()))
@@ -55,12 +56,12 @@ public class PublicNoticeService {
         var notice = notices.findForUpdate(id).orElseThrow(AdvisoryNotFoundException::new);
         if ("PUBLISHED".equals(notice.status())) return notice;
         validatePublicationSource(notice);
-        notice.publish(actor, clock.instant()); return notice;
+        notice.publish(actor, clock.instant().truncatedTo(ChronoUnit.MICROS)); return notice;
     }
     @Transactional
     public PublicNotice withdraw(UUID id) {
         var notice = notices.findForUpdate(id).orElseThrow(AdvisoryNotFoundException::new);
-        notice.withdraw(clock.instant()); return notice;
+        notice.withdraw(clock.instant().truncatedTo(ChronoUnit.MICROS)); return notice;
     }
     @Transactional
     public PublicNotice replace(UUID previousId, UUID nextId, UUID disruptionId, String title, String message,
@@ -68,13 +69,20 @@ public class PublicNoticeService {
         var previous = notices.findForUpdate(previousId).orElseThrow(AdvisoryNotFoundException::new);
         if (previousId.equals(nextId) || !previous.disruptionId().equals(disruptionId))
             throw new IllegalArgumentException("Replacement needs a new identity and the same source");
-        if (previous.replacementId() != null && !previous.replacementId().equals(nextId))
-            throw new AdvisoryConflictException("Notice has already been replaced");
-        if (!"PUBLISHED".equals(previous.status()) && !Objects.equals(previous.replacementId(), nextId))
+        if (previous.replacementId() != null) {
+            if (!previous.replacementId().equals(nextId)) throw new AdvisoryConflictException("Notice has already been replaced");
+            // A retry must not revalidate changed source facts or resurrect a withdrawn correction.
+            return draft(nextId, disruptionId, title, message, services, locations, from, until, actor);
+        }
+        if (!"PUBLISHED".equals(previous.status()))
             throw new AdvisoryConflictException("Only a published notice can be replaced");
+        if (from == null || from.isAfter(clock.instant()))
+            throw new IllegalArgumentException("A correction must take effect immediately");
         var replacement = draft(nextId, disruptionId, title, message, services, locations, from, until, actor);
+        if (!"DRAFT".equals(replacement.status())) throw new AdvisoryConflictException("Replacement must be an unpublished draft");
         validatePublicationSource(replacement);
-        replacement.publish(actor, clock.instant()); previous.replace(nextId, clock.instant()); return replacement;
+        Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+        replacement.publish(actor, now); previous.replace(nextId, now); return replacement;
     }
     public Page<PublicNotice> managed(int page, int size) { validatePage(page, size); return notices.findAllByOrderByCreatedAtDesc(PageRequest.of(page, size)); }
     public Page<PublicNotice> current(String classification, UUID runId, int page, int size) {

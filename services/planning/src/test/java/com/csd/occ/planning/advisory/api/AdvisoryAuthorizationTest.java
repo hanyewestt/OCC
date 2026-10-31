@@ -100,6 +100,9 @@ class AdvisoryAuthorizationTest {
         assertThat(mvc.post().uri("/api/v1/planning/notices").contentType(MediaType.APPLICATION_JSON).content("{}").exchange())
                 .hasStatus(401);
         assertThat(mvc.post().uri("/api/v1/planning/notices/{id}/publications", UUID.randomUUID()).exchange()).hasStatus(401);
+        assertThat(mvc.post().uri("/api/v1/planning/notices/{id}/withdrawals", UUID.randomUUID()).exchange()).hasStatus(401);
+        assertThat(mvc.post().uri("/api/v1/planning/notices/{id}/replacements", UUID.randomUUID())
+                .contentType(MediaType.APPLICATION_JSON).content("{}").exchange()).hasStatus(401);
         assertThat(mvc.post().uri("/api/v1/planning/notices/{id}/suggestions", sourceId).exchange()).hasStatus(401);
         verify(notices, never()).publish(any(), any());
     }
@@ -116,6 +119,10 @@ class AdvisoryAuthorizationTest {
                     .contentType(MediaType.APPLICATION_JSON).content("{}").exchange()).hasStatus(403);
             assertThat(mvc.post().uri("/api/v1/planning/notices/{id}/publications", UUID.randomUUID())
                     .with(principal).exchange()).hasStatus(403);
+            assertThat(mvc.post().uri("/api/v1/planning/notices/{id}/withdrawals", UUID.randomUUID())
+                    .with(principal).exchange()).hasStatus(403);
+            assertThat(mvc.post().uri("/api/v1/planning/notices/{id}/replacements", UUID.randomUUID())
+                    .with(principal).contentType(MediaType.APPLICATION_JSON).content("{}").exchange()).hasStatus(403);
             assertThat(mvc.post().uri("/api/v1/planning/notices/{id}/suggestions", sourceId)
                     .with(principal).exchange()).hasStatus(403);
         }
@@ -144,6 +151,38 @@ class AdvisoryAuthorizationTest {
         }
         verify(instructions, times(2)).proposals(0, 20, true);
         verify(instructions, never()).acknowledge(any(), any());
+    }
+
+    @Test
+    void controllersAndAdminsCanPublishReplaceAndWithdrawUsingVerifiedSubjects() {
+        UUID previous = UUID.randomUUID();
+        UUID next = UUID.randomUUID();
+        UUID source = UUID.randomUUID();
+        Instant from = Instant.parse("2026-10-31T04:00:00Z");
+        Instant until = from.plusSeconds(3600);
+        var notice = mock(PublicNotice.class);
+        when(notice.id()).thenReturn(next);
+        when(notices.publish(previous, "verified-controller")).thenReturn(notice);
+        when(notices.withdraw(previous)).thenReturn(notice);
+        when(notices.replace(previous, next, source, "Correction", "Reviewed message", List.of(), List.of(), from, until,
+                "verified-controller")).thenReturn(notice);
+        String body = """
+                {"id":"%s","disruptionId":"%s","title":"Correction","message":"Reviewed message",
+                "services":[],"locations":[],"effectiveFrom":"%s","effectiveUntil":"%s"}
+                """.formatted(next, source, from, until);
+        for (String role : List.of("CONTROLLER", "ADMIN")) {
+            var principal = jwt().jwt(token -> token.subject("verified-controller"))
+                    .authorities(new SimpleGrantedAuthority("ROLE_" + role));
+            for (String action : List.of("publications", "withdrawals", "replacements")) {
+                assertThat(mvc.post().uri("/api/v1/planning/notices/{id}/" + action, previous)
+                        .with(principal).header("X-Actor-Subject", "forged-controller")
+                        .contentType(MediaType.APPLICATION_JSON).content(body).exchange()).hasStatusOk();
+            }
+        }
+        verify(notices, times(2)).publish(previous, "verified-controller");
+        verify(notices, times(2)).replace(previous, next, source, "Correction", "Reviewed message", List.of(), List.of(), from, until,
+                "verified-controller");
+        verify(notices, times(2)).withdraw(previous);
     }
 
     @Test

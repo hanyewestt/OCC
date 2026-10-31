@@ -169,6 +169,60 @@ class PublicNoticeServiceTest {
     }
 
     @Test
+    void lifecycleResponsesUseTheSameMicrosecondPrecisionAsPostgres() {
+        var notice = draft(UUID.randomUUID());
+        when(notices.findForUpdate(notice.id())).thenReturn(Optional.of(notice));
+        when(context.hazard(disruptionId)).thenReturn(hazard("ACTIVE", null, NOW.plusSeconds(3600)));
+        var precise = new PublicNoticeService(notices, context, drafts,
+                Clock.fixed(NOW.plusNanos(123456789), ZoneOffset.UTC));
+        assertThat(precise.publish(notice.id(), "controller").publishedAt()).isEqualTo(NOW.plusNanos(123456000));
+        assertThat(precise.withdraw(notice.id()).withdrawnAt()).isEqualTo(NOW.plusNanos(123456000));
+    }
+
+    @Test
+    void correctionReplayAfterExpiryAndWithdrawalDoesNotRevalidateOrRepublish() {
+        var previous = draft(UUID.randomUUID());
+        var next = draft(UUID.randomUUID());
+        previous.publish("first-controller", NOW.minusSeconds(30));
+        next.publish("correcting-controller", NOW);
+        previous.replace(next.id(), NOW);
+        next.withdraw(NOW.plusSeconds(1));
+        when(notices.findForUpdate(previous.id())).thenReturn(Optional.of(previous));
+        when(notices.findById(next.id())).thenReturn(Optional.of(next));
+        var later = new PublicNoticeService(notices, context, drafts, Clock.fixed(NOW.plusSeconds(3600), ZoneOffset.UTC));
+        var replay = later.replace(previous.id(), next.id(), disruptionId, next.title(), next.message(), next.services(),
+                next.locations(), next.effectiveFrom(), next.effectiveUntil(), "another-controller");
+        assertThat(replay).isSameAs(next);
+        assertThat(replay.status()).isEqualTo("WITHDRAWN");
+        assertThat(replay.publishedAt()).isEqualTo(NOW);
+        assertThat(replay.withdrawnAt()).isEqualTo(NOW.plusSeconds(1));
+        assertThatThrownBy(() -> later.replace(previous.id(), next.id(), disruptionId, "Different content", next.message(),
+                next.services(), next.locations(), next.effectiveFrom(), next.effectiveUntil(), "controller"))
+                .isInstanceOf(AdvisoryConflictException.class);
+        verifyNoInteractions(context, drafts);
+        verify(notices, never()).save(any());
+    }
+
+    @Test
+    void futureCorrectionsAndExistingPublicationsCannotReplaceCurrentContent() {
+        var previous = draft(UUID.randomUUID());
+        previous.publish("controller", NOW.minusSeconds(30));
+        when(notices.findForUpdate(previous.id())).thenReturn(Optional.of(previous));
+        assertThatThrownBy(() -> service.replace(previous.id(), UUID.randomUUID(), disruptionId, "Correction", "Message",
+                List.of(), List.of(), NOW.plusSeconds(1), NOW.plusSeconds(60), "controller"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("immediately");
+        var next = draft(UUID.randomUUID());
+        next.publish("controller", NOW.minusSeconds(20));
+        when(notices.findById(next.id())).thenReturn(Optional.of(next));
+        assertThatThrownBy(() -> service.replace(previous.id(), next.id(), disruptionId, next.title(), next.message(),
+                next.services(), next.locations(), next.effectiveFrom(), next.effectiveUntil(), "controller"))
+                .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("unpublished draft");
+        assertThat(previous.status()).isEqualTo("PUBLISHED");
+        assertThat(previous.replacementId()).isNull();
+        verifyNoInteractions(context);
+    }
+
+    @Test
     void simulationReadsRequireExplicitRunScopeAndCannotMixIntoDefaultReads() {
         assertThatThrownBy(() -> service.current("SIMULATION", null, 0, 20)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> service.current("OBSERVATION_ONLY", UUID.randomUUID(), 0, 20))

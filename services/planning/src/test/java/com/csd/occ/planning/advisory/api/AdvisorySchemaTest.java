@@ -22,7 +22,8 @@ class AdvisorySchemaTest {
     @Test
     void protectedOperationsDeclareBearerSecurityAndProblemDetailsForRuntimeErrors() throws Exception {
         assertThat(AdvisoryController.class.getAnnotation(SecurityRequirement.class).name()).isEqualTo("SupabaseJWT");
-        assertThat(NoticeController.class.getAnnotation(SecurityRequirement.class).name()).isEqualTo("SupabaseJWT");
+        assertThat(NoticeController.class.getMethod("list", int.class, int.class)
+                .getAnnotation(SecurityRequirement.class).name()).isEqualTo("SupabaseJWT");
         assertThat(BunchingInstructionController.class.getAnnotation(SecurityRequirement.class).name()).isEqualTo("SupabaseJWT");
         assertThat(NoticeController.class.getMethod("published", String.class, java.util.UUID.class, int.class, int.class)
                 .getAnnotation(SecurityRequirements.class)).isNotNull();

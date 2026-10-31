@@ -197,6 +197,15 @@ Public notice drafts and publication history are controller-only at
 simulation notices. A simulation board requires an explicit `demoRunId` and is
 labelled as demonstration content. Published notices are immutable; corrections
 publish a replacement and withdraw the previous notice in one transaction.
+Corrections must be effective immediately (`effectiveFrom` at or before server
+time) and unexpired, so replacement never creates a gap in public visibility.
+Identical correction retries return the stored correction even after expiry,
+withdrawal or source changes; they cannot republish it. Different content under
+the same identity or a competing correction returns `409`. Publishing and
+withdrawing retain their original timestamps on retries; withdrawn notices
+cannot be published again.
+Lifecycle timestamps use PostgreSQL microsecond precision so the first response
+and subsequent reads/retries return the same instant.
 Controllers can request source-fact or configured Gemini wording suggestions at
 `POST /api/v1/planning/notices/{disruptionId}/suggestions`. Suggestions only
 populate editable text and affected services/locations; they are never saved or

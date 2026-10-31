@@ -1814,6 +1814,98 @@ test('failed notice suggestions preserve manual wording and allow retry without 
   expect(writes).toBe(0)
 })
 
+test('controller publishes corrects and withdraws notices while the public board follows each saved change', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const disruptionId = '00000000-0000-4000-8000-000000000306'
+  const from = new Date(Date.now() + 8 * 3600_000 - 60_000).toISOString().slice(0, 16)
+  const until = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 16)
+  let items: Record<string, unknown>[] = []
+  let failPublication = true
+  let failCorrection = true
+  let corrections = 0
+  await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: { items: [{
+    disruptionId, kind: 'FLOOD', status: 'ACTIVE', classification: 'OBSERVATION_ONLY', demoRunId: null,
+    updatedAt: new Date().toISOString(), facts: { title: 'Flood report', description: 'Water reported.', instruction: null, effectiveUntil: null },
+    exposures: [], limitations: [],
+  }], page: 0, size: 100, totalElements: 1, feeds: [] } }))
+  await context.route('**/api/v1/planning/notices?*', route => route.fulfill({ json: { items, page: 0, totalItems: items.length, totalPages: 1 } }))
+  await context.route('**/api/v1/planning/notices', route => {
+    const saved = { ...route.request().postDataJSON(), classification: 'OBSERVATION_ONLY', demoRunId: null, status: 'DRAFT' }
+    items.push(saved)
+    return route.fulfill({ json: saved })
+  })
+  await context.route('**/api/v1/planning/notices/*/publications', route => {
+    if (failPublication) return route.fulfill({ status: 503, json: { detail: 'Publication temporarily unavailable.' } })
+    items[0] = { ...items[0], status: 'PUBLISHED', publishedAt: new Date().toISOString() }
+    return route.fulfill({ json: items[0] })
+  })
+  await context.route('**/api/v1/planning/notices/*/replacements', route => {
+    corrections++
+    if (failCorrection) return route.fulfill({ status: 409, json: { detail: 'Source changed; review the correction before retrying.' } })
+    const corrected = { ...route.request().postDataJSON(), classification: 'OBSERVATION_ONLY', demoRunId: null,
+      status: 'PUBLISHED', publishedAt: new Date().toISOString() }
+    items = [{ ...items[0], status: 'WITHDRAWN' }, corrected]
+    return route.fulfill({ json: corrected })
+  })
+  await context.route('**/api/v1/planning/notices/*/withdrawals', route => {
+    const id = new URL(route.request().url()).pathname.split('/').at(-2)
+    items = items.map(item => item.id === id ? { ...item, status: 'WITHDRAWN' } : item)
+    return route.fulfill({ json: items.find(item => item.id === id) })
+  })
+  await context.route('**/api/v1/planning/public/notices?*', route => {
+    expect(route.request().headers().authorization).toBeUndefined()
+    const visible = items.filter(item => item.status === 'PUBLISHED')
+    return route.fulfill({ json: { items: visible, page: 0, totalItems: visible.length, totalPages: 1 } })
+  })
+  await login(page)
+  await page.goto('/controller/notices')
+  await page.getByRole('button', { name: 'Draft notice', exact: true }).click()
+  const draft = page.getByRole('dialog', { name: 'New notice draft', exact: true })
+  await draft.getByLabel('Source hazard', { exact: true }).selectOption(disruptionId)
+  await draft.getByLabel('Title', { exact: true }).fill('Original passenger notice')
+  await draft.getByLabel('Starts (SGT)', { exact: true }).fill(from)
+  await draft.getByLabel('Expires (SGT)', { exact: true }).fill(until)
+  await draft.getByRole('button', { name: 'Save draft', exact: true }).click()
+  await expect(draft).toHaveCount(0)
+  const board = await context.newPage()
+  await board.goto('/notices')
+  await expect(board.getByText('No current service advisories.', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Publish notice', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Publication temporarily unavailable.')
+  expect(items[0].status).toBe('DRAFT')
+  failPublication = false
+  await page.getByRole('button', { name: 'Publish notice', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Correct notice', exact: true })).toBeVisible()
+  await board.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(board.getByRole('heading', { name: 'Original passenger notice', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Correct notice', exact: true }).click()
+  const correction = page.getByRole('dialog', { name: 'Publish a correction', exact: true })
+  await expect(correction.getByLabel('Source hazard', { exact: true })).toBeDisabled()
+  await correction.getByLabel('Title', { exact: true }).fill('Corrected passenger notice')
+  await correction.getByLabel('Starts (SGT)', { exact: true }).fill('2039-01-01T15:00')
+  await correction.getByLabel('Expires (SGT)', { exact: true }).fill('2040-01-01T15:00')
+  await correction.getByRole('button', { name: 'Publish correction', exact: true }).click()
+  await expect(correction.getByRole('alert')).toContainText('A correction must take effect immediately.')
+  expect(corrections).toBe(0)
+  await correction.getByLabel('Starts (SGT)', { exact: true }).fill(from)
+  await correction.getByLabel('Expires (SGT)', { exact: true }).fill(until)
+  await correction.getByRole('button', { name: 'Publish correction', exact: true }).click()
+  await expect(correction.getByRole('alert')).toContainText('Source changed; review the correction before retrying.')
+  await expect(correction.getByLabel('Title', { exact: true })).toHaveValue('Corrected passenger notice')
+  expect(items[0].status).toBe('PUBLISHED')
+  failCorrection = false
+  await correction.getByRole('button', { name: 'Publish correction', exact: true }).click()
+  await expect(correction).toHaveCount(0)
+  await board.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(board.getByRole('heading', { name: 'Corrected passenger notice', exact: true })).toBeVisible()
+  await expect(board.getByRole('heading', { name: 'Original passenger notice', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Withdraw notice', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Withdraw notice', exact: true })).toHaveCount(0)
+  await board.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(board.getByText('No current service advisories.', { exact: true })).toBeVisible()
+  await board.close()
+})
+
 test('controller repairs a saved notice by copying it into a separate draft', async ({ page, context }) => {
   await mockAuth(context, 'CONTROLLER')
   const original = { id: '00000000-0000-4000-8000-000000000304', disruptionId: '00000000-0000-4000-8000-000000000305',

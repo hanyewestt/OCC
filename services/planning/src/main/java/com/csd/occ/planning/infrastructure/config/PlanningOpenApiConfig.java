@@ -29,8 +29,11 @@ public class PlanningOpenApiConfig {
     GroupedOpenApi publicPlanningApi() {
         return GroupedOpenApi.builder().group("planning")
                 .pathsToMatch("/api/v1/planning/**")
-                .addOpenApiCustomizer(openApi -> openApi.addSecurityItem(
-                        new SecurityRequirement().addList("SupabaseJWT")))
+                .addOpenApiCustomizer(openApi -> {
+                    openApi.addSecurityItem(new SecurityRequirement().addList("SupabaseJWT"));
+                    // This operation is anonymous even when the group has a bearer default.
+                    openApi.getPaths().get("/api/v1/planning/public/notices").getGet().setSecurity(java.util.List.of());
+                })
                 .build();
     }
 
