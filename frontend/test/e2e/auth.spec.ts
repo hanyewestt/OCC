@@ -1906,6 +1906,60 @@ test('controller publishes corrects and withdraws notices while the public board
   await board.close()
 })
 
+test('notice history identifies each scope and copied simulation drafts keep their original run', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const runA = '00000000-0000-4000-8000-000000000401'
+  const runB = '00000000-0000-4000-8000-000000000402'
+  const base = { message: 'Reviewed passenger advice.', services: ['190'], locations: ['Example Stop'],
+    effectiveFrom: new Date(Date.now() - 3600_000).toISOString(), effectiveUntil: new Date(Date.now() + 3600_000).toISOString(),
+    publishedAt: null, withdrawnAt: null }
+  const items = [
+    { ...base, id: 'live-notice', disruptionId: 'live-source', title: 'Live notice history', classification: 'OBSERVATION_ONLY', demoRunId: null, status: 'PUBLISHED' },
+    { ...base, id: 'run-a-notice', disruptionId: 'run-a-source', title: 'Run A draft history', classification: 'SIMULATION', demoRunId: runA, status: 'DRAFT' },
+    { ...base, id: 'run-b-notice', disruptionId: 'run-b-source', title: 'Expired Run B draft', classification: 'SIMULATION', demoRunId: runB,
+      effectiveUntil: new Date(Date.now() - 60_000).toISOString(), status: 'DRAFT' },
+  ]
+  await context.route('**/api/v1/planning/notices?*', route => route.fulfill({ json: { items, page: 0, totalItems: items.length, totalPages: 1 } }))
+  await login(page)
+  await page.goto('/controller/notices')
+  await expect(page.getByText('History includes Live notices and all Simulation runs. Copies keep their original source scope.', { exact: true })).toBeVisible()
+  const history = page.getByRole('region', { name: 'Managed notices', exact: true })
+  const runARecord = history.locator('[data-slot="card"]').filter({ has: page.getByRole('heading', { name: 'Run A draft history', exact: true }) })
+  const runBRecord = history.locator('[data-slot="card"]').filter({ has: page.getByRole('heading', { name: 'Expired Run B draft', exact: true }) })
+  await expect(runARecord.getByText(`Simulation run: ${runA}`, { exact: true })).toBeVisible()
+  await expect(runARecord.getByRole('link', { name: 'Preview simulation board', exact: true })).toHaveAttribute('href', `/notices?classification=SIMULATION&demoRunId=${runA}`)
+  await expect(runBRecord.getByRole('link', { name: 'Preview simulation board', exact: true })).toHaveAttribute('href', `/notices?classification=SIMULATION&demoRunId=${runB}`)
+  await expect(runBRecord.getByText('Simulation · Draft · Expired', { exact: true })).toBeVisible()
+  await expect(runBRecord.getByRole('button', { name: 'Publish notice', exact: true })).toBeDisabled()
+  await expect(runBRecord.getByRole('button', { name: 'Copy to new draft', exact: true })).toBeEnabled()
+  await runARecord.getByRole('button', { name: 'Copy to new draft', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'New notice draft', exact: true })
+  await expect(editor.getByLabel('Notice scope')).toContainText(`Notice scope: Simulation · Run ${runA}`)
+})
+
+test.describe('SGT correction scheduling', () => {
+  test.use({ timezoneId: 'America/New_York' })
+  test('notice corrections prefill immediate SGT start and preserve an unexpired end time', async ({ page, context }) => {
+    await mockAuth(context, 'CONTROLLER')
+    await context.route('**/api/v1/planning/notices?*', route => route.fulfill({ json: {
+      items: [{ id: 'scheduled-notice', disruptionId: 'source-hazard', title: 'Scheduled passenger update', message: 'Passenger advice.',
+        services: ['190'], locations: [], classification: 'OBSERVATION_ONLY', demoRunId: null, status: 'PUBLISHED',
+        effectiveFrom: '2030-01-01T15:00:00Z', effectiveUntil: '2030-01-01T16:05:00Z', publishedAt: '2026-10-31T04:00:00Z', withdrawnAt: null }],
+      page: 0, totalItems: 1, totalPages: 1,
+    } }))
+    await login(page)
+    await page.goto('/controller/notices')
+    await expect(page.getByText('Live · Published · Scheduled', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Correct notice', exact: true }).click()
+    const editor = page.getByRole('dialog', { name: 'Publish a correction', exact: true })
+    const start = await editor.getByLabel('Starts (SGT)', { exact: true }).inputValue()
+    expect(start).not.toBe('')
+    expect(Date.parse(`${start}:00+08:00`)).toBeLessThanOrEqual(Date.now())
+    await expect(editor.getByLabel('Expires (SGT)', { exact: true })).toHaveValue('2030-01-02T00:05')
+    await expect(editor.getByLabel('Notice scope')).toContainText('Notice scope: Live')
+  })
+})
+
 test('controller repairs a saved notice by copying it into a separate draft', async ({ page, context }) => {
   await mockAuth(context, 'CONTROLLER')
   const original = { id: '00000000-0000-4000-8000-000000000304', disruptionId: '00000000-0000-4000-8000-000000000305',
@@ -2272,7 +2326,7 @@ test('controller can withdraw a published notice from managed notice history', a
   await expect(history.getByRole('heading', { name: 'Temporary service advisory', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Withdraw notice', exact: true }).click()
   await expect.poll(() => withdrawalRequests).toBe(1)
-  await expect(history.getByText(/WITHDRAWN/)).toBeVisible()
+  await expect(history.getByText(/Withdrawn/)).toBeVisible()
   await expect(page.getByRole('button', { name: 'Withdraw notice', exact: true })).toHaveCount(0)
 })
 

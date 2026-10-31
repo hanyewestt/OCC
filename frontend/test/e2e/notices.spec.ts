@@ -111,6 +111,91 @@ test('simulation board rejects missing run identity before requesting notices', 
   expect(requests).toBe(0)
 })
 
+for (const scope of [
+  { name: 'unknown classification', query: 'classification=LIVE', error: 'Invalid notice view.' },
+  { name: 'empty classification', query: 'classification=', error: 'Invalid notice view.' },
+  { name: 'malformed run identity', query: 'classification=SIMULATION&demoRunId=not-a-uuid', error: 'The simulation view needs a valid demo run ID.' },
+  { name: 'run identity on Live', query: 'demoRunId=00000000-0000-0000-0000-000000000019', error: 'Live notices do not accept a demo run ID.' },
+  { name: 'empty run identity on Live', query: 'demoRunId=', error: 'Live notices do not accept a demo run ID.' },
+]) {
+  test(`public board rejects ${scope.name} without requests and offers a valid Live link`, async ({ page, context }) => {
+    let configReads = 0
+    let noticeReads = 0
+    await context.route('**/frontend-config', route => {
+      configReads++
+      return route.fulfill({ json: { publicNoticeRefreshIntervalSeconds: 30 } })
+    })
+    await context.route('**/api/v1/planning/public/notices?*', route => {
+      noticeReads++
+      const query = new URL(route.request().url()).searchParams
+      expect(query.get('classification')).toBe('OBSERVATION_ONLY')
+      expect(query.has('demoRunId')).toBe(false)
+      return route.fulfill({ json: { items: [notice], page: 0, totalItems: 1, totalPages: 1 } })
+    })
+    await page.goto(`/notices?${scope.query}`)
+    await expect(page.getByRole('alert')).toContainText(scope.error)
+    await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeDisabled()
+    // App bootstrap reads shared settings; an invalid board adds no timing request.
+    expect(configReads).toBe(1)
+    expect(noticeReads).toBe(0)
+    await page.getByRole('link', { name: 'View Live notices', exact: true }).click()
+    await expect(page.getByRole('heading', { name: notice.title, exact: true })).toBeVisible()
+    await expect(page.getByText('Live service advisories', { exact: true })).toBeVisible()
+    await expect(page.getByRole('alert')).toHaveCount(0)
+    expect(noticeReads).toBe(1)
+  })
+}
+
+test('switching a populated simulation board to Live clears old content while the new scope loads', async ({ page, context }) => {
+  await publicConfig(context)
+  let releaseLive: (() => void) | undefined
+  const liveWaiting = new Promise<void>(resolve => { releaseLive = resolve })
+  await context.route('**/api/v1/planning/public/notices?*', async route => {
+    const query = new URL(route.request().url()).searchParams
+    if (query.get('classification') === 'SIMULATION') {
+      return route.fulfill({ json: { items: [{ ...notice, classification: 'SIMULATION', title: 'Run A demonstration' }], page: 0, totalItems: 1, totalPages: 1 } })
+    }
+    await liveWaiting
+    return route.fulfill({ json: { items: [notice], page: 0, totalItems: 1, totalPages: 1 } })
+  })
+  await page.goto('/notices?classification=SIMULATION&demoRunId=00000000-0000-0000-0000-000000000019')
+  await expect(page.getByRole('heading', { name: 'Run A demonstration', exact: true })).toBeVisible()
+  await page.getByRole('link', { name: 'View Live notices', exact: true }).click()
+  await expect(page.getByText('Live service advisories', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Run A demonstration', exact: true })).toHaveCount(0)
+  await expect(page.getByLabel('Page refresh status')).toContainText('Not refreshed yet')
+  releaseLive?.()
+  await expect(page.getByRole('heading', { name: notice.title, exact: true })).toBeVisible()
+})
+
+test('a late simulation response cannot populate the Live board after navigation', async ({ page, context }) => {
+  await publicConfig(context)
+  let markStarted: (() => void) | undefined
+  let releaseSimulation: (() => void) | undefined
+  let markFinished: (() => void) | undefined
+  const started = new Promise<void>(resolve => { markStarted = resolve })
+  const waiting = new Promise<void>(resolve => { releaseSimulation = resolve })
+  const finished = new Promise<void>(resolve => { markFinished = resolve })
+  await context.route('**/api/v1/planning/public/notices?*', async route => {
+    if (new URL(route.request().url()).searchParams.get('classification') === 'SIMULATION') {
+      markStarted?.()
+      await waiting
+      await route.fulfill({ json: { items: [{ ...notice, classification: 'SIMULATION', title: 'Obsolete simulation response' }], page: 0, totalItems: 1, totalPages: 1 } })
+      markFinished?.()
+      return
+    }
+    return route.fulfill({ json: { items: [notice], page: 0, totalItems: 1, totalPages: 1 } })
+  })
+  await page.goto('/notices?classification=SIMULATION&demoRunId=00000000-0000-0000-0000-000000000019')
+  await started
+  await page.getByRole('link', { name: 'View Live notices', exact: true }).click()
+  await expect(page.getByRole('heading', { name: notice.title, exact: true })).toBeVisible()
+  releaseSimulation?.()
+  await finished
+  await expect(page.getByRole('heading', { name: 'Obsolete simulation response', exact: true })).toHaveCount(0)
+  await expect(page.getByText('Simulation', { exact: true })).toHaveCount(0)
+})
+
 test('public board scrolls through notices and refresh returns to the latest first page', async ({ page, context }) => {
   await page.clock.install()
   await publicConfig(context)

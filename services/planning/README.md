@@ -195,7 +195,13 @@ Public notice drafts and publication history are controller-only at
 `/api/v1/planning/notices`. Anonymous reads use
 `/api/v1/planning/public/notices`; the default `OBSERVATION_ONLY` scope excludes
 simulation notices. A simulation board requires an explicit `demoRunId` and is
-labelled as demonstration content. Published notices are immutable; corrections
+labelled as demonstration content.
+Closing a run does not delete its notice preview: explicitly selected simulation
+notices remain available until expiry or withdrawal and stay isolated from Live
+and every other run. Managed history intentionally includes all scopes/runs;
+the controller UI labels provenance rather than implying the shared mode filters
+that history.
+Published notices are immutable; corrections
 publish a replacement and withdraw the previous notice in one transaction.
 Corrections must be effective immediately (`effectiveFrom` at or before server
 time) and unexpired, so replacement never creates a gap in public visibility.
