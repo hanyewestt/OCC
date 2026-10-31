@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { formatSgtDateTime, formatSgtTime, sgtDateTimeInputToUtc } from '../../src/lib/time'
+import { formatSgtDateTime, formatSgtTime, sgtDateTimeInputFromUtc, sgtDateTimeInputToUtc } from '../../src/lib/time'
 import { dataClassificationLabel, diagnosisStatusLabel } from '../../src/lib/presentation'
 
 test('formats UTC instants in SGT regardless of the host timezone', () => {
@@ -22,6 +22,13 @@ test('returns a dash for missing and invalid timestamps', () => {
     expect(formatSgtTime(value)).toBe('—')
     expect(formatSgtDateTime(value)).toBe('—')
   }
+})
+
+test('prefills Singapore wall-clock inputs from UTC across date boundaries', () => {
+  expect(sgtDateTimeInputFromUtc('2026-10-31T16:05:00Z')).toBe('2026-11-01T00:05')
+  expect(sgtDateTimeInputFromUtc('2026-10-31T04:55:23Z')).toBe('2026-10-31T12:55')
+  expect(sgtDateTimeInputToUtc(sgtDateTimeInputFromUtc('2026-10-31T04:55:00Z'))).toBe('2026-10-31T04:55:00.000Z')
+  for (const value of [null, undefined, '', 'invalid']) expect(sgtDateTimeInputFromUtc(value)).toBe('')
 })
 
 test('uses contextual labels for every diagnosis processing state', () => {

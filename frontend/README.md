@@ -26,6 +26,29 @@ The simulation supplies a two-bus service 190 event
 and a three-bus service 972 event so controller workflows can be exercised in one
 run.
 
+Public notices are drafted at `/controller/notices`. Selecting a different source
+clears affected services, locations and scheduling so details from another hazard
+cannot carry over. Wording suggestions remain editable and never save or publish
+automatically; a failed suggestion keeps the controller's existing text. Saved
+drafts can be copied into a new draft for revision without changing the original.
+The copy requires a fresh validity period, and expiry must follow the start time.
+Published notices can be corrected or withdrawn. A correction publishes immediately
+and replaces the old notice atomically; future start times are rejected. Failed
+publication or correction requests keep the current notice/draft available to retry.
+
+The anonymous `/notices` board retains its existing notices and last successful
+refresh time when a refresh fails. Retry reloads page zero for refresh errors or
+the failed later page for paging errors. The notice region supports keyboard
+scrolling, announces loading/results, and wraps long passenger content on narrow
+screens. Public reads and board timing configuration do not require staff sign-in.
+The default board is explicitly Live. Simulation previews require a valid run ID
+and carry a demonstration label; changing scopes clears prior content and ignores
+late responses. Invalid scopes offer a link back to Live rather than falling back
+silently. Closed-run previews remain scoped demonstrations until expiry/withdrawal.
+Controller notice history includes all scopes and identifies each simulation run.
+Copied drafts show their original scope, expired drafts cannot be published, and
+correction scheduling is prefilled in SGT independently of the browser timezone.
+
 See the [app overview and route table](../README.md#pages-and-access) for page
 behavior and permissions. Setup, Vite development, builds, environment settings
 and test commands are in [the development guide](../docs/DEVELOPMENT.md).
