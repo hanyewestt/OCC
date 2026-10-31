@@ -32,6 +32,9 @@ cannot carry over. Wording suggestions remain editable and never save or publish
 automatically; a failed suggestion keeps the controller's existing text. Saved
 drafts can be copied into a new draft for revision without changing the original.
 The copy requires a fresh validity period, and expiry must follow the start time.
+Published notices can be corrected or withdrawn. A correction publishes immediately
+and replaces the old notice atomically; future start times are rejected. Failed
+publication or correction requests keep the current notice/draft available to retry.
 
 See the [app overview and route table](../README.md#pages-and-access) for page
 behavior and permissions. Setup, Vite development, builds, environment settings

@@ -349,9 +349,9 @@ class AdvisoryPersistenceIT {
                         .value("#/components/schemas/InstructionPageResponse"))
                 .andExpect(jsonPath("$.paths['/api/v1/planning/captain/instructions'].get.responses['200'].content['*/*'].schema.$ref")
                         .value("#/components/schemas/InstructionPageResponse"))
-                .andExpect(jsonPath("$.paths['/api/v1/planning/notices'].get.responses['200'].content['*/*'].schema.$ref")
+                .andExpect(jsonPath("$.paths['/api/v1/planning/notices'].get.responses['200'].content['application/json'].schema.$ref")
                         .value("#/components/schemas/ManagedNoticePageResponse"))
-                .andExpect(jsonPath("$.paths['/api/v1/planning/public/notices'].get.responses['200'].content['*/*'].schema.$ref")
+                .andExpect(jsonPath("$.paths['/api/v1/planning/public/notices'].get.responses['200'].content['application/json'].schema.$ref")
                         .value("#/components/schemas/PublishedNoticePageResponse"))
                 .andExpect(jsonPath("$.components.schemas.AdvisoryPageResponse.properties.items.items.$ref")
                         .value("#/components/schemas/AdvisoryResponse"))
@@ -376,6 +376,24 @@ class AdvisoryPersistenceIT {
                 .andExpect(jsonPath("$.status").value(404))
                 .andExpect(jsonPath("$.detail").isNotEmpty())
                 .andExpect(jsonPath("$.instance").isNotEmpty());
+    }
+
+    @Test
+    void noticeContractDocumentsAnonymousReadsAndSuccessfulProtectedMutations() throws Exception {
+        for (String path : List.of("/v3/api-docs", "/v3/api-docs/planning")) {
+            String document = mvc.perform(get(path).with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"))))
+                    .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+            var contract = tools.jackson.databind.json.JsonMapper.builder().build().readTree(document);
+            var publicOperation = contract.path("paths").path("/api/v1/planning/public/notices").path("get");
+            assertThat(publicOperation.has("security") ? publicOperation.path("security").size() : contract.path("security").size()).isZero();
+            for (String mutation : List.of("publications", "withdrawals", "replacements")) {
+                var operation = contract.path("paths").path("/api/v1/planning/notices/{id}/" + mutation).path("post");
+                assertThat(operation.path("security").get(0).has("SupabaseJWT")).isTrue();
+                assertThat(operation.path("responses").path("200").path("content").path("application/json")
+                        .path("schema").path("$ref").asText()).isEqualTo("#/components/schemas/NoticeResponse");
+                for (String code : List.of("400", "401", "403", "404")) assertThat(operation.path("responses").has(code)).isTrue();
+            }
+        }
     }
 
     @Test
@@ -460,6 +478,144 @@ class AdvisoryPersistenceIT {
     }
 
     @Test
+    void correctedNoticeReplacesPublicContentAndWithdrawalReplaysDoNotResurrectIt() {
+        var live = source(false);
+        var original = draft(live, UUID.randomUUID(), MESSAGE);
+        notices.publish(original.id(), "controller");
+        UUID nextId = UUID.randomUUID();
+        var corrected = replaceNotice(original.id(), nextId, live.disruptionId());
+        assertThat(corrected.publishedAt()).isEqualTo(NOW);
+        var previous = publications.findById(original.id()).orElseThrow();
+        assertThat(previous.status()).isEqualTo("WITHDRAWN");
+        assertThat(previous.replacementId()).isEqualTo(nextId);
+        assertThat(previous.withdrawnAt()).isEqualTo(corrected.publishedAt());
+        assertThat(previous.message()).isEqualTo(MESSAGE);
+        assertThat(notices.current("OBSERVATION_ONLY", null, 0, 20).getContent())
+                .extracting(PublicNotice::id).containsExactly(nextId);
+        assertThat(jdbc.queryForObject("SELECT published_by FROM planning.public_notice WHERE id=?", String.class, nextId))
+                .isEqualTo("correcting-controller");
+
+        notices.withdraw(nextId);
+        notices.withdraw(nextId);
+        var replay = replaceNotice(original.id(), nextId, live.disruptionId());
+        assertThat(replay.status()).isEqualTo("WITHDRAWN");
+        assertThat(replay.publishedAt()).isEqualTo(NOW);
+        assertThat(replay.withdrawnAt()).isEqualTo(NOW);
+        assertThat(publications.count()).isEqualTo(2);
+        assertThat(notices.current("OBSERVATION_ONLY", null, 0, 20)).isEmpty();
+        assertThatThrownBy(() -> notices.publish(nextId, "controller")).isInstanceOf(AdvisoryConflictException.class);
+    }
+
+    @Test
+    void failedCorrectionRollsBackBothInsertionAndWithdrawal() {
+        var original = draft(hazard, UUID.randomUUID(), MESSAGE);
+        notices.publish(original.id(), "controller");
+        for (boolean rejectWithdrawal : List.of(true, false)) {
+            UUID nextId = UUID.randomUUID();
+            String rejected = rejectWithdrawal ? "id <> '" + original.id() + "' OR status <> 'WITHDRAWN'"
+                    : "id <> '" + nextId + "' OR status <> 'PUBLISHED'";
+            jdbc.execute("ALTER TABLE planning.public_notice ADD CONSTRAINT test_reject_correction CHECK (" + rejected + ") NOT VALID");
+            try {
+                assertThatThrownBy(() -> replaceNotice(original.id(), nextId, hazard.disruptionId()))
+                        .isInstanceOf(DataIntegrityViolationException.class);
+            } finally {
+                jdbc.execute("ALTER TABLE planning.public_notice DROP CONSTRAINT test_reject_correction");
+            }
+            assertThat(publications.count()).isEqualTo(1);
+            var stored = publications.findById(original.id()).orElseThrow();
+            assertThat(stored.status()).isEqualTo("PUBLISHED");
+            assertThat(stored.replacementId()).isNull();
+        }
+    }
+
+    @Test
+    void identicalConcurrentCorrectionsReturnOnePublishedRecord() throws Exception {
+        var original = draft(hazard, UUID.randomUUID(), MESSAGE);
+        notices.publish(original.id(), "controller");
+        UUID nextId = UUID.randomUUID();
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = executor.submit(() -> { start.await(); return replaceNotice(original.id(), nextId, hazard.disruptionId()).id(); });
+            var b = executor.submit(() -> { start.await(); return replaceNotice(original.id(), nextId, hazard.disruptionId()).id(); });
+            start.countDown();
+            assertThat(a.get(20, TimeUnit.SECONDS)).isEqualTo(nextId);
+            assertThat(b.get(20, TimeUnit.SECONDS)).isEqualTo(nextId);
+        }
+        assertThat(publications.count()).isEqualTo(2);
+        assertThat(publications.findById(original.id()).orElseThrow().replacementId()).isEqualTo(nextId);
+        Long version = jdbc.queryForObject("SELECT version FROM planning.public_notice WHERE id=?", Long.class, nextId);
+        replaceNotice(original.id(), nextId, hazard.disruptionId());
+        assertThat(jdbc.queryForObject("SELECT version FROM planning.public_notice WHERE id=?", Long.class, nextId)).isEqualTo(version);
+    }
+
+    @Test
+    void competingCorrectionsLeaveOneWinnerAndNoOrphanDraft() throws Exception {
+        var original = draft(hazard, UUID.randomUUID(), MESSAGE);
+        notices.publish(original.id(), "controller");
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = executor.submit(() -> correctAfter(start, original.id(), UUID.randomUUID()));
+            var b = executor.submit(() -> correctAfter(start, original.id(), UUID.randomUUID()));
+            start.countDown();
+            assertThat(List.of(a.get(20, TimeUnit.SECONDS), b.get(20, TimeUnit.SECONDS))).containsExactlyInAnyOrder(true, false);
+        }
+        assertThat(publications.count()).isEqualTo(2);
+        UUID winner = publications.findById(original.id()).orElseThrow().replacementId();
+        assertThat(publications.findById(winner).orElseThrow().status()).isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    void withdrawalRacingCorrectionKeepsOneConsistentOutcome() throws Exception {
+        var original = draft(hazard, UUID.randomUUID(), MESSAGE);
+        notices.publish(original.id(), "controller");
+        UUID nextId = UUID.randomUUID();
+        CountDownLatch start = new CountDownLatch(1);
+        boolean corrected;
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = executor.submit(() -> correctAfter(start, original.id(), nextId));
+            var b = executor.submit(() -> { start.await(); return notices.withdraw(original.id()).status(); });
+            start.countDown();
+            corrected = a.get(20, TimeUnit.SECONDS);
+            assertThat(b.get(20, TimeUnit.SECONDS)).isEqualTo("WITHDRAWN");
+        }
+        var stored = publications.findById(original.id()).orElseThrow();
+        assertThat(stored.status()).isEqualTo("WITHDRAWN");
+        assertThat(publications.count()).isEqualTo(corrected ? 2 : 1);
+        assertThat(stored.replacementId()).isEqualTo(corrected ? nextId : null);
+    }
+
+    @Test
+    void publicationRacingWithdrawalCannotRepublishTheWithdrawnNotice() throws Exception {
+        var original = draft(hazard, UUID.randomUUID(), MESSAGE);
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = executor.submit(() -> {
+                start.await();
+                try { notices.publish(original.id(), "controller"); }
+                catch (AdvisoryConflictException expected) { /* Withdrawal won the row lock. */ }
+                return true;
+            });
+            var b = executor.submit(() -> { start.await(); return notices.withdraw(original.id()).status(); });
+            start.countDown();
+            assertThat(a.get(20, TimeUnit.SECONDS)).isTrue();
+            assertThat(b.get(20, TimeUnit.SECONDS)).isEqualTo("WITHDRAWN");
+        }
+        assertThat(publications.findById(original.id()).orElseThrow().status()).isEqualTo("WITHDRAWN");
+        assertThatThrownBy(() -> notices.publish(original.id(), "controller")).isInstanceOf(AdvisoryConflictException.class);
+    }
+
+    private PublicNotice replaceNotice(UUID previous, UUID next, UUID source) {
+        return notices.replace(previous, next, source, "Corrected notice", "Reviewed correction.", List.of("190"), List.of("School"),
+                NOW.minusSeconds(1), NOW.plusSeconds(300), "correcting-controller");
+    }
+
+    private boolean correctAfter(CountDownLatch start, UUID previous, UUID next) throws InterruptedException {
+        start.await();
+        try { replaceNotice(previous, next, hazard.disruptionId()); return true; }
+        catch (AdvisoryConflictException conflict) { return false; }
+    }
+
+    @Test
     void publicReadsExcludeDraftsWithdrawalsExpiredAndSyntheticNotices() {
         var live = source(false);
         var visible = draft(live, UUID.randomUUID(), MESSAGE); notices.publish(visible.id(), "controller");
@@ -470,6 +626,9 @@ class AdvisoryPersistenceIT {
                 NOW.minusSeconds(120), NOW, "controller", NOW.minusSeconds(120));
         expired.publish("controller", NOW.minusSeconds(60)); publications.saveAndFlush(expired);
         var simulated = draft(hazard, UUID.randomUUID(), "Simulation notice"); notices.publish(simulated.id(), "controller");
+        var scheduled = notices.draft(UUID.randomUUID(), live.disruptionId(), "Scheduled notice", "Future notice", List.of(), List.of(),
+                NOW.plusSeconds(1), NOW.plusSeconds(600), "controller");
+        notices.publish(scheduled.id(), "controller");
         assertThat(notices.current("OBSERVATION_ONLY", null, 0, 20).getContent())
                 .extracting(PublicNotice::id).containsExactly(visible.id());
         assertThat(notices.current("SIMULATION", run, 0, 20).getContent())

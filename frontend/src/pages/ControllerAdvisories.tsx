@@ -341,7 +341,7 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
     {(view === 'notices' || view === 'audit') && <>
       {view === 'audit' && <h3 className="font-semibold">Notice history</h3>}
       <Dialog open={draft !== null} onOpenChange={open => { if (!open) closeDraft() }}>
-      {draft && <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>{draft.previousId ? 'Publish a correction' : 'New notice draft'}</DialogTitle><DialogDescription>Review the passenger message and its publication period before saving.</DialogDescription></DialogHeader>
+      {draft && <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>{draft.previousId ? 'Publish a correction' : 'New notice draft'}</DialogTitle><DialogDescription>{draft.previousId ? 'A correction takes effect immediately and replaces the previous notice. Choose a start time at or before now.' : 'Review the passenger message and its publication period before saving.'}</DialogDescription></DialogHeader>
       <form className="space-y-4" onSubmit={event => {
         event.preventDefault()
         if (pending || noticeSaving) return
@@ -350,6 +350,10 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
           effectiveFrom: sgtDateTimeInputToUtc(draft.from), effectiveUntil: sgtDateTimeInputToUtc(draft.until) }
         if (body.effectiveUntil <= body.effectiveFrom) {
           setActionError('Expiry must be after the start time.')
+          return
+        }
+        if (draft.previousId && Date.parse(body.effectiveFrom) > Date.now()) {
+          setActionError('A correction must take effect immediately. Choose a start time at or before now.')
           return
         }
         setNoticeSaving(true)
