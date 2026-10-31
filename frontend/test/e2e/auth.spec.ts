@@ -814,6 +814,12 @@ test('dirty controller recommendation editor confirms dismissal and discards onl
   await page.keyboard.press('Escape')
   let confirmation = page.getByRole('alertdialog', { name: 'Discard unsaved changes?', exact: true })
   await expect(confirmation).toBeVisible()
+  await expect(confirmation.getByRole('button', { name: 'Keep editing', exact: true })).toBeFocused()
+  // Let the newly focused modal finish mounting its keyboard layer before
+  // sending a second Escape in the same browser frame.
+  await confirmation.evaluate(() => new Promise<void>(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
   await page.keyboard.press('Escape')
   await expect(confirmation).toHaveCount(0)
   await expect(editor).toBeVisible()

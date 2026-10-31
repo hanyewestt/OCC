@@ -387,7 +387,7 @@ npx playwright install chromium
 npm test
 ```
 
-The browser suite mocks Supabase/Gateway responses and starts Vite by default.
+The browser suite mocks Supabase/Gateway responses and starts Vite.
 It proves frontend behavior, not provider behavior or backend authorization.
 To run it against the built app served by Nginx, set the test target first:
 
@@ -403,6 +403,11 @@ Bash:
 ```bash
 OCC_FRONTEND_TEST_PUBLIC_URL=http://127.0.0.1 npm test
 ```
+
+The `application` project uses the selected target. The `hooks` project always
+uses Vite because its source fixtures are intentionally excluded from the
+production build. Use `--project=application` or `--project=hooks` to select one;
+the default runs both. Hook fixtures are never exposed through Nginx.
 
 Use the actual Nginx host port if changed. For Vite-targeted tests, its configured
 port must match `OCC_FRONTEND_DEV_PORT`. Browser test deadlines use
