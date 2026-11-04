@@ -52,7 +52,7 @@ class BunchingRecordingIT {
     @Autowired PlatformTransactionManager transactions;
 
     @BeforeEach void reset() {
-        jdbc.execute("TRUNCATE disruption.hazard_state, disruption.planning_outbox, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption, disruption.source_processing_state");
+        jdbc.execute("TRUNCATE disruption.hazard_state, disruption.planning_outbox, disruption.bunching_diagnosis_link, disruption.bunching_diagnosis_correlation, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption, disruption.source_processing_state");
         jdbc.update("UPDATE disruption.consumer_state SET mode='LIVE', demo_run_id=NULL, last_sequence=0, updated_at=? WHERE id=1", Timestamp.from(NOW));
     }
 

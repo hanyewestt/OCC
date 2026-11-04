@@ -33,6 +33,7 @@ class HttpStoredArrivalAdapterTest {
     void mapsTheIngestionSnapshotContractIntoDetectorInput() {
         UUID raw = UUID.randomUUID();
         UUID poll = UUID.randomUUID();
+        UUID sourcePollCycle = UUID.randomUUID();
         UUID reference = UUID.randomUUID();
         UUID first = UUID.randomUUID();
         UUID second = UUID.randomUUID();
@@ -40,23 +41,30 @@ class HttpStoredArrivalAdapterTest {
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         server.expect(requestTo("http://ingestion.test/internal/v1/arrival-snapshots/" + raw))
                 .andRespond(withSuccess("""
-                        {"sequence":7,"rawObservationId":"%s","pollRunId":"%s","sourceKey":"stop:44009",
+                        {"sequence":7,"rawObservationId":"%s","pollRunId":"%s","sourcePollCycleId":"%s","sourceKey":"stop:44009",
                          "fetchedAt":"2026-09-25T00:00:00Z","normalizationState":"NORMALIZED","arrivals":[
                          {"observationId":"%s","referenceVersionId":"%s","stopCode":"44009","serviceId":"190",
-                          "directionId":1,"visitOrder":1,"estimatedArrivalAt":"2026-09-25T00:05:00Z"},
+                          "operator":"SMRT","directionId":1,"visitOrder":1,"visitNumber":1,
+                          "estimatedArrivalAt":"2026-09-25T00:05:00Z","originCode":"01009","destinationCode":"46009",
+                          "latitude":1.301,"longitude":103.801,"routeStopSequence":10},
                          {"observationId":"%s","referenceVersionId":"%s","stopCode":"44009","serviceId":"190",
-                          "directionId":1,"visitOrder":2,"estimatedArrivalAt":"2026-09-25T00:06:00Z"}]}
-                        """.formatted(raw, poll, first, reference, second, reference), MediaType.APPLICATION_JSON));
+                          "operator":"SMRT","directionId":1,"visitOrder":2,"visitNumber":1,
+                          "estimatedArrivalAt":"2026-09-25T00:06:00Z","originCode":"01009","destinationCode":"46009",
+                          "latitude":1.302,"longitude":103.802,"routeStopSequence":10}]}
+                        """.formatted(raw, poll, sourcePollCycle, first, reference, second, reference), MediaType.APPLICATION_JSON));
 
         HttpStoredArrivalAdapter adapter = adapter(builder.build(), "LIVE", null);
         var snapshot = adapter.snapshot(raw);
 
         assertEquals(raw, snapshot.rawObservationId());
         assertEquals(poll, snapshot.pollRunId());
+        assertEquals(sourcePollCycle, snapshot.sourcePollCycleId().orElseThrow());
         assertEquals(reference, snapshot.referenceVersionId().orElseThrow());
         assertEquals(2, snapshot.arrivals().size());
         assertEquals(Instant.parse("2026-09-25T00:05:00Z"), snapshot.arrivals().getFirst().estimatedArrivalAt().orElseThrow());
         assertTrue(snapshot.arrivals().stream().allMatch(arrival -> arrival.directionId().orElseThrow() == 1));
+        assertTrue(snapshot.arrivals().stream().allMatch(arrival -> "SMRT".equals(arrival.operator())));
+        assertTrue(snapshot.arrivals().stream().allMatch(arrival -> arrival.routeStopSequence() == 10));
         server.verify();
     }
 
