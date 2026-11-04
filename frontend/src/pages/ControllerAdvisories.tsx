@@ -11,7 +11,7 @@ import { PagedCollectionControls } from '@/components/PagedCollectionControls'
 import { ApiError, apiRequest, type Advisory, type AdvisoryGroup, type AdvisoryCandidate, type CaptainInstruction, type Hazard, type ManagedNotice, type NoticeSuggestion, type PageResult, type PlanningHazardHistory } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { dataClassificationLabel } from '@/lib/presentation'
-import { formatSgtDateTime, sgtDateTimeInputToUtc } from '@/lib/time'
+import { formatSgtDateTime, sgtDateTimeInputFromUtc, sgtDateTimeInputToUtc } from '@/lib/time'
 import { usePagedCollection } from '@/lib/paged-collection'
 
 type Edit = { advisory: Advisory; type: AdvisoryCandidate['type']; stopSequence: string; speed: string; minutes: string; count: string; rationale: string; replacement: string }
@@ -35,6 +35,7 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
   const initialDraft = useRef('')
   const [discardDraft, setDiscardDraft] = useState(false)
   const [noticeSaving, setNoticeSaving] = useState(false)
+  const [noticeNow, setNoticeNow] = useState(Date.now)
   const [kind, setKind] = useState('')
   const action = useRef<AbortController | null>(null)
   const hazardsEnabled = view === 'hazards' || edit !== null || draft !== null
@@ -132,6 +133,11 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [registerRefresh, view, hazardsEnabled, hazards.refresh, advisories.refresh, instructions.refresh, notices.refresh, hazardRequests.refresh])
   useEffect(() => () => action.current?.abort(), [])
+  useEffect(() => {
+    if (view !== 'notices' && view !== 'audit') return
+    const timer = window.setInterval(() => setNoticeNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [view])
 
   function updateDraft(value: Draft | null) {
     draftIdentity.current = value
@@ -197,6 +203,8 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
   }
 
   const stops = edit ? hazards.items.find(h => h.disruptionId === edit.advisory.disruptionId)?.exposures.filter(e => e.busId === edit.advisory.busId) ?? [] : []
+  const draftSource = draft ? hazards.items.find(h => h.disruptionId === draft.disruptionId)
+    ?? notices.items.find(n => n.disruptionId === draft.disruptionId) : undefined
   function instructionBody(value: Edit) {
     const stop = stops.find(s => s.stopSequence === Number(value.stopSequence))
     const parameters = value.type === 'REDUCE_SPEED'
@@ -340,14 +348,23 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
     </>}
     {(view === 'notices' || view === 'audit') && <>
       {view === 'audit' && <h3 className="font-semibold">Notice history</h3>}
+      <p className="text-sm text-muted-foreground">History includes Live notices and all Simulation runs. Copies keep their original source scope.</p>
       <Dialog open={draft !== null} onOpenChange={open => { if (!open) closeDraft() }}>
-      {draft && <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>{draft.previousId ? 'Publish a correction' : 'New notice draft'}</DialogTitle><DialogDescription>Review the passenger message and its publication period before saving.</DialogDescription></DialogHeader>
+      {draft && <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>{draft.previousId ? 'Publish a correction' : 'New notice draft'}</DialogTitle><DialogDescription>{draft.previousId ? 'A correction takes effect immediately and replaces the previous notice. Choose a start time at or before now.' : 'Review the passenger message and its publication period before saving.'}</DialogDescription></DialogHeader>
       <form className="space-y-4" onSubmit={event => {
         event.preventDefault()
         if (pending || noticeSaving) return
         const body = { id: draft.id, disruptionId: draft.disruptionId, title: draft.title, message: draft.message,
           services: draft.services.split(',').map(s => s.trim()).filter(Boolean), locations: draft.locations.split(',').map(s => s.trim()).filter(Boolean),
           effectiveFrom: sgtDateTimeInputToUtc(draft.from), effectiveUntil: sgtDateTimeInputToUtc(draft.until) }
+        if (body.effectiveUntil <= body.effectiveFrom) {
+          setActionError('Expiry must be after the start time.')
+          return
+        }
+        if (draft.previousId && Date.parse(body.effectiveFrom) > Date.now()) {
+          setActionError('A correction must take effect immediately. Choose a start time at or before now.')
+          return
+        }
         setNoticeSaving(true)
         void submit(draft.previousId ? `/api/v1/planning/notices/${draft.previousId}/replacements` : '/api/v1/planning/notices', body)
           .then(saved => { if (saved) updateDraft(null) }).finally(() => setNoticeSaving(false))
@@ -355,10 +372,16 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
         {actionError && <p role="alert" className="text-sm text-destructive">{actionError}</p>}
         <div className="space-y-2"><Label htmlFor="notice-source">Source hazard</Label><select id="notice-source" required className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={draft.disruptionId} disabled={!!draft.previousId} onChange={e => {
           const source = hazards.items.find(h => h.disruptionId === e.target.value)
-          updateDraft({ ...draft, disruptionId: e.target.value, title: source?.facts.title ?? '', message: [source?.facts.description, source?.facts.instruction].filter(Boolean).join('\n') })
-        }}><option value="">Select a hazard</option>{hazards.items.map(h => <option key={h.disruptionId} value={h.disruptionId}>{h.facts.title} · {dataClassificationLabel(h.classification)}</option>)}</select>
+          setActionError('')
+          updateDraft({ ...draft, disruptionId: e.target.value, title: source?.facts.title ?? '', message: [source?.facts.description, source?.facts.instruction].filter(Boolean).join('\n'),
+            services: '', locations: '', from: '', until: '' })
+        }}><option value="">Select a hazard</option>
+        {draft.disruptionId && !hazards.items.some(h => h.disruptionId === draft.disruptionId) && <option value={draft.disruptionId}>Saved notice source</option>}
+        {hazards.items.map(h => <option key={h.disruptionId} value={h.disruptionId}>{h.facts.title} · {dataClassificationLabel(h.classification)}</option>)}</select>
         <PagedCollectionControls label="source hazards" hasItems={!!hazards.items.length} hasMore={hazards.hasMore}
           isLoadingMore={hazards.isLoadingMore} error={hazards.error} refreshError={hazards.refreshError} reload={hazards.reload} loadNext={hazards.loadNext} /></div>
+        {draftSource && <p aria-label="Notice scope" className="break-words text-sm font-medium">Notice scope: {dataClassificationLabel(draftSource.classification)}
+          {draftSource.classification === 'SIMULATION' && draftSource.demoRunId ? ` · Run ${draftSource.demoRunId}` : ''}</p>}
         <Button type="button" variant="outline" disabled={pending || !draft.disruptionId || hazards.items.find(h => h.disruptionId === draft.disruptionId)?.status === 'CLEARED'} onClick={() => void suggestNotice()}>Suggest passenger wording</Button>
         <div className="space-y-2"><Label htmlFor="notice-title">Title</Label><Input id="notice-title" required maxLength={160} value={draft.title} onChange={e => updateDraft({ ...draft, title: e.target.value })} /></div>
         <div className="space-y-2"><Label htmlFor="notice-message">Passenger message</Label><textarea id="notice-message" required maxLength={2000} rows={4} className="w-full rounded-md border bg-background p-3 text-sm" value={draft.message} onChange={e => updateDraft({ ...draft, message: e.target.value })} /></div>
@@ -373,14 +396,24 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       {notices.error !== null && !notices.items.length && <p role="alert" className="text-sm text-destructive">Notices are unavailable.</p>}
       {!notices.isLoading && notices.error === null && notices.latestPage && !notices.items.length && <p className="text-sm text-muted-foreground">No notices.</p>}
       {!!notices.items.length && <ScrollArea role="region" aria-label="Managed notices" tabIndex={0} className="max-h-[32rem]"
-        viewportProps={{ onScroll: notices.onScroll }}><div className="space-y-3 p-1 pr-3.5">{notices.items.map(n => <Card key={n.id} className="min-h-28"><CardContent className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-medium">{n.title}</h4><p className="text-xs text-muted-foreground">{dataClassificationLabel(n.classification)} · {n.status}</p></div><p className="whitespace-pre-wrap text-sm">{n.message}</p>
-          <div className="flex flex-wrap gap-2">{n.status === 'DRAFT' && <Button disabled={pending} onClick={() => void submit(`/api/v1/planning/notices/${n.id}/publications`)}>Publish notice</Button>}
+        viewportProps={{ onScroll: notices.onScroll }}><div className="space-y-3 p-1 pr-3.5">{notices.items.map(n => {
+          const expired = Date.parse(n.effectiveUntil) <= noticeNow
+          const state = n.status === 'DRAFT' ? 'Draft' : n.status === 'PUBLISHED' ? 'Published' : n.status === 'WITHDRAWN' ? 'Withdrawn' : n.status
+          return <Card key={n.id} className="min-h-28"><CardContent className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-medium">{n.title}</h4><p className="text-xs text-muted-foreground">{dataClassificationLabel(n.classification)} · {state}{n.status !== 'WITHDRAWN' && expired ? ' · Expired' : n.status === 'PUBLISHED' && Date.parse(n.effectiveFrom) > noticeNow ? ' · Scheduled' : ''}</p></div><p className="whitespace-pre-wrap text-sm">{n.message}</p>
+          {n.classification === 'SIMULATION' && n.demoRunId && <p className="break-all text-xs text-muted-foreground">Simulation run: {n.demoRunId}</p>}
+          <p className="text-xs text-muted-foreground">Starts <time dateTime={n.effectiveFrom}>{formatSgtDateTime(n.effectiveFrom)}</time> · Expires <time dateTime={n.effectiveUntil}>{formatSgtDateTime(n.effectiveUntil)}</time></p>
+          {n.publishedAt && <p className="text-xs text-muted-foreground">Published <time dateTime={n.publishedAt}>{formatSgtDateTime(n.publishedAt)}</time></p>}
+          {n.withdrawnAt && <p className="text-xs text-muted-foreground">Withdrawn <time dateTime={n.withdrawnAt}>{formatSgtDateTime(n.withdrawnAt)}</time></p>}
+          <div className="flex flex-wrap gap-2">{n.status === 'DRAFT' && <><Button disabled={pending || expired} onClick={() => void submit(`/api/v1/planning/notices/${n.id}/publications`)}>Publish notice</Button>
+            <Button variant="outline" disabled={pending} onClick={() => openDraft({ id: crypto.randomUUID(), disruptionId: n.disruptionId, title: n.title, message: n.message,
+              services: n.services.join(', '), locations: n.locations.join(', '), from: '', until: '' })}>Copy to new draft</Button></>}
             {n.status === 'PUBLISHED' && <><Button variant="outline" disabled={pending} onClick={() => void submit(`/api/v1/planning/notices/${n.id}/withdrawals`)}>Withdraw notice</Button>
-              <Button variant="outline" disabled={pending} onClick={() => openDraft({ id: crypto.randomUUID(), previousId: n.id, disruptionId: n.disruptionId, title: n.title, message: n.message, services: n.services.join(', '), locations: n.locations.join(', '), from: '', until: '' })}>Correct notice</Button></>}
+              <Button variant="outline" disabled={pending} onClick={() => openDraft({ id: crypto.randomUUID(), previousId: n.id, disruptionId: n.disruptionId, title: n.title, message: n.message, services: n.services.join(', '), locations: n.locations.join(', '),
+                from: sgtDateTimeInputFromUtc(new Date().toISOString()), until: expired ? '' : sgtDateTimeInputFromUtc(n.effectiveUntil) })}>Correct notice</Button></>}
             {n.classification === 'SIMULATION' && n.demoRunId && <Button asChild variant="outline"><Link target="_blank" rel="noreferrer" to={`/notices?classification=SIMULATION&demoRunId=${encodeURIComponent(n.demoRunId)}`}>Preview simulation board</Link></Button>}
           </div>
-        </CardContent></Card>)}</div></ScrollArea>}
+        </CardContent></Card>})}</div></ScrollArea>}
       <PagedCollectionControls label="managed notices" hasItems={!!notices.items.length} hasMore={notices.hasMore}
         isLoadingMore={notices.isLoadingMore} error={notices.error} refreshError={notices.refreshError} reload={notices.reload} loadNext={notices.loadNext} />
     </>}
