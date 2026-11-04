@@ -27,7 +27,7 @@ ARG OCC_SERVICE
 ARG OCC_SERVICE_INTERNAL_PORT
 
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y curl \
+    && apt-get install --no-install-recommends -y curl libbrotli1 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build "/workspace/services/${OCC_SERVICE}/target/${OCC_SERVICE}-0.0.1-SNAPSHOT.jar" app.jar
