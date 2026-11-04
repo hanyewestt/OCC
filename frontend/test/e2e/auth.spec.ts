@@ -1,9 +1,10 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test'
-import { classify, clockText, deltaText, initialScenario } from '../../src/lib/obu-pacing'
+import { clockText, deltaText, gapSummary } from '../../src/lib/obu-pacing'
 import { bunchingArrivals } from '../../src/lib/bunching'
-import { groupStops, skipLabel, type UpcomingStop } from '../../src/lib/skip-stops'
+import { compactStops, distanceText, routeProgress, stopName } from '../../src/lib/captain-route'
+import { acknowledgementTimeLeft, durationText, instructionHeadline, instructionState } from '../../src/lib/captain-instructions'
 import { formatSgtDateTime } from '../../src/lib/time'
-import type { Advisory, CaptainInstruction } from '../../src/lib/api'
+import type { Advisory, CaptainInstruction, CaptainRoute } from '../../src/lib/api'
 
 function advisoryGroup(members: Advisory[], serviceId = '190', directionId = 1) {
   const first = members[0]
@@ -27,6 +28,30 @@ function session(role: string, lifetime = 3600) {
   }
 }
 type Options = { invalidPassword?: boolean; sessionFailure?: boolean; accessFailure?: boolean; refreshFailure?: boolean }
+// Synthetic route for the captain's assigned simulation bus: leaving stop 2, approaching stop 3.
+const routeStops = [
+  { sequence: 1, stopCode: '44141', description: 'Phoenix Stn', distanceKm: 3.5 },
+  { sequence: 2, stopCode: '44249', description: 'Blk 174', distanceKm: 4.0 },
+  { sequence: 3, stopCode: '44251', description: 'Bt Panjang Stn/Blk 604', distanceKm: 4.5 },
+  { sequence: 4, stopCode: '44241', description: 'Opp Lompang Rd', distanceKm: 5.5 },
+  { sequence: 5, stopCode: '44231', description: 'Zhenghua Pr Sch', distanceKm: 6.0 },
+  { sequence: 6, stopCode: '44261', description: null, distanceKm: 6.4 },
+  { sequence: 7, stopCode: '40239', description: 'Bef Stevens Stn Exit 4', distanceKm: 12.0 },
+  { sequence: 8, stopCode: '10499', description: 'Kampong Bahru Ter', distanceKm: null },
+].map(stop => ({ ...stop, roadName: stop.description ? 'Synthetic Rd' : 'Petir Rd', arrivalAt: null as string | null,
+  arrivalKind: null as 'PREDICTED' | 'ESTIMATED' | null }))
+function captainRoute(source: 'SIMULATION' | 'UNAVAILABLE' = 'SIMULATION'): CaptainRoute {
+  const stops = routeStops.map(stop => source === 'UNAVAILABLE' ? stop
+    : stop.sequence === 3 ? { ...stop, arrivalAt: '2026-10-27T06:01:00Z', arrivalKind: 'PREDICTED' as const }
+      : stop.sequence === 4 ? { ...stop, arrivalAt: '2026-10-27T06:03:00Z', arrivalKind: 'ESTIMATED' as const } : stop)
+  return { classification: 'SIMULATION', bus: { busId: 'demo-190-b', registrationNumber: 'SBS5898U', serviceId: '190', directionId: 1 },
+    stops, position: source === 'UNAVAILABLE'
+      ? { source, lastStopSequence: null, nextStopSequence: null, observedAt: null }
+      : { source, lastStopSequence: 2, nextStopSequence: 3, observedAt: '2026-10-27T06:00:00Z' },
+    // Synthetic backend pacing (WQAP-68) for this bus; the target is the backend default of 3 minutes.
+    pacing: { targetHeadwaySeconds: 180, ahead: { headwaySeconds: 45, state: 'TOO_CLOSE' },
+      behind: { headwaySeconds: 300, state: 'TOO_FAR' }, observedAt: '2026-10-27T06:00:00Z', calculatedAt: '2026-10-27T06:00:05Z' } }
+}
 async function mockAuth(context: BrowserContext, role: string, options: Options = {}) {
   const stop = (stopCode: string, stopSequence: number) => ({
     stopCode, roadName: 'Sample Road', description: `Stop ${stopCode}`,
@@ -74,6 +99,7 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
     await context.route(`**/api/v1/${endpoint}?*`, route => route.fulfill({ json: { items: [], page: 0, size: 100, totalItems: 0, totalPages: 0 } }))
   }
   await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ status: 204 }))
+  await context.route('**/api/v1/captain-routes/current', route => route.fulfill({ json: captainRoute() }))
   await context.route('**/frontend-config', route => route.fulfill({ json: {
     projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
     controllerRefreshIntervalSeconds: 30, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20, captainRefreshIntervalSeconds: 5, publicNoticeRefreshIntervalSeconds: 30,
@@ -1247,7 +1273,7 @@ for (const [role, destination, title, other] of [
     await expect(page.getByRole('heading', { name: 'Access denied' })).toBeVisible()
     await expect(page.getByText('403', { exact: true })).toBeVisible()
     await expect(page.getByText('Access verified')).toHaveCount(0)
-    await expect(page.getByRole('region', { name: 'Captain pacing display' })).toHaveCount(0)
+    await expect(page.getByRole('region', { name: 'Captain display' })).toHaveCount(0)
     await page.getByRole('link', { name: 'Return to my page' }).click()
     await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Sign out' }).click()
@@ -1383,18 +1409,12 @@ for (const [status, heading] of [[401, 'Sign-in required'], [403, 'Access denied
   })
 }
 
-test('pacing treats threshold boundaries and missing measurements consistently', () => {
-  expect(classify(240, 480)).toBe('close')
-  expect(classify(241, 480)).toBe('ok')
-  expect(classify(719, 480)).toBe('ok')
-  expect(classify(720, 480)).toBe('far')
-  for (const missing of [null, Number.NaN, -1]) {
-    expect(classify(missing, 480)).toBe('unknown')
-    expect(clockText(missing)).toBe('--:--')
-  }
-  expect(classify(300, 0)).toBe('unknown')
+test('pacing text formats gaps and treats missing measurements consistently', () => {
+  for (const missing of [null, Number.NaN, -1]) expect(clockText(missing)).toBe('--:--')
+  expect(clockText(95)).toBe('1:35')
   expect(deltaText(490, 480)).toBe('About on target')
-  expect(initialScenario('?scenario=invalid')).toBe('bunched')
+  expect(deltaText(95, 480)).toBe('6:25 shorter than target')
+  expect(deltaText(null, 480)).toBe('No bus detected')
 })
 
 test('captain retries failed acknowledgement and keeps the persisted receipt after refresh', async ({ page, context }) => {
@@ -1424,13 +1444,6 @@ test('captain retries failed acknowledgement and keeps the persisted receipt aft
 
   await login(page)
   const display = page.getByRole('region', { name: 'Controller instructions', exact: true })
-  const stops = page.getByRole('region', { name: 'Upcoming stops in route order', exact: true })
-  const stopBounds = await stops.boundingBox()
-  const visibleStops = await stops.locator('li').evaluateAll((elements, bounds) => elements.filter(element => {
-    const rect = element.getBoundingClientRect()
-    return rect.top >= bounds.top && rect.bottom <= bounds.top + bounds.height
-  }).length, { top: stopBounds!.y, height: stopBounds!.height })
-  expect(visibleStops).toBeLessThanOrEqual(10)
   await expect(display.getByText(instruction.message, { exact: true })).toBeVisible()
   await expect(display.getByText('Simulation · demo-190-b · Hazard: Live', { exact: true })).toBeVisible()
   await expect(display.getByText(/sec remaining/)).toHaveCount(0)
@@ -2116,9 +2129,10 @@ test('controller sees hazard processing history only in audit and can load later
   await expect(history.getByText('Flood report', { exact: true })).toHaveCount(1)
 })
 
-test('captain pacing updates samples and switches scenarios while only polling assigned instructions', async ({ page, context }) => {
+test('captain pacing shows the assigned bus gaps from the backend and only calls captain APIs', async ({ page, context }) => {
   await mockAuth(context, 'CAPTAIN')
-  await page.clock.install()
+  let pacing: CaptainRoute['pacing'] = captainRoute().pacing
+  await context.route('**/api/v1/captain-routes/current', route => route.fulfill({ json: { ...captainRoute(), pacing } }))
   const operationalRequests: string[] = []
   page.on('request', request => {
     const path = new URL(request.url()).pathname
@@ -2127,65 +2141,195 @@ test('captain pacing updates samples and switches scenarios while only polling a
   await login(page)
   const ahead = page.getByRole('region', { name: 'Gap to bus ahead', exact: true })
   const behind = page.getByRole('region', { name: 'Gap to bus behind', exact: true })
-  await expect(page.getByText('SAMPLE DATA', { exact: true })).toBeVisible()
   await expectPageRefreshStatus(page, 5)
   await expect(page.getByText('No current instructions for your assigned bus.', { exact: true })).toBeVisible()
-  const beforeManualRefresh = operationalRequests.length
+  await expect(page.getByText('Target gap 3:00', { exact: true })).toBeVisible()
+  await expect(ahead.getByText('0:45', { exact: true })).toBeVisible()
+  await expect(ahead).toHaveAttribute('data-state', 'TOO_CLOSE')
+  await expect(ahead.getByText('Bus ahead is 0:45 away · 2:15 shorter than target', { exact: true })).toBeVisible()
+  await expect(behind).toHaveAttribute('data-state', 'TOO_FAR')
+  await expect(page.getByText('SAMPLE DATA', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('group', { name: 'Sample scenario' })).toHaveCount(0)
+
+  // The next refresh shows whatever the backend now reports for this bus.
+  pacing = { ...pacing!, ahead: { headwaySeconds: 170, state: 'ON_TARGET' }, behind: null }
   await page.getByRole('button', { name: 'Refresh', exact: true }).click()
-  await expect.poll(() => operationalRequests.length).toBeGreaterThan(beforeManualRefresh)
-  await expect(ahead.getByText('1:35', { exact: true })).toBeVisible()
-  await expect(ahead).toHaveAttribute('data-state', 'close')
-  await expect(behind).toHaveAttribute('data-state', 'far')
-  await page.clock.fastForward(10_000)
-  await expect(ahead.getByText('1:41', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'On target', exact: true }).click()
-  await expect(ahead).toHaveAttribute('data-state', 'ok')
-  await expect(behind).toHaveAttribute('data-state', 'ok')
-  await page.getByRole('button', { name: 'Big gap ahead', exact: true }).click()
-  await expect(ahead).toHaveAttribute('data-state', 'far')
-  await expect(behind).toHaveAttribute('data-state', 'close')
-  await page.getByRole('button', { name: 'No bus behind', exact: true }).click()
+  await expect(ahead).toHaveAttribute('data-state', 'ON_TARGET')
+  await expect(behind).toHaveAttribute('data-state', 'NO_DATA')
   await expect(behind.getByText('--:--', { exact: true })).toBeVisible()
-  await expect(behind).toHaveAttribute('data-state', 'unknown')
-  expect(operationalRequests.length).toBeGreaterThan(0)
-  expect(operationalRequests.every(path => path === '/api/v1/planning/captain/instructions')).toBe(true)
+
+  pacing = null
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByText(/No pacing data for your bus yet/)).toBeVisible()
+  await expect(ahead).toHaveCount(0)
+  expect(operationalRequests.every(path => ['/api/v1/planning/captain/instructions', '/api/v1/captain-routes/current'].includes(path))).toBe(true)
   expect(operationalRequests).not.toContain('/api/v1/pacing-snapshots/latest')
 })
 
-test('consecutive skipped stops form one group in route order', () => {
-  const stop = (stopCode: string, skipped: boolean): UpcomingStop => ({ stopCode, name: `Stop ${stopCode}`, skipped })
-  const segments = groupStops([stop('1', true), stop('2', true), stop('3', false), stop('4', true), stop('5', false)])
-  expect(segments.map(segment => segment.kind === 'stop' ? segment.stop.stopCode
-    : segment.stops.map(skipped => skipped.stopCode).join('+'))).toEqual(['1+2', '3', '4', '5'])
-  expect(groupStops([stop('1', false), stop('2', false)]).every(segment => segment.kind === 'stop')).toBe(true)
-  expect(groupStops([])).toEqual([])
-  expect(skipLabel(1)).toBe('Skip 1 stop')
-  expect(skipLabel(3)).toBe('Skip 3 stops')
+test('route progress splits stops around the bus and compacts the rest like an on-board unit', () => {
+  const route = captainRoute()
+  const progress = routeProgress(route)
+  expect([progress.passedCount, progress.last?.stopCode, progress.next?.stopCode, progress.ahead.map(stop => stop.sequence)])
+    .toEqual([1, '44249', '44251', [4, 5, 6, 7, 8]])
+  const unknown = routeProgress(captainRoute('UNAVAILABLE'))
+  expect([unknown.last, unknown.next, unknown.ahead.length]).toEqual([null, null, 8])
+  const atEnd = routeProgress({ ...route, position: { ...route.position, lastStopSequence: 8, nextStopSequence: null } })
+  expect([atEnd.passedCount, atEnd.last?.stopCode, atEnd.next, atEnd.ahead]).toEqual([7, '10499', null, []])
+
+  const compact = compactStops(progress.ahead, 3)
+  expect([compact.shown.map(stop => stop.sequence), compact.hiddenCount, compact.terminal?.sequence]).toEqual([[4, 5, 6], 1, 8])
+  // With at most one stop beyond the visible ones, list them all instead of hiding a single stop.
+  expect(compactStops(progress.ahead.slice(1), 3)).toEqual({ shown: progress.ahead.slice(1), hiddenCount: 0, terminal: null })
+  expect(distanceText(routeStops[1], routeStops[2])).toBe('500 m')
+  expect(distanceText(routeStops[2], routeStops[6])).toBe('7.5 km')
+  expect(distanceText(routeStops[6], routeStops[7])).toBeNull()
+  expect(stopName(routeStops[5])).toBe('Petir Rd')
 })
 
-test('captain sees skipped stops grouped among upcoming stops', async ({ page, context }) => {
-  await mockAuth(context, 'CAPTAIN')
-  await login(page)
-  const stops = page.getByRole('list', { name: 'Upcoming stops in route order', exact: true })
-  await expect(page.getByRole('heading', { name: 'Upcoming stops', exact: true })).toBeVisible()
-  await expect(page.getByText('Skip 4 stops on this trip', { exact: true })).toBeVisible()
-  await expect(stops.locator(':scope > li')).toHaveText([
-    /Opp Blk 123.*STOP/, /Skip 3 stops.*Blk 45.*Bt Batok Stn.*Opp Bt Batok Stn/,
-    /Bt Batok West Ave 6.*STOP/, /Skip 1 stop.*Blk 211/, /Choa Chu Kang Int.*STOP/,
-  ])
-  const longRun = page.getByRole('list', { name: 'Skip 3 stops', exact: true })
-  await expect(longRun.getByRole('listitem')).toHaveCount(3)
-  await expect(longRun.getByRole('listitem').first()).toContainText('(skipped)')
-  await expect(page.getByRole('list', { name: 'Skip 1 stop', exact: true }).getByRole('listitem')).toHaveCount(1)
-})
-
-test('captain pacing supports narrow screens, scenario links and persistent day mode', async ({ page, context }) => {
+test('captain sees the assigned bus route with the next stop, timings and the terminal', async ({ page, context }) => {
   await mockAuth(context, 'CAPTAIN')
   await page.setViewportSize({ width: 375, height: 812 })
   await login(page)
-  await page.goto('/captain?scenario=no-bus-behind')
-  const display = page.getByRole('region', { name: 'Captain pacing display', exact: true })
-  await expect(page.getByRole('region', { name: 'Gap to bus behind', exact: true })).toHaveAttribute('data-state', 'unknown')
+  const routeList = page.getByRole('list', { name: 'Route stops', exact: true })
+  await expect(page.getByRole('heading', { name: 'Service 190 towards Kampong Bahru Ter', exact: true })).toBeVisible()
+  await expect(page.getByText('Bus SBS5898U · Direction 1 · 8 stops', { exact: true })).toBeVisible()
+  await expect(page.getByText('Next stop', { exact: true })).toBeVisible()
+  await expect(page.getByText(/^44251 · 500 m · due \d\d:\d\d$/)).toBeVisible()
+  await expect(routeList.locator('[data-state="passed"]')).toContainText('Blk 174')
+  await expect(routeList.locator('[aria-current="location"]')).toContainText('Bt Panjang Stn/Blk 604')
+  await expect(routeList.locator('[data-state="ahead"]')).toHaveText([/Opp Lompang Rd.*\d\d:\d\d est\./, /Zhenghua Pr Sch/, /Petir Rd/])
+  await expect(routeList).toContainText('1 more stop')
+  await expect(routeList.locator('[data-state="terminal"]')).toContainText('Kampong Bahru Ter')
+  await page.getByRole('button', { name: 'Show full route', exact: true }).click()
+  await expect(routeList.locator('[data-state="ahead"]')).toHaveCount(5)
+  await expect(routeList.locator('[data-state="terminal"]')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Show fewer stops', exact: true }).click()
+  // Instructions come before the route, and pacing after it, so the actionable card is seen first.
+  const order = await page.locator('#captain-instructions-heading, #route-heading, #pacing-heading')
+    .evaluateAll(elements => elements.map(element => element.id))
+  expect(order).toEqual(['captain-instructions-heading', 'route-heading', 'pacing-heading'])
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})
+
+test('captain without an assigned bus or fresh progress gets a clear route state', async ({ page, context }) => {
+  await mockAuth(context, 'CAPTAIN')
+  let response: 'unassigned' | 'unavailable' = 'unassigned'
+  await context.route('**/api/v1/captain-routes/current', route => response === 'unassigned'
+    ? route.fulfill({ status: 204 }) : route.fulfill({ json: captainRoute('UNAVAILABLE') }))
+  await login(page)
+  await expect(page.getByText(/No bus is assigned to you right now/)).toBeVisible()
+  response = 'unavailable'
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByText(/Position unavailable/)).toBeVisible()
+  const routeList = page.getByRole('list', { name: 'Route stops', exact: true })
+  await expect(routeList.locator('[data-state="ahead"]')).toHaveCount(3)
+  await expect(routeList).toContainText('4 more stops')
+  await expect(routeList.locator('[data-state="terminal"]')).toContainText('Kampong Bahru Ter')
+})
+
+test('instruction headlines, states and pacing sentences read plainly', () => {
+  const none = { stopCode: null, stopName: null, stopSequence: null, subsequentStopCount: null, speedReductionKmh: null, durationSeconds: null }
+  expect(instructionHeadline('HOLD', { ...none, durationSeconds: 90, stopName: 'Bt Panjang Stn' })).toBe('Hold 1 min 30 s at Bt Panjang Stn')
+  expect(instructionHeadline('DWELL_ADJUSTMENT', { ...none, durationSeconds: 45 })).toBe('Stay 45 s longer')
+  expect(instructionHeadline('DWELL_ADJUSTMENT', none)).toBe('Stay longer')
+  expect(instructionHeadline('REDUCE_SPEED', { ...none, speedReductionKmh: 5, durationSeconds: 300 })).toBe('Reduce speed by 5 km/h for 5 min')
+  expect(instructionHeadline('SLOW_DOWN_NEAR_STOPS', { ...none, subsequentStopCount: 1 })).toBe('Slow down near the next 1 stop')
+  expect(instructionHeadline('BE_CAUTIOUS', none)).toBe('Be cautious')
+  expect([durationText(0), durationText(60), durationText(61)]).toEqual(['0 s', '1 min', '1 min 1 s'])
+
+  const now = new Date('2026-10-27T06:00:00Z')
+  const issued = syntheticInstruction(now)
+  expect(instructionState(issued, now.getTime())).toBe('action')
+  expect(instructionState(issued, null)).toBe('action')
+  expect(instructionState(issued, Date.parse(issued.acknowledgementDeadline))).toBe('closed')
+  expect(instructionState({ ...issued, status: 'EXPIRED' }, now.getTime())).toBe('closed')
+  expect(instructionState({ ...issued, acknowledgedAt: now.toISOString() }, now.getTime())).toBe('acknowledged')
+  expect(instructionState({ ...issued, status: 'CANCELLED' }, now.getTime())).toBe('cancelled')
+  expect(acknowledgementTimeLeft(issued.acknowledgementDeadline, now.getTime() + 1_000)).toBe('4:59')
+  expect(acknowledgementTimeLeft(issued.acknowledgementDeadline, null)).toBeNull()
+
+  expect(gapSummary('ahead', 95, 480)).toBe('Bus ahead is 1:35 away · 6:25 shorter than target')
+  expect(gapSummary('behind', null, 480)).toBe('No bus detected behind')
+})
+
+test('an instruction awaiting acknowledgement is the most prominent, full-width action', async ({ page, context }) => {
+  await mockAuth(context, 'CAPTAIN')
+  const now = new Date()
+  let instruction = syntheticInstruction(now)
+  await context.route('**/api/v1/planning/captain/instructions?*', route => route.fulfill({
+    json: { items: [instruction], page: 0, totalItems: 1, totalPages: 1, serverTime: now.toISOString() } }))
+  await context.route(`**/api/v1/planning/captain/instructions/${instruction.id}/acknowledgements`, route => {
+    instruction = { ...instruction, status: 'ACKNOWLEDGED', acknowledgedAt: now.toISOString(),
+      applicableUntil: new Date(now.getTime() + 300_000).toISOString() }
+    return route.fulfill({ json: instruction })
+  })
+  await page.setViewportSize({ width: 375, height: 812 })
+  await login(page)
+  const display = page.getByRole('region', { name: 'Controller instructions', exact: true })
+  const card = display.locator('[data-state="action"]')
+  await expect(display.getByText('1 instruction needs acknowledgement', { exact: true })).toBeVisible()
+  await expect(card.getByText('Reduce speed by 5 km/h for 5 min', { exact: true })).toBeVisible()
+  await expect(card.getByText(/^Acknowledge within \d:\d\d$/)).toBeVisible()
+  const button = card.getByRole('button', { name: 'Acknowledge', exact: true })
+  const [buttonBox, cardBox] = [await button.boundingBox(), await card.boundingBox()]
+  expect(buttonBox!.height).toBeGreaterThanOrEqual(56)
+  expect(buttonBox!.width).toBeGreaterThan(cardBox!.width * 0.8)
+  // The actionable card sits above the route so it is the first thing the captain sees.
+  expect(cardBox!.y).toBeLessThan((await page.locator('#route-heading').boundingBox())!.y)
+  await button.click()
+  await expect(display.locator('[data-state="acknowledged"]').getByText(/^Acknowledged /)).toBeVisible()
+  await expect(display.getByText('1 instruction needs acknowledgement', { exact: true })).toHaveCount(0)
+  await expect(display.getByRole('button', { name: 'Acknowledge', exact: true })).toHaveCount(0)
+})
+
+for (const theme of ['night', 'day'] as const) {
+  test(`captain display text keeps readable contrast in ${theme} mode`, async ({ page, context }) => {
+    await mockAuth(context, 'CAPTAIN')
+    const now = new Date()
+    await context.route('**/api/v1/planning/captain/instructions?*', route => route.fulfill({
+      json: { items: [syntheticInstruction(now)], page: 0, totalItems: 1, totalPages: 1, serverTime: now.toISOString() } }))
+    await page.addInitScript(value => { localStorage.setItem('occ-obu-theme', value) }, theme)
+    await login(page)
+    await expect(page.getByRole('region', { name: 'Captain display', exact: true })).toHaveAttribute('data-theme', theme)
+    const instruction = page.getByRole('region', { name: 'Controller instructions', exact: true })
+    const checked = {
+      'instruction headline': instruction.getByText('Reduce speed by 5 km/h for 5 min', { exact: true }),
+      'instruction status': instruction.getByText('1 instruction needs acknowledgement', { exact: true }),
+      'acknowledge button': instruction.getByRole('button', { name: 'Acknowledge', exact: true }),
+      'next stop label': page.getByText('Next stop', { exact: true }),
+      'route stop time': page.getByText(/\d\d:\d\d est\./).first(),
+      'pacing state': page.getByRole('region', { name: 'Gap to bus ahead', exact: true }).getByText('TOO CLOSE'),
+      'pacing label': page.getByRole('region', { name: 'Gap to bus ahead', exact: true }).getByText(/^Gap to bus ahead$/i),
+      'simulation badge': page.getByText('SIMULATION', { exact: true }),
+    }
+    for (const [name, locator] of Object.entries(checked)) {
+      // Composite every background up the tree, then compare against the rendered text colour.
+      const ratio = await locator.evaluate(element => {
+        const context2d = document.createElement('canvas').getContext('2d', { willReadFrequently: true })!
+        const paint = (colours: string[]) => {
+          context2d.fillStyle = '#ffffff'; context2d.fillRect(0, 0, 1, 1)
+          for (const colour of colours) { context2d.fillStyle = colour; context2d.fillRect(0, 0, 1, 1) }
+          return Array.from(context2d.getImageData(0, 0, 1, 1).data.slice(0, 3))
+        }
+        const backgrounds: string[] = []
+        for (let node: Element | null = element; node; node = node.parentElement) backgrounds.unshift(getComputedStyle(node).backgroundColor)
+        const luminance = (rgb: number[]) => rgb.map(value => value / 255)
+          .map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
+          .reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
+        const [text, background] = [luminance(paint([...backgrounds, getComputedStyle(element).color])), luminance(paint(backgrounds))]
+        return (Math.max(text, background) + 0.05) / (Math.min(text, background) + 0.05)
+      })
+      expect(ratio, `${name} contrast in ${theme} mode`).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+}
+
+test('captain display supports narrow screens and persistent day mode', async ({ page, context }) => {
+  await mockAuth(context, 'CAPTAIN')
+  await page.setViewportSize({ width: 375, height: 812 })
+  await login(page)
+  const display = page.getByRole('region', { name: 'Captain display', exact: true })
+  await expect(page.getByRole('region', { name: 'Gap to bus behind', exact: true })).toHaveAttribute('data-state', 'TOO_FAR')
   await page.getByRole('button', { name: 'Day mode', exact: true }).click()
   await expect(display).toHaveAttribute('data-theme', 'day')
   await page.reload()
