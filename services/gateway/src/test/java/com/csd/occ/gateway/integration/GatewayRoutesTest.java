@@ -102,6 +102,18 @@ class GatewayRoutesTest {
     }
 
     @Test
+    void onlyCaptainsReachTheirAssignedBusRoute() {
+        String path = "/api/v1/captain-routes/current";
+        assertThat(get(path, "CAPTAIN").getStatusCode().value()).isEqualTo(200);
+        assertThat(lastBackendPath.get()).isEqualTo(path);
+        lastBackendPath.set(null);
+        for (String role : List.of("CONTROLLER", "ADMIN", "UNASSIGNED")) {
+            assertThat(get(path, role).getStatusCode().value()).isEqualTo(403);
+        }
+        assertThat(lastBackendPath.get()).isNull();
+    }
+
+    @Test
     void backendDoesNotRouteDemoPages() {
         lastBackendPath.set(null);
         ResponseEntity<String> response = get("/demo.html", "ADMIN");
