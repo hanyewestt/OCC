@@ -250,6 +250,14 @@ duplicate it. Source fields are `null` when the newest completed cycle contains
 no usable readings. The current estimator does not extrapolate buses between
 polls.
 
+The internal bunching snapshot feed also carries the coordinated
+`sourcePollCycleId`, provider operator and visit number. It supplies a
+`routeStopSequence` only when the active reference topology resolves that stop to
+exactly one occurrence for the service, operator and direction. Repeated circular
+occurrences therefore remain `null`. Disruption uses these fields only to suppress
+an exact same-pair, same-sweep duplicate Planning diagnosis; they are not exposed as
+stable vehicle identities, and missing or ambiguous evidence is never deduplicated.
+
 The machine-readable OpenAPI document is at `/v3/api-docs`.
 
 Current arrivals can be filtered by a trimmed, case-insensitive literal substring
