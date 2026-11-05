@@ -90,12 +90,12 @@ export function ControllerOverview({ collection, search, onSearch, sortBy, sortD
     </Table>}
     {loadMoreError && <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-destructive">
       <span>{collection.refreshError ? 'Unable to refresh arrivals.' : 'Unable to load more arrivals.'}</span>
-      <Button variant="outline" size="sm" disabled={collection.isLoadingMore} onClick={collection.refreshError ? collection.reload : collection.loadNext}>{collection.refreshError ? 'Retry arrivals' : 'Retry loading more arrivals'}</Button>
+      <Button variant="outline" size="sm" disabled={collection.isLoading || collection.isLoadingMore} onClick={collection.refreshError ? collection.reload : collection.loadNext}>{collection.isLoading || collection.isLoadingMore ? 'Loading…' : collection.refreshError ? 'Retry arrivals' : 'Retry loading more arrivals'}</Button>
     </div>}
-    {collection.hasMore && !loadMoreError && <Button variant="outline" disabled={collection.isLoadingMore} onClick={collection.loadNext}>
+    {collection.hasMore && !loadMoreError && <Button variant="outline" disabled={collection.isLoading || collection.isLoadingMore} onClick={collection.loadNext}>
       {collection.isLoadingMore ? 'Loading more arrivals…' : 'Load more arrivals'}
     </Button>}
-    {collection.error !== null && !collection.items.length && <Button variant="outline" onClick={collection.reload}>Retry arrivals</Button>}
+    {collection.error !== null && !collection.items.length && <Button variant="outline" disabled={collection.isLoading} onClick={collection.reload}>{collection.isLoading ? 'Retrying arrivals…' : 'Retry arrivals'}</Button>}
   </section>
 }
 
@@ -416,7 +416,7 @@ export function BunchingMap({
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return
-    if ((event.target as HTMLElement).closest('button')) return
+    if ((event.target as Element).closest('button, [role="button"]')) return
     const centerWorld = latLngToWorld(center.lat, center.lng, zoom)
     drag.current = {
       pointerId: event.pointerId,
@@ -452,7 +452,9 @@ export function BunchingMap({
 
   const onStopClick = (stopCode: string) => {
     if (!onSelectIncident) return
-    const matching = incidents.find(i => i.stopCodes.includes(stopCode))
+    const corridorServiceIds = new Set(routes.map(r => r.serviceId))
+    const matching = incidents.find(i => corridorServiceIds.has(i.serviceId) && i.stopCodes.includes(stopCode))
+      ?? incidents.find(i => i.stopCodes.includes(stopCode))
     if (matching) {
       onSelectIncident(selectedIncident?.id === matching.id ? null : matching.id)
       document.getElementById(`incident-${matching.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
@@ -692,6 +694,7 @@ export function BunchingMap({
                 )}
                 opacity={isDimmed ? 0.35 : 1}
                 onClick={() => onStopClick(stop.stopCode)}
+                onPointerDown={e => e.stopPropagation()}
                 onKeyDown={e => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
@@ -748,6 +751,7 @@ export function BunchingMap({
                 )}
                 opacity={isDimmed ? 0.35 : 1}
                 onClick={() => onBusClick(bus.serviceId, bus.order)}
+                onPointerDown={e => e.stopPropagation()}
                 onKeyDown={e => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
@@ -824,6 +828,7 @@ export function BunchingMap({
             size="icon"
             variant="ghost"
             aria-label="Reset map view"
+            disabled={manualView === null}
             onClick={handleResetView}
             className="h-8 w-8 border-t rounded-none"
           >
@@ -908,12 +913,8 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
     if (incidentParam) {
       return positionedIncidents.find(i => i.id === incidentParam) ?? null
     }
-    if (serviceParam) {
-      return positionedIncidents.find(i => i.serviceId === serviceParam &&
-        (directionParam === null || String(i.directionId) === directionParam)) ?? null
-    }
     return null
-  }, [incidentParam, serviceParam, directionParam, positionedIncidents])
+  }, [incidentParam, positionedIncidents])
 
   const activeIncidents = useMemo(() => positionedIncidents.filter(i => !i.historical), [positionedIncidents])
   const historicalIncidents = useMemo(() => positionedIncidents.filter(i => i.historical), [positionedIncidents])
@@ -1342,7 +1343,7 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
           affectedStopCodes={affectedStopCodes}
           buses={mapBuses}
           selectedIncident={selectedIncident}
-          incidents={displayedIncidents}
+          incidents={positionedIncidents}
           onSelectIncident={handleSelectIncident}
         />
       )}
@@ -1402,7 +1403,7 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
       
       {!simulation && !loading && liveAlerts.latestPage && liveAlerts.latestPage.totalItems > items.length && <p className="text-xs text-muted-foreground">Showing {items.length} of {liveAlerts.latestPage.totalItems} detections.</p>}
       {!simulation && <PagedCollectionControls label="bunching detections" hasItems={!!liveAlerts.items.length} hasMore={liveAlerts.hasMore}
-        isLoadingMore={liveAlerts.isLoadingMore} error={liveAlerts.error} refreshError={liveAlerts.refreshError} reload={liveAlerts.reload} loadNext={liveAlerts.loadNext} />}
+        isLoading={liveAlerts.isLoading} isLoadingMore={liveAlerts.isLoadingMore} error={liveAlerts.error} refreshError={liveAlerts.refreshError} reload={liveAlerts.reload} loadNext={liveAlerts.loadNext} />}
     </section>
   </div>
 }
@@ -1423,7 +1424,7 @@ export function ControllerAudit({ decisions, loading }: {
       </Table>}
       {decisions.latestPage && decisions.latestPage.totalItems > items.length && <p className="text-xs text-muted-foreground">Showing {items.length} of {decisions.latestPage.totalItems} decisions.</p>}
       <PagedCollectionControls label="decisions" hasItems={!!decisions.items.length} hasMore={decisions.hasMore}
-        isLoadingMore={decisions.isLoadingMore} error={decisions.error} refreshError={decisions.refreshError} reload={decisions.reload} loadNext={decisions.loadNext} />
+        isLoading={decisions.isLoading} isLoadingMore={decisions.isLoadingMore} error={decisions.error} refreshError={decisions.refreshError} reload={decisions.reload} loadNext={decisions.loadNext} />
     </section>
     <section aria-labelledby="ai-audit-title" className="space-y-2 border-t pt-6"><h2 id="ai-audit-title" className="font-medium">AI audit logs</h2><p className="text-sm text-muted-foreground">Not connected yet. AI audit records will appear here when available.</p></section>
   </div>
