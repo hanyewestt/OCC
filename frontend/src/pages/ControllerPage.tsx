@@ -308,8 +308,8 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           'Unable to switch modes. Check the current mode before trying again.')
     } finally {
       switchingRef.current = false
+      setSwitching(false)
       if (!controller.signal.aborted) {
-        setSwitching(false)
         void requestRefresh('mutation')
       }
     }

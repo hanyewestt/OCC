@@ -103,14 +103,18 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
 
     triggerDiagnosis({ eventId: targetEventId, requestId: targetRequestId }, token, controller.signal)
       .then(() => {
-        setDiagnosing(false)
-        setDiagnosingMessage('')
-        onRefresh()
+        if (!controller.signal.aborted) {
+          onRefresh()
+        }
       })
       .catch((err: unknown) => {
+        if (!controller.signal.aborted) {
+          setTriggerError(err instanceof Error ? err.message : 'Failed to diagnose root cause.')
+        }
+      })
+      .finally(() => {
         setDiagnosing(false)
         setDiagnosingMessage('')
-        setTriggerError(err instanceof Error ? err.message : 'Failed to diagnose root cause.')
       })
   }
 
@@ -136,17 +140,17 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
     triggerDiagnosis({ eventId: eventParam }, token, controller.signal)
       .then(() => {
         if (!controller.signal.aborted) {
-          setDiagnosing(false)
-          setDiagnosingMessage('')
           onRefresh()
         }
       })
       .catch((err: unknown) => {
         if (!controller.signal.aborted) {
-          setDiagnosing(false)
-          setDiagnosingMessage('')
           setTriggerError(err instanceof Error ? err.message : 'Failed to diagnose root cause.')
         }
+      })
+      .finally(() => {
+        setDiagnosing(false)
+        setDiagnosingMessage('')
       })
 
     return () => {
@@ -163,7 +167,7 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
 
   const [message, setMessage] = useState('')
   const [editingRecommendation, setEditingRecommendation] = useState<EditingRecommendation | null>(null)
-  useEffect(() => { onPendingChange(!!editingRecommendation?.pending) }, [editingRecommendation?.pending, onPendingChange])
+  useEffect(() => { onPendingChange(diagnosing || !!editingRecommendation?.pending) }, [diagnosing, editingRecommendation?.pending, onPendingChange])
   useEffect(() => () => onPendingChange(false), [onPendingChange])
   const recommendationPage = recommendations.latestPage
   const recommendationScopeMatches = !modeError && recommendationPage?.mode === mode &&
@@ -249,9 +253,10 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
               variant="outline"
               size="sm"
               className="h-7 text-xs"
+              disabled={diagnosing}
               onClick={() => handleTrigger(eventParam)}
             >
-              Retry
+              {diagnosing ? 'Retrying…' : 'Retry'}
             </Button>
           )}
         </div>
@@ -287,7 +292,7 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
         </Card>)}</div></ScrollArea>}
       {!!diagnosisPage && diagnosisPage.totalItems > diagnosisItems.length && <p className="text-xs text-muted-foreground">Showing {diagnosisItems.length} of {diagnosisPage.totalItems} diagnoses.</p>}
       <PagedCollectionControls label="diagnoses" hasItems={!!diagnoses.items.length} hasMore={diagnoses.hasMore}
-        isLoadingMore={diagnoses.isLoadingMore} error={diagnoses.error} refreshError={diagnoses.refreshError} reload={diagnoses.reload} loadNext={diagnoses.loadNext} />
+        isLoading={diagnoses.isLoading} isLoadingMore={diagnoses.isLoadingMore} error={diagnoses.error} refreshError={diagnoses.refreshError} reload={diagnoses.reload} loadNext={diagnoses.loadNext} />
     </section>
     <DataMessage error={recommendationError} loading={loading || recommendations.isLoading && !recommendationPage} empty={!recommendationItems.length && !detailRecommendation}>No recommendations are awaiting a decision.</DataMessage>
     {message && <p role="status" className="text-sm">{message}</p>}
@@ -340,20 +345,21 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
           {!visible.length && <p className="p-6 text-center text-sm text-muted-foreground">No matching bus service.</p>}
         </div></ScrollArea>
         <div className="p-3"><PagedCollectionControls label="recommendations" hasItems={!!recommendations.items.length} hasMore={recommendations.hasMore}
-          isLoadingMore={recommendations.isLoadingMore} error={recommendations.error} refreshError={recommendations.refreshError} reload={recommendations.reload} loadNext={recommendations.loadNext} /></div>
+          isLoading={recommendations.isLoading} isLoadingMore={recommendations.isLoadingMore} error={recommendations.error} refreshError={recommendations.refreshError} reload={recommendations.reload} loadNext={recommendations.loadNext} /></div>
       </Card>
 
       {detailRecommendation && detailIdentity && <RecommendationDetail key={detailIdentity} selected={detailRecommendation} identity={detailIdentity}
         scopeIdentity={scopeIdentity} token={token} isCurrent={selectionIsCurrent} validationFailed={editorUnavailable}
+        checkingCurrent={recommendations.isLoading}
         retryCurrentCheck={modeError ? onRefresh : recommendations.reload}
         onSaved={onSaved} onMessage={setMessage} onEditorChange={setEditingRecommendation} />}
     </div> : null}
   </section>
 }
 
-function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurrent, validationFailed, retryCurrentCheck, onSaved, onMessage, onEditorChange }: {
+function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurrent, validationFailed, checkingCurrent = false, retryCurrentCheck, onSaved, onMessage, onEditorChange }: {
   selected: PendingRecommendation; identity: string; scopeIdentity: string; token: string
-  isCurrent: boolean; validationFailed: boolean; retryCurrentCheck: () => void
+  isCurrent: boolean; validationFailed: boolean; checkingCurrent?: boolean; retryCurrentCheck: () => void
   onSaved: () => void; onMessage: (message: string) => void; onEditorChange: Dispatch<SetStateAction<EditingRecommendation | null>>
 }) {
   const [pending, setPending] = useState(false)
@@ -443,9 +449,9 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
       } else setMessage(error instanceof ApiError && error.status === 403 ? 'You do not have permission to record this decision.' : 'Unable to save the decision. Check the instructions and try again.')
     } finally {
       submitting.current = false
+      setPending(false)
+      onEditorChange(value => value?.identity === identity ? { ...value, pending: false } : value)
       if (!controller.signal.aborted) {
-        setPending(false)
-        onEditorChange(value => value?.identity === identity ? { ...value, pending: false } : value)
         onSaved()
       }
     }
@@ -464,9 +470,9 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
       if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : 'Unable to issue the instruction.')
     } finally {
       submitting.current = false
+      setPending(false)
+      onEditorChange(value => value?.identity === identity ? { ...value, pending: false } : value)
       if (!controller.signal.aborted) {
-        setPending(false)
-        onEditorChange(value => value?.identity === identity ? { ...value, pending: false } : value)
         onSaved()
       }
     }
@@ -481,7 +487,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
 
         <div className="flex flex-wrap justify-end gap-2 border-b pb-4">
           <Dialog open={editorOpen} onOpenChange={changeEditorOpen}>
-            <DialogTrigger asChild><Button variant="outline" disabled={pending}>Enter controller recommendation</Button></DialogTrigger>
+            <DialogTrigger asChild><Button variant="outline" disabled={pending || !isCurrent}>Enter controller recommendation</Button></DialogTrigger>
             <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl"
               onOpenAutoFocus={event => { event.preventDefault(); firstBusReference.current?.focus() }}
               onEscapeKeyDown={event => { if (pending) event.preventDefault() }}
@@ -493,7 +499,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
               {!isCurrent && <div role="alert" className="rounded-lg border p-3 text-sm">
                 <p>{validationFailed ? 'Unable to confirm this recommendation is current. Your draft is preserved; decisions are paused.'
                   : 'Checking that this recommendation is still pending. Decisions are paused.'}</p>
-                {validationFailed && <Button type="button" variant="outline" className="mt-3" onClick={retryCurrentCheck}>Retry recommendation check</Button>}
+                {validationFailed && <Button type="button" variant="outline" className="mt-3" disabled={pending || checkingCurrent} onClick={retryCurrentCheck}>{checkingCurrent ? 'Checking…' : 'Retry recommendation check'}</Button>}
               </div>}
               {message && <p role="alert" className="rounded-lg border p-3 text-sm">{message}</p>}
               <form className="space-y-4" noValidate onSubmit={event => { event.preventDefault(); void decide('REJECTED') }}>
