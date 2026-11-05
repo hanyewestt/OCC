@@ -27,6 +27,7 @@ ARG OCC_SERVICE
 ARG OCC_SERVICE_INTERNAL_PORT
 
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install --no-install-recommends -y curl libbrotli1 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
