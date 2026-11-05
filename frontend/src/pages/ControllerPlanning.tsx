@@ -85,7 +85,17 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
   onPendingChange: (pending: boolean) => void
 }) {
   const [searchParams, setSearchParams] = useSearchParams()
-  const [filter, setFilter] = useState('')
+  const serviceParam = searchParams.get('service')
+  const stopParam = searchParams.get('stop')
+  const incidentParam = searchParams.get('incident')
+  const [userFilter, setUserFilter] = useState<string | null>(null)
+  const [prevServiceParam, setPrevServiceParam] = useState(serviceParam)
+  if (prevServiceParam !== serviceParam) {
+    setPrevServiceParam(serviceParam)
+    setUserFilter(null)
+  }
+  const filter = userFilter !== null ? userFilter : (serviceParam ?? '')
+
   const [message, setMessage] = useState('')
   const [editingRecommendation, setEditingRecommendation] = useState<EditingRecommendation | null>(null)
   useEffect(() => { onPendingChange(!!editingRecommendation?.pending) }, [editingRecommendation?.pending, onPendingChange])
@@ -113,8 +123,11 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
   const editingItemIsLoaded = !!editingItem
   const editNeedsRevalidation = !!editingInScope && !editingItem && (!!modeError || recommendations.isLoading || recommendations.isLoadingMore ||
     recommendationHasMore || recommendationLoadError !== null)
+  const paramMatched = !requestedId && (serviceParam || stopParam)
+    ? recommendationItems.find(item => (!serviceParam || item.serviceId === serviceParam) && (!stopParam || item.controlStopCode === stopParam))
+    : null
   const selected = editingInScope && !editingItem && (editNeedsRevalidation || editingRecommendation?.pending) ? editingInScope.recommendation
-    : recommendationItems.find(item => item.recommendationId === requestedId) ?? visible[0] ?? recommendationItems[0]
+    : (recommendationItems.find(item => item.recommendationId === requestedId) ?? paramMatched ?? visible[0] ?? recommendationItems[0])
   const selectedIdentity = selected ? `${scopeIdentity}:${selected.recommendationId}` : null
   const editorUnavailable = !!editingInScope && (!!modeError || recommendationLoadError !== null)
   const editorStale = editingRecommendation !== null && (editingRecommendation.scopeIdentity !== scopeIdentity ||
@@ -133,12 +146,20 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
 
   useEffect(() => {
     if (selected && selected.recommendationId !== requestedId) {
-      setSearchParams({ recommendation: selected.recommendationId }, { replace: true })
+      setSearchParams(prev => {
+        const next = new URLSearchParams(prev)
+        next.set('recommendation', selected.recommendationId)
+        return next
+      }, { replace: true })
     }
   }, [requestedId, selected, setSearchParams])
 
   function select(recommendationId: string) {
-    setSearchParams({ recommendation: recommendationId })
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.set('recommendation', recommendationId)
+      return next
+    })
   }
 
   return <section aria-label="Mitigation recommendations" className="space-y-4">
@@ -167,12 +188,39 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
     {message && <p role="status" className="text-sm">{message}</p>}
     {editorStale && <p role="status" className="text-sm">This recommendation is no longer current. The editor was closed; review the latest data before making a decision.</p>}
     {editorUnavailable && !editorStale && <p role="status" className="text-sm">Unable to confirm this recommendation is current. Your draft is preserved; retry the check before deciding.</p>}
+    {(serviceParam || incidentParam) && (
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5 text-xs">
+        <span className="text-foreground">
+          Showing recommendations for <strong>Service {serviceParam || selected?.serviceId}</strong>
+          {stopParam && <> near stop <strong>{stopParam}</strong></>}
+          {incidentParam && <> (linked from Disruption)</>}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-6 text-xs text-muted-foreground hover:text-foreground"
+          onClick={() => {
+            setSearchParams(prev => {
+              const next = new URLSearchParams(prev)
+              next.delete('incident')
+              next.delete('service')
+              next.delete('stop')
+              return next
+            })
+            setUserFilter('')
+          }}
+        >
+          Clear filter
+        </Button>
+      </div>
+    )}
     {!!recommendationItems.length || !!detailRecommendation ? <div className="grid items-start gap-4 lg:grid-cols-[minmax(16rem,0.36fr)_minmax(0,1fr)]">
       <Card className="gap-0 py-0">
         <div className="space-y-3 border-b p-4">
           <div className="flex items-center justify-between gap-3"><h2 className="text-sm font-medium">Awaiting decision</h2><span className="text-xs text-muted-foreground">Oldest first</span></div>
           <Label htmlFor="service-filter" className="sr-only">Filter by bus service number</Label>
-          <Input id="service-filter" inputMode="numeric" placeholder="Filter bus no. e.g. 190" value={filter} onChange={event => setFilter(event.target.value)} />
+          <Input id="service-filter" inputMode="numeric" placeholder="Filter bus no. e.g. 190" value={filter} onChange={event => setUserFilter(event.target.value)} />
         </div>
         <ScrollArea role="listbox" aria-label="Recommendations awaiting a decision" tabIndex={0} className="max-h-[28rem]"
           viewportProps={{ onScroll: recommendations.onScroll }}><div className="divide-y">

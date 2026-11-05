@@ -42,7 +42,9 @@ public class RoutePositionsController {
                     + "linked, but estimates returned together by one stop snapshot remain separate. Coordinated "
                     + "refresh-boundary matching is enabled only for configured service directions. On configured "
                     + "circular service directions, evidence can share a compatible phase without reducing the number "
-                    + "of estimates. Evidence IDs and sourcePollCycleId identify source "
+                    + "of estimates. A singleton provider measurement after a multi-bus observation may be shared "
+                    + "across compatible hypotheses to preserve multiplicity through a merged-measurement interval. "
+                    + "Evidence IDs and sourcePollCycleId identify source "
                     + "records, not verified physical vehicles; sourceObservedAt is source time while computedAt is "
                     + "response computation time.")
     @ApiResponses({
