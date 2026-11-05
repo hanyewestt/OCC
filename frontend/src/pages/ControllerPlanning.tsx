@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
-import { ApiError, apiRequest, type ControllerBusInstruction, type Decision, type DiagnosisEvidenceDetail, type PendingRecommendation, type PlanningDiagnosisPage } from '@/lib/api'
+import { ApiError, apiRequest, triggerDiagnosis, type ControllerBusInstruction, type Decision, type DiagnosisEvidenceDetail, type PendingRecommendation, type PlanningDiagnosisPage } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { dataClassificationLabel, diagnosisStatusLabel } from '@/lib/presentation'
 import type { Planning } from './ControllerPage'
@@ -88,6 +88,71 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
   const serviceParam = searchParams.get('service')
   const stopParam = searchParams.get('stop')
   const incidentParam = searchParams.get('incident')
+  const eventParam = searchParams.get('event')
+  const [diagnosing, setDiagnosing] = useState(false)
+  const [diagnosingMessage, setDiagnosingMessage] = useState('')
+  const [triggerError, setTriggerError] = useState<string | null>(null)
+  const triggeredEventsRef = useRef<Set<string>>(new Set())
+
+  const handleTrigger = (targetEventId?: string, targetRequestId?: string) => {
+    if (!token || diagnosing) return
+    const controller = new AbortController()
+    setDiagnosing(true)
+    setDiagnosingMessage('Analyzing root cause with Gemini AI...')
+    setTriggerError(null)
+
+    triggerDiagnosis({ eventId: targetEventId, requestId: targetRequestId }, token, controller.signal)
+      .then(() => {
+        setDiagnosing(false)
+        setDiagnosingMessage('')
+        onRefresh()
+      })
+      .catch((err: unknown) => {
+        setDiagnosing(false)
+        setDiagnosingMessage('')
+        setTriggerError(err instanceof Error ? err.message : 'Failed to diagnose root cause.')
+      })
+  }
+
+  useEffect(() => {
+    if (!eventParam || !token || modeError) return
+
+    const alreadyDiagnosed = diagnoses.items.some(
+      item => item.eventId === eventParam && item.status === 'COMPLETED'
+    )
+    if (alreadyDiagnosed) {
+      triggeredEventsRef.current.add(eventParam)
+      return
+    }
+
+    if (triggeredEventsRef.current.has(eventParam)) return
+    triggeredEventsRef.current.add(eventParam)
+
+    const controller = new AbortController()
+    setDiagnosing(true)
+    setDiagnosingMessage('Analyzing root cause with Gemini AI...')
+    setTriggerError(null)
+
+    triggerDiagnosis({ eventId: eventParam }, token, controller.signal)
+      .then(() => {
+        if (!controller.signal.aborted) {
+          setDiagnosing(false)
+          setDiagnosingMessage('')
+          onRefresh()
+        }
+      })
+      .catch((err: unknown) => {
+        if (!controller.signal.aborted) {
+          setDiagnosing(false)
+          setDiagnosingMessage('')
+          setTriggerError(err instanceof Error ? err.message : 'Failed to diagnose root cause.')
+        }
+      })
+
+    return () => {
+      controller.abort()
+    }
+  }, [eventParam, token, modeError, diagnoses.items, onRefresh])
   const [userFilter, setUserFilter] = useState<string | null>(null)
   const [prevServiceParam, setPrevServiceParam] = useState(serviceParam)
   if (prevServiceParam !== serviceParam) {
@@ -166,12 +231,52 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
     <section aria-labelledby="planning-diagnoses-title" className="space-y-4">
       <h2 id="planning-diagnoses-title" className="font-medium">Root-cause diagnoses</h2>
       <p className="text-sm text-muted-foreground">Live diagnoses are advisory; actions require validated vehicle, control-stop and crowd-safety inputs.</p>
+      {diagnosing && (
+        <div className="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/10 p-4 text-sm text-foreground">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent shrink-0" />
+          <div>
+            <p className="font-medium">{diagnosingMessage || 'Analyzing root cause with Gemini AI...'}</p>
+            <p className="text-xs text-muted-foreground">Gathering corridor telemetry, assessing traffic incidents, and generating mitigation proposals.</p>
+          </div>
+        </div>
+      )}
+      {triggerError && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+          <p><strong>Diagnosis request failed:</strong> {triggerError}</p>
+          {eventParam && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => handleTrigger(eventParam)}
+            >
+              Retry
+            </Button>
+          )}
+        </div>
+      )}
       <DataMessage error={diagnosisError} loading={loading || diagnoses.isLoading && !diagnosisPage} empty={!diagnosisItems.length}>No confirmed bunching events have reached Planning in this mode.</DataMessage>
       {!!diagnosisItems.length && <ScrollArea role="region" aria-label="Root-cause diagnoses" tabIndex={0} className="max-h-[28rem]"
         viewportProps={{ onScroll: diagnoses.onScroll }}><div className="space-y-3 p-1 pr-3.5">{diagnosisItems.map(item => <Card key={item.requestId} className="min-h-28">
           <CardContent className="space-y-2 text-sm">
             <p className="font-medium">Service {item.serviceId ?? 'unavailable'} · {item.directionId === null ? 'Direction unavailable' : `Direction ${item.directionId}`} · Stop {item.stopCode ?? 'unavailable'}</p>
             <p className="text-xs text-muted-foreground">{dataClassificationLabel(item.classification)} · {diagnosisStatusLabel(item.status)} · {timestamp(item.createdAt)}</p>
+            {item.status === 'PENDING' && (
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-xs text-muted-foreground">Not yet diagnosed (on-demand)</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  disabled={diagnosing}
+                  onClick={() => handleTrigger(item.eventId, item.requestId)}
+                >
+                  Analyze with AI →
+                </Button>
+              </div>
+            )}
             {item.likelyCause && <p>{item.likelyCause}</p>}
             {item.failureCode && <p role="alert">Diagnosis unavailable: {item.failureCode.replaceAll('_', ' ')}.</p>}
             {!!item.evidenceDetails?.length || !!item.limitations.length ? <details className="text-xs text-muted-foreground"><summary className="cursor-pointer font-medium">Evidence and limitations</summary>
@@ -206,6 +311,7 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
               next.delete('incident')
               next.delete('service')
               next.delete('stop')
+              next.delete('event')
               return next
             })
             setUserFilter('')

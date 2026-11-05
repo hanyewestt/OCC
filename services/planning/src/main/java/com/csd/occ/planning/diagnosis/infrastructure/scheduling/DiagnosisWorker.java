@@ -37,7 +37,7 @@ public class DiagnosisWorker {
     @Scheduled(fixedDelayString = "${occ.diagnosis.worker-interval}")
     public void processDueWork() {
         // AI calls can outlive the queue lease; claim one diagnosis at a time to avoid duplicate model work.
-        List<java.util.UUID> requestIds = requests.claimDueRequests(1, properties.leaseDuration());
+        List<java.util.UUID> requestIds = requests.claimDueRequests(1, properties.leaseDuration(), properties.autoProcessBunching());
         requestIds.forEach(id -> { if (!hazards.processIfHazard(id)) processor.process(id); });
         deliverDueRecommendations();
     }
