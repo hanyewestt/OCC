@@ -14,6 +14,12 @@ import type { Decision } from '@/lib/api'
 import type { PagedCollection } from '@/lib/paged-collection'
 import type { Resource } from './ControllerPage'
 import { groupRouteIncidents, type RouteIncident, formatGap, gapSeverity, routeStopDistances, linkIncidentToPosition, routeKey, type IncidentStripLink } from '@/lib/route-strip'
+import {
+  type LatLng,
+  computeBusLatLngAlongPolyline,
+  getBundledRouteGeometry,
+  loadRouteGeometry,
+} from '@/lib/route-geometry'
 
 export function timestamp(value: string | null | undefined) {
   return formatSgtDateTime(value)
@@ -161,7 +167,13 @@ export function computeBusLatLng(
   route: RouteDirection,
   distanceAlongRouteM: number,
   routeLengthM: number,
+  polylineCoords?: LatLng[] | null,
 ): { latitude: number; longitude: number } | null {
+  if (polylineCoords && polylineCoords.length >= 2) {
+    const pt = computeBusLatLngAlongPolyline(polylineCoords, distanceAlongRouteM, routeLengthM)
+    if (pt) return pt
+  }
+
   const validStops = route.stops.filter(s => validCoord(s.latitude, s.longitude))
   if (validStops.length < 2) return null
 
@@ -197,6 +209,7 @@ export interface BunchingMapProps {
   selectedIncident?: PositionedIncident | null
   incidents?: PositionedIncident[]
   onSelectIncident?: (incidentId: string | null) => void
+  routeGeometries?: Record<string, LatLng[]>
 }
 
 export function BunchingMap({
@@ -206,8 +219,39 @@ export function BunchingMap({
   selectedIncident = null,
   incidents = [],
   onSelectIncident,
+  routeGeometries,
 }: BunchingMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const [loadedGeometries, setLoadedGeometries] = useState<Record<string, LatLng[]>>({})
+
+  const activeGeometries = useMemo(() => {
+    const result: Record<string, LatLng[]> = { ...loadedGeometries, ...(routeGeometries ?? {}) }
+    for (const route of routes) {
+      const key = `${route.serviceId}-${route.directionId}`
+      if (!result[key]) {
+        const bundled = getBundledRouteGeometry(route.serviceId, route.directionId)
+        if (bundled) {
+          result[key] = bundled
+        }
+      }
+    }
+    return result
+  }, [routes, loadedGeometries, routeGeometries])
+
+  useEffect(() => {
+    let cancelled = false
+    for (const route of routes) {
+      const key = `${route.serviceId}-${route.directionId}`
+      if (!activeGeometries[key]) {
+        loadRouteGeometry(route.serviceId, route.directionId).then(pts => {
+          if (!cancelled && pts) {
+            setLoadedGeometries(prev => ({ ...prev, [key]: pts }))
+          }
+        }).catch(() => {})
+      }
+    }
+    return () => { cancelled = true }
+  }, [routes, activeGeometries])
   const [containerSize, setContainerSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 })
   const [isDragging, setIsDragging] = useState(false)
 
@@ -268,7 +312,9 @@ export function BunchingMap({
   const busMarkers = useMemo(() => buses.flatMap(({ serviceId, directionId, routeLengthM, bus }) => {
     const route = routes.find(candidate => candidate.serviceId === serviceId && candidate.directionId === directionId)
     if (!route) return []
-    const coords = computeBusLatLng(route, bus.distanceAlongRouteM, routeLengthM)
+    const key = `${serviceId}-${directionId}`
+    const geom = activeGeometries[key]
+    const coords = computeBusLatLng(route, bus.distanceAlongRouteM, routeLengthM, geom)
     if (!coords) return []
     return [{
       ...coords,
@@ -277,7 +323,7 @@ export function BunchingMap({
       order: bus.order,
       label: `Estimated bus ${bus.order} on service ${serviceId}`,
     }]
-  }), [buses, routes])
+  }), [buses, routes, activeGeometries])
 
   const corridorFocusPoints = useMemo(() => {
     if (allStops.length > 0) {
@@ -491,11 +537,15 @@ export function BunchingMap({
   }
 
   const routePolylines = routes.map(route => {
-    const pts = route.stops
-      .filter(stop => validCoord(stop.latitude, stop.longitude))
-      .map(stop => project(stop.latitude!, stop.longitude!))
+    const key = `${route.serviceId}-${route.directionId}`
+    const geom = activeGeometries[key]
+    const pts = (geom && geom.length > 1)
+      ? geom.map(p => project(p.latitude, p.longitude))
+      : route.stops
+          .filter(stop => validCoord(stop.latitude, stop.longitude))
+          .map(stop => project(stop.latitude!, stop.longitude!))
     return {
-      key: `${route.serviceId}-${route.directionId}`,
+      key,
       points: pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' '),
       count: pts.length,
     }
