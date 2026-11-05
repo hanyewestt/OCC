@@ -57,5 +57,6 @@ frontend/dist/
 frontend/test-results/
 frontend/playwright-report/
 frontend/coverage/
+test-results/
 
 .superpowers

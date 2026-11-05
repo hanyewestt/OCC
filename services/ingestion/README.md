@@ -210,6 +210,14 @@ by any one stop snapshot, so repeated or co-located buses are not collapsed.
 identifier. This short-range linkage is limited to the replay-validated route
 lines 190 direction 1 and 190 direction 2.
 
+When a later stop snapshot contains one compatible row after an earlier
+snapshot established multiple buses, that row is treated as a merged
+measurement. The predictive association shares the measurement across the
+existing hypotheses rather than assigning it only to `visitOrder` 1; this
+preserves multiplicity through a bunching interval and avoids fragmenting the
+unobserved track. Identity remains unresolved until later observations provide
+an unambiguous separation.
+
 Some provider coordinates can change while the stops in one service poll cycle
 are still being queried. For 190 direction 1, coordinated refresh-boundary
 reconciliation requires an unambiguous coordinated set of matches within 250 m
