@@ -370,6 +370,28 @@ class RoutePositionPolicyTest {
     }
 
     @Test
+    void mergedSingletonMeasurementIsSharedAcrossExistingBusHypotheses() {
+        UUID separatedSnapshot = snapshot("merged-separated");
+        UUID mergedSnapshot = snapshot("merged-singleton");
+        RoutePositionReading firstBus = reading(separatedSnapshot, CURRENT_CYCLE, "A", 1, 1,
+                1_000, 1.30000, 103.80000, "ORIGIN", "DESTINATION", 1, 200, 6);
+        RoutePositionReading secondBus = reading(separatedSnapshot, CURRENT_CYCLE, "A", 1, 2,
+                1_000, 1.30000, 103.80000, "ORIGIN", "DESTINATION", 1, 210, 6);
+        RoutePositionReading merged = reading(mergedSnapshot, CURRENT_CYCLE, "B", 2, 1,
+                1_020, 1.30000, 103.80000, "ORIGIN", "DESTINATION", 1, 220, 5);
+
+        RoutePositionPolicy.RoutePositionEstimate estimate = estimate(
+                List.of(firstBus, secondBus, merged));
+
+        assertThat(estimate.buses()).hasSize(2);
+        assertThat(estimate.buses()).allSatisfy(bus -> {
+            assertThat(bus.distanceAlongRouteM()).isEqualTo(1_010);
+            assertThat(bus.evidenceObservationIds()).contains(merged.observationId());
+        });
+        assertThat(estimate.suppressedBusCount()).isZero();
+    }
+
+    @Test
     void shortRangeLinkageUsesCompleteLinkInsteadOfCollapsingAProximityChain() {
         List<RoutePositionReading> readings = List.of(
                 reading(snapshot("complete-link-a"), CURRENT_CYCLE, "A", 1, 1,

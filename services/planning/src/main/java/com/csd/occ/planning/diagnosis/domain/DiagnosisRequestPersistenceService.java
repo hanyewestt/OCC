@@ -82,8 +82,16 @@ public class DiagnosisRequestPersistenceService {
 
     @Transactional
     public List<UUID> claimDueRequests(int batchSize, Duration leaseDuration) {
+        return claimDueRequests(batchSize, leaseDuration, true);
+    }
+
+    @Transactional
+    public List<UUID> claimDueRequests(int batchSize, Duration leaseDuration, boolean includeBunching) {
         Instant now = clock.instant();
-        return requests.findClaimable(now, batchSize).stream().map(request -> {
+        List<DiagnosisRequest> claimable = includeBunching
+                ? requests.findClaimable(now, batchSize)
+                : requests.findClaimableHazardsOnly(now, batchSize);
+        return claimable.stream().map(request -> {
             request.claim(now.plus(leaseDuration), now);
             return request.id();
         }).toList();

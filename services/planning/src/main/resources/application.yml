@@ -99,6 +99,7 @@ occ:
     disruption-internal-url: ${OCC_DISRUPTION_INTERNAL_URL}
     ingestion-internal-url: ${OCC_INGESTION_INTERNAL_URL}
     worker-enabled: ${OCC_PLANNING_DIAGNOSIS_WORKER_ENABLED:true}
+    auto-process-bunching: ${OCC_PLANNING_DIAGNOSIS_AUTO_PROCESS_BUNCHING:true}
     worker-interval: ${OCC_PLANNING_DIAGNOSIS_WORKER_INTERVAL:2s}
     worker-batch-size: ${OCC_PLANNING_DIAGNOSIS_WORKER_BATCH_SIZE:10}
     lease-duration: ${OCC_PLANNING_DIAGNOSIS_LEASE_DURATION:5m}

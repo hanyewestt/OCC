@@ -22,7 +22,8 @@ public record DiagnosisProperties(
         double confidenceThreshold,
         Duration requestTimeout,
         long peerResponseMaxBytes,
-        long maxPromptInputBytes) {
+        long maxPromptInputBytes,
+        boolean autoProcessBunching) {
 
     public DiagnosisProperties {
         requireHttp(disruptionInternalUrl, "disruption-internal-url");
