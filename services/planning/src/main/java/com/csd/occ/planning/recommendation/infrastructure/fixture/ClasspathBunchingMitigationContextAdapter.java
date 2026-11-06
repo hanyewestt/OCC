@@ -9,8 +9,10 @@ import java.io.InputStream;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
+@Component
 public class ClasspathBunchingMitigationContextAdapter implements BunchingMitigationContextPort {
 
     private final Map<BunchingMitigationFixtureCatalog.FixtureKey, BunchingMitigationInputs> fixtures;
