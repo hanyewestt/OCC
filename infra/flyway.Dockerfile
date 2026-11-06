@@ -17,7 +17,7 @@ RUN case "${OCC_SERVICE}" in ingestion|disruption|planning) ;; \
 RUN apt-get update \
     && apt-get upgrade -y \
     && apt-get install --no-install-recommends -y curl libbrotli1 \
-    && curl --fail --silent --show-error --location \
+    && curl --fail --silent --show-error --location --retry 5 --retry-delay 2 --retry-max-time 60 --retry-all-errors \
         "https://repo1.maven.org/maven2/com/google/guava/guava/${GUAVA_VERSION}/guava-${GUAVA_VERSION}.jar" \
         --output /tmp/guava.jar \
     && echo "${GUAVA_SHA256}  /tmp/guava.jar" | sha256sum --check \
