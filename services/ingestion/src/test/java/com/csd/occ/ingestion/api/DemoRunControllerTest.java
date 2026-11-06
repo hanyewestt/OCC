@@ -1,6 +1,7 @@
 package com.csd.occ.ingestion.api;
 
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -25,6 +26,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.http.MediaType;
 
 @WebMvcTest(DemoRunController.class)
 class DemoRunControllerTest {
@@ -40,6 +42,34 @@ class DemoRunControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(runId.toString()))
                 .andExpect(jsonPath("$.status").value("RUNNING"));
+    }
+
+    @Test
+    void startSavesTheRequestedFleetConfiguration() throws Exception {
+        UUID runId = UUID.randomUUID();
+        var configuration = new com.csd.occ.ingestion.domain.DemoRunConfiguration("972", 1, 3,
+                java.time.Duration.ofSeconds(120), List.of(java.time.Duration.ofSeconds(120),
+                java.time.Duration.ofSeconds(150)), "44251", com.csd.occ.ingestion.domain.DemoScenario.NORMAL);
+        when(runs.start(eq(configuration))).thenReturn(new DemoRunDetails(runId, "RUNNING", 0, configuration, List.of()));
+
+        mvc.perform(post("/api/v1/demo-runs").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"serviceId\":\"972\",\"directionId\":1,\"busCount\":3,\"dispatchGapSeconds\":120,\"busGapsSeconds\":[120,150],\"monitoredStopCode\":\"44251\",\"scenario\":\"NORMAL\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.serviceId").value("972"))
+                .andExpect(jsonPath("$.busCount").value(3))
+                .andExpect(jsonPath("$.dispatchGapSeconds").value(120))
+                .andExpect(jsonPath("$.busGapsSeconds[0]").value(120))
+                .andExpect(jsonPath("$.busGapsSeconds[1]").value(150))
+                .andExpect(jsonPath("$.monitoredStopCode").value("44251"))
+                .andExpect(jsonPath("$.scenario").value("NORMAL"));
+    }
+
+    @Test
+    void startRejectsAnInvalidFleetConfiguration() throws Exception {
+        mvc.perform(post("/api/v1/demo-runs").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"serviceId\":\"190\",\"directionId\":1,\"busCount\":1,\"dispatchGapSeconds\":90,\"scenario\":\"NORMAL\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"));
     }
 
     @Test

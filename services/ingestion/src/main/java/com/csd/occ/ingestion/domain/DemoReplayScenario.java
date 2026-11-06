@@ -9,9 +9,14 @@ public final class DemoReplayScenario {
     private DemoReplayScenario() {}
 
     public static Duration headway(int step, Duration threshold) {
+        return headway(step, threshold.multipliedBy(10).dividedBy(3), threshold, DemoScenario.BUNCHING);
+    }
+
+    public static Duration headway(int step, Duration dispatchGap, Duration threshold, DemoScenario scenario) {
         if (step < 0 || step >= STEP_COUNT) throw new IllegalArgumentException("demo step is out of range");
         if (threshold == null || threshold.compareTo(Duration.ofNanos(2)) < 0)
             throw new IllegalArgumentException("bunching threshold must be at least 2ns");
-        return step == 0 ? threshold.multipliedBy(10).dividedBy(3) : threshold.dividedBy(2);
+        if (scenario == DemoScenario.NORMAL) return dispatchGap;
+        return step == 0 ? dispatchGap : threshold.dividedBy(2);
     }
 }

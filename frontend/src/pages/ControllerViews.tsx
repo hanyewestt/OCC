@@ -11,6 +11,11 @@ import type { Decision } from '@/lib/api'
 import type { PagedCollection } from '@/lib/paged-collection'
 import type { Resource } from './ControllerPage'
 
+function simulationBusLabel(bus: BunchingAlert['leadingVehicle']) {
+  if (!bus) return 'Unavailable'
+  return bus.registrationNumber === bus.busId ? bus.busId : `${bus.registrationNumber} (${bus.busId})`
+}
+
 export function timestamp(value: string | null | undefined) {
   return formatSgtDateTime(value)
 }
@@ -102,8 +107,8 @@ export function ControllerDisruptions({ liveAlerts, run, loading }: {
       {!!items.length && <Table containerProps={{ role: 'region', 'aria-label': 'Bunching detections', tabIndex: 0,
         onScroll: simulation ? undefined : liveAlerts.onScroll, className: 'max-h-[26rem] overflow-auto rounded-lg border' }} className="min-w-[60rem]">
         <TableCaption className="sr-only">Bunching detections</TableCaption>
-        <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-1 [&_th]:bg-background"><TableRow><TableHead>Service</TableHead><TableHead>Bus stop</TableHead><TableHead>Direction</TableHead><TableHead>Bus 1 arrival</TableHead><TableHead>Bus 2 arrival</TableHead><TableHead>Bus 3 arrival</TableHead><TableHead>Event</TableHead><TableHead>Detected</TableHead><TableHead>Source</TableHead></TableRow></TableHeader>
-        <TableBody>{items.map(alert => <TableRow key={alert.eventId}><TableCell className="font-medium">{alert.serviceId}</TableCell><TableCell><p className="font-medium">{alert.stopName || 'Stop name unavailable'}</p><p className="mt-1 text-xs text-muted-foreground">{alert.stopRoadName ? `${alert.stopRoadName} · ` : ''}{alert.stopCode}</p></TableCell><TableCell>{alert.directionId ? `Direction ${alert.directionId}` : 'Unavailable'}</TableCell>{bunchingArrivals(alert).map((value, index) => <TableCell key={index}>{value === 'No prediction' || value === 'Unavailable' ? <span className="text-muted-foreground">{value}</span> : timestamp(value)}</TableCell>)}<TableCell>{alert.action}</TableCell><TableCell>{timestamp(alert.detectedAt)}</TableCell><TableCell>{dataClassificationLabel(alert.classification)}</TableCell></TableRow>)}</TableBody>
+        <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-1 [&_th]:bg-background"><TableRow><TableHead>Service</TableHead><TableHead>Bus stop</TableHead><TableHead>Direction</TableHead><TableHead>Leading bus</TableHead><TableHead>Following bus</TableHead><TableHead>Bus 1 arrival</TableHead><TableHead>Bus 2 arrival</TableHead><TableHead>Bus 3 arrival</TableHead><TableHead>Event</TableHead><TableHead>Detected</TableHead><TableHead>Source</TableHead></TableRow></TableHeader>
+        <TableBody>{items.map(alert => <TableRow key={alert.eventId}><TableCell className="font-medium">{alert.serviceId}</TableCell><TableCell><p className="font-medium">{alert.stopName || 'Stop name unavailable'}</p><p className="mt-1 text-xs text-muted-foreground">{alert.stopRoadName ? `${alert.stopRoadName} · ` : ''}{alert.stopCode}</p></TableCell><TableCell>{alert.directionId ? `Direction ${alert.directionId}` : 'Unavailable'}</TableCell><TableCell>{simulationBusLabel(alert.leadingVehicle)}</TableCell><TableCell>{simulationBusLabel(alert.followingVehicle)}</TableCell>{bunchingArrivals(alert).map((value, index) => <TableCell key={index}>{value === 'No prediction' || value === 'Unavailable' ? <span className="text-muted-foreground">{value}</span> : timestamp(value)}</TableCell>)}<TableCell>{alert.action}</TableCell><TableCell>{timestamp(alert.detectedAt)}</TableCell><TableCell>{dataClassificationLabel(alert.classification)}</TableCell></TableRow>)}</TableBody>
       </Table>}
       {!simulation && !loading && liveAlerts.latestPage && liveAlerts.latestPage.totalItems > items.length && <p className="text-xs text-muted-foreground">Showing {items.length} of {liveAlerts.latestPage.totalItems} detections.</p>}
       {!simulation && <PagedCollectionControls label="bunching detections" hasItems={!!liveAlerts.items.length} hasMore={liveAlerts.hasMore}

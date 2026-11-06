@@ -30,13 +30,15 @@ public class DemoRunService {
         this.configuration = configuration;
     }
 
-    public DemoRunDetails start() {
+    public DemoRunDetails start() { return start(null); }
+
+    public DemoRunDetails start(DemoRunConfiguration configuration) {
         Optional<DemoRun> current = runs.findActive();
         if (current.isPresent()) throw new DemoRunAlreadyActiveException(current.get().id());
 
         DemoRun run;
         try {
-            run = replay.start();
+            run = configuration == null ? replay.start() : replay.start(configuration);
         } catch (RuntimeException failure) {
             current = runs.findActive();
             if (current.isPresent()) throw new DemoRunAlreadyActiveException(current.get().id());
@@ -76,7 +78,7 @@ public class DemoRunService {
                 throw new DemoRunAlreadyActiveException(current.get().id());
             returnToLive(id);
         }
-        return new DemoRunDetails(run.id(), "CLOSED", run.currentStep(), List.of());
+        return new DemoRunDetails(run.id(), "CLOSED", run.currentStep(), run.configuration(), List.of());
     }
 
     public Optional<DemoRecommendationDetails> recommendation(UUID id) {
@@ -136,7 +138,7 @@ public class DemoRunService {
                     stop.name(), stop.roadName(), alert.directionId(), alert.detectedAt(), headwaySeconds(leading, following),
                     leading == null ? null : leading.vehicle(), following == null ? null : following.vehicle(), alert.evidence()));
         }
-        return new DemoRunDetails(run.id(), run.status(), run.currentStep(), result);
+        return new DemoRunDetails(run.id(), run.status(), run.currentStep(), run.configuration(), result);
     }
 
     private Optional<DemoSimulationArrivalDetails> arrival(UUID runId, UUID observationId) {

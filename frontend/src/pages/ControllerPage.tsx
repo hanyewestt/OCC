@@ -3,7 +3,9 @@ import { Link, useLocation } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type PageResult, type PendingRecommendation, type RouteDirection, type RoutePositions, type PlanningDiagnosisPage } from '@/lib/api'
+import { Input } from '@/components/ui/input'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type PageResult, type PendingRecommendation, type RouteDirection, type RoutePositions } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { ControllerSidebar, controllerPages } from '@/components/ControllerSidebar'
 import { ControllerOverview, ControllerDisruptions, ControllerAudit } from '@/pages/ControllerViews'
@@ -40,6 +42,25 @@ async function loadRoutePositions(token: string, signal: AbortSignal): Promise<R
   return {
     data: snapshots.length ? snapshots : null,
     error: results.some(result => result.error) ? `Some estimated bus positions could not be loaded (${results.filter(result => result.error).map(result => result.error).join('; ')}).` : '',
+  }
+}
+
+async function loadSimulationRoutePositions(token: string, runId: string, signal: AbortSignal): Promise<Resource<RoutePositions[]>> {
+  try {
+    const position = await apiRequest<RoutePositions>(`/api/v1/demo-runs/${encodeURIComponent(runId)}/route-positions`, token, signal)
+    return { data: position ? [position] : null, error: '' }
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401 && !signal.aborted) void signOut(error.message)
+    return { data: null, error: 'Simulation route positions are unavailable.' }
+  }
+}
+
+async function loadRouteDirections(token: string, serviceIds: string[], signal: AbortSignal): Promise<Resource<RouteDirection[]>> {
+  const results = await Promise.all(serviceIds.map(serviceId =>
+    readResource(apiRequest<BusRoute>(`/api/v1/bus-routes/${encodeURIComponent(serviceId)}`, token, signal), signal)))
+  return {
+    data: routeDirections(results.flatMap(result => result.data ? [result.data] : [])),
+    error: results.some(result => result.error) ? 'Unable to load all route references.' : '',
   }
 }
 
@@ -107,6 +128,8 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const [loaded, setLoaded] = useState('')
   const [switching, setSwitching] = useState(false)
   const [modeError, setModeError] = useState('')
+  const [simulationDialogOpen, setSimulationDialogOpen] = useState(false)
+  const [simulationConfig, setSimulationConfig] = useState({ serviceId: '190', directionId: 1, busCount: 3, dispatchGapSeconds: 90, busGapsSeconds: [90, 90], monitoredStopCode: '44251', scenario: 'BUNCHING' as 'NORMAL' | 'BUNCHING' })
   const modeRequestRef = useRef<AbortController | null>(null)
   const liveRequestGenerationRef = useRef(0)
   const switchingRef = useRef(false)
@@ -114,6 +137,8 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const loading = loaded !== requestKey || switching
   const scopeVerified = loaded === requestKey && !run.error
   const simulation = run.data && run.data.status !== 'CLOSED' ? run.data : null
+  const simulationDirections = routeStops.data?.filter(route => route.serviceId === simulationConfig.serviceId) ?? []
+  const simulationStops = simulationDirections.find(route => route.directionId === simulationConfig.directionId)?.stops ?? []
   const refreshScope = `${requestKey}:${simulation?.id ?? 'LIVE'}`
   const reportAdvisoryRefresh = useCallback((at: string | null) => {
     setAdvisoryRefreshTime(previous => previous.key === refreshScope && previous.at === at ? previous : { key: refreshScope, at })
@@ -165,17 +190,6 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       throw error
     }
   }, decision => decision.recommendationId, pathname === '/controller/audit')
-  const diagnosisCollection = usePagedCollection<PlanningDiagnosisPage['items'][number], PlanningDiagnosisPage>(scopeKey, async (page, signal) => {
-    const params = new URLSearchParams({ page: String(page), size: '100' })
-    try {
-      const result = await apiRequest<PlanningDiagnosisPage>(`/api/v1/planning/diagnoses?${params}`, token, signal)
-      if (!result) throw new Error('Diagnosis response was empty.')
-      return result
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401 && !signal.aborted) void signOut(error.message)
-      throw error
-    }
-  }, diagnosis => diagnosis.requestId, scopeVerified && pathname === '/controller/planning')
   const requestLiveData = useCallback(async (signal: AbortSignal) => {
     const generation = ++liveRequestGenerationRef.current
     return { generation, data: await loadLiveData(token, signal) }
@@ -210,20 +224,18 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const loadShell = useCallback(async (signal: AbortSignal) => {
     const runPromise = readResource(apiRequest<DemoRun>('/api/v1/demo-runs/active', token, signal).then(async value =>
       value ? { ...value, alerts: await enrichBunchingStops(value.alerts, token, signal) } : null), signal)
-    const routePromise = pathname === '/controller'
-      ? Promise.all(['190', '972'].map(serviceId =>
-      readResource(apiRequest<BusRoute>(`/api/v1/bus-routes/${serviceId}`, token, signal), signal)))
-      .then(results => ({
-        data: routeDirections(results.flatMap(result => result.data ? [result.data] : [])),
-        error: results.some(result => result.error) ? 'Unable to load all route references.' : '',
-      })) : Promise.resolve(null)
-    const [liveRequest, nextRun, nextRouteStops] = await Promise.all([
-      pathname === '/controller' ? requestLiveData(signal) : Promise.resolve(null), runPromise, routePromise,
+    const [liveRequest, nextRun] = await Promise.all([
+      pathname === '/controller' ? requestLiveData(signal) : Promise.resolve(null), runPromise,
     ])
     if (signal.aborted) return false
     const liveIsCurrent = !liveRequest || liveRequest.generation === liveRequestGenerationRef.current
     const live = liveIsCurrent ? liveRequest?.data ?? null : null
-    if (live) {
+    const previousMode = runState.current.data?.id ?? 'LIVE'
+    const resolvedRun = nextRun.error && runState.current.data ? { ...runState.current, error: nextRun.error } : nextRun
+    const activeSimulation = resolvedRun.data && resolvedRun.data.status !== 'CLOSED' ? resolvedRun.data : null
+    const nextRouteStops = await loadRouteDirections(token,
+      activeSimulation ? [activeSimulation.serviceId || '190'] : ['190', '972'], signal)
+    if (live && !activeSimulation) {
       setRouteArrivals(previous => live.routeArrivals.error && previous.data ? { ...previous, error: live.routeArrivals.error } : live.routeArrivals)
       setRoutePositions(previous => {
         if (!live.positions.error) return live.positions
@@ -232,11 +244,17 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         return { data: snapshots.size ? [...snapshots.values()] : null, error: live.positions.error }
       })
     }
-    const previousMode = runState.current.data?.id ?? 'LIVE'
-    const resolvedRun = nextRun.error && runState.current.data ? { ...runState.current, error: nextRun.error } : nextRun
     runState.current = resolvedRun
     setRun(resolvedRun)
-    if (nextRouteStops) { routeReference.current = nextRouteStops; setRouteStops(nextRouteStops) }
+    if (pathname === '/controller' && activeSimulation) {
+      const simulationPositions = await loadSimulationRoutePositions(token, activeSimulation.id, signal)
+      if (!signal.aborted) {
+        setRoutePositions(simulationPositions)
+        setRouteArrivals({ data: [], error: '' })
+      }
+    }
+    routeReference.current = nextRouteStops
+    setRouteStops(nextRouteStops)
     setLoaded(requestKey)
     if (liveIsCurrent && !nextRun.error && !live?.routeArrivals.error && !live?.positions.error && !nextRouteStops?.error) {
       setShellRefreshTime({ key: requestKey, at: new Date().toISOString() })
@@ -257,7 +275,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const collectionsLoading = pathname === '/controller'
     ? arrivalCollection.isLoading || !simulation && alertCollection.isLoading || recommendationCollection.isLoading
     : pathname.endsWith('/disruptions') ? !simulation && alertCollection.isLoading
-      : pathname.endsWith('/planning') ? recommendationCollection.isLoading || diagnosisCollection.isLoading
+      : pathname.endsWith('/planning') ? recommendationCollection.isLoading
         : pathname.endsWith('/audit') && decisionCollection.isLoading
   const { requestRefresh, isRefreshing } = usePageRefresh(controllerRefreshIntervalSeconds, async signal => {
     const modeChanged = await loadShell(signal)
@@ -265,18 +283,18 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     const requests: Promise<void>[] = []
     if (pathname === '/controller') requests.push(arrivalCollection.refresh(signal), recommendationCollection.refresh(signal))
     if (!simulation && (pathname === '/controller' || pathname.endsWith('/disruptions'))) requests.push(alertCollection.refresh(signal))
-    if (pathname === '/controller/planning') requests.push(recommendationCollection.refresh(signal), diagnosisCollection.refresh(signal))
+    if (pathname === '/controller/planning') requests.push(recommendationCollection.refresh(signal))
     if (pathname === '/controller/audit') requests.push(decisionCollection.refresh(signal))
-    if (pathname !== '/controller') requests.push(refreshAdvisories.current(signal))
+    if (pathname !== '/controller' && !pathname.endsWith('/planning')) requests.push(refreshAdvisories.current(signal))
     await Promise.allSettled(requests)
   }, loading || collectionsLoading || advisoryPending || planningPending || switching, requestKey)
 
   const refreshTimes = [shellRefreshTime.key === requestKey ? shellRefreshTime.at : null,
     ...(pathname === '/controller' ? [arrivalCollection.lastSuccessAt, recommendationCollection.lastSuccessAt]
-      : pathname.endsWith('/planning') ? [recommendationCollection.lastSuccessAt, diagnosisCollection.lastSuccessAt]
+      : pathname.endsWith('/planning') ? [recommendationCollection.lastSuccessAt]
         : pathname.endsWith('/audit') ? [decisionCollection.lastSuccessAt] : []),
     ...(!simulation && (pathname === '/controller' || pathname.endsWith('/disruptions')) ? [alertCollection.lastSuccessAt] : []),
-    ...(pathname !== '/controller' ? [advisoryRefreshTime.key === refreshScope ? advisoryRefreshTime.at : null] : [])]
+    ...(pathname !== '/controller' && !pathname.endsWith('/planning') ? [advisoryRefreshTime.key === refreshScope ? advisoryRefreshTime.at : null] : [])]
   const lastPageRefresh = refreshTimes.includes(null) ? null : [...refreshTimes].sort()[0] ?? null
 
   const modeValue = simulation ? 'DEMO' : 'LIVE'
@@ -290,7 +308,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   }
   const mode = loading ? 'Checking mode…' : run.error ? 'Mode unavailable' : simulation ? 'Simulation' : 'Live'
 
-  async function switchMode() {
+  async function switchMode(configuration?: typeof simulationConfig) {
     if (loading || run.error || switchingRef.current) return
     switchingRef.current = true
     setSwitching(true); setModeError('')
@@ -298,7 +316,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     modeRequestRef.current = controller
     const path = simulation ? `/api/v1/demo-runs/${encodeURIComponent(simulation.id)}/close` : '/api/v1/demo-runs'
     try {
-      await apiRequest<DemoRun>(path, token, controller.signal, { method: 'POST' })
+      await apiRequest<DemoRun>(path, token, controller.signal, { method: 'POST', ...(configuration ? { body: configuration } : {}) })
     } catch (error) {
       if (controller.signal.aborted) return
       if (error instanceof ApiError && error.status === 401) void signOut(error.message)
@@ -314,6 +332,11 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     }
   }
 
+  function startSimulation() {
+    setSimulationDialogOpen(false)
+    void switchMode(simulationConfig)
+  }
+
   return <div className="flex min-h-svh w-full bg-background">
     <ControllerSidebar email={email} />
     <div className="min-w-0 flex-1">
@@ -325,9 +348,64 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
             <RefreshCw aria-hidden="true" className={loading || isRefreshing ? 'motion-safe:animate-spin' : undefined} />
           </Button>
           <span role="status" className={`flex items-center gap-2 text-xs font-medium ${simulation ? 'text-amber-700 dark:text-amber-400' : !loading && !run.error ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground'}`}><span className="size-1.5 rounded-full bg-current" />{mode}</span>
-          <Button variant="outline" disabled={loading || isRefreshing || advisoryPending || planningPending || !!run.error} onClick={() => void switchMode()}>{switching ? 'Switching…' : simulation ? 'Return to live' : 'Start simulation'}</Button>
+          {simulation && <span className="text-xs text-muted-foreground">Injection stop {simulation.monitoredStopCode}</span>}
+          <Button variant="outline" disabled={loading || isRefreshing || advisoryPending || planningPending || !!run.error}
+            onClick={() => simulation ? void switchMode() : setSimulationDialogOpen(true)}>{switching ? 'Switching…' : simulation ? 'Return to live' : 'Start simulation'}</Button>
         </div>
       </header>
+      <Dialog open={simulationDialogOpen} onOpenChange={open => { if (!switching) setSimulationDialogOpen(open) }}>
+        <DialogContent><DialogHeader><DialogTitle>Configure simulation</DialogTitle><DialogDescription>Choose one fictional route and fleet. The same buses send updated positions throughout the run.</DialogDescription></DialogHeader>
+          <div className="grid gap-4">
+            <label className="grid gap-1.5 text-sm font-medium">Route
+              <select value={simulationConfig.serviceId} onChange={event => setSimulationConfig(value => {
+                const directions = routeStops.data?.filter(route => route.serviceId === event.target.value) ?? []
+                const direction = directions.find(route => route.directionId === value.directionId) ?? directions[0]
+                return { ...value, serviceId: event.target.value, directionId: direction?.directionId ?? value.directionId,
+                  monitoredStopCode: direction?.stops[0]?.stopCode ?? value.monitoredStopCode }
+              })} className="h-10 rounded-md border bg-background px-3">
+                <option value="190">Service 190</option><option value="972">Service 972</option>
+              </select>
+            </label>
+            <label className="grid gap-1.5 text-sm font-medium">Direction
+              <Input type="number" min="1" max="99" value={simulationConfig.directionId} onChange={event => setSimulationConfig(value => {
+                const directionId = Number(event.target.value)
+                const stop = (routeStops.data?.find(route => route.serviceId === value.serviceId && route.directionId === directionId)?.stops ?? [])[0]
+                return { ...value, directionId, monitoredStopCode: stop?.stopCode ?? value.monitoredStopCode }
+              })} />
+            </label>
+            <label className="grid gap-1.5 text-sm font-medium">Buses in this injection
+              <Input type="number" min="2" max="3" value={simulationConfig.busCount} onChange={event => setSimulationConfig(value => {
+                const busCount = Math.max(2, Math.min(3, Number(event.target.value) || 2))
+                return { ...value, busCount, busGapsSeconds: Array.from({ length: busCount - 1 }, (_, index) => value.busGapsSeconds[index] ?? value.dispatchGapSeconds) }
+              })} />
+            </label>
+            <label className="grid gap-1.5 text-sm font-medium">Injection stop
+              {simulationStops.length ? <select value={simulationConfig.monitoredStopCode} onChange={event => setSimulationConfig(value => ({ ...value, monitoredStopCode: event.target.value }))} className="h-10 rounded-md border bg-background px-3">
+                {simulationStops.map(stop => <option key={stop.stopCode} value={stop.stopCode}>{stop.description || stop.stopCode} ({stop.stopCode})</option>)}
+              </select> : <Input value={simulationConfig.monitoredStopCode} onChange={event => setSimulationConfig(value => ({ ...value, monitoredStopCode: event.target.value }))} />}
+            </label>
+            <label className="grid gap-1.5 text-sm font-medium">Default gap for new buses (seconds)
+              <Input type="number" min="15" max="900" value={simulationConfig.dispatchGapSeconds} onChange={event => setSimulationConfig(value => ({ ...value, dispatchGapSeconds: Number(event.target.value) }))} />
+            </label>
+            <fieldset className="grid gap-2"><legend className="text-sm font-medium">Gaps between individual buses (seconds)</legend>
+              <p className="text-xs text-muted-foreground">Each gap is kept at this spacing during normal operation.</p>
+              {simulationConfig.busGapsSeconds.map((gap, index) => <label key={index} className="grid gap-1.5 text-sm">Bus {index + 1} → Bus {index + 2}
+                <Input aria-label={`Gap from bus ${index + 1} to bus ${index + 2} in seconds`} type="number" min="15" max="900" value={gap} onChange={event => setSimulationConfig(value => ({ ...value,
+                  busGapsSeconds: value.busGapsSeconds.map((current, gapIndex) => gapIndex === index ? Number(event.target.value) : current),
+                }))} />
+              </label>)}
+            </fieldset>
+            <fieldset className="grid gap-2"><legend className="text-sm font-medium">Scenario</legend>
+              {([['NORMAL', 'Normal operation'], ['BUNCHING', 'Bunching']] as const).map(([value, label]) => <label key={value} className="flex items-center gap-2 text-sm"><input type="radio" name="simulation-scenario" checked={simulationConfig.scenario === value} onChange={() => setSimulationConfig(config => {
+                if (value !== 'NORMAL') return { ...config, scenario: value }
+                return { ...config, scenario: value, dispatchGapSeconds: config.dispatchGapSeconds <= 90 ? 120 : config.dispatchGapSeconds,
+                  busGapsSeconds: config.busGapsSeconds.map(gap => gap <= 90 ? 120 : gap) }
+              })} />{label}</label>)}
+            </fieldset>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setSimulationDialogOpen(false)}>Cancel</Button><Button onClick={startSimulation}>Start simulation</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
       <div className="mx-auto max-w-7xl space-y-7 p-5 md:p-8">
         <PageRefreshStatus lastSuccessAt={lastPageRefresh} intervalSeconds={controllerRefreshIntervalSeconds} />
         {run.error && !loading && <p role="alert" className="text-sm text-destructive">{run.error} Simulation state could not be verified.</p>}
@@ -355,13 +433,13 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
             }} />
         </>}
         {pathname.endsWith('/disruptions') && <ControllerDisruptions liveAlerts={alertCollection} run={run} loading={loading} />}
-        {pathname.endsWith('/planning') && <ControllerPlanning recommendations={recommendationCollection} diagnoses={diagnosisCollection}
+        {pathname.endsWith('/planning') && <ControllerPlanning recommendations={recommendationCollection}
           loading={loading} modeError={run.error} mode={modeValue} demoRunId={simulation?.id ?? null} token={token}
           onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { void requestRefresh('mutation') }} />}
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} loading={loading} />}
-        {pathname !== '/controller' && loaded === requestKey && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
+        {pathname !== '/controller' && !pathname.endsWith('/planning') && loaded === requestKey && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
           registerRefresh={registerAdvisoryRefresh} onRefresh={() => { void requestRefresh('mutation') }} onPendingChange={setAdvisoryPending} onRefreshTimeChange={reportAdvisoryRefresh}
-          view={pathname.endsWith('/disruptions') ? 'hazards' : pathname.endsWith('/planning') ? 'planning' : pathname.endsWith('/notices') ? 'notices' : 'audit'} />}
+          view={pathname.endsWith('/disruptions') ? 'hazards' : pathname.endsWith('/notices') ? 'notices' : 'audit'} />}
       </div>
     </div>
   </div>
