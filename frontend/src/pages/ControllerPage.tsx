@@ -225,7 +225,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     const runPromise = readResource(apiRequest<DemoRun>('/api/v1/demo-runs/active', token, signal).then(async value =>
       value ? { ...value, alerts: await enrichBunchingStops(value.alerts, token, signal) } : null), signal)
     const [liveRequest, nextRun] = await Promise.all([
-      pathname === '/controller' ? requestLiveData(signal) : Promise.resolve(null), runPromise,
+      (pathname === '/controller' || pathname.endsWith('/disruptions')) ? requestLiveData(signal) : Promise.resolve(null), runPromise,
     ])
     if (signal.aborted) return false
     const liveIsCurrent = !liveRequest || liveRequest.generation === liveRequestGenerationRef.current

@@ -2166,6 +2166,7 @@ test('Disruptions Refresh updates bunching detections and hazards together', asy
   await mockAuth(context, 'CONTROLLER')
   let detections = 0
   let hazards = 0
+  let positionRequests = 0
   await context.route('**/api/v1/live-bunching-alerts?*', route => {
     detections++
     return route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } })
@@ -2174,19 +2175,47 @@ test('Disruptions Refresh updates bunching detections and hazards together', asy
     hazards++
     return route.fulfill({ json: { items: [], page: 0, size: 100, totalElements: 0, feeds: [] } })
   })
+  await context.route('**/api/v1/route-positions?*', route => {
+    positionRequests++
+    const serviceId = new URL(route.request().url()).searchParams.get('service') ?? '190'
+    return route.fulfill({ json: { serviceId, computedAt: '2026-10-23T04:00:00Z', refreshIntervalSeconds: 60,
+      maxSourceAgeSeconds: 120, directions: [] } })
+  })
   await login(page)
   await page.getByRole('link', { name: 'Disruptions', exact: true }).click()
   await expect.poll(() => hazards).toBeGreaterThan(0)
   await expect.poll(() => detections).toBeGreaterThan(0)
-  const before = { detections, hazards }
+  await expect.poll(() => positionRequests).toBeGreaterThan(0)
+  const before = { detections, hazards, positionRequests }
   await page.getByRole('button', { name: 'Refresh', exact: true }).click()
   await expect.poll(() => detections).toBeGreaterThan(before.detections)
   await expect.poll(() => hazards).toBeGreaterThan(before.hazards)
+  await expect.poll(() => positionRequests).toBeGreaterThan(before.positionRequests)
   await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled()
-  const afterManual = { detections, hazards }
+  const afterManual = { detections, hazards, positionRequests }
   await page.clock.runFor(31000)
   await expect.poll(() => detections).toBeGreaterThan(afterManual.detections)
   await expect.poll(() => hazards).toBeGreaterThan(afterManual.hazards)
+  await expect.poll(() => positionRequests).toBeGreaterThan(afterManual.positionRequests)
+})
+
+test('Disruptions refreshes simulated map positions every controller refresh interval', async ({ page, context }) => {
+  await page.clock.install()
+  await mockDashboard(context)
+  let positionRequests = 0
+  await context.route('**/api/v1/demo-runs/run-1/route-positions', route => {
+    positionRequests++
+    return route.fulfill({ json: {
+      serviceId: '190', computedAt: '2026-10-23T04:00:00Z', refreshIntervalSeconds: 60, maxSourceAgeSeconds: 120,
+      directions: [{ operator: 'SMRT', directionId: 1, routeLengthM: 12_000, buses: [] }],
+    } })
+  })
+  await login(page)
+  await page.getByRole('link', { name: 'Disruptions', exact: true }).click()
+  await expect.poll(() => positionRequests).toBeGreaterThan(0)
+  const before = positionRequests
+  await page.clock.runFor(31000)
+  await expect.poll(() => positionRequests).toBeGreaterThan(before)
 })
 
 test('page refresh status retains its successful time after arrival refresh failure', async ({ page, context }) => {
