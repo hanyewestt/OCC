@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
-import { ApiError, apiRequest, type ControllerBusInstruction, type Decision, type DiagnosisEvidenceDetail, type PendingRecommendation } from '@/lib/api'
+import { ApiError, apiRequest, triggerDiagnosis, type ControllerBusInstruction, type Decision, type DiagnosisEvidenceDetail, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import type { Planning } from './ControllerPage'
 import type { PagedCollection } from '@/lib/paged-collection'
@@ -52,8 +52,9 @@ function RecommendationEvidenceList({ items }: { items: DiagnosisEvidenceDetail[
 
 type EditingRecommendation = { identity: string; scopeIdentity: string; recommendation: PendingRecommendation; pending?: boolean }
 
-export function ControllerPlanning({ recommendations, loading, modeError, mode, demoRunId, token, onPendingChange, onRefresh, onSaved }: {
+export function ControllerPlanning({ recommendations, diagnosisRequests, loading, modeError, mode, demoRunId, token, onPendingChange, onRefresh, onSaved }: {
   recommendations: PagedCollection<PendingRecommendation, Planning['recommendations']>
+  diagnosisRequests: PagedCollection<PlanningDiagnosisRequest, PlanningDiagnosisRequestPage>
   loading: boolean; modeError: string; mode: 'LIVE' | 'DEMO'; demoRunId: string | null; token: string
   onRefresh: () => void; onSaved: () => void
   onPendingChange: (pending: boolean) => void
@@ -62,7 +63,8 @@ export function ControllerPlanning({ recommendations, loading, modeError, mode, 
   const [filter, setFilter] = useState('')
   const [message, setMessage] = useState('')
   const [editingRecommendation, setEditingRecommendation] = useState<EditingRecommendation | null>(null)
-  useEffect(() => { onPendingChange(!!editingRecommendation?.pending) }, [editingRecommendation?.pending, onPendingChange])
+  const [triggeringRequestId, setTriggeringRequestId] = useState<string | null>(null)
+  useEffect(() => { onPendingChange(!!editingRecommendation?.pending || triggeringRequestId !== null) }, [editingRecommendation?.pending, onPendingChange, triggeringRequestId])
   useEffect(() => () => onPendingChange(false), [onPendingChange])
   const recommendationPage = recommendations.latestPage
   const recommendationScopeMatches = !modeError && recommendationPage?.mode === mode &&
@@ -71,8 +73,18 @@ export function ControllerPlanning({ recommendations, loading, modeError, mode, 
     ? 'Unable to load recommendations.' : recommendationPage && !recommendationScopeMatches && !loading
       ? 'Data selection changed. Refresh before making a decision.' : ''
   const recommendationItems = !recommendationError && recommendationScopeMatches ? recommendations.items : []
+  const diagnosisPage = diagnosisRequests.latestPage
+  const diagnosisScopeMatches = !modeError && diagnosisPage?.mode === mode &&
+    (diagnosisPage.demoRunId ?? null) === demoRunId
+  const diagnosisError = modeError ? 'Simulation state is unavailable.' : diagnosisRequests.error !== null && !diagnosisRequests.items.length
+    ? 'Unable to load bunching requests.' : diagnosisPage && !diagnosisScopeMatches && !loading
+      ? 'Data selection changed. Refresh before generating a diagnosis.' : ''
+  const queuedRequests = !diagnosisError && diagnosisScopeMatches
+    ? diagnosisRequests.items.filter(item => item.status !== 'COMPLETED') : []
+  const visibleRequests = queuedRequests.filter(item => item.serviceId?.includes(filter.trim()))
   const visible = recommendationItems.filter(item => item.serviceId.includes(filter.trim()))
   const requestedId = searchParams.get('recommendation')
+  const requestedRequestId = searchParams.get('request')
   const scopeIdentity = `${mode}:${demoRunId ?? 'none'}`
   const { error: recommendationLoadError, hasMore: recommendationHasMore, isLoading: recommendationIsLoading,
     isLoadingMore: recommendationIsLoadingMore, loadNext: loadNextRecommendation } = recommendations
@@ -84,6 +96,7 @@ export function ControllerPlanning({ recommendations, loading, modeError, mode, 
   const selected = editingInScope && !editingItem && (editNeedsRevalidation || editingRecommendation?.pending) ? editingInScope.recommendation
     : recommendationItems.find(item => item.recommendationId === requestedId) ?? visible[0] ?? recommendationItems[0]
   const selectedIdentity = selected ? `${scopeIdentity}:${selected.recommendationId}` : null
+  const selectedRequest = visibleRequests.find(item => item.requestId === requestedRequestId) ?? visibleRequests[0] ?? null
   const editorUnavailable = !!editingInScope && (!!modeError || recommendationLoadError !== null)
   const editorStale = editingRecommendation !== null && (editingRecommendation.scopeIdentity !== scopeIdentity ||
     !editNeedsRevalidation && selectedIdentity !== editingRecommendation.identity)
@@ -109,8 +122,35 @@ export function ControllerPlanning({ recommendations, loading, modeError, mode, 
     setSearchParams({ recommendation: recommendationId })
   }
 
+  function selectRequest(requestId: string) {
+    setSearchParams({ request: requestId })
+  }
+
+  async function generateDiagnosis(request: PlanningDiagnosisRequest) {
+    if (triggeringRequestId) return
+    setTriggeringRequestId(request.requestId)
+    setMessage('')
+    const controller = new AbortController()
+    try {
+      const result = await triggerDiagnosis({ requestId: request.requestId }, token, controller.signal)
+      if (!controller.signal.aborted) {
+        setMessage(result?.status === 'COMPLETED'
+          ? 'Diagnosis generated. The recommendation is ready for review.'
+          : 'Diagnosis generation has started. Refresh to see its latest status.')
+      }
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) void signOut(error.message)
+      else setMessage(error instanceof ApiError && error.status === 403
+        ? 'You do not have permission to generate a diagnosis.'
+        : 'Unable to generate a diagnosis. Try again.')
+    } finally {
+      setTriggeringRequestId(null)
+      onRefresh()
+    }
+  }
+
   return <section aria-label="Mitigation recommendations" className="space-y-4">
-    <DataMessage error={recommendationError} loading={loading || recommendations.isLoading && !recommendationPage} empty={false}>No recommendations are awaiting a decision.</DataMessage>
+    <DataMessage error={recommendationError || diagnosisError} loading={loading || recommendations.isLoading && !recommendationPage || diagnosisRequests.isLoading && !diagnosisPage} empty={false}>No requests are awaiting a decision.</DataMessage>
     {message && <p role="status" className="text-sm">{message}</p>}
     {editorStale && <p role="status" className="text-sm">This recommendation is no longer current. The editor was closed; review the latest data before making a decision.</p>}
     {editorUnavailable && !editorStale && <p role="status" className="text-sm">Unable to confirm this recommendation is current. Your draft is preserved; retry the check before deciding.</p>}
@@ -122,7 +162,14 @@ export function ControllerPlanning({ recommendations, loading, modeError, mode, 
           <Input id="service-filter" inputMode="numeric" placeholder="Filter bus no. e.g. 190" value={filter} onChange={event => setFilter(event.target.value)} />
         </div>
         <ScrollArea role="listbox" aria-label="Recommendations awaiting a decision" tabIndex={0} className="max-h-[28rem]"
-          viewportProps={{ onScroll: recommendations.onScroll }}><div className="divide-y">
+          viewportProps={{ onScroll: event => { recommendations.onScroll(event); diagnosisRequests.onScroll(event) } }}><div className="divide-y">
+          {visibleRequests.map(item => <button type="button" role="option" aria-selected={selectedRequest?.requestId === item.requestId} key={item.requestId} onClick={() => selectRequest(item.requestId)}
+            className="min-h-28 w-full space-y-2 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring aria-selected:bg-muted">
+            <div className="flex items-start justify-between gap-3"><span className="font-medium">Service {item.serviceId ?? 'unknown'} · Direction {item.directionId ?? 'unknown'}</span><span className="shrink-0 text-xs text-muted-foreground">{timestamp(item.createdAt)}</span></div>
+            <p className="text-xs text-muted-foreground">Stop {item.stopCode ?? 'unknown'} · Bunching detected</p>
+            <p className="text-sm">{item.status === 'PROCESSING' ? 'Diagnosis is being generated.' : item.status.startsWith('FAILED') ? 'Diagnosis needs to be retried.' : 'Diagnosis has not been generated yet.'}</p>
+            {item.failureCode && <p className="text-xs text-destructive">Last attempt: {item.failureCode}</p>}
+          </button>)}
           {visible.map(item => <button type="button" role="option" aria-selected={selected?.recommendationId === item.recommendationId} key={item.recommendationId} onClick={() => select(item.recommendationId)}
             className="min-h-28 w-full space-y-2 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring aria-selected:bg-muted">
             <div className="flex items-start justify-between gap-3"><span className="font-medium">Service {item.serviceId} · Direction {item.directionId}</span><span className="shrink-0 text-xs text-muted-foreground">{timestamp(item.detectedAt)}</span></div>
@@ -131,18 +178,42 @@ export function ControllerPlanning({ recommendations, loading, modeError, mode, 
             <p className="text-xs text-muted-foreground">Affected buses · {affectedBuses(item).join(', ')}</p>
             <p className="text-xs text-muted-foreground">{item.mitigationType.replaceAll('_', ' ')} · Target: {item.targetBusReference}</p>
           </button>)}
-          {!visible.length && <p className="p-6 text-center text-sm text-muted-foreground">{filter.trim() ? 'No matching bus service.' : 'No recommendations are awaiting a decision yet.'}</p>}
+          {!visible.length && !visibleRequests.length && <p className="p-6 text-center text-sm text-muted-foreground">{filter.trim() ? 'No matching bus service.' : 'No requests are awaiting a decision yet.'}</p>}
         </div></ScrollArea>
-        <div className="p-3"><PagedCollectionControls label="recommendations" hasItems={!!recommendations.items.length} hasMore={recommendations.hasMore}
-          isLoadingMore={recommendations.isLoadingMore} error={recommendations.error} refreshError={recommendations.refreshError} reload={recommendations.reload} loadNext={recommendations.loadNext} /></div>
+        <div className="space-y-2 p-3"><PagedCollectionControls label="bunching requests" hasItems={!!diagnosisRequests.items.length} hasMore={diagnosisRequests.hasMore}
+          isLoadingMore={diagnosisRequests.isLoadingMore} error={diagnosisRequests.error} refreshError={diagnosisRequests.refreshError} reload={diagnosisRequests.reload} loadNext={diagnosisRequests.loadNext} />
+          <PagedCollectionControls label="recommendations" hasItems={!!recommendations.items.length} hasMore={recommendations.hasMore}
+            isLoadingMore={recommendations.isLoadingMore} error={recommendations.error} refreshError={recommendations.refreshError} reload={recommendations.reload} loadNext={recommendations.loadNext} /></div>
       </Card>
 
-      {detailRecommendation && detailIdentity && <RecommendationDetail key={detailIdentity} selected={detailRecommendation} identity={detailIdentity}
+      {!selectedRequest && detailRecommendation && detailIdentity && <RecommendationDetail key={detailIdentity} selected={detailRecommendation} identity={detailIdentity}
         scopeIdentity={scopeIdentity} token={token} isCurrent={selectionIsCurrent} validationFailed={editorUnavailable}
         retryCurrentCheck={modeError ? onRefresh : recommendations.reload}
         onSaved={onSaved} onMessage={setMessage} onEditorChange={setEditingRecommendation} />}
+      {selectedRequest && <DiagnosisRequestDetail request={selectedRequest}
+        generating={triggeringRequestId === selectedRequest.requestId} onGenerate={() => { void generateDiagnosis(selectedRequest) }} />}
     </div>
   </section>
+}
+
+function DiagnosisRequestDetail({ request, generating, onGenerate }: {
+  request: PlanningDiagnosisRequest; generating: boolean; onGenerate: () => void
+}) {
+  const retry = request.status.startsWith('FAILED')
+  const processing = request.status === 'PROCESSING'
+  return <Card><CardContent className="space-y-5 px-5">
+    <div className="flex flex-wrap items-start justify-between gap-4 border-b pb-4">
+      <div><h2 className="text-lg font-semibold">Service {request.serviceId ?? 'unknown'} · Direction {request.directionId ?? 'unknown'}</h2>
+        <p className="mt-1 text-xs text-muted-foreground">Stop {request.stopCode ?? 'unknown'} · detected {timestamp(request.createdAt)}</p></div>
+      <span className="text-xs text-muted-foreground">{request.requestId}</span>
+    </div>
+    <div><h3 className="text-sm font-medium">Bunching detection</h3>
+      <p className="mt-1 text-sm text-muted-foreground">{processing ? 'Diagnosis is being generated.' : retry ? 'The previous diagnosis attempt needs to be retried.' : 'Generate a diagnosis to receive an AI mitigation recommendation for this detected bunching event.'}</p>
+      {request.failureCode && <p className="mt-2 text-sm text-destructive">Last attempt: {request.failureCode}</p>}</div>
+    <div className="flex justify-end border-t pt-4"><Button disabled={generating || processing} onClick={onGenerate}>
+      {generating ? 'Generating diagnosis…' : retry ? 'Retry diagnosis' : 'Generate diagnosis'}
+    </Button></div>
+  </CardContent></Card>
 }
 
 function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurrent, validationFailed, retryCurrentCheck, onSaved, onMessage, onEditorChange }: {
@@ -254,15 +325,17 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
         <div><h3 className="text-sm font-medium">Affected buses</h3><p className="mt-1 text-sm text-muted-foreground">{affectedBuses(selected).join(', ')}</p></div>
 
         <div className="flex flex-wrap justify-end gap-2 border-b pb-4">
+          <Button disabled={pending || !isCurrent} onClick={() => { void decide('APPROVED') }}>Approve recommendation</Button>
           <Dialog open={editorOpen} onOpenChange={changeEditorOpen}>
-          <DialogTrigger asChild><Button disabled={pending}>Approve recommendation</Button></DialogTrigger>
+          <DialogTrigger asChild><Button variant="outline" disabled={pending}>Enter controller recommendation</Button></DialogTrigger>
             <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl"
               onOpenAutoFocus={event => { event.preventDefault(); firstBusReference.current?.focus() }}
               onEscapeKeyDown={event => { if (pending) event.preventDefault() }}
-              onInteractOutside={event => { if (pending) event.preventDefault() }}>
+              onPointerDownOutside={event => { event.preventDefault(); requestClose() }}
+              onInteractOutside={event => { event.preventDefault(); requestClose() }}>
               <DialogHeader>
-                <DialogTitle>Approve recommendation</DialogTitle>
-                <DialogDescription>Confirm or adjust the instructions for every affected injected bus, then provide a controller rationale.</DialogDescription>
+                <DialogTitle>Enter controller recommendation</DialogTitle>
+                <DialogDescription>Replace the AI recommendation with instructions for the affected buses and a controller rationale.</DialogDescription>
               </DialogHeader>
               {!isCurrent && <div role="alert" className="rounded-lg border p-3 text-sm">
                 <p>{validationFailed ? 'Unable to confirm this recommendation is current. Your draft is preserved; decisions are paused.'
@@ -272,14 +345,14 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
               {message && <p role="alert" className="rounded-lg border p-3 text-sm">{message}</p>}
               <form className="space-y-4" noValidate onSubmit={event => { event.preventDefault(); void decide('REJECTED') }}>
                 {instructions.map((item, index) => <div key={index} className="grid gap-3 rounded-lg border p-4 sm:grid-cols-[minmax(10rem,0.35fr)_1fr_auto]">
-                  <div className="space-y-2"><Label htmlFor={`bus-reference-${index}`}>Injected bus ID</Label><Input ref={index === 0 ? firstBusReference : undefined} id={`bus-reference-${index}`} value={item.busReference} readOnly aria-readonly="true" /></div>
+                  <div className="space-y-2"><Label htmlFor={`bus-reference-${index}`}>Bus reference</Label><Input ref={index === 0 ? firstBusReference : undefined} id={`bus-reference-${index}`} value={item.busReference} onChange={event => updateInstruction(index, 'busReference', event.target.value)} required /></div>
                   <div className="space-y-2"><Label htmlFor={`bus-instruction-${index}`}>Instruction</Label><textarea id={`bus-instruction-${index}`} maxLength={500} rows={2} value={item.instruction} onChange={event => updateInstruction(index, 'instruction', event.target.value)} required className="min-h-16 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50" /></div>
                 </div>)}
                 <div className="space-y-2"><Label htmlFor="controller-rationale">Controller rationale</Label><textarea id="controller-rationale" maxLength={1000} rows={3} value={rationale} onChange={event => { setRationale(event.target.value); setMessage('') }} required className="w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50" /></div>
                 <DialogFooter>
                   <DialogClose asChild><Button type="button" variant="outline" disabled={pending}>Close</Button></DialogClose>
                   <Button type="button" variant="outline" disabled={pending} onClick={requestClose}>Cancel</Button>
-                  <Button type="submit" disabled={pending || !isCurrent}>{pending ? 'Sending…' : 'Approve & send instructions'}</Button>
+                  <Button type="submit" disabled={pending || !isCurrent}>{pending ? 'Saving…' : 'Reject AI suggestion & save instructions'}</Button>
                 </DialogFooter>
               </form>
             </DialogContent>

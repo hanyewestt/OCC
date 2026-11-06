@@ -646,7 +646,38 @@ test('controller keeps the awaiting decision panel visible before a simulation r
   await login(page)
   await page.getByRole('link', { name: /Awaiting decision/ }).click()
   await expect(page.getByRole('heading', { name: 'Awaiting decision', exact: true })).toBeVisible()
-  await expect(page.getByText('No recommendations are awaiting a decision yet.', { exact: true })).toBeVisible()
+  await expect(page.getByText('No requests are awaiting a decision yet.', { exact: true })).toBeVisible()
+})
+
+test('controller can opt into diagnosis from a queued bunching request', async ({ page, context }) => {
+  await mockDashboard(context)
+  let completed = false
+  let triggered = false
+  const request = {
+    requestId: 'bunching-request-1', eventId: 'bunching-event-1', diagnosisId: null, classification: 'SIMULATION', demoRunId: 'run-1',
+    serviceId: '190', directionId: 1, stopCode: '44251', status: 'PENDING', likelyCause: null, confidence: null,
+    limitations: [], evidenceDetails: [], failureCode: null, policyOutcome: null, createdAt: '2026-10-22T01:00:00Z',
+  }
+  await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: {
+    mode: 'DEMO', demoRunId: 'run-1', items: completed ? [{ ...request, status: 'COMPLETED' }] : [request], page: 0, totalItems: completed ? 0 : 1, totalPages: 1,
+  } }))
+  await context.route('**/api/v1/planning/diagnoses/trigger', route => {
+    expect(route.request().method()).toBe('POST')
+    expect(route.request().postDataJSON()).toEqual({ requestId: 'bunching-request-1' })
+    triggered = true
+    completed = true
+    return route.fulfill({ json: { requestId: 'bunching-request-1', diagnosisId: 'diagnosis-1', status: 'COMPLETED', failureCode: null, createdAt: request.createdAt, policyOutcome: null } })
+  })
+
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  const queue = page.getByRole('listbox', { name: 'Recommendations awaiting a decision' })
+  await expect(queue).toContainText('Service 190 · Direction 1')
+  await expect(queue).toContainText('Stop 44251 · Bunching detected')
+  await expect(page.getByRole('heading', { name: 'Bunching detection', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Generate diagnosis', exact: true }).click()
+  await expect.poll(() => triggered).toBe(true)
+  await expect(page.getByText('Diagnosis generated. The recommendation is ready for review.')).toBeVisible()
 })
 
 test('controller switches the shared backend mode from the dashboard without leaving the page', async ({ page, context }) => {
@@ -778,10 +809,10 @@ test('controller handles conflicting decisions by retrieving the saved result', 
   await mockDashboard(context, { conflict: true })
   await login(page)
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
-  await page.getByRole('button', { name: 'Approve recommendation', exact: true }).click()
-  const editor = page.getByRole('dialog', { name: 'Approve recommendation', exact: true })
+  await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
   await editor.getByLabel('Controller rationale').fill('Keep the shorter hold.')
-  await editor.getByRole('button', { name: 'Approve & send instructions', exact: true }).click()
+  await editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true }).click()
   await expect(page.getByText(/already has a decision/)).toBeVisible()
 })
 

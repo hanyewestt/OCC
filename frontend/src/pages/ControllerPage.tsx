@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type PageResult, type PendingRecommendation, type RouteDirection, type RoutePositions } from '@/lib/api'
+import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type PageResult, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RoutePositions } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { ControllerSidebar, controllerPages } from '@/components/ControllerSidebar'
 import { ControllerOverview, ControllerDisruptions, ControllerAudit } from '@/pages/ControllerViews'
@@ -179,6 +179,17 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       throw error
     }
   }, recommendation => recommendation.recommendationId, scopeVerified && (pathname === '/controller' || pathname === '/controller/planning'))
+  const diagnosisCollection = usePagedCollection<PlanningDiagnosisRequest, PlanningDiagnosisRequestPage>(scopeKey, async (page, signal) => {
+    const params = new URLSearchParams({ page: String(page), size: '100' })
+    try {
+      const result = await apiRequest<PlanningDiagnosisRequestPage>(`/api/v1/planning/diagnoses?${params}`, token, signal)
+      if (!result) throw new Error('Bunching request response was empty.')
+      return result
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401 && !signal.aborted) void signOut(error.message)
+      throw error
+    }
+  }, request => request.requestId, scopeVerified && pathname === '/controller/planning')
   const decisionCollection = usePagedCollection<Decision, PageResult<Decision>>(token, async (page, signal) => {
     const params = new URLSearchParams({ page: String(page), size: '100' })
     try {
@@ -275,7 +286,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const collectionsLoading = pathname === '/controller'
     ? arrivalCollection.isLoading || !simulation && alertCollection.isLoading || recommendationCollection.isLoading
     : pathname.endsWith('/disruptions') ? !simulation && alertCollection.isLoading
-      : pathname.endsWith('/planning') ? recommendationCollection.isLoading
+      : pathname.endsWith('/planning') ? recommendationCollection.isLoading || diagnosisCollection.isLoading
         : pathname.endsWith('/audit') && decisionCollection.isLoading
   const { requestRefresh, isRefreshing } = usePageRefresh(controllerRefreshIntervalSeconds, async signal => {
     const modeChanged = await loadShell(signal)
@@ -283,7 +294,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     const requests: Promise<void>[] = []
     if (pathname === '/controller') requests.push(arrivalCollection.refresh(signal), recommendationCollection.refresh(signal))
     if (!simulation && (pathname === '/controller' || pathname.endsWith('/disruptions'))) requests.push(alertCollection.refresh(signal))
-    if (pathname === '/controller/planning') requests.push(recommendationCollection.refresh(signal))
+    if (pathname === '/controller/planning') requests.push(recommendationCollection.refresh(signal), diagnosisCollection.refresh(signal))
     if (pathname === '/controller/audit') requests.push(decisionCollection.refresh(signal))
     if (pathname !== '/controller' && !pathname.endsWith('/planning')) requests.push(refreshAdvisories.current(signal))
     await Promise.allSettled(requests)
@@ -291,7 +302,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
 
   const refreshTimes = [shellRefreshTime.key === requestKey ? shellRefreshTime.at : null,
     ...(pathname === '/controller' ? [arrivalCollection.lastSuccessAt, recommendationCollection.lastSuccessAt]
-      : pathname.endsWith('/planning') ? [recommendationCollection.lastSuccessAt]
+      : pathname.endsWith('/planning') ? [recommendationCollection.lastSuccessAt, diagnosisCollection.lastSuccessAt]
         : pathname.endsWith('/audit') ? [decisionCollection.lastSuccessAt] : []),
     ...(!simulation && (pathname === '/controller' || pathname.endsWith('/disruptions')) ? [alertCollection.lastSuccessAt] : []),
     ...(pathname !== '/controller' && !pathname.endsWith('/planning') ? [advisoryRefreshTime.key === refreshScope ? advisoryRefreshTime.at : null] : [])]
@@ -434,7 +445,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         </>}
         {pathname.endsWith('/disruptions') && <ControllerDisruptions liveAlerts={alertCollection} run={run} loading={loading}
           routes={routeStops.data ?? []} positions={routePositions.data ?? []} pollIntervalSeconds={pollIntervalSeconds} />}
-        {pathname.endsWith('/planning') && <ControllerPlanning recommendations={recommendationCollection}
+        {pathname.endsWith('/planning') && <ControllerPlanning recommendations={recommendationCollection} diagnosisRequests={diagnosisCollection}
           loading={loading} modeError={run.error} mode={modeValue} demoRunId={simulation?.id ?? null} token={token}
           onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { void requestRefresh('mutation') }} />}
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} loading={loading} />}
