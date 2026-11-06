@@ -195,6 +195,19 @@ export type PlanningHazardHistory = Omit<PlanningHazardRequest, 'status'> & {
   status: 'COMPLETED' | 'FAILED_TERMINAL'; title: string; completedAt: string
 }
 
+export type PlanningDiagnosisRequest = {
+  requestId: string; eventId: string; diagnosisId: string | null
+  classification: string; demoRunId: string | null
+  serviceId: string | null; directionId: number | null; stopCode: string | null
+  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED_RETRYABLE' | 'FAILED_TERMINAL'
+  likelyCause: string | null; confidence: number | null; limitations: string[]
+  evidenceDetails: DiagnosisEvidenceDetail[]; failureCode: string | null; policyOutcome: string | null
+  createdAt: string
+}
+export type PlanningDiagnosisRequestPage = PageResult<PlanningDiagnosisRequest> & {
+  mode: 'LIVE' | 'DEMO'; demoRunId: string | null
+}
+
 export type TriggerDiagnosisRequest = {
   eventId?: string
   requestId?: string
