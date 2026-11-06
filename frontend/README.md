@@ -5,8 +5,9 @@ email/password sign-in, exclusive controller and captain pages, and shared
 401/403/404 error screens. Nginx serves the static build; Gateway verifies
 session and role access before protected content appears.
 
-The Captain page includes the OBU sample pacing display, scenario controls and
-day/night mode. It uses no live bus data.
+The Captain page shows the signed-in captain's controller instructions, their
+assigned bus route and its pacing, with day/night mode. The backend resolves the
+bus from the verified captain identity; captains cannot read other buses.
 
 The Controller dashboard includes simulation controls, a selectable approximate
 live route strip, searchable and sortable live arrivals, and bunching detections.

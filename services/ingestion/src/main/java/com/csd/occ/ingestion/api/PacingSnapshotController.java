@@ -30,8 +30,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @RestController
 @RequestMapping("/api/v1/pacing-snapshots")
-@Tag(name = "Pacing", description = "Gap to the bus ahead and behind for bus captain On Board Units. "
-        + "Readable by ADMIN, CONTROLLER and CAPTAIN.")
+@Tag(name = "Pacing", description = "Fleet-wide gap to the bus ahead and behind. Captains read their own bus "
+        + "through /api/v1/captain-routes/current. Readable by ADMIN and CONTROLLER.")
 public class PacingSnapshotController {
     static final String EVENT_NAME = "pacing";
 
@@ -45,12 +45,12 @@ public class PacingSnapshotController {
 
     @GetMapping(value = "/latest", produces = MediaType.APPLICATION_JSON_VALUE)
     @Operation(operationId = "getLatestPacingSnapshot", summary = "Get the most recent pacing snapshot",
-            description = "Returns the latest calculated gaps once. Readable by ADMIN, CONTROLLER and CAPTAIN.")
+            description = "Returns the latest calculated gaps once. Readable by ADMIN and CONTROLLER.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Latest snapshot, possibly with no items",
                     content = @Content(schema = @Schema(implementation = PacingSnapshotResponse.class))),
             @ApiResponse(responseCode = "401", description = "Missing or invalid bearer token", content = @Content),
-            @ApiResponse(responseCode = "403", description = "Role is not ADMIN, CONTROLLER or CAPTAIN",
+            @ApiResponse(responseCode = "403", description = "Role is not ADMIN or CONTROLLER",
                     content = @Content),
             @ApiResponse(responseCode = "503", description = "No snapshot has been calculated yet",
                     content = @Content(mediaType = "application/problem+json",
@@ -67,14 +67,14 @@ public class PacingSnapshotController {
     @Operation(operationId = "streamPacingSnapshots", summary = "Stream pacing snapshots as Server-Sent Events",
             description = "Pushes the current snapshot immediately, then one `pacing` event per calculation cycle "
                     + "(every 10 seconds by default). Each event's data is a PacingSnapshotResponse. The server "
-                    + "closes the stream after the configured timeout; clients reconnect. Readable by ADMIN, "
-                    + "CONTROLLER and CAPTAIN.")
+                    + "closes the stream after the configured timeout; clients reconnect. Readable by ADMIN "
+                    + "and CONTROLLER.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Event stream of pacing snapshots",
                     content = @Content(mediaType = MediaType.TEXT_EVENT_STREAM_VALUE,
                             schema = @Schema(implementation = PacingSnapshotResponse.class))),
             @ApiResponse(responseCode = "401", description = "Missing or invalid bearer token", content = @Content),
-            @ApiResponse(responseCode = "403", description = "Role is not ADMIN, CONTROLLER or CAPTAIN",
+            @ApiResponse(responseCode = "403", description = "Role is not ADMIN or CONTROLLER",
                     content = @Content),
             @ApiResponse(responseCode = "503", description = "The stream has reached its subscriber limit",
                     content = @Content(mediaType = "application/problem+json",
