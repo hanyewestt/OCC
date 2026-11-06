@@ -40,6 +40,10 @@ public final class DisruptionOperationalMetrics implements MeterBinder {
                         DisruptionOperationalMetrics::retainedOutboxAttemptCount)
                 .description("Sum of delivery attempts retained in the Planning outbox")
                 .register(registry);
+        Gauge.builder("occ.disruption.bunching_diagnosis.correlated_duplicate_count", this,
+                        DisruptionOperationalMetrics::correlatedBunchingDiagnosisCount)
+                .description("Retained bunching alerts whose duplicate root-cause submission was suppressed")
+                .register(registry);
         Gauge.builder("occ.disruption.traffic.poll_age_seconds", this,
                         DisruptionOperationalMetrics::trafficPollAgeSeconds)
                 .description("Age of the most recently completed traffic poll, or minus one if none completed")
@@ -78,6 +82,11 @@ public final class DisruptionOperationalMetrics implements MeterBinder {
 
     private double retainedOutboxAttemptCount() {
         return queryNumber("SELECT COALESCE(SUM(attempt_count), 0) FROM disruption.planning_outbox");
+    }
+
+    private double correlatedBunchingDiagnosisCount() {
+        return queryNumber("SELECT COUNT(*) FROM disruption.bunching_diagnosis_link "
+                + "WHERE decision = 'SAME_PAIR_SAME_SWEEP'");
     }
 
     private double trafficPollAgeSeconds() {

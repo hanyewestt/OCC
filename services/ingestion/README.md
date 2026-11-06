@@ -221,6 +221,14 @@ by any one stop snapshot, so repeated or co-located buses are not collapsed.
 identifier. This short-range linkage is limited to the replay-validated route
 lines 190 direction 1 and 190 direction 2.
 
+When a later stop snapshot contains one compatible row after an earlier
+snapshot established multiple buses, that row is treated as a merged
+measurement. The predictive association shares the measurement across the
+existing hypotheses rather than assigning it only to `visitOrder` 1; this
+preserves multiplicity through a bunching interval and avoids fragmenting the
+unobserved track. Identity remains unresolved until later observations provide
+an unambiguous separation.
+
 Some provider coordinates can change while the stops in one service poll cycle
 are still being queried. For 190 direction 1, coordinated refresh-boundary
 reconciliation requires an unambiguous coordinated set of matches within 250 m
@@ -260,6 +268,14 @@ is deliberately separate: it is the time the API calculated the response.
 duplicate it. Source fields are `null` when the newest completed cycle contains
 no usable readings. The current estimator does not extrapolate buses between
 polls.
+
+The internal bunching snapshot feed also carries the coordinated
+`sourcePollCycleId`, provider operator and visit number. It supplies a
+`routeStopSequence` only when the active reference topology resolves that stop to
+exactly one occurrence for the service, operator and direction. Repeated circular
+occurrences therefore remain `null`. Disruption uses these fields only to suppress
+an exact same-pair, same-sweep duplicate Planning diagnosis; they are not exposed as
+stable vehicle identities, and missing or ambiguous evidence is never deduplicated.
 
 The machine-readable OpenAPI document is at `/v3/api-docs`.
 

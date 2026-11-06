@@ -28,8 +28,9 @@ public class JacksonBunchingEvidenceAdapter implements BunchingEvidencePort {
                 .toList();
         var relevantSnapshot = new com.csd.occ.disruption.bunching.domain.ArrivalSnapshot(
                 evaluation.snapshot().rawObservationId(), evaluation.snapshot().pollRunId(),
-                evaluation.snapshot().referenceVersionId(), evaluation.snapshot().fetchedAt(), relevantArrivals,
-                evaluation.snapshot().classification(), evaluation.snapshot().demoRunId());
+                evaluation.snapshot().sourcePollCycleId(), evaluation.snapshot().referenceVersionId(),
+                evaluation.snapshot().fetchedAt(), relevantArrivals, evaluation.snapshot().classification(),
+                evaluation.snapshot().demoRunId());
         return mapper.writeValueAsString(new BunchingEvaluation(relevantSnapshot, evaluation.evaluatedAt(),
                 evaluation.threshold(), evaluation.staleAfter(), java.util.List.of(group)));
     }

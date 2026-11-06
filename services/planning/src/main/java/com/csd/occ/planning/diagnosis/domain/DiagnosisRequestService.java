@@ -160,6 +160,10 @@ public class DiagnosisRequestService {
         return persistence.claimDueRequests(batchSize, leaseDuration);
     }
 
+    public List<UUID> claimDueRequests(int batchSize, Duration leaseDuration, boolean includeBunching) {
+        return persistence.claimDueRequests(batchSize, leaseDuration, includeBunching);
+    }
+
     public static final class UnsupportedEventTypeException extends RuntimeException {
         public UnsupportedEventTypeException(String message) { super(message); }
     }

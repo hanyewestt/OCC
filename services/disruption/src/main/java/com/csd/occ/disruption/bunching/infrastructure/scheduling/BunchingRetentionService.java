@@ -1,6 +1,7 @@
 package com.csd.occ.disruption.bunching.infrastructure.scheduling;
 
 import com.csd.occ.disruption.bunching.domain.AlertEventRepository;
+import com.csd.occ.disruption.bunching.domain.BunchingDiagnosisLinkPort;
 import com.csd.occ.disruption.bunching.domain.DiagnosisOutboxRepository;
 import com.csd.occ.disruption.bunching.domain.SourceProcessingStateRepository;
 import com.csd.occ.disruption.bunching.infrastructure.config.BunchingRetentionProperties;
@@ -15,6 +16,7 @@ public class BunchingRetentionService {
     private final SourceProcessingStateRepository sources;
     private final AlertEventRepository events;
     private final DiagnosisOutboxRepository outbox;
+    private final BunchingDiagnosisLinkPort diagnosisLinks;
     private final BunchingRetentionProperties retention;
     private final Clock clock;
     private final com.csd.occ.disruption.bunching.domain.SourceRetentionPort sourceRetention;
@@ -25,7 +27,8 @@ public class BunchingRetentionService {
     private final HazardProperties hazardSettings;
 
     public BunchingRetentionService(SourceProcessingStateRepository sources, AlertEventRepository events,
-                                   DiagnosisOutboxRepository outbox, BunchingRetentionProperties retention, Clock clock,
+                                   DiagnosisOutboxRepository outbox, BunchingDiagnosisLinkPort diagnosisLinks,
+                                   BunchingRetentionProperties retention, Clock clock,
                                    com.csd.occ.disruption.bunching.domain.SourceRetentionPort sourceRetention,
                                    com.csd.occ.disruption.bunching.domain.ConsumerStateRepository consumers,
                                    com.csd.occ.disruption.bunching.domain.AlertProcessingStateRepository alerts,
@@ -34,6 +37,7 @@ public class BunchingRetentionService {
         this.sources = sources;
         this.events = events;
         this.outbox = outbox;
+        this.diagnosisLinks = diagnosisLinks;
         this.retention = retention;
         this.clock = clock;
         this.sourceRetention = sourceRetention;
@@ -65,6 +69,7 @@ public class BunchingRetentionService {
             sources.delete(state);
             deletedRows++;
         }
+        deletedRows += diagnosisLinks.deleteOrphanedBefore(cutoff);
         return deletedRows;
     }
 }

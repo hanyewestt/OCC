@@ -201,3 +201,28 @@ export type PlanningHazardRequestPage = PageResult<PlanningHazardRequest> & { mo
 export type PlanningHazardHistory = Omit<PlanningHazardRequest, 'status'> & {
   status: 'COMPLETED' | 'FAILED_TERMINAL'; title: string; completedAt: string
 }
+
+export type TriggerDiagnosisRequest = {
+  eventId?: string
+  requestId?: string
+}
+
+export type TriggerDiagnosisResponse = {
+  requestId: string
+  diagnosisId: string | null
+  status: string
+  failureCode: string | null
+  createdAt: string
+  policyOutcome: string | null
+}
+
+export async function triggerDiagnosis(
+  body: TriggerDiagnosisRequest,
+  token: string,
+  signal: AbortSignal
+): Promise<TriggerDiagnosisResponse | null> {
+  return apiRequest<TriggerDiagnosisResponse>('/api/v1/planning/diagnoses/trigger', token, signal, {
+    method: 'POST',
+    body,
+  })
+}
