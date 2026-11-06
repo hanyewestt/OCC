@@ -172,7 +172,8 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       }
       return false
     } finally {
-      if (!controller.signal.aborted) { setPending(false); onRefresh() }
+      setPending(false)
+      if (!controller.signal.aborted) { onRefresh() }
     }
   }
 
@@ -198,7 +199,8 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
         if (failure instanceof ApiError && failure.status === 401) void signOut(failure.message)
       }
     } finally {
-      if (!controller.signal.aborted) { setPending(false); onRefresh() }
+      setPending(false)
+      if (!controller.signal.aborted) { onRefresh() }
     }
   }
 
@@ -225,13 +227,14 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       if (!controller.signal.aborted) { setPreview({ input: JSON.stringify(value), message: result.message }); setActionError('') }
     } catch (failure) {
       if (!controller.signal.aborted) setActionError(failure instanceof Error ? failure.message : 'Preview unavailable.')
-    } finally { if (!controller.signal.aborted) setPending(false) }
+    } finally { setPending(false) }
   }
   const pendingAdvisories = advisories.items
+  const isBusy = pending || collectionsLoading
   return <section aria-label={view === 'notices' ? 'Public notice management' : 'Multi-hazard advisories'} className={view === 'notices' ? 'space-y-5' : 'space-y-5 border-t pt-6'}>
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">{view === 'hazards' ? 'Multi-hazard conditions' : view === 'audit' ? 'Instruction and notice history' : view === 'notices' ? 'Managed notices' : 'Captain advisories'}</h2>
       {view === 'notices' && <div className="flex flex-wrap gap-2"><Button asChild variant="outline"><Link to="/notices" target="_blank" rel="noreferrer">Public notice board</Link></Button>
-        <Button variant="outline" disabled={pending} onClick={() => openDraft({ id: crypto.randomUUID(), disruptionId: '', title: '', message: '', services: '', locations: '', from: '', until: '' })}>Draft notice</Button></div>}</div>
+        <Button variant="outline" disabled={isBusy} onClick={() => openDraft({ id: crypto.randomUUID(), disruptionId: '', title: '', message: '', services: '', locations: '', from: '', until: '' })}>Draft notice</Button></div>}</div>
     {actionError && !draft && !groupReview && <p role="alert" className="rounded-lg border p-3 text-sm">{actionError}</p>}
     {view === 'hazards' && <>
       <div className="max-w-xs space-y-2"><Label htmlFor="hazard-kind">Hazard type</Label><select id="hazard-kind" value={kind} onChange={e => setKind(e.target.value)} className="h-9 w-full rounded-md border bg-background px-3 text-sm">
@@ -251,7 +254,7 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
         </CardContent></Card>)}</div>
       </ScrollArea>}
       <PagedCollectionControls label="hazards" hasItems={!!hazards.items.length} hasMore={hazards.hasMore}
-        isLoadingMore={hazards.isLoadingMore} error={hazards.error} refreshError={hazards.refreshError} reload={hazards.reload} loadNext={hazards.loadNext} />
+        isLoading={hazards.isLoading} isLoadingMore={hazards.isLoadingMore} error={hazards.error} refreshError={hazards.refreshError} reload={hazards.reload} loadNext={hazards.loadNext} />
     </>}
     {view === 'audit' && <div className="space-y-3">
       <h3 className="font-semibold">Hazard processing history</h3>
@@ -270,7 +273,7 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
           })}</div>
       </ScrollArea>}
       <PagedCollectionControls label="hazard processing history" hasItems={!!hazardRequests.items.length} hasMore={hazardRequests.hasMore}
-        isLoadingMore={hazardRequests.isLoadingMore} error={hazardRequests.error} refreshError={hazardRequests.refreshError} reload={hazardRequests.reload} loadNext={hazardRequests.loadNext} />
+        isLoading={hazardRequests.isLoading} isLoadingMore={hazardRequests.isLoadingMore} error={hazardRequests.error} refreshError={hazardRequests.refreshError} reload={hazardRequests.reload} loadNext={hazardRequests.loadNext} />
     </div>}
     {view === 'planning' && <>
       {advisories.isLoading && !advisories.latestPage && <p role="status" className="text-sm text-muted-foreground">Loading pending advisories…</p>}
@@ -284,18 +287,18 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
             <p className="text-sm font-medium">{group.hazardTitle} · {instructionLabels[group.candidate.type]}</p>
             <p className="text-xs text-muted-foreground">Simulation · {group.members.length} affected {group.members.length === 1 ? 'bus' : 'buses'} · Hazard: {dataClassificationLabel(group.hazardClassification)}</p></div>
           <p className="text-sm">{group.preview}</p>
-          <Button disabled={pending} aria-label="Review and send to affected captains" onClick={() => { setActionError(''); setGroupReview(group) }}>Review and send</Button>
+          <Button disabled={isBusy} aria-label="Review and send to affected captains" onClick={() => { setActionError(''); setGroupReview(group) }}>Review and send</Button>
           <details open={group.members.length === 1} className="space-y-3 text-sm"><summary className="cursor-pointer font-medium">Individual bus instructions</summary>
             <div className="space-y-3">{group.members.map(a => <div key={a.id} className="space-y-2 rounded-lg border p-3">
               <p className="font-medium">{a.busId}</p><p className="text-xs text-muted-foreground">{a.candidate.rationale}</p>
-              <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={pending} onClick={() => void submit(`/api/v1/planning/advisories/${a.id}/decisions`, {})}>Send to this bus</Button>
-              <Button variant="outline" disabled={pending} onClick={() => setEdit({ advisory: a, type: a.candidate.type, stopSequence: String(a.candidate.parameters.stopSequence ?? ''), speed: String(a.candidate.parameters.speedReductionKmh ?? ''), minutes: a.candidate.parameters.durationSeconds ? String(a.candidate.parameters.durationSeconds / 60) : '', count: String(a.candidate.parameters.subsequentStopCount ?? 0), rationale: '', replacement: '' })}>Edit instruction</Button></div>
+              <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={isBusy} onClick={() => void submit(`/api/v1/planning/advisories/${a.id}/decisions`, {})}>Send to this bus</Button>
+              <Button variant="outline" disabled={isBusy} onClick={() => setEdit({ advisory: a, type: a.candidate.type, stopSequence: String(a.candidate.parameters.stopSequence ?? ''), speed: String(a.candidate.parameters.speedReductionKmh ?? ''), minutes: a.candidate.parameters.durationSeconds ? String(a.candidate.parameters.durationSeconds / 60) : '', count: String(a.candidate.parameters.subsequentStopCount ?? 0), rationale: '', replacement: '' })}>Edit instruction</Button></div>
             </div>)}</div>
           </details>
         </CardContent></Card>)}</div>
       </ScrollArea>}
       <PagedCollectionControls label="pending advisories" hasItems={!!advisories.items.length} hasMore={advisories.hasMore}
-        isLoadingMore={advisories.isLoadingMore} error={advisories.error} refreshError={advisories.refreshError} reload={advisories.reload} loadNext={advisories.loadNext} />
+        isLoading={advisories.isLoading} isLoadingMore={advisories.isLoadingMore} error={advisories.error} refreshError={advisories.refreshError} reload={advisories.reload} loadNext={advisories.loadNext} />
       <Dialog open={groupReview !== null} onOpenChange={open => { if (!open && !pending) setGroupReview(null) }}>
         {groupReview && <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
           <DialogHeader><DialogTitle>Send advisory to affected captains</DialogTitle><DialogDescription>Each captain receives an individual instruction and acknowledges separately. If any bus is no longer eligible, nothing is sent.</DialogDescription></DialogHeader>
@@ -330,7 +333,7 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
         <div className="space-y-2"><Label htmlFor="replace-instruction">Replace an active instruction</Label><select id="replace-instruction" className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={edit.replacement} onChange={e => setEdit({ ...edit, replacement: e.target.value })}>
           <option value="">Do not replace</option>{instructions.items.filter(i => i.busId === edit.advisory.busId && ['ISSUED', 'ACKNOWLEDGED'].includes(i.status)).map(i => <option key={i.id} value={i.id}>{i.message}</option>)}</select></div>
         {preview?.input === JSON.stringify(edit) && <p className="rounded-lg border p-3 font-medium" aria-label="OBU preview">{preview.message}</p>}
-        <div className="flex gap-2"><Button disabled={pending}>{preview?.input === JSON.stringify(edit) ? 'Approve edited instruction' : 'Preview instruction'}</Button><Button type="button" variant="outline" onClick={() => setEdit(null)}>Cancel edit</Button></div>
+        <div className="flex gap-2"><Button disabled={pending}>{preview?.input === JSON.stringify(edit) ? 'Approve edited instruction' : 'Preview instruction'}</Button><Button type="button" variant="outline" disabled={pending} onClick={() => setEdit(null)}>Cancel edit</Button></div>
       </form></CardContent></Card>}
     </>}
     {(view === 'planning' || view === 'audit') && <>
@@ -341,10 +344,10 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       {!!instructions.items.length && <ScrollArea role="region" aria-label="Issued instructions" tabIndex={0} className="max-h-[28rem]"
         viewportProps={{ onScroll: instructions.onScroll }}><div className="space-y-3 p-1 pr-3.5">{instructions.items.map(i => <Card key={i.id} className="min-h-28"><CardContent className="flex flex-wrap items-center justify-between gap-4">
           <div className="space-y-1"><p className="font-medium">{i.message}</p><p className="text-xs text-muted-foreground">{i.busId} · {i.status}{i.acknowledgedAt ? ` · Acknowledged ${formatSgtDateTime(i.acknowledgedAt)}` : ''}</p></div>
-          {['ISSUED', 'ACKNOWLEDGED'].includes(i.status) && <Button variant="outline" disabled={pending} onClick={() => void submit(`/api/v1/planning/instructions/${i.id}/cancellations`)}>Cancel instruction</Button>}
+          {['ISSUED', 'ACKNOWLEDGED'].includes(i.status) && <Button variant="outline" disabled={isBusy} onClick={() => void submit(`/api/v1/planning/instructions/${i.id}/cancellations`)}>Cancel instruction</Button>}
         </CardContent></Card>)}</div></ScrollArea>}
       <PagedCollectionControls label="instructions" hasItems={!!instructions.items.length} hasMore={instructions.hasMore}
-        isLoadingMore={instructions.isLoadingMore} error={instructions.error} refreshError={instructions.refreshError} reload={instructions.reload} loadNext={instructions.loadNext} />
+        isLoading={instructions.isLoading} isLoadingMore={instructions.isLoadingMore} error={instructions.error} refreshError={instructions.refreshError} reload={instructions.reload} loadNext={instructions.loadNext} />
     </>}
     {(view === 'notices' || view === 'audit') && <>
       {view === 'audit' && <h3 className="font-semibold">Notice history</h3>}
@@ -379,16 +382,16 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
         {draft.disruptionId && !hazards.items.some(h => h.disruptionId === draft.disruptionId) && <option value={draft.disruptionId}>Saved notice source</option>}
         {hazards.items.map(h => <option key={h.disruptionId} value={h.disruptionId}>{h.facts.title} · {dataClassificationLabel(h.classification)}</option>)}</select>
         <PagedCollectionControls label="source hazards" hasItems={!!hazards.items.length} hasMore={hazards.hasMore}
-          isLoadingMore={hazards.isLoadingMore} error={hazards.error} refreshError={hazards.refreshError} reload={hazards.reload} loadNext={hazards.loadNext} /></div>
+          isLoading={hazards.isLoading} isLoadingMore={hazards.isLoadingMore} error={hazards.error} refreshError={hazards.refreshError} reload={hazards.reload} loadNext={hazards.loadNext} /></div>
         {draftSource && <p aria-label="Notice scope" className="break-words text-sm font-medium">Notice scope: {dataClassificationLabel(draftSource.classification)}
           {draftSource.classification === 'SIMULATION' && draftSource.demoRunId ? ` · Run ${draftSource.demoRunId}` : ''}</p>}
-        <Button type="button" variant="outline" disabled={pending || !draft.disruptionId || hazards.items.find(h => h.disruptionId === draft.disruptionId)?.status === 'CLEARED'} onClick={() => void suggestNotice()}>Suggest passenger wording</Button>
+        <Button type="button" variant="outline" disabled={pending || noticeSaving || !draft.disruptionId || hazards.items.find(h => h.disruptionId === draft.disruptionId)?.status === 'CLEARED'} onClick={() => void suggestNotice()}>Suggest passenger wording</Button>
         <div className="space-y-2"><Label htmlFor="notice-title">Title</Label><Input id="notice-title" required maxLength={160} value={draft.title} onChange={e => updateDraft({ ...draft, title: e.target.value })} /></div>
         <div className="space-y-2"><Label htmlFor="notice-message">Passenger message</Label><textarea id="notice-message" required maxLength={2000} rows={4} className="w-full rounded-md border bg-background p-3 text-sm" value={draft.message} onChange={e => updateDraft({ ...draft, message: e.target.value })} /></div>
         <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="notice-services">Services (comma separated)</Label><Input id="notice-services" value={draft.services} onChange={e => updateDraft({ ...draft, services: e.target.value })} /></div><div className="space-y-2"><Label htmlFor="notice-locations">Locations (comma separated)</Label><Input id="notice-locations" value={draft.locations} onChange={e => updateDraft({ ...draft, locations: e.target.value })} /></div></div>
         <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="notice-from">Starts (SGT)</Label><Input id="notice-from" required type="datetime-local" value={draft.from} onChange={e => updateDraft({ ...draft, from: e.target.value })} /></div><div className="space-y-2"><Label htmlFor="notice-until">Expires (SGT)</Label><Input id="notice-until" required type="datetime-local" value={draft.until} onChange={e => updateDraft({ ...draft, until: e.target.value })} /></div></div>
         <div className="space-y-2 rounded-lg border p-4"><p className="text-xs text-muted-foreground">Passenger preview</p><h4 className="font-semibold">{draft.title || 'Notice title'}</h4><p className="whitespace-pre-wrap text-sm">{draft.message || 'Notice message'}</p></div>
-        <div className="flex gap-2"><Button disabled={pending}>{draft.previousId ? 'Publish correction' : 'Save draft'}</Button><Button type="button" variant="outline" disabled={pending} onClick={closeDraft}>Cancel draft</Button></div>
+        <div className="flex gap-2"><Button disabled={pending || noticeSaving}>{draft.previousId ? 'Publish correction' : 'Save draft'}</Button><Button type="button" variant="outline" disabled={pending || noticeSaving} onClick={closeDraft}>Cancel draft</Button></div>
       </fieldset></form></DialogContent>}
       </Dialog>
       <AlertDialog open={discardDraft} onOpenChange={setDiscardDraft}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Discard notice draft?</AlertDialogTitle><AlertDialogDescription>Your unsaved changes will be lost.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Keep editing</AlertDialogCancel><AlertDialogAction onClick={() => updateDraft(null)}>Discard draft</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
@@ -405,17 +408,17 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
           <p className="text-xs text-muted-foreground">Starts <time dateTime={n.effectiveFrom}>{formatSgtDateTime(n.effectiveFrom)}</time> · Expires <time dateTime={n.effectiveUntil}>{formatSgtDateTime(n.effectiveUntil)}</time></p>
           {n.publishedAt && <p className="text-xs text-muted-foreground">Published <time dateTime={n.publishedAt}>{formatSgtDateTime(n.publishedAt)}</time></p>}
           {n.withdrawnAt && <p className="text-xs text-muted-foreground">Withdrawn <time dateTime={n.withdrawnAt}>{formatSgtDateTime(n.withdrawnAt)}</time></p>}
-          <div className="flex flex-wrap gap-2">{n.status === 'DRAFT' && <><Button disabled={pending || expired} onClick={() => void submit(`/api/v1/planning/notices/${n.id}/publications`)}>Publish notice</Button>
-            <Button variant="outline" disabled={pending} onClick={() => openDraft({ id: crypto.randomUUID(), disruptionId: n.disruptionId, title: n.title, message: n.message,
+          <div className="flex flex-wrap gap-2">{n.status === 'DRAFT' && <><Button disabled={isBusy || expired} onClick={() => void submit(`/api/v1/planning/notices/${n.id}/publications`)}>Publish notice</Button>
+            <Button variant="outline" disabled={isBusy} onClick={() => openDraft({ id: crypto.randomUUID(), disruptionId: n.disruptionId, title: n.title, message: n.message,
               services: n.services.join(', '), locations: n.locations.join(', '), from: '', until: '' })}>Copy to new draft</Button></>}
-            {n.status === 'PUBLISHED' && <><Button variant="outline" disabled={pending} onClick={() => void submit(`/api/v1/planning/notices/${n.id}/withdrawals`)}>Withdraw notice</Button>
-              <Button variant="outline" disabled={pending} onClick={() => openDraft({ id: crypto.randomUUID(), previousId: n.id, disruptionId: n.disruptionId, title: n.title, message: n.message, services: n.services.join(', '), locations: n.locations.join(', '),
+            {n.status === 'PUBLISHED' && <><Button variant="outline" disabled={isBusy} onClick={() => void submit(`/api/v1/planning/notices/${n.id}/withdrawals`)}>Withdraw notice</Button>
+              <Button variant="outline" disabled={isBusy} onClick={() => openDraft({ id: crypto.randomUUID(), previousId: n.id, disruptionId: n.disruptionId, title: n.title, message: n.message, services: n.services.join(', '), locations: n.locations.join(', '),
                 from: sgtDateTimeInputFromUtc(new Date().toISOString()), until: expired ? '' : sgtDateTimeInputFromUtc(n.effectiveUntil) })}>Correct notice</Button></>}
             {n.classification === 'SIMULATION' && n.demoRunId && <Button asChild variant="outline"><Link target="_blank" rel="noreferrer" to={`/notices?classification=SIMULATION&demoRunId=${encodeURIComponent(n.demoRunId)}`}>Preview simulation board</Link></Button>}
           </div>
         </CardContent></Card>})}</div></ScrollArea>}
       <PagedCollectionControls label="managed notices" hasItems={!!notices.items.length} hasMore={notices.hasMore}
-        isLoadingMore={notices.isLoadingMore} error={notices.error} refreshError={notices.refreshError} reload={notices.reload} loadNext={notices.loadNext} />
+        isLoading={notices.isLoading} isLoadingMore={notices.isLoadingMore} error={notices.error} refreshError={notices.refreshError} reload={notices.reload} loadNext={notices.loadNext} />
     </>}
   </section>
 }

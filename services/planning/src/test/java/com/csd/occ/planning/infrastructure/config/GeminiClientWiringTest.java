@@ -40,7 +40,7 @@ class GeminiClientWiringTest {
                     URI.create("http://disruption:8002"), URI.create("http://ingestion:8001"), false,
                     Duration.ofSeconds(2), 10, Duration.ofMinutes(5), 3, 0, Duration.ofSeconds(2),
                     Duration.ofMinutes(1), 1, Duration.ofMinutes(15), 2.0, 0.7, Duration.ofSeconds(10),
-                    131072, 65536));
+                    131072, 65536, false));
             context.registerBean(RecommendationInputProperties.class, () -> new RecommendationInputProperties(65536));
             context.registerBean("diagnosisAudit", com.csd.occ.planning.diagnosis.infrastructure.config.AiAuditProperties.class,
                     () -> new com.csd.occ.planning.diagnosis.infrastructure.config.AiAuditProperties(65536));

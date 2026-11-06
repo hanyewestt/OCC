@@ -15,6 +15,7 @@ RUN case "${OCC_SERVICE}" in ingestion|disruption|planning) ;; \
 # vulnerable transitive dependencies from the one-shot migration image. Flyway's
 # GCP driver keeps Guava, so replace it with the CVE-fixed release and verify it.
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install --no-install-recommends -y curl libbrotli1 \
     && curl --fail --silent --show-error --location \
         "https://repo1.maven.org/maven2/com/google/guava/guava/${GUAVA_VERSION}/guava-${GUAVA_VERSION}.jar" \

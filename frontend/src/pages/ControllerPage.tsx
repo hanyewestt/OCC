@@ -208,9 +208,10 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     document.getElementById('arrivals')?.scrollIntoView({ block: 'start' })
   }, [pathname, hash])
   const loadShell = useCallback(async (signal: AbortSignal) => {
+    const needsRouteMapData = pathname === '/controller' || pathname.endsWith('/disruptions')
     const runPromise = readResource(apiRequest<DemoRun>('/api/v1/demo-runs/active', token, signal).then(async value =>
       value ? { ...value, alerts: await enrichBunchingStops(value.alerts, token, signal) } : null), signal)
-    const routePromise = pathname === '/controller'
+    const routePromise = needsRouteMapData
       ? Promise.all(['190', '972'].map(serviceId =>
       readResource(apiRequest<BusRoute>(`/api/v1/bus-routes/${serviceId}`, token, signal), signal)))
       .then(results => ({
@@ -218,7 +219,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         error: results.some(result => result.error) ? 'Unable to load all route references.' : '',
       })) : Promise.resolve(null)
     const [liveRequest, nextRun, nextRouteStops] = await Promise.all([
-      pathname === '/controller' ? requestLiveData(signal) : Promise.resolve(null), runPromise, routePromise,
+      needsRouteMapData ? requestLiveData(signal) : Promise.resolve(null), runPromise, routePromise,
     ])
     if (signal.aborted) return false
     const liveIsCurrent = !liveRequest || liveRequest.generation === liveRequestGenerationRef.current
@@ -307,8 +308,8 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           'Unable to switch modes. Check the current mode before trying again.')
     } finally {
       switchingRef.current = false
+      setSwitching(false)
       if (!controller.signal.aborted) {
-        setSwitching(false)
         void requestRefresh('mutation')
       }
     }
@@ -354,7 +355,8 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
               setArrivalSortBy(column)
             }} />
         </>}
-        {pathname.endsWith('/disruptions') && <ControllerDisruptions liveAlerts={alertCollection} run={run} loading={loading} />}
+        {pathname.endsWith('/disruptions') && <ControllerDisruptions liveAlerts={alertCollection} run={run} loading={loading}
+          routes={routeStops.data ?? []} positions={routePositions.data ?? []} pollIntervalSeconds={pollIntervalSeconds} />}
         {pathname.endsWith('/planning') && <ControllerPlanning recommendations={recommendationCollection} diagnoses={diagnosisCollection}
           loading={loading} modeError={run.error} mode={modeValue} demoRunId={simulation?.id ?? null} token={token}
           onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { void requestRefresh('mutation') }} />}
