@@ -79,6 +79,19 @@ headway baseline uses `OCC_DISRUPTION_EXPECTED_HEADWAY` in both modes. Candidate
 older than `OCC_DISRUPTION_STALE_AFTER` or predating a return to Live are discarded.
 Unknown-direction detections remain observational alerts and are not sent for diagnosis.
 
+Stop-level alerts remain independent audit records. Before creating Planning work, the
+service correlates only alerts that contain the same exact two-bus provider evidence in
+the same coordinated poll sweep, reference topology, service, operator and direction.
+The first alert is the representative diagnosis; later matching alerts retain their own
+disruption lifecycle but link to that representative without creating another outbox
+submission. The correlation root survives independent stop-alert retention while any
+member remains, then normal retention removes the orphaned root. Missing vehicle evidence,
+duplicate identities, unknown directions and ambiguous route-stop occurrences fail open
+and keep separate submissions. This keeps
+service 190 directions independent and prevents repeated start/end occurrences on
+circular service 972 from being merged without unambiguous evidence. The retained count
+is exposed as `occ.disruption.bunching_diagnosis.correlated_duplicate_count`.
+
 ### Multi-hazard lifecycle and candidate exposure
 
 The disruption service consumes the independent flood, rail and approved

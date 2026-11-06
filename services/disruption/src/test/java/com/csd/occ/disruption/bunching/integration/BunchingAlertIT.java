@@ -1,6 +1,7 @@
 package com.csd.occ.disruption.bunching.integration;
 
 import com.csd.occ.disruption.bunching.domain.ArrivalSnapshot;
+import com.csd.occ.disruption.bunching.domain.BunchingDiagnosisLinkPort;
 import com.csd.occ.disruption.bunching.domain.BunchingRecordingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,6 +22,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.postgresql.PGConnection;
 
 import javax.sql.DataSource;
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -48,14 +50,16 @@ class BunchingAlertIT {
     private final JdbcTemplate jdbc;
     private final DataSource dataSource;
     private final PlatformTransactionManager transactions;
+    private final BunchingDiagnosisLinkPort diagnosisLinks;
 
     @Autowired
     BunchingAlertIT(BunchingRecordingService recording, JdbcTemplate jdbc, DataSource dataSource,
-                   PlatformTransactionManager transactions) {
+                   PlatformTransactionManager transactions, BunchingDiagnosisLinkPort diagnosisLinks) {
         this.recording = recording;
         this.jdbc = jdbc;
         this.dataSource = dataSource;
         this.transactions = transactions;
+        this.diagnosisLinks = diagnosisLinks;
     }
 
     @Autowired org.springframework.test.web.servlet.MockMvc mvc;
@@ -75,7 +79,7 @@ class BunchingAlertIT {
     }
 
     @BeforeEach
-    void reset() { jdbc.update("UPDATE disruption.consumer_state SET mode='LIVE', demo_run_id=null, updated_at=?", java.sql.Timestamp.from(NOW.minusSeconds(3600))); jdbc.execute("TRUNCATE disruption.hazard_state, disruption.planning_outbox, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption, disruption.source_processing_state"); }
+    void reset() { jdbc.update("UPDATE disruption.consumer_state SET mode='LIVE', demo_run_id=null, updated_at=?", java.sql.Timestamp.from(NOW.minusSeconds(3600))); jdbc.execute("TRUNCATE disruption.hazard_state, disruption.planning_outbox, disruption.bunching_diagnosis_link, disruption.bunching_diagnosis_correlation, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption, disruption.source_processing_state"); }
 
     @Test
     void opensOnceClearsAndReopensWithANewEpisode() {
@@ -223,6 +227,108 @@ class BunchingAlertIT {
                 "SELECT payload_json::jsonb ->> 'classification' FROM disruption.planning_outbox", String.class));
     }
 
+    @Test
+    void sameExactBusPairAcrossStopsRetainsBothAlertsAndQueuesOneDiagnosis() throws Exception {
+        UUID candidateCycle = UUID.randomUUID();
+        UUID confirmingCycle = UUID.randomUUID();
+        record(strongSnapshot(0, "44009", 10, 1, candidateCycle, "1.300", "1.305"));
+        record(strongSnapshot(0, "44019", 11, 1, candidateCycle, "1.300", "1.305"));
+        var firstConfirmation = strongSnapshot(1, "44009", 10, 1, confirmingCycle, "1.301", "1.306");
+        var secondConfirmation = strongSnapshot(1, "44019", 11, 1, confirmingCycle, "1.301", "1.306");
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> record(firstConfirmation));
+            var second = executor.submit(() -> record(secondConfirmation));
+            first.get();
+            second.get();
+        }
+
+        assertEquals(2, events());
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM disruption.disruption", Integer.class));
+        assertEquals(2, jdbc.queryForObject(
+                "SELECT count(*) FROM disruption.bunching_diagnosis_link", Integer.class));
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT count(*) FROM disruption.bunching_diagnosis_link WHERE decision='REPRESENTATIVE'",
+                Integer.class));
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT count(*) FROM disruption.bunching_diagnosis_link WHERE decision='SAME_PAIR_SAME_SWEEP'",
+                Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM disruption.planning_outbox", Integer.class));
+    }
+
+    @Test
+    void correlationRootSurvivesRepresentativeRetentionUntilTheLastMemberExpires() throws Exception {
+        UUID candidateCycle = UUID.randomUUID();
+        UUID confirmingCycle = UUID.randomUUID();
+        record(strongSnapshot(0, "44009", 10, 1, candidateCycle, "1.300", "1.305"));
+        record(strongSnapshot(0, "44019", 11, 1, candidateCycle, "1.300", "1.305"));
+        var firstConfirmation = strongSnapshot(1, "44009", 10, 1, confirmingCycle, "1.301", "1.306");
+        var secondConfirmation = strongSnapshot(1, "44019", 11, 1, confirmingCycle, "1.301", "1.306");
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> record(firstConfirmation));
+            var second = executor.submit(() -> record(secondConfirmation));
+            first.get();
+            second.get();
+        }
+
+        UUID canonicalEventId = jdbc.queryForObject("""
+                SELECT representative_event_id
+                FROM disruption.bunching_diagnosis_correlation
+                """, UUID.class);
+        UUID memberEventId = jdbc.queryForObject("""
+                SELECT event_id FROM disruption.bunching_diagnosis_link
+                WHERE decision = 'SAME_PAIR_SAME_SWEEP'
+                """, UUID.class);
+        jdbc.update("DELETE FROM disruption.planning_outbox WHERE event_id = ?", canonicalEventId);
+        jdbc.update("DELETE FROM disruption.disruption_event WHERE id = ?", canonicalEventId);
+
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT count(*) FROM disruption.bunching_diagnosis_correlation", Integer.class));
+        assertEquals(canonicalEventId, jdbc.queryForObject("""
+                SELECT canonical_event_id FROM disruption.bunching_diagnosis_link
+                WHERE event_id = ?
+                """, UUID.class, memberEventId));
+
+        jdbc.update("DELETE FROM disruption.disruption_event WHERE id = ?", memberEventId);
+        new TransactionTemplate(transactions).executeWithoutResult(
+                ignored -> diagnosisLinks.deleteOrphanedBefore(NOW.plusSeconds(3_600)));
+        assertEquals(0, jdbc.queryForObject(
+                "SELECT count(*) FROM disruption.bunching_diagnosis_correlation", Integer.class));
+    }
+
+    @Test
+    void distinctPairsAndDirectionsRemainSeparateDiagnoses() {
+        UUID candidateCycle = UUID.randomUUID();
+        UUID confirmingCycle = UUID.randomUUID();
+        record(strongSnapshot(0, "44009", 10, 1, candidateCycle, "1.300", "1.305"));
+        record(strongSnapshot(0, "44019", 11, 1, candidateCycle, "1.320", "1.325"));
+        record(strongSnapshot(0, "44009", 10, 2, candidateCycle, "1.300", "1.305"));
+        record(strongSnapshot(1, "44009", 10, 1, confirmingCycle, "1.301", "1.306"));
+        record(strongSnapshot(1, "44019", 11, 1, confirmingCycle, "1.321", "1.326"));
+        record(strongSnapshot(1, "44009", 10, 2, confirmingCycle, "1.301", "1.306"));
+
+        assertEquals(3, events());
+        assertEquals(3, jdbc.queryForObject("SELECT count(*) FROM disruption.planning_outbox", Integer.class));
+        assertEquals(3, jdbc.queryForObject(
+                "SELECT count(*) FROM disruption.bunching_diagnosis_link WHERE decision='REPRESENTATIVE'",
+                Integer.class));
+    }
+
+    @Test
+    void ambiguousCircularStopFailsOpenAndKeepsBothDiagnoses() {
+        UUID candidateCycle = UUID.randomUUID();
+        UUID confirmingCycle = UUID.randomUUID();
+        record(strongSnapshot(0, "44009", null, 1, candidateCycle, "1.300", "1.305", "972"));
+        record(strongSnapshot(0, "44019", 11, 1, candidateCycle, "1.300", "1.305", "972"));
+        record(strongSnapshot(1, "44009", null, 1, confirmingCycle, "1.301", "1.306", "972"));
+        record(strongSnapshot(1, "44019", 11, 1, confirmingCycle, "1.301", "1.306", "972"));
+
+        assertEquals(2, events());
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM disruption.planning_outbox", Integer.class));
+        assertEquals(0, jdbc.queryForObject(
+                "SELECT count(*) FROM disruption.bunching_diagnosis_link WHERE decision='SAME_PAIR_SAME_SWEEP'",
+                Integer.class));
+    }
+
     private void record(ArrivalSnapshot snapshot) {
         recording.record(snapshot, Duration.ofSeconds(90), Duration.ofSeconds(120));
     }
@@ -233,6 +339,30 @@ class BunchingAlertIT {
         return new ArrivalSnapshot(UUID.randomUUID(), UUID.randomUUID(), Optional.empty(), NOW.plusSeconds(offset), List.of(
                 new ArrivalSnapshot.Arrival(UUID.randomUUID(), "190", "44009", direction, 1, Optional.of(NOW.plusSeconds(300))),
                 new ArrivalSnapshot.Arrival(UUID.randomUUID(), "190", "44009", direction, 2, Optional.of(NOW.plusSeconds(300 + gap)))));
+    }
+
+    private ArrivalSnapshot strongSnapshot(int offset, String stopCode, Integer stopSequence, int direction,
+            UUID sourcePollCycleId, String leadingLatitude, String followingLatitude) {
+        return strongSnapshot(offset, stopCode, stopSequence, direction, sourcePollCycleId, leadingLatitude,
+                followingLatitude, "190");
+    }
+
+    private ArrivalSnapshot strongSnapshot(int offset, String stopCode, Integer stopSequence, int direction,
+            UUID sourcePollCycleId, String leadingLatitude, String followingLatitude, String serviceId) {
+        UUID referenceVersionId = UUID.fromString("00000000-0000-0000-0000-000000000190");
+        return new ArrivalSnapshot(UUID.randomUUID(), UUID.randomUUID(), Optional.of(sourcePollCycleId),
+                Optional.of(referenceVersionId), NOW.plusSeconds(offset), List.of(
+                strongArrival(serviceId, stopCode, stopSequence, direction, 1, leadingLatitude, "103.800",
+                        NOW.plusSeconds(300)),
+                strongArrival(serviceId, stopCode, stopSequence, direction, 2, followingLatitude, "103.805",
+                        NOW.plusSeconds(360))), "OBSERVATION_ONLY", null);
+    }
+
+    private ArrivalSnapshot.Arrival strongArrival(String serviceId, String stopCode, Integer stopSequence,
+            int direction, int visitOrder, String latitude, String longitude, Instant eta) {
+        return new ArrivalSnapshot.Arrival(UUID.randomUUID(), serviceId, stopCode, Optional.of(direction),
+                visitOrder, Optional.of(eta), "SMRT", 1, "01009", "46009",
+                new BigDecimal(latitude), new BigDecimal(longitude), stopSequence);
     }
 
     @TestConfiguration

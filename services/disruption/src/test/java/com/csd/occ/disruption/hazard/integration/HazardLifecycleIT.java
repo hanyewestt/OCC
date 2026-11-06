@@ -125,7 +125,9 @@ class HazardLifecycleIT {
     void resetRows() {
         clock.set(NOW);
         jdbc.update("UPDATE disruption.consumer_state SET mode='LIVE', demo_run_id=NULL WHERE id=1");
-        jdbc.execute("TRUNCATE disruption.planning_outbox, disruption.event_evidence, disruption.disruption_event, "
+        jdbc.execute("TRUNCATE disruption.planning_outbox, disruption.bunching_diagnosis_link, "
+                + "disruption.bunching_diagnosis_correlation, "
+                + "disruption.event_evidence, disruption.disruption_event, "
                 + "disruption.hazard_state, disruption.hazard_feed_health, disruption.traffic_incident_state, "
                 + "disruption.disruption_processing_state, disruption.disruption");
         jdbc.update("UPDATE disruption.hazard_checkpoint SET completed_at=NULL, poll_run_id=NULL");

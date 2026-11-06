@@ -506,6 +506,15 @@ class DiagnosisRequestPersistenceIT {
         assertThat(diagnoses.findByRequestId(requestId)).isEmpty();
     }
 
+    @Test
+    void claimDueRequestsWhenIncludeBunchingIsFalseSkipsBunchingRequests() {
+        requests.enqueue(EventType.BUS_BUNCHING, PRODUCER, UUID.randomUUID(), UUID.randomUUID());
+        var claimed = requests.claimDueRequests(10, Duration.ofMinutes(1), false);
+        assertThat(claimed).isEmpty();
+        var claimedWithBunching = requests.claimDueRequests(10, Duration.ofMinutes(1), true);
+        assertThat(claimedWithBunching).hasSize(1);
+    }
+
     private ModelInvocationDetails invocation(String model) {
         return invocation("GOOGLE_GENAI", model);
     }

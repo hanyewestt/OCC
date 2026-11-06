@@ -2,14 +2,18 @@ package com.csd.occ.planning.diagnosis.api;
 
 import com.csd.occ.planning.diagnosis.api.dto.CreateDiagnosisEventSubmission;
 import com.csd.occ.planning.diagnosis.api.dto.DiagnosisRequestResponse;
+import com.csd.occ.planning.diagnosis.api.dto.TriggerDiagnosisRequest;
+import com.csd.occ.planning.diagnosis.domain.DiagnosisQueryService;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestService;
+import com.csd.occ.planning.diagnosis.domain.DiagnosisTriggerService;
+import com.csd.occ.planning.diagnosis.domain.EventType;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import io.swagger.v3.oas.annotations.enums.ParameterIn;
 import jakarta.validation.Valid;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -19,7 +23,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -28,11 +31,15 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(name = "Root-cause diagnosis requests")
 public class DiagnosisRequestController {
     private final DiagnosisRequestService requests;
-    private final com.csd.occ.planning.diagnosis.domain.DiagnosisQueryService query;
+    private final DiagnosisQueryService query;
+    private final DiagnosisTriggerService triggerService;
 
     public DiagnosisRequestController(DiagnosisRequestService requests,
-                                     com.csd.occ.planning.diagnosis.domain.DiagnosisQueryService query) {
-        this.requests = requests; this.query = query;
+                                     DiagnosisQueryService query,
+                                     DiagnosisTriggerService triggerService) {
+        this.requests = requests;
+        this.query = query;
+        this.triggerService = triggerService;
     }
 
     @PostMapping("/internal/v1/planning/requests")
@@ -78,9 +85,19 @@ public class DiagnosisRequestController {
     @ApiResponse(responseCode = "200", description = "Diagnosis request status")
     @ApiResponse(responseCode = "404", description = "No request has been accepted for this event")
     public DiagnosisRequestResponse getByEvent(@PathVariable UUID eventId,
-            @RequestParam(defaultValue = "BUS_BUNCHING") com.csd.occ.planning.diagnosis.domain.EventType eventType) {
+            @RequestParam(defaultValue = "BUS_BUNCHING") EventType eventType) {
         var request = query.findRequestByEvent(eventId, eventType);
         return new DiagnosisRequestResponse(request.requestId(), request.diagnosisId(), request.status(),
                 request.failureCode(), request.createdAt(), request.policyOutcome());
+    }
+
+    @PostMapping("/api/v1/planning/diagnoses/trigger")
+    @Operation(operationId = "triggerDiagnosis", summary = "Trigger root-cause diagnosis on-demand for an event or request",
+            description = "Runs root-cause diagnosis and mitigation candidate generation on-demand. If already completed, returns existing result.")
+    @ApiResponse(responseCode = "200", description = "Diagnosis completed or status returned")
+    @ApiResponse(responseCode = "400", description = "Either eventId or requestId must be provided")
+    @ApiResponse(responseCode = "404", description = "Diagnosis request not found")
+    public DiagnosisRequestResponse trigger(@RequestBody TriggerDiagnosisRequest body) {
+        return triggerService.trigger(body);
     }
 }

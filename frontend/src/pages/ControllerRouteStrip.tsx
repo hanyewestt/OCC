@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import type { Arrival, BunchingAlert, DemoRun, PageResult, RouteDirection, RoutePositionDirection, RoutePositions } from '@/lib/api'
 import { formatSgtTime } from '@/lib/time'
@@ -81,6 +82,7 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
   lastUpdated: string
   fetchStopArrivals: Props['fetchStopArrivals']
 }) {
+  const navigate = useNavigate()
   const [selectedStopCode, setSelectedStopCode] = useState<string | null>(null)
   const [selectedArrivals, setSelectedArrivals] = useState<Arrival[]>([])
   const [selectedStopLoading, setSelectedStopLoading] = useState(false)
@@ -292,8 +294,27 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
             headway.source === 'estimate' ? 'Approximate time from position gap divided by estimated speed.' :
               headway.source === 'same-stop-eta' ? `Arrival-time difference at stop ${headway.etaStopCode}; both readings came from the same poll snapshot.` :
                 'Position separation unavailable.'
-          const description = `Estimated buses ${headway.frontOrder} and ${headway.followingOrder}: ${label}. ${sourceLabel}${linked.length ? ` Linked to ${linked.length} incident${linked.length === 1 ? '' : 's'}.` : ''}`
-          return <g key={pairKey(headway.frontOrder, headway.followingOrder)} role="img" aria-label={description}>
+          const hasLinkedIncidents = linked.length > 0
+          const description = `Estimated buses ${headway.frontOrder} and ${headway.followingOrder}: ${label}. ${sourceLabel}${hasLinkedIncidents ? ` Linked to ${linked.length} incident${linked.length === 1 ? '' : 's'}. Click to view disruption details and map.` : ''}`
+
+          const onHeadwayClick = hasLinkedIncidents ? () => {
+            navigate(`/controller/disruptions?service=${encodeURIComponent(route.serviceId)}&direction=${route.directionId}&incident=${encodeURIComponent(linked[0].id)}`)
+          } : undefined
+
+          return <g
+            key={pairKey(headway.frontOrder, headway.followingOrder)}
+            role={hasLinkedIncidents ? "button" : "img"}
+            tabIndex={hasLinkedIncidents ? 0 : undefined}
+            aria-label={description}
+            className={hasLinkedIncidents ? "cursor-pointer outline-none transition-transform hover:scale-105" : undefined}
+            onClick={onHeadwayClick}
+            onKeyDown={hasLinkedIncidents ? e => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                onHeadwayClick?.()
+              }
+            } : undefined}
+          >
             <title>{description}</title>
             <path d={`M${Math.min(firstX, secondX)} ${y - 5}V${y}H${Math.max(firstX, secondX)}V${y - 5}`}
               fill="none" stroke={style ? `currentColor` : 'var(--muted-foreground)'} strokeWidth="2"
@@ -303,7 +324,7 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
               className={style?.markerClassName ?? 'text-muted-foreground'} />
             <text x={center} y={y + 16} textAnchor="middle" fontSize="9" fontWeight="600" fill="currentColor"
               className={style?.markerClassName ?? 'text-muted-foreground'}>{label}</text>
-            {linked.length > 0 && <circle cx={center + labelWidth / 2 - 1} cy={y + 4} r="4" fill="var(--destructive)" />}
+            {hasLinkedIncidents && <circle cx={center + labelWidth / 2 - 1} cy={y + 4} r="4" fill="var(--destructive)" />}
           </g>
         })}
         {buses.map((bus, index) => {

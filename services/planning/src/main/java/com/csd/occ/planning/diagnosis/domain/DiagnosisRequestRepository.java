@@ -103,4 +103,13 @@ public interface DiagnosisRequestRepository extends JpaRepository<DiagnosisReque
             + "or (status = 'PROCESSING' and lease_until <= :now)) "
             + "order by created_at limit :batchSize for update skip locked", nativeQuery = true)
     List<DiagnosisRequest> findClaimable(@Param("now") Instant now, @Param("batchSize") int batchSize);
+
+    @Query(value = "select * from planning.planning_request where "
+            + "event_type in ('HAZARD','TRAFFIC_INCIDENT') and "
+            + "(((status in ('PENDING','FAILED_RETRYABLE') and next_attempt_at <= :now) "
+            + "or (status = 'PROCESSING' and lease_until <= :now))) "
+            + "order by created_at limit :batchSize for update skip locked", nativeQuery = true)
+    List<DiagnosisRequest> findClaimableHazardsOnly(@Param("now") Instant now, @Param("batchSize") int batchSize);
+
+    Optional<DiagnosisRequest> findFirstByEventIdOrderByCreatedAtDesc(UUID eventId);
 }
