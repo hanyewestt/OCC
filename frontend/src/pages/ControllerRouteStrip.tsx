@@ -260,7 +260,7 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
           const selected = selectedStopCode === stop.stopCode
           return <g key={`${stop.stopCode}:${stop.stopSequence}`} role="button" tabIndex={0}
             aria-label={`${stop.description || `Stop ${stop.stopCode}`}, stop ${stop.stopCode}. Select to compare same-sweep arrival evidence.`}
-            aria-pressed={selected} className="cursor-pointer outline-none focus-visible:stroke-sky-700"
+            aria-pressed={selected} className="cursor-pointer outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-700"
             onClick={() => toggleStopSelection(stop.stopCode)}
             onKeyDown={event => {
               if (event.key === 'Enter' || event.key === ' ') {

@@ -198,6 +198,10 @@ prove production compatibility.
   outcomes instead of fixed sleeps. State whether APIs are mocked or real.
   Supply test settings through inventoried environment variables; keep
   credentials and saved sessions out of Git.
+- Keep new screens covered by the accessibility checks in
+  `test/e2e/accessibility.ts` (WCAG AA text contrast, 3:1 focus indicators,
+  keyboard access and scrolling, no sideways scroll) at desktop sizes and the
+  1024x600 and 800x480 captain display sizes.
 - Check the built app through local HTTP and production-style HTTPS Nginx:
   direct links/refresh, assets, missing-file 404s, protected APIs, blocked routes
   and useful feedback when configuration or APIs are unavailable.
