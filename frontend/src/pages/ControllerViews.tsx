@@ -3,13 +3,15 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
-import type { Arrival, BunchingAlert, DemoRun, PageResult } from '@/lib/api'
+import type { Arrival, BunchingAlert, DemoRun, PageResult, RouteDirection } from '@/lib/api'
 import { bunchingArrivals } from '@/lib/bunching'
 import { dataClassificationLabel } from '@/lib/presentation'
 import { formatSgtDateTime } from '@/lib/time'
 import type { Decision } from '@/lib/api'
 import type { PagedCollection } from '@/lib/paged-collection'
 import type { Resource } from './ControllerPage'
+import { routeStopDistances } from '@/lib/route-strip'
+import { computeBusLatLngAlongPolyline, type LatLng } from '@/lib/route-geometry'
 
 function simulationBusLabel(bus: BunchingAlert['leadingVehicle']) {
   if (!bus) return 'Unavailable'
@@ -26,6 +28,74 @@ export function DataMessage({ error, loading, empty, children }: {
   return loading ? <p role="status" className="py-6 text-sm text-muted-foreground">Loading…</p> :
     error ? <p role="alert" className="py-6 text-sm text-destructive">{error} Use Refresh to try again.</p> :
       empty ? <p className="py-6 text-sm text-muted-foreground">{children}</p> : null
+}
+
+export const TILE_SIZE = 256
+export const MIN_ZOOM = 11
+export const MAX_ZOOM = 18
+export const DEFAULT_CENTER = { lat: 1.3521, lng: 103.8198 }
+
+export function validCoord(lat: number | null | undefined, lng: number | null | undefined): boolean {
+  return lat !== null && lat !== undefined && lng !== null && lng !== undefined
+    && Number.isFinite(lat) && Number.isFinite(lng)
+    && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180
+    && !(lat === 0 && lng === 0)
+}
+
+export function latLngToWorld(lat: number, lng: number, zoom: number) {
+  const worldSize = TILE_SIZE * 2 ** zoom
+  const x = ((lng + 180) / 360) * worldSize
+  const latRad = Math.max(-85.05112878, Math.min(85.05112878, lat)) * Math.PI / 180
+  return { x, y: (1 - Math.asinh(Math.tan(latRad)) / Math.PI) / 2 * worldSize }
+}
+
+export function worldToLatLng(x: number, y: number, zoom: number) {
+  const worldSize = TILE_SIZE * 2 ** zoom
+  const lng = (x / worldSize) * 360 - 180
+  return { lat: Math.atan(Math.sinh(Math.PI * (1 - 2 * (y / worldSize)))) * 180 / Math.PI, lng }
+}
+
+export function computeCorridorFit(points: Array<{ latitude: number; longitude: number }>, width: number, height: number, padding = 48) {
+  if (!points.length) return { center: DEFAULT_CENTER, zoom: 12 }
+  const minLat = Math.min(...points.map(point => point.latitude))
+  const maxLat = Math.max(...points.map(point => point.latitude))
+  const minLng = Math.min(...points.map(point => point.longitude))
+  const maxLng = Math.max(...points.map(point => point.longitude))
+  const center = { lat: (minLat + maxLat) / 2, lng: (minLng + maxLng) / 2 }
+  if (points.length === 1 || minLat === maxLat && minLng === maxLng) return { center, zoom: 15 }
+  const availableWidth = Math.max(80, width - padding * 2)
+  const availableHeight = Math.max(80, height - padding * 2)
+  let bestZoom = MIN_ZOOM
+  for (let zoom = MAX_ZOOM; zoom >= MIN_ZOOM; zoom--) {
+    const first = latLngToWorld(minLat, minLng, zoom)
+    const last = latLngToWorld(maxLat, maxLng, zoom)
+    if (Math.abs(last.x - first.x) <= availableWidth && Math.abs(last.y - first.y) <= availableHeight) {
+      bestZoom = zoom
+      break
+    }
+  }
+  return { center, zoom: Math.max(12, Math.min(16, bestZoom)) }
+}
+
+export function computeBusLatLng(route: RouteDirection, distanceAlongRouteM: number, routeLengthM: number, polyline?: LatLng[] | null) {
+  if (polyline?.length && polyline.length >= 2) return computeBusLatLngAlongPolyline(polyline, distanceAlongRouteM, routeLengthM)
+  const validStops = route.stops.filter(stop => validCoord(stop.latitude, stop.longitude))
+  if (validStops.length < 2 || routeLengthM <= 0) return null
+  const { distancesM } = routeStopDistances(route, routeLengthM)
+  const target = Math.max(0, Math.min(routeLengthM, distanceAlongRouteM))
+  let nextIndex = distancesM.findIndex(distance => distance >= target)
+  if (nextIndex < 0) nextIndex = route.stops.length - 1
+  const next = Math.max(1, Math.min(nextIndex, route.stops.length - 1))
+  const previous = next - 1
+  const denominator = distancesM[next] - distancesM[previous]
+  const ratio = denominator > 0 ? Math.max(0, Math.min(1, (target - distancesM[previous]) / denominator)) : 0
+  const previousStop = route.stops[previous]
+  const nextStop = route.stops[next]
+  if (!validCoord(previousStop.latitude, previousStop.longitude) || !validCoord(nextStop.latitude, nextStop.longitude)) return null
+  return {
+    latitude: previousStop.latitude! + ratio * (nextStop.latitude! - previousStop.latitude!),
+    longitude: previousStop.longitude! + ratio * (nextStop.longitude! - previousStop.longitude!),
+  }
 }
 
 type ArrivalCollection = {
