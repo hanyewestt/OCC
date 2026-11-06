@@ -164,7 +164,7 @@ public class RootCauseDiagnosisProcessor {
 
     private void validateOutput(ModelOutput output, EvidenceSnapshot snapshot) {
         if (output == null || output.causeCode() == null) throw new IllegalArgumentException("causeCode is required");
-        if (!List.of("TRAFFIC_INCIDENT", "UNKNOWN").contains(output.causeCode()))
+        if (!List.of("TRAFFIC_INCIDENT", "PASSENGER_SURGE", "HEADWAY_DECAY", "UNKNOWN").contains(output.causeCode()))
             throw new IllegalArgumentException("causeCode is unsupported");
         if (output.supportingEvidenceIds().size() > 100 || output.limitations().size() > 20
                 || output.supportingEvidenceIds().stream().anyMatch(id -> id == null || id.isBlank() || id.length() > 200))
@@ -173,7 +173,7 @@ public class RootCauseDiagnosisProcessor {
             throw new IllegalArgumentException("model cited evidence outside the supplied allow-list");
         if (output.limitations().stream().anyMatch(value -> value == null || value.isBlank() || value.length() > 500))
             throw new IllegalArgumentException("limitations must be non-empty strings of at most 500 characters");
-        if ("TRAFFIC_INCIDENT".equals(output.causeCode())
+        if (List.of("TRAFFIC_INCIDENT", "PASSENGER_SURGE", "HEADWAY_DECAY").contains(output.causeCode())
                 && (output.likelyCause() == null || output.likelyCause().isBlank() || output.likelyCause().length() > 1_000))
             throw new IllegalArgumentException("likelyCause is required and limited to 1000 characters");
         if (output.causeSubtype() != null && output.causeSubtype().length() > 100)
