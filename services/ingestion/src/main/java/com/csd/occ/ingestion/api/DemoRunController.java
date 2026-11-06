@@ -39,8 +39,14 @@ public class DemoRunController {
     @ApiResponses({@ApiResponse(responseCode = "201", description = "Demo run started"),
             @ApiResponse(responseCode = "409", description = "A demo run is already active"),
             @ApiResponse(responseCode = "503", description = "Bunching control is unavailable")})
-    public DemoRunResponse start(@Valid @RequestBody(required = false) StartDemoRunRequest request) {
-        return response(request == null ? runs.start() : runs.start(request.configuration()));
+    public DemoRunResponse start(@Valid @RequestBody(required = false) StartDemoRunRequest request,
+                                 org.springframework.validation.BindingResult bindingResult)
+            throws org.springframework.validation.BindException {
+        if (request == null || request.isEmpty()) return response(runs.start());
+        if (bindingResult.hasErrors()) {
+            throw new org.springframework.validation.BindException(bindingResult);
+        }
+        return response(runs.start(request.configuration()));
     }
 
     @GetMapping("/active")
