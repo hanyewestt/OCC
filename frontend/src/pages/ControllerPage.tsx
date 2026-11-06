@@ -246,7 +246,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     }
     runState.current = resolvedRun
     setRun(resolvedRun)
-    if (pathname === '/controller' && activeSimulation) {
+    if ((pathname === '/controller' || pathname.endsWith('/disruptions')) && activeSimulation) {
       const simulationPositions = await loadSimulationRoutePositions(token, activeSimulation.id, signal)
       if (!signal.aborted) {
         setRoutePositions(simulationPositions)
@@ -432,7 +432,8 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
               setArrivalSortBy(column)
             }} />
         </>}
-        {pathname.endsWith('/disruptions') && <ControllerDisruptions liveAlerts={alertCollection} run={run} loading={loading} />}
+        {pathname.endsWith('/disruptions') && <ControllerDisruptions liveAlerts={alertCollection} run={run} loading={loading}
+          routes={routeStops.data ?? []} positions={routePositions.data ?? []} pollIntervalSeconds={pollIntervalSeconds} />}
         {pathname.endsWith('/planning') && <ControllerPlanning recommendations={recommendationCollection}
           loading={loading} modeError={run.error} mode={modeValue} demoRunId={simulation?.id ?? null} token={token}
           onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { void requestRefresh('mutation') }} />}
