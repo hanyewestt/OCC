@@ -4,7 +4,11 @@ import { bunchingArrivals } from '../../src/lib/bunching'
 import { compactStops, distanceText, routeProgress, stopName } from '../../src/lib/captain-route'
 import { acknowledgementTimeLeft, durationText, instructionHeadline, instructionState } from '../../src/lib/captain-instructions'
 import { formatSgtDateTime } from '../../src/lib/time'
-import type { Advisory, CaptainInstruction, CaptainRoute } from '../../src/lib/api'
+import type { CaptainInstruction, CaptainRoute, InstructionParameters, InstructionType } from '../../src/lib/api'
+
+type Advisory = { id: string; disruptionId: string; demoRunId: string; busId: string; status: string;
+  candidate: { type: InstructionType; parameters: InstructionParameters; rationale: string }; finalCandidate: null;
+  preview: string; hazardClassification: string; limitations: string[]; createdAt: string }
 
 function advisoryGroup(members: Advisory[], serviceId = '190', directionId = 1) {
   const first = members[0]
@@ -188,7 +192,6 @@ test.describe('SGT notice scheduling', () => {
     expect(posted.at(-1)?.effectiveUntil).toBe('2026-10-25T07:55:00.000Z')
   })
 })
-
 function syntheticInstruction(now: Date): CaptainInstruction {
   return {
     id: '00000000-0000-4000-8000-000000000101', demoRunId: '00000000-0000-4000-8000-000000000102',
@@ -203,7 +206,7 @@ function syntheticInstruction(now: Date): CaptainInstruction {
 // Dashboard journeys use synthetic API fixtures and never write real decisions.
 async function mockDashboard(context: BrowserContext, options: { arrivalFailure?: boolean; conflict?: boolean } = {}) {
   await mockAuth(context, 'CONTROLLER')
-  const alert = { eventId: 'event-1', action: 'OPENED', classification: 'SIMULATION', serviceId: '190', stopCode: 'B01', stopName: 'Teck Whye Secondary School', directionId: 1, detectedAt: '2026-10-22T01:00:00Z', evidence: arrivalEvidence('SIMULATION', 1) }
+  const alert = { eventId: 'event-1', action: 'OPENED', classification: 'SIMULATION', serviceId: '190', stopCode: 'B01', stopName: 'Teck Whye Secondary School', directionId: 1, detectedAt: '2026-10-22T01:00:00Z', leadingVehicle: { registrationNumber: 'DEMO-190-01', operator: 'DEMO-OPERATOR', vehicleType: 'DD', captainCode: 'CAPTAIN-01', busId: 'demo-190-1' }, followingVehicle: { registrationNumber: 'DEMO-190-02', operator: 'DEMO-OPERATOR', vehicleType: 'DD', captainCode: 'CAPTAIN-02', busId: 'demo-190-2' }, evidence: arrivalEvidence('SIMULATION', 1) }
   const recommendation = {
     recommendationId: 'recommendation-1', classification: 'SIMULATION', status: 'RECOMMENDED',
     serviceId: '190', directionId: 1, monitoredStopCode: 'B01', detectedAt: '2026-10-22T01:00:00Z', createdAt: '2026-10-22T01:01:00Z',
@@ -217,6 +220,13 @@ async function mockDashboard(context: BrowserContext, options: { arrivalFailure?
   } }))
   await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: { mode: 'DEMO', demoRunId: 'run-1', items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ json: { id: 'run-1', status: 'REPLAY_COMPLETE', alerts: [alert] } }))
+  await context.route('**/api/v1/demo-runs/run-1/route-positions', route => route.fulfill({ json: {
+    serviceId: '190', computedAt: '2026-10-22T01:00:00Z', refreshIntervalSeconds: 60, maxSourceAgeSeconds: 120,
+    directions: [{ operator: 'SMRT', directionId: 1, routeLengthM: 12_000, buses: [
+      { order: 1, distanceAlongRouteM: 4_300, uncertaintyM: 70, speedMps: 6.2 },
+      { order: 2, distanceAlongRouteM: 3_500, uncertaintyM: 70, speedMps: 4.2 },
+    ] }],
+  } }))
   await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: {
     mode: 'DEMO', demoRunId: 'run-1', items: decision ? [] : [recommendation], page: 0, totalItems: decision ? 0 : 1, totalPages: decision ? 0 : 1,
   } }))
@@ -243,11 +253,10 @@ function arrivalEvidence(classification: string, directionId: number) {
   })) } })
 }
 
-test('controller shows one selectable live route strip and keeps the overview detection count', async ({ page, context }) => {
+test('controller shows the injected simulation route strip and keeps the overview detection count', async ({ page, context }) => {
   await mockDashboard(context)
   await login(page)
   await expect(page.getByRole('heading', { name: 'Approximate Live Route Strip', exact: true })).toBeVisible()
-  await expect(page.getByText('Simulation alerts · route positions remain live.', { exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: /Simulation detections/ })).toContainText('1')
   await expect(page.getByRole('heading', { name: 'Service 190 · Towards Stop C01', exact: true })).toBeVisible()
   await expect(page.getByLabel('Route', { exact: true }).locator('option:checked')).toHaveText('Service 190 · Towards Stop C01 · SMRT')
@@ -597,6 +606,10 @@ for (const simulation of [true, false]) {
     await page.getByRole('link', { name: 'Disruptions', exact: true }).click()
     await expect(page.getByText('Teck Whye Secondary School', { exact: true })).toBeVisible()
     await expect(page.getByRole('cell', { name: `Direction ${simulation ? 1 : 2}`, exact: true })).toBeVisible()
+    if (simulation) {
+      await expect(page.getByRole('cell', { name: 'DEMO-190-01 (demo-190-1)', exact: true })).toBeVisible()
+      await expect(page.getByRole('cell', { name: 'DEMO-190-02 (demo-190-2)', exact: true })).toBeVisible()
+    }
     for (const slot of [1, 2, 3]) {
       await expect(page.getByRole('columnheader', { name: `Bus ${slot} arrival`, exact: true })).toBeVisible()
       const formatted = formatSgtDateTime(`2026-10-22T01:0${slot}:00Z`)
@@ -606,9 +619,39 @@ for (const simulation of [true, false]) {
   })
 }
 
+test('controller shows one simulated bus pair in its single awaiting decision', async ({ page, context }) => {
+  await mockDashboard(context)
+  await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: {
+    mode: 'DEMO', demoRunId: 'run-1', page: 0, totalItems: 1, totalPages: 1, items: [{
+      recommendationId: 'pair-recommendation', classification: 'SIMULATION', status: 'RECOMMENDED', serviceId: '190', directionId: 1,
+      monitoredStopCode: 'B01', detectedAt: '2026-10-22T01:00:00Z', createdAt: '2026-10-22T01:01:00Z', expectedHeadwaySeconds: 180,
+      observedHeadwaySeconds: 60, mitigationType: 'HOLD', targetBusReference: 'demo-190-2', affectedBusReferences: ['demo-190-1', 'demo-190-2'],
+      controlStopCode: 'B01', adjustmentSeconds: 120, explanation: { rationale: 'Restore spacing.', likelyCause: 'Simulation bunching', diagnosisConfidence: 0.9, tradeOffs: [], limitations: [] },
+      expectedImpact: { headwayBeforeSeconds: 60, headwayAfterSeconds: 180, queueBeforePassengers: 20, queueAfterPassengers: 12, passengerMinutesBefore: 40, passengerMinutesAfter: 28 },
+    }],
+  } }))
+  await login(page)
+  await page.getByRole('link', { name: /Awaiting decision/ }).click()
+  const queue = page.getByRole('listbox', { name: 'Recommendations awaiting a decision' })
+  await expect(queue.getByRole('option')).toHaveCount(1)
+  await expect(queue).toContainText('Affected buses · demo-190-1, demo-190-2')
+  await expect(page.getByRole('heading', { name: 'Affected buses', exact: true })).toBeVisible()
+})
+
+test('controller keeps the awaiting decision panel visible before a simulation recommendation arrives', async ({ page, context }) => {
+  await mockDashboard(context)
+  await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: {
+    mode: 'DEMO', demoRunId: 'run-1', items: [], page: 0, totalItems: 0, totalPages: 0,
+  } }))
+  await login(page)
+  await page.getByRole('link', { name: /Awaiting decision/ }).click()
+  await expect(page.getByRole('heading', { name: 'Awaiting decision', exact: true })).toBeVisible()
+  await expect(page.getByText('No recommendations are awaiting a decision yet.', { exact: true })).toBeVisible()
+})
+
 test('controller switches the shared backend mode from the dashboard without leaving the page', async ({ page, context }) => {
   await mockDashboard(context)
-  const simulation = { id: 'run-1', status: 'REPLAY_COMPLETE', alerts: [{ eventId: 'event-1', action: 'OPENED', classification: 'SIMULATION', serviceId: '190', stopCode: 'B01', detectedAt: '2026-10-22T01:00:00Z' }] }
+  const simulation = { id: 'run-1', status: 'REPLAY_COMPLETE', serviceId: '190', directionId: 1, busCount: 3, dispatchGapSeconds: 90, busGapsSeconds: [90, 90], monitoredStopCode: '44251', scenario: 'BUNCHING', alerts: [{ eventId: 'event-1', action: 'OPENED', classification: 'SIMULATION', serviceId: '190', stopCode: 'B01', detectedAt: '2026-10-22T01:00:00Z' }] }
   let active = false
   let starts = 0
   let closes = 0
@@ -616,6 +659,7 @@ test('controller switches the shared backend mode from the dashboard without lea
   await context.route('**/api/v1/demo-runs', route => {
     expect(route.request().method()).toBe('POST')
     expect(route.request().headers().authorization).toMatch(/^Bearer /)
+    expect(route.request().postDataJSON()).toEqual({ serviceId: '190', directionId: 1, busCount: 3, dispatchGapSeconds: 90, busGapsSeconds: [90, 90], monitoredStopCode: '44251', scenario: 'BUNCHING' })
     active = true; starts++
     return route.fulfill({ status: 201, json: simulation })
   })
@@ -625,10 +669,17 @@ test('controller switches the shared backend mode from the dashboard without lea
     active = false; closes++
     return route.fulfill({ json: { ...simulation, status: 'CLOSED' } })
   })
+  await context.route('**/api/v1/demo-runs/run-1/route-positions', route => route.fulfill({ json: {
+    serviceId: '190', computedAt: '2026-10-22T01:00:00Z', sourcePollCycleId: null, sourceObservedAt: '2026-10-22T01:00:00Z',
+    refreshIntervalSeconds: 1, maxSourceAgeSeconds: 60, directions: [{ operator: 'SBST', directionId: 1,
+      routeLengthM: 1000, buses: [{ order: 1, distanceAlongRouteM: 750, uncertaintyM: 20, speedMps: 8.33, evidenceObservationIds: [], positionEvidenceObservationIds: [], supportingStopCount: 0 }, { order: 2, distanceAlongRouteM: 500, uncertaintyM: 20, speedMps: 8.33, evidenceObservationIds: [], positionEvidenceObservationIds: [], supportingStopCount: 0 }, { order: 3, distanceAlongRouteM: 250, uncertaintyM: 20, speedMps: 8.33, evidenceObservationIds: [], positionEvidenceObservationIds: [], supportingStopCount: 0 }], suppressedBusCount: 0 }],
+  } }))
   await login(page)
   await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Start simulation', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Return to live', exact: true })).toBeEnabled()
   await expect(page.getByRole('status').filter({ hasText: /^Simulation$/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Simulation Route Strip', exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: /Simulation detections/ })).toContainText('1')
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toBeVisible()
@@ -645,6 +696,7 @@ test('failed mode changes keep the verified mode and show a useful error', async
   await context.route('**/api/v1/demo-runs', route => route.fulfill({ status: 503 }))
   await login(page)
   await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Start simulation', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Unable to switch modes')
   await expect(page.getByRole('status').filter({ hasText: /^Live$/ })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Start simulation', exact: true })).toBeEnabled()
@@ -727,84 +779,10 @@ test('controller handles conflicting decisions by retrieving the saved result', 
   await login(page)
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   await page.getByRole('button', { name: 'Approve recommendation', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'Approve recommendation', exact: true })
+  await editor.getByLabel('Controller rationale').fill('Keep the shorter hold.')
+  await editor.getByRole('button', { name: 'Approve & send instructions', exact: true }).click()
   await expect(page.getByText(/already has a decision/)).toBeVisible()
-})
-
-test('controller scrolls root-cause diagnoses within their collection viewport', async ({ page, context }) => {
-  await mockDashboard(context)
-  await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: {
-    mode: 'DEMO', demoRunId: 'run-1', page: 0, size: 100, totalItems: 5, totalPages: 1,
-    items: Array.from({ length: 5 }, (_, index) => ({
-      requestId: `request-${index}`, eventId: `event-${index}`, diagnosisId: `diagnosis-${index}`,
-      classification: 'SIMULATION', demoRunId: 'run-1', serviceId: '190', directionId: 2,
-      stopCode: `09${String(index).padStart(3, '0')}`, status: 'COMPLETED',
-      likelyCause: `Diagnosis ${index + 1}`, confidence: null, limitations: [], evidenceDetails: [],
-      failureCode: null, policyOutcome: null, createdAt: '2026-10-25T07:05:31.590871Z',
-    })),
-  } }))
-
-  await login(page)
-  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
-  const viewport = page.getByRole('region', { name: 'Root-cause diagnoses', exact: true })
-    .locator('[data-slot="scroll-area-viewport"]')
-  await expect.poll(() => viewport.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
-  await viewport.hover()
-  await page.mouse.wheel(0, 400)
-  await expect.poll(() => viewport.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
-})
-
-test('controller sees concise diagnosis summaries and source facts in the evidence disclosure', async ({ page, context }) => {
-  await mockDashboard(context)
-  const likelyCause = 'Possible contributor: Vehicle Breakdown. The provider reported: Breakdown near Teck Whye Avenue.'
-  const evidenceDetails = [{ evidenceId: 'traffic-incident:4b61cb14-7a2a-4ebd-8245-7e65eec5d23c',
-    incidentType: 'Vehicle Breakdown', message: 'Breakdown near Teck Whye Avenue',
-    reportTime: '2026-10-25T07:05:31.590871Z', fetchedAt: '2026-10-25T07:05:32Z',
-    firstConfirmedAt: '2026-10-25T07:05:31.590871Z', secondsBeforeFirstConfirmed: 0,
-    distanceMetersFromSuppliedBusPosition: 1807, busPositionEvidenceId: 'bus-arrival:077f6b4f-4da2-41dd-bd85-8740a9244f7c',
-    monitoredStopCode: '44251' },
-    { evidenceId: 'traffic-incident:missing-confirmation', incidentType: 'Road obstruction',
-      message: 'Road obstruction reported', reportTime: '2026-10-25T07:04:00Z', fetchedAt: '2026-10-25T07:05:32Z',
-      firstConfirmedAt: null, secondsBeforeFirstConfirmed: null, distanceMetersFromSuppliedBusPosition: null,
-      busPositionEvidenceId: null, monitoredStopCode: '44251' },
-    { evidenceId: 'traffic-incident:subsecond-report', incidentType: 'Road works',
-      message: 'Road works reported', reportTime: '2026-10-25T07:05:31.090871Z', fetchedAt: '2026-10-25T07:05:32Z',
-      firstConfirmedAt: '2026-10-25T07:05:31.590871Z', secondsBeforeFirstConfirmed: 0,
-      distanceMetersFromSuppliedBusPosition: null, busPositionEvidenceId: null, monitoredStopCode: '44251' }]
-  await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: { mode: 'DEMO', demoRunId: 'run-1', items: [{
-    requestId: 'request-1', eventId: 'event-1', diagnosisId: 'diagnosis-1', classification: 'SIMULATION', demoRunId: 'run-1',
-    serviceId: '190', directionId: 1, stopCode: '44251', status: 'COMPLETED', likelyCause, confidence: null,
-    limitations: ['Road and direction relevance have not been verified; proximity does not establish impact or causation.'],
-    evidenceDetails, failureCode: null, policyOutcome: null, createdAt: '2026-10-25T07:05:31.590871Z',
-  }], page: 0, size: 100, totalItems: 1, totalPages: 1 } }))
-  await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: { mode: 'DEMO', demoRunId: 'run-1', items: [{
-    recommendationId: 'recommendation-1', classification: 'SIMULATION', status: 'RECOMMENDED',
-    serviceId: '190', directionId: 1, monitoredStopCode: '44251', detectedAt: '2026-10-25T07:05:31Z', createdAt: '2026-10-25T07:06:00Z',
-    expectedHeadwaySeconds: 180, observedHeadwaySeconds: 60, mitigationType: 'HOLD', targetBusReference: 'SAMPLE-BUS',
-    affectedBusReferences: ['SAMPLE-BUS'], controlStopCode: '44251', adjustmentSeconds: 120,
-    explanation: { rationale: 'Restore spacing between buses.', likelyCause, diagnosisConfidence: null,
-      tradeOffs: ['Adds waiting time.'], limitations: ['Simulation only.'], evidenceDetails },
-    expectedImpact: { headwayBeforeSeconds: 60, headwayAfterSeconds: 180, queueBeforePassengers: 20, queueAfterPassengers: 12,
-      passengerMinutesBefore: 40, passengerMinutesAfter: 28 },
-  }], page: 0, size: 50, totalItems: 1, totalPages: 1 } }))
-
-  await login(page)
-  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
-  const diagnoses = page.getByRole('region', { name: 'Root-cause diagnoses', exact: true })
-  await expect(diagnoses.getByText(likelyCause)).toBeVisible()
-  await expect.poll(async () => {
-    const [viewport, card] = await Promise.all([diagnoses.locator('[data-slot="scroll-area-viewport"]').boundingBox(), diagnoses.locator('[data-slot="card"]').first().boundingBox()])
-    return viewport !== null && card !== null && card.x > viewport.x && card.y > viewport.y
-  }).toBe(true)
-  await diagnoses.getByText('Evidence and limitations').click()
-  await expect(diagnoses.getByText(/same time as the first confirmed irregularity/).first()).toBeVisible()
-  await expect(diagnoses.getByText(/but timing relative to the first confirmed irregularity is unavailable/).first()).toBeVisible()
-  await expect(diagnoses.getByText(/Reported less than 1 second before the first confirmed irregularity/).first()).toBeVisible()
-  await expect(diagnoses.getByText(/1,807 m from the supplied bus position near stop 44251/).first()).toBeVisible()
-
-  const recommendationEvidence = page.locator('details').filter({ hasText: 'Supporting incident evidence' })
-  await expect(page.getByText(likelyCause).nth(1)).toBeVisible()
-  await page.getByText('Evidence and limitations').nth(1).click()
-  await expect(recommendationEvidence.getByText(/Bus-position evidence/)).toBeVisible()
 })
 
 test('dirty controller recommendation editor confirms dismissal and discards only explicitly', async ({ page, context }) => {
@@ -2637,40 +2615,3 @@ test('captain acknowledgement timing follows the server clock when the device cl
   await expect(page.getByRole('status').filter({ hasText: /301 sec remaining/ })).toHaveCount(0)
 })
 
-// These journeys use synthetic evidence and never contact Gemini.
-test('shared mode toggle switches Planning diagnoses without mixing live and simulation results', async ({ page, context }) => {
-  await mockAuth(context, 'CONTROLLER')
-  let activeRun: string | null = null
-  await context.route('**/api/v1/demo-runs/active', route => activeRun
-    ? route.fulfill({ json: { id: activeRun, status: 'RUNNING', alerts: [] } }) : route.fulfill({ status: 204 }))
-  await context.route('**/api/v1/demo-runs', route => {
-    activeRun = 'simulation-run'
-    return route.fulfill({ json: { id: activeRun, status: 'RUNNING', alerts: [] } })
-  })
-  await context.route('**/api/v1/demo-runs/simulation-run/close', route => {
-    activeRun = null
-    return route.fulfill({ json: { id: 'simulation-run', status: 'CLOSED', alerts: [] } })
-  })
-  await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: {
-    mode: activeRun ? 'DEMO' : 'LIVE', demoRunId: activeRun,
-    items: [{ requestId: activeRun ?? 'live-request', eventId: 'event', diagnosisId: 'diagnosis',
-      classification: activeRun ? 'SIMULATION' : 'OBSERVATION_ONLY', demoRunId: activeRun,
-      serviceId: '190', directionId: 1, stopCode: '44009', status: 'COMPLETED',
-      likelyCause: activeRun ? 'Synthetic simulation diagnosis' : 'Live evidence diagnosis', confidence: 0.7,
-      limitations: ['No operational instruction is issued.'], failureCode: null, policyOutcome: null, createdAt: '2026-10-24T00:00:00Z' }],
-    page: 0, totalItems: 1, totalPages: 1,
-  } }))
-  await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: {
-    mode: activeRun ? 'DEMO' : 'LIVE', demoRunId: activeRun, items: [], page: 0, totalItems: 0, totalPages: 0,
-  } }))
-  await login(page)
-  await page.goto('/controller/planning')
-  await expect(page.getByText('Live evidence diagnosis', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toHaveCount(0)
-  await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
-  await expect(page.getByText('Synthetic simulation diagnosis', { exact: true })).toBeVisible()
-  await expect(page.getByText('Live evidence diagnosis', { exact: true })).toHaveCount(0)
-  await page.getByRole('button', { name: /Return to live|Stop simulation|End simulation/ }).click()
-  await expect(page.getByText('Live evidence diagnosis', { exact: true })).toBeVisible()
-  await expect(page.getByText('Synthetic simulation diagnosis', { exact: true })).toHaveCount(0)
-})

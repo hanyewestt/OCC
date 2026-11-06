@@ -466,9 +466,9 @@ export function ControllerRouteStrip({ alerts, run, stops, positions, arrivals, 
 
   return <section aria-labelledby="route-strip-title" className="space-y-4">
     <div>
-      <h2 id="route-strip-title" className="font-medium">Approximate Live Route Strip</h2>
-      <p className="mt-1 text-xs text-muted-foreground">Stops are evenly spaced for readability; bus positions are approximate along the ordered route. Numbers are order estimates, not vehicle identities.</p>
-      {simulationRun && <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">Simulation alerts · route positions remain live.</p>}
+      <h2 id="route-strip-title" className="font-medium">{simulationRun ? 'Simulation Route Strip' : 'Approximate Live Route Strip'}</h2>
+      <p className="mt-1 text-xs text-muted-foreground">Stops are evenly spaced for readability; bus positions are approximate along the ordered route. Numbers are display order, not vehicle identities.</p>
+      {simulationRun && <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">Simulation fleet · Service {simulationRun.serviceId} · {simulationRun.scenario === 'NORMAL' ? 'Normal operation' : 'Bunching'}.</p>}
       <p className="mt-1 text-xs text-muted-foreground">Gaps use same-poll arrival times when available; otherwise time is estimated from position and speed, or shown as distance only.</p>
       {positions.error && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">Estimated positions could not be refreshed; showing available estimates.</p>}
       {arrivals.error && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">Route arrivals are incomplete; destinations and same-stop gaps may be unavailable.</p>}
