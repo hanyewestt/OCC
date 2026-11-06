@@ -246,7 +246,7 @@ services:
 
   nginx:
     profiles: [edge]
-    image: nginx:1.30.6-alpine-slim@sha256:3028fc1419f99b95c1c69f844bbaf49dc1b881750c51b497fc721ac4f02a14e6
+    image: nginx:1.30.6-alpine-slim@sha256:8d2a1209b7d4fe55917a96abcadd35cbac860074a9dde97422e87668a26eb9be
     user: "101:101"
     restart: unless-stopped
     read_only: true

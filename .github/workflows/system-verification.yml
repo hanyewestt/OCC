@@ -69,7 +69,7 @@ jobs:
             --mount "type=bind,source=$GITHUB_WORKSPACE/tests/system/provider_stubs.conf,target=/etc/nginx/conf.d/default.conf,readonly" \
             --mount "type=bind,source=$RUNNER_TEMP/occ-edge-nginx.conf,target=/etc/nginx/nginx.conf,readonly" \
             --entrypoint nginx \
-            nginx:1.30.6-alpine-slim@sha256:3028fc1419f99b95c1c69f844bbaf49dc1b881750c51b497fc721ac4f02a14e6 -g 'daemon off;'
+            nginx:1.30.6-alpine-slim@sha256:8d2a1209b7d4fe55917a96abcadd35cbac860074a9dde97422e87668a26eb9be -g 'daemon off;'
           jwks_ready=false
           for attempt in $(seq 1 30); do
             if docker compose -p occ-edge-ci --env-file .env.example \
@@ -127,7 +127,7 @@ jobs:
             --mount "type=bind,source=$RUNNER_TEMP/occ-edge-nginx.conf,target=/etc/nginx/nginx.conf,readonly" \
             --mount "type=bind,source=$RUNNER_TEMP/occ-edge-test.crt,target=/run/secrets/occ_tls_certificate,readonly" \
             --mount "type=bind,source=$RUNNER_TEMP/occ-edge-test.key,target=/run/secrets/occ_tls_private_key,readonly" \
-            nginx:1.30.6-alpine-slim@sha256:3028fc1419f99b95c1c69f844bbaf49dc1b881750c51b497fc721ac4f02a14e6
+            nginx:1.30.6-alpine-slim@sha256:8d2a1209b7d4fe55917a96abcadd35cbac860074a9dde97422e87668a26eb9be
           for attempt in $(seq 1 30); do
             status=$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' \
               https://127.0.0.1:18443/_occ_edge_health || true)

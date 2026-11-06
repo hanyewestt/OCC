@@ -407,11 +407,11 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Pull pinned Nginx edge image
-        run: docker pull nginx:1.30.6-alpine-slim@sha256:3028fc1419f99b95c1c69f844bbaf49dc1b881750c51b497fc721ac4f02a14e6
+        run: docker pull nginx:1.30.6-alpine-slim@sha256:8d2a1209b7d4fe55917a96abcadd35cbac860074a9dde97422e87668a26eb9be
       - name: Fail on HIGH or CRITICAL OS/library findings
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: nginx:1.30.6-alpine-slim@sha256:3028fc1419f99b95c1c69f844bbaf49dc1b881750c51b497fc721ac4f02a14e6
+          image-ref: nginx:1.30.6-alpine-slim@sha256:8d2a1209b7d4fe55917a96abcadd35cbac860074a9dde97422e87668a26eb9be
           version: v0.76.0
           format: table
           output: ${{ runner.temp }}/trivy-nginx.txt
@@ -423,7 +423,7 @@ jobs:
         if: always()
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: nginx:1.30.6-alpine-slim@sha256:3028fc1419f99b95c1c69f844bbaf49dc1b881750c51b497fc721ac4f02a14e6
+          image-ref: nginx:1.30.6-alpine-slim@sha256:8d2a1209b7d4fe55917a96abcadd35cbac860074a9dde97422e87668a26eb9be
           version: v0.76.0
           format: cyclonedx
           output: ${{ runner.temp }}/sbom-nginx.json
