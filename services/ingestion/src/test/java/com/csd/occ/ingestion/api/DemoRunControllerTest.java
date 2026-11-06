@@ -45,6 +45,17 @@ class DemoRunControllerTest {
     }
 
     @Test
+    void startWithEmptyJsonBodyUsesDefaults() throws Exception {
+        UUID runId = UUID.randomUUID();
+        when(runs.start()).thenReturn(new DemoRunDetails(runId, "RUNNING", 0, List.of()));
+
+        mvc.perform(post("/api/v1/demo-runs").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(runId.toString()))
+                .andExpect(jsonPath("$.status").value("RUNNING"));
+    }
+
+    @Test
     void startSavesTheRequestedFleetConfiguration() throws Exception {
         UUID runId = UUID.randomUUID();
         var configuration = new com.csd.occ.ingestion.domain.DemoRunConfiguration("972", 1, 3,
