@@ -46,10 +46,8 @@ public class IngestionSecurityConfig {
                                 "/internal/v1/ingestion/planning-context")
                         .hasAuthority(PeerCapabilityAuthenticationFilter.PLANNING_AUTHORITY)
                         .requestMatchers("/internal/v1/**").denyAll()
-                        // Bus captains read pacing on their On Board Unit; every other API stays controller-only.
-                        .requestMatchers(HttpMethod.GET, "/api/v1/pacing-snapshots/latest",
-                                "/api/v1/pacing-snapshots/stream").hasAnyRole("ADMIN", "CONTROLLER", "CAPTAIN")
-                        // A captain reads only their own assigned bus; the actor is always the token subject.
+                        // A captain reads only their own assigned bus (route and its pacing); the actor is always the
+                        // token subject. Fleet-wide pacing snapshots stay controller-only with every other API.
                         .requestMatchers(HttpMethod.GET, "/api/v1/captain-routes/current").hasRole("CAPTAIN")
                         .requestMatchers("/api/v1/**").hasAnyRole("ADMIN", "CONTROLLER")
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")

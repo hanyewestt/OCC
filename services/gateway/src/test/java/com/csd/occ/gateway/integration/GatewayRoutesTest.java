@@ -89,16 +89,19 @@ class GatewayRoutesTest {
     }
 
     @Test
-    void captainsReachPacingOnIngestionButNoOtherOperationalApi() {
-        ResponseEntity<String> stream = get("/api/v1/pacing-snapshots/stream", "CAPTAIN");
+    void fleetWidePacingReachesIngestionOnlyForControllersAndAdmins() {
+        ResponseEntity<String> stream = get("/api/v1/pacing-snapshots/stream", "CONTROLLER");
         assertThat(stream.getStatusCode().value()).isEqualTo(200);
         assertThat(lastBackendPath.get()).isEqualTo("/api/v1/pacing-snapshots/stream");
-        assertThat(get("/api/v1/pacing-snapshots/latest", "CAPTAIN").getStatusCode().value()).isEqualTo(200);
+        assertThat(get("/api/v1/pacing-snapshots/latest", "ADMIN").getStatusCode().value()).isEqualTo(200);
 
+        // Captains read only their own bus's pacing through /api/v1/captain-routes/current.
         lastBackendPath.set(null);
+        for (String role : List.of("CAPTAIN", "UNASSIGNED", "DRIVER")) {
+            assertThat(get("/api/v1/pacing-snapshots/latest", role).getStatusCode().value()).isEqualTo(403);
+            assertThat(get("/api/v1/pacing-snapshots/stream", role).getStatusCode().value()).isEqualTo(403);
+        }
         assertThat(get("/api/v1/arrivals", "CAPTAIN").getStatusCode().value()).isEqualTo(403);
-        assertThat(get("/api/v1/pacing-snapshots/latest", "UNASSIGNED").getStatusCode().value()).isEqualTo(403);
-        assertThat(get("/api/v1/pacing-snapshots/latest", "DRIVER").getStatusCode().value()).isEqualTo(403);
         assertThat(lastBackendPath.get()).isNull();
     }
 
