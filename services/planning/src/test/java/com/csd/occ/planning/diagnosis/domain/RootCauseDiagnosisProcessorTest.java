@@ -270,6 +270,40 @@ class RootCauseDiagnosisProcessorTest {
                 BigDecimal.ONE, BigDecimal.ONE, "LOW", "DD", "SIMULATION", demoRunId, null);
     }
 
+    @Test
+    void validHeadwayDecayOutputIsCompletedWithOperationalExplanation() {
+        ModelInvocationDetails invocation = invocation(1);
+        when(model.diagnose(any(EvidenceSnapshot.class), eq(List.of()), eq(1)))
+                .thenReturn(new RootCauseModelPort.ModelCallResult(
+                        new ModelOutput("HEADWAY_DECAY", "PEAK_CONGESTION", "Peak corridor delay",
+                                List.of("bunching-evidence-1"), List.of()), invocation));
+
+        processor.process(requestId);
+
+        ArgumentCaptor<RootCauseDiagnosis> diagnosis = ArgumentCaptor.forClass(RootCauseDiagnosis.class);
+        verify(completion).complete(eq(requestId), diagnosis.capture(), anyList(), anyString(), eq("persisted-recommendation-payload"), any(UUID.class));
+        assertThat(diagnosis.getValue().causeCode()).isEqualTo("HEADWAY_DECAY");
+        assertThat(diagnosis.getValue().causeSubtype()).isEqualTo("PEAK_CONGESTION");
+        assertThat(diagnosis.getValue().likelyCause()).contains("Peak arterial traffic friction");
+    }
+
+    @Test
+    void validPassengerSurgeOutputIsCompletedWithBoardingExplanation() {
+        ModelInvocationDetails invocation = invocation(1);
+        when(model.diagnose(any(EvidenceSnapshot.class), eq(List.of()), eq(1)))
+                .thenReturn(new RootCauseModelPort.ModelCallResult(
+                        new ModelOutput("PASSENGER_SURGE", "BOARDING_IMBALANCE", "High boarding dwell",
+                                List.of("arrival-evidence-1", "arrival-evidence-2"), List.of()), invocation));
+
+        processor.process(requestId);
+
+        ArgumentCaptor<RootCauseDiagnosis> diagnosis = ArgumentCaptor.forClass(RootCauseDiagnosis.class);
+        verify(completion).complete(eq(requestId), diagnosis.capture(), anyList(), anyString(), eq("persisted-recommendation-payload"), any(UUID.class));
+        assertThat(diagnosis.getValue().causeCode()).isEqualTo("PASSENGER_SURGE");
+        assertThat(diagnosis.getValue().causeSubtype()).isEqualTo("BOARDING_IMBALANCE");
+        assertThat(diagnosis.getValue().likelyCause()).contains("Passenger boarding surge");
+    }
+
     private ModelInvocationDetails invocation(int attempt) {
         return new ModelInvocationDetails("GOOGLE_GENAI", "synthetic-model", "synthetic-response",
                 "root-cause-prompt-v1", "root-cause-output-v1", NOW, NOW, 0, 1, 1, 2,

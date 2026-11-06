@@ -110,6 +110,56 @@ class BunchingEvidenceSupportPolicyTest {
         assertThatThrownBy(() -> associate(List.of(), invalid)).isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void associatesPassengerSurgeFromArrivalEvidence() {
+        var lead = new ArrivalEvidence("arrival:lead", UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                "190", "44251", 1, CONFIRMED, CONFIRMED, new BigDecimal("1.3"), new BigDecimal("103.8"),
+                "LSD", "DD", "SIMULATION", RUN, null);
+        var follow = new ArrivalEvidence("arrival:follow", UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                "190", "44251", 1, CONFIRMED.plusSeconds(40), CONFIRMED, new BigDecimal("1.3"), new BigDecimal("103.8"),
+                "SEA", "DD", "SIMULATION", RUN, null);
+        var context = new RootCauseContext("SIMULATION", RUN, null, List.of(lead, follow), List.of(), List.of());
+        var output = new ModelOutput("PASSENGER_SURGE", "BOARDING_IMBALANCE", "High boarding dwell",
+                List.of("arrival:lead", "arrival:follow"), List.of());
+
+        var result = policy.associate(event(), context, output, Duration.ofMinutes(15), 1);
+
+        assertThat(result.causeCode()).isEqualTo("PASSENGER_SURGE");
+        assertThat(result.causeSubtype()).isEqualTo("BOARDING_IMBALANCE");
+        assertThat(result.evidenceIds()).containsExactlyInAnyOrder("event:one", "arrival:lead", "arrival:follow");
+        assertThat(result.facts()).anySatisfy(fact -> assertThat(fact).contains("leading bus passenger load LSD"));
+        assertThat(result.limitations()).anySatisfy(lim -> assertThat(lim).contains("Passenger load categories"));
+    }
+
+    @Test
+    void associatesHeadwayDecayWithAppropriateSubtype() {
+        var lead = new ArrivalEvidence("arrival:lead", UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                "190", "44251", 1, CONFIRMED, CONFIRMED, new BigDecimal("1.3"), new BigDecimal("103.8"),
+                "SEA", "SD", "SIMULATION", RUN, null);
+        var follow = new ArrivalEvidence("arrival:follow", UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                "190", "44251", 1, CONFIRMED.plusSeconds(45), CONFIRMED, new BigDecimal("1.3"), new BigDecimal("103.8"),
+                "SEA", "DD", "SIMULATION", RUN, null);
+        var context = new RootCauseContext("SIMULATION", RUN, null, List.of(lead, follow), List.of(), List.of());
+
+        var peakOutput = new ModelOutput("HEADWAY_DECAY", "PEAK_CONGESTION", "Peak corridor friction",
+                List.of("arrival:lead"), List.of());
+        var peakResult = policy.associate(event(), context, peakOutput, Duration.ofMinutes(15), 1);
+        assertThat(peakResult.causeCode()).isEqualTo("HEADWAY_DECAY");
+        assertThat(peakResult.causeSubtype()).isEqualTo("PEAK_CONGESTION");
+        assertThat(peakResult.facts()).anySatisfy(fact -> assertThat(fact).contains("Headway compressed to 45s"));
+
+        var fleetOutput = new ModelOutput("HEADWAY_DECAY", "FLEET_CAPACITY_ASYMMETRY", "Capacity mismatch",
+                List.of(), List.of());
+        var fleetResult = policy.associate(event(), context, fleetOutput, Duration.ofMinutes(15), 1);
+        assertThat(fleetResult.causeCode()).isEqualTo("HEADWAY_DECAY");
+        assertThat(fleetResult.causeSubtype()).isEqualTo("FLEET_CAPACITY_ASYMMETRY");
+
+        var dispatchOutput = new ModelOutput("HEADWAY_DECAY", "TERMINAL_DISPATCH", "Origin delay",
+                List.of(), List.of());
+        var dispatchResult = policy.associate(event(), context, dispatchOutput, Duration.ofMinutes(15), 1);
+        assertThat(dispatchResult.causeSubtype()).isEqualTo("TERMINAL_DISPATCH");
+    }
+
     private BunchingEvidenceSupportPolicy.AssociatedEvidence associate(List<IncidentEvidence> incidents, ModelOutput output) {
         var position = new ArrivalEvidence("arrival:one", UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
                 "190", "44251", 1, CONFIRMED.plusSeconds(120), CONFIRMED, new BigDecimal("1.3"),
