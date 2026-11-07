@@ -118,6 +118,9 @@ export type PendingRecommendation = {
   explanation: RecommendationExplanation; expectedImpact: RecommendationImpact
 }
 export type ControllerBusInstruction = { busReference: string; instruction: string }
+export type EarlyControllerSuggestion = {
+  requestId: string; instructions: ControllerBusInstruction[]; controllerRationale: string; suggestedAt: string
+}
 export type Decision = {
   recommendationId: string; action: 'APPROVED' | 'REJECTED'; actorSubject: string
   overrideInstructions: ControllerBusInstruction[]; controllerRationale: string | null; decidedAt: string
@@ -199,6 +202,7 @@ export type PlanningDiagnosisRequest = {
   requestId: string; eventId: string; diagnosisId: string | null
   classification: string; demoRunId: string | null
   serviceId: string | null; directionId: number | null; stopCode: string | null
+  affectedBusReferences: string[]
   status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED_RETRYABLE' | 'FAILED_TERMINAL'
   likelyCause: string | null; confidence: number | null; limitations: string[]
   evidenceDetails: DiagnosisEvidenceDetail[]; failureCode: string | null; policyOutcome: string | null
