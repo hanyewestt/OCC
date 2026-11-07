@@ -14,7 +14,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class DemoReplayService {
-    private static final String DEMO_STOP_CODE = "44251";
 
     private final DemoRunRepository runs;
     private final DemoVehicleAssignmentRepository assignments;
@@ -41,17 +40,24 @@ public class DemoReplayService {
     }
 
     @Transactional
-    public DemoRun start() {
+    public DemoRun start() { return start(DemoRunConfiguration.defaults()); }
+
+    @Transactional
+    public DemoRun start(DemoRunConfiguration configuration) {
         if (runs.findActive().isPresent()) throw new IllegalStateException("A demo run is already active");
-        if (topology.activeVersion().isEmpty()) throw new IllegalStateException("Demo requires active bus topology");
-        DemoRun run = runs.save(new DemoRun(UUID.randomUUID(), clock.instant(), settings.scenario(), settings.seed()));
+        if (configuration.scenario() == DemoScenario.NORMAL
+                && configuration.busGaps().stream().anyMatch(gap -> gap.compareTo(settings.bunchingThreshold()) <= 0))
+            throw new IllegalArgumentException("Normal operation needs a dispatch gap above the bunching threshold");
+        var version = topology.activeVersion().orElseThrow(() -> new IllegalStateException("Demo requires active bus topology"));
+        var route = topology.busRoute(version.id(), configuration.serviceId()).orElseThrow(() -> new IllegalArgumentException("Selected bus service is unavailable"));
+        if (route.operators().stream().flatMap(operator -> operator.directions().stream())
+                .filter(direction -> direction.directionId() == configuration.directionId())
+                .noneMatch(direction -> direction.stops().stream().anyMatch(stop -> stop.stopCode().equals(configuration.monitoredStopCode()))))
+            throw new IllegalArgumentException("Selected stop is unavailable on this route direction");
+        DemoRun run = runs.save(new DemoRun(UUID.randomUUID(), clock.instant(), settings.scenario(), settings.seed(), configuration));
         String seed = Long.toString(settings.seed());
-        assignments.saveAll(List.of(
-                assignment(run.id(), "demo-190-a", "190", "SBS8027Y", seed, 1),
-                assignment(run.id(), "demo-190-b", "190", "SBS5898U", seed, 2),
-                assignment(run.id(), "demo-972-a", "972", "SMB3123A", seed, 3),
-                assignment(run.id(), "demo-972-b", "972", "SMB4567B", seed, 4),
-                assignment(run.id(), "demo-972-c", "972", "SMB5890C", seed, 5)));
+        assignments.saveAll(java.util.stream.IntStream.rangeClosed(1, configuration.busCount())
+                .mapToObj(number -> assignment(run.id(), configuration.serviceId(), configuration.directionId(), seed, number)).toList());
         return run;
     }
 
@@ -79,58 +85,59 @@ public class DemoReplayService {
 
     private void emit(DemoRun run) {
         Instant now = clock.instant(); int step = run.currentStep();
-        java.time.Duration headway = DemoReplayScenario.headway(step, settings.bunchingThreshold());
+        var configuration = run.configuration();
+        java.time.Duration headway = DemoReplayScenario.headway(step, configuration.dispatchGap(),
+                settings.bunchingThreshold(), configuration.scenario());
         UUID pollId = UUID.randomUUID();
         PollRun poll = new PollRun(); poll.setId(pollId); poll.setSource("DEMO"); poll.setScopeKey("demo:" + run.id());
         poll.setIdempotencyKey("demo:" + run.id() + ":" + step); poll.setStartedAt(now); poll.setCompletedAt(now);
-        poll.setOutcome("SUCCESS"); poll.setHttpStatus(200); poll.setRecordsReceived(5); poll.setClassification("SIMULATION"); poll.setDemoRunId(run.id()); pollRuns.save(poll);
+        poll.setOutcome("SUCCESS"); poll.setHttpStatus(200); poll.setRecordsReceived(configuration.busCount()); poll.setClassification("SIMULATION"); poll.setDemoRunId(run.id()); pollRuns.save(poll);
         String payload = payload();
         RawObservation raw = new RawObservation(); raw.setId(UUID.randomUUID()); raw.setPollRunId(pollId); raw.setSource("DEMO");
-        raw.setSourceKey("demo:" + run.id() + ":stop:" + DEMO_STOP_CODE);
-        raw.setRequestParameters("{\"BusStopCode\":\"" + DEMO_STOP_CODE + "\"}");
+        raw.setSourceKey("demo:" + run.id() + ":stop:" + configuration.monitoredStopCode());
+        raw.setRequestParameters("{\"BusStopCode\":\"" + configuration.monitoredStopCode() + "\"}");
         raw.setPayload(payload); raw.setPayloadChecksum(hash(payload)); raw.setFetchedAt(now); raw.setIngestedAt(now); raw.setHttpStatus(200);
         raw.setClassification("SIMULATION"); raw.setDemoRunId(run.id()); rawObservations.save(raw);
         UUID reference = topology.activeVersion().orElseThrow().id();
-        Instant firstEta = now.plusSeconds(120);
-        arrivals.saveAll(List.of(
-                arrival(raw.getId(), pollId, reference, run.id(), "demo-190-a", "190", 1, firstEta, now),
-                arrival(raw.getId(), pollId, reference, run.id(), "demo-190-b", "190", 2, firstEta.plus(headway), now),
-                arrival(raw.getId(), pollId, reference, run.id(), "demo-972-a", "972", 1, firstEta, now),
-                arrival(raw.getId(), pollId, reference, run.id(), "demo-972-b", "972", 2, firstEta.plus(headway), now),
-                arrival(raw.getId(), pollId, reference, run.id(), "demo-972-c", "972", 3,
-                        firstEta.plus(headway.multipliedBy(2)), now)));
-        if (step >= 1) incidents.save(new TrafficIncidentObservation(raw.getId(), pollId, run.id(), hash("Vehicle Breakdown|1.3802550|103.7550750|DEMO"), now));
+        Instant firstEta = now.plusSeconds(120L - step * 20L);
+        arrivals.saveAll(java.util.stream.IntStream.rangeClosed(1, configuration.busCount())
+                .mapToObj(number -> arrival(raw.getId(), pollId, reference, run.id(),
+                        tripId(configuration.serviceId(), number), configuration.serviceId(), configuration.directionId(), configuration.monitoredStopCode(), number,
+                        firstEta.plus(headway.multipliedBy(number - 1L)), now)).toList());
         hazards.emit(run, step, now);
         run.advance(); if (run.currentStep() >= DemoReplayScenario.STEP_COUNT) run.complete(now);
     }
 
-    private DemoVehicleAssignment assignment(UUID runId, String tripId, String serviceId,
-            String registration, String seed, int captainNumber) {
-        return new DemoVehicleAssignment(new DemoVehicleAssignmentId(runId, tripId), serviceId, 1,
-                registration, "DEMO-OPERATOR", "DD", "DEMO-CAPTAIN-" + seed + "-0" + captainNumber,
-                "demo-190-b".equals(tripId) ? settings.captainUserId().orElse(null) : null);
+    private DemoVehicleAssignment assignment(UUID runId, String serviceId, int directionId, String seed, int number) {
+        String tripId = tripId(serviceId, number);
+        return new DemoVehicleAssignment(new DemoVehicleAssignmentId(runId, tripId), serviceId, directionId,
+                "DEMO-" + serviceId + "-" + String.format("%02d", number), "DEMO-OPERATOR", "DD",
+                "DEMO-CAPTAIN-" + seed + "-" + String.format("%02d", number),
+                number == 1 ? settings.captainUserId().orElse(null) : null);
     }
 
     private BusArrivalObservation arrival(UUID rawId, UUID pollId, UUID reference, UUID runId,
-                                           String tripId, String serviceId, int visit,
+                                           String tripId, String serviceId, int directionId, String stopCode, int visit,
                                            Instant eta, Instant now) {
         BusArrivalObservation value = new BusArrivalObservation(); value.setId(UUID.randomUUID()); value.setRawObservationId(rawId);
-        value.setPollRunId(pollId); value.setReferenceVersionId(reference); value.setStopCode(DEMO_STOP_CODE); value.setServiceId(serviceId);
-        value.setOperator("SBST"); value.setDirectionId(1); value.setVisitOrder(visit); value.setEstimatedArrivalAt(eta);
+        value.setPollRunId(pollId); value.setReferenceVersionId(reference); value.setStopCode(stopCode); value.setServiceId(serviceId);
+        value.setOperator("DEMO-OPERATOR"); value.setDirectionId(directionId); value.setVisitOrder(visit); value.setEstimatedArrivalAt(eta);
         value.setLatitude(new BigDecimal("1.3770000")); value.setLongitude(new BigDecimal("103.7710000")); value.setMonitored(true);
         value.setVehicleType("DD"); value.setFetchedAt(now); value.setIngestedAt(now); value.setRecordChecksum(hash(tripId + eta));
         value.setClassification("SIMULATION"); value.setDemoRunId(runId); value.setTripId(tripId);
-        value.setRouteStopSequence(routeStopSequence(reference, serviceId));
+        value.setRouteStopSequence(routeStopSequence(reference, serviceId, directionId, stopCode));
         return value;
     }
 
-    private Integer routeStopSequence(UUID referenceVersionId, String serviceId) {
+    private String tripId(String serviceId, int number) { return "demo-" + serviceId + "-" + number; }
+
+    private Integer routeStopSequence(UUID referenceVersionId, String serviceId, int directionId, String stopCode) {
         return topology.busRoute(referenceVersionId, serviceId).stream()
                 .flatMap(route -> route.operators().stream())
                 .flatMap(operator -> operator.directions().stream())
-                .filter(direction -> direction.directionId() == 1)
+                .filter(direction -> direction.directionId() == directionId)
                 .flatMap(direction -> direction.stops().stream())
-                .filter(stop -> DEMO_STOP_CODE.equals(stop.stopCode()))
+                .filter(stop -> stopCode.equals(stop.stopCode()))
                 .mapToInt(ReferenceTopologyPort.BusRouteStop::stopSequence)
                 .min().stream().boxed().findFirst().orElse(null);
     }

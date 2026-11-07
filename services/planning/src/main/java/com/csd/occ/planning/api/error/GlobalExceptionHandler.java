@@ -88,6 +88,14 @@ public class GlobalExceptionHandler {
                 "urn:occ:problem:not-found", request);
     }
 
+    @ExceptionHandler(com.csd.occ.planning.diagnosis.domain.EarlyBunchingControllerSuggestionService.SuggestionConflictException.class)
+    ProblemDetail handleEarlySuggestionConflict(
+            com.csd.occ.planning.diagnosis.domain.EarlyBunchingControllerSuggestionService.SuggestionConflictException exception,
+            HttpServletRequest request) {
+        return problem(HttpStatus.CONFLICT, "Controller suggestion conflict", exception.getMessage(),
+                "urn:occ:problem:controller-suggestion-conflict", request);
+    }
+
     @ExceptionHandler(RecommendationDecisionService.RecommendationNotFoundException.class)
     ProblemDetail handleRecommendationNotFound(HttpServletRequest request) {
         return problem(HttpStatus.NOT_FOUND, "Recommendation not found",
