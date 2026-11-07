@@ -284,6 +284,81 @@ class AdvisoryPersistenceIT {
                 .andExpect(status().isForbidden());
     }
 
+    @Test
+    void groupSendDeliversEachRecipientCaptainOnlyTheirOwnInstruction() throws Exception {
+        var fleet = groupedFleet();
+        var recipients = fleet.subList(0, 3);
+        var outsideGroup = fleet.subList(3, 5);
+        var ids = recipients.stream().map(value -> proposalFor(value, InstructionType.BE_CAUTIOUS).id()).toList();
+        var body = "{\"proposalIds\":[" + ids.stream().map(id -> "\"" + id + "\"").collect(java.util.stream.Collectors.joining(",")) + "]}";
+        mvc.perform(post("/api/v1/planning/advisory-groups/decisions").with(controller())
+                .contentType("application/json").content(body)).andExpect(status().isOk());
+
+        for (var recipient : recipients) {
+            var delivered = issued.findAll().stream().filter(value -> value.busId().equals(recipient.busId())).toList();
+            assertThat(delivered).singleElement().satisfies(value -> assertThat(value.captainUserId()).isEqualTo(recipient.captainUserId()));
+            readsOnly(recipient.captainUserId(), delivered.getFirst());
+        }
+        for (var other : outsideGroup) readsNothing(other.captainUserId());
+
+        // Each delivery is acknowledged independently and only by its own captain.
+        var first = issued.findAll().stream().filter(value -> value.busId().equals(recipients.get(0).busId())).findFirst().orElseThrow();
+        acknowledge(first.id(), recipients.get(1).captainUserId()).andExpect(status().isNotFound());
+        acknowledge(first.id(), recipients.get(0).captainUserId()).andExpect(status().isOk())
+                .andExpect(jsonPath("status").value("ACKNOWLEDGED"));
+        assertThat(issued.findAll()).filteredOn(value -> value.acknowledgedAt() != null)
+                .extracting(IssuedInstruction::id).containsExactly(first.id());
+    }
+
+    @Test
+    void individualDecisionDeliversOnlyToTheTargetBusCaptain() throws Exception {
+        var fleet = groupedFleet();
+        var proposal = proposalFor(bus, InstructionType.BE_CAUTIOUS);
+        mvc.perform(post("/api/v1/planning/advisories/" + proposal.id() + "/decisions").with(controller())
+                .contentType("application/json").content("{}")).andExpect(status().isOk());
+
+        var delivered = issued.findById(proposal.id()).orElseThrow();
+        assertThat(delivered.busId()).isEqualTo(bus.busId());
+        assertThat(delivered.captainUserId()).isEqualTo(captain);
+        readsOnly(captain, delivered);
+        for (var other : fleet.subList(1, fleet.size())) readsNothing(other.captainUserId());
+    }
+
+    @Test
+    void approvedBunchingControlDeliversOnlyToTheTargetBusCaptain() throws Exception {
+        var fleet = groupedFleet();
+        var recommendation = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
+        mvc.perform(post("/api/v1/planning/recommendations/" + recommendation + "/obu-decisions").with(controller()))
+                .andExpect(status().isOk()).andExpect(jsonPath("busId").value(bus.busId()));
+
+        readsOnly(captain, issued.findById(recommendation).orElseThrow());
+        for (var other : fleet.subList(1, fleet.size())) readsNothing(other.captainUserId());
+    }
+
+    private static org.springframework.test.web.servlet.request.RequestPostProcessor controller() {
+        return jwt().jwt(token -> token.subject("controller")).authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"));
+    }
+
+    private static org.springframework.test.web.servlet.request.RequestPostProcessor captainToken(UUID subject) {
+        return jwt().jwt(token -> token.subject(subject.toString())).authorities(new SimpleGrantedAuthority("ROLE_CAPTAIN"));
+    }
+
+    private void readsOnly(UUID captainUserId, IssuedInstruction expected) throws Exception {
+        mvc.perform(get("/api/v1/planning/captain/instructions").with(captainToken(captainUserId)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(expected.id().toString()))
+                .andExpect(jsonPath("$.items[0].busId").value(expected.busId()));
+    }
+
+    private void readsNothing(UUID captainUserId) throws Exception {
+        mvc.perform(get("/api/v1/planning/captain/instructions").with(captainToken(captainUserId)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(0));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions acknowledge(UUID id, UUID captainUserId) throws Exception {
+        return mvc.perform(post("/api/v1/planning/captain/instructions/" + id + "/acknowledgements").with(captainToken(captainUserId)));
+    }
+
     private List<AdvisoryContextPort.Bus> groupedFleet() {
         var fleet = List.of(bus,
                 new AdvisoryContextPort.Bus("demo-190-c", "trip-c", "BUS-C", "190", 1, UUID.randomUUID(), "ASSIGNED", bus.progress()),
