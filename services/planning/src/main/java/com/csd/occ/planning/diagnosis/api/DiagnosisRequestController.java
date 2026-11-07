@@ -4,6 +4,7 @@ import com.csd.occ.planning.diagnosis.api.dto.CreateDiagnosisEventSubmission;
 import com.csd.occ.planning.diagnosis.api.dto.DiagnosisRequestResponse;
 import com.csd.occ.planning.diagnosis.api.dto.EarlyBunchingControllerSuggestionRequest;
 import com.csd.occ.planning.diagnosis.api.dto.EarlyBunchingControllerSuggestionResponse;
+import com.csd.occ.planning.diagnosis.api.dto.EarlyBunchingControllerSuggestionPageResponse;
 import com.csd.occ.planning.diagnosis.api.dto.TriggerDiagnosisRequest;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisQueryService;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestService;
@@ -123,5 +124,18 @@ public class DiagnosisRequestController {
         return EarlyBunchingControllerSuggestionResponse.from(suggestions.suggest(requestId,
                 body.instructions().stream().map(instruction -> instruction.toDomain()).toList(),
                 body.controllerRationale(), jwt.getSubject()));
+    }
+
+    @GetMapping("/api/v1/planning/diagnoses/controller-suggestions")
+    @Operation(operationId = "listEarlyBunchingMitigationSuggestions",
+            summary = "List early controller bunching mitigation suggestions",
+            description = "Controller/admin only. Returns controller-authored bus actions recorded before AI mitigation was available, limited to the active data selection and ordered newest first.")
+    public EarlyBunchingControllerSuggestionPageResponse suggestions(
+            @RequestParam(defaultValue = "0") @jakarta.validation.constraints.Min(0) int page,
+            @RequestParam(defaultValue = "50") @jakarta.validation.constraints.Min(1) @jakarta.validation.constraints.Max(100) int size) {
+        var items = suggestions.history(page, size).stream().map(EarlyBunchingControllerSuggestionResponse::from).toList();
+        long totalItems = suggestions.countHistory();
+        return new EarlyBunchingControllerSuggestionPageResponse(items, page, size, totalItems,
+                totalItems == 0 ? 0 : (int) ((totalItems + size - 1) / size));
     }
 }

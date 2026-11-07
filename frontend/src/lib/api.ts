@@ -119,7 +119,7 @@ export type PendingRecommendation = {
 }
 export type ControllerBusInstruction = { busReference: string; instruction: string }
 export type EarlyControllerSuggestion = {
-  requestId: string; instructions: ControllerBusInstruction[]; controllerRationale: string; suggestedAt: string
+  requestId: string; instructions: ControllerBusInstruction[]; controllerRationale: string; actorSubject: string; suggestedAt: string
 }
 export type Decision = {
   recommendationId: string; action: 'APPROVED' | 'REJECTED'; actorSubject: string

@@ -36,6 +36,17 @@ public class EarlyBunchingControllerSuggestionService {
         return persisted;
     }
 
+    public List<EarlyBunchingControllerSuggestion> history(int page, int size) {
+        if (page < 0 || size < 1 || size > 100) throw new IllegalArgumentException("Invalid suggestion page bounds");
+        var scope = scopes.current();
+        return suggestions.findAll(scope.classification(), scope.demoRunId(), page * size, size);
+    }
+
+    public long countHistory() {
+        var scope = scopes.current();
+        return suggestions.count(scope.classification(), scope.demoRunId());
+    }
+
     private EvidenceSnapshot decode(String value) {
         if (value == null || value.isBlank()) return null;
         try { return codec.decode(value); } catch (RuntimeException ignored) { return null; }

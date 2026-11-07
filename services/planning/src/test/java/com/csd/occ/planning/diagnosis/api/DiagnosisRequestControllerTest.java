@@ -88,6 +88,22 @@ class DiagnosisRequestControllerTest {
     }
 
     @Test
+    void listsEarlyControllerSuggestionsForTheAuditLog() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        when(suggestions.history(0, 50)).thenReturn(List.of(new EarlyBunchingControllerSuggestion(requestId,
+                List.of(new ControllerBusInstruction("DEMO-190-01", "Hold for 60 seconds.")),
+                "Restore a safe headway.", "controller-subject", Instant.parse("2026-11-07T09:00:00Z"))));
+        when(suggestions.countHistory()).thenReturn(1L);
+
+        mvc.perform(get("/api/v1/planning/diagnoses/controller-suggestions")
+                        .with(jwt().authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_CONTROLLER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalItems").value(1))
+                .andExpect(jsonPath("$.items[0].actorSubject").value("controller-subject"))
+                .andExpect(jsonPath("$.items[0].instructions[0].busReference").value("DEMO-190-01"));
+    }
+
+    @Test
     void exposesTerminalFailureByEventBeforeADiagnosisExists() throws Exception {
         UUID eventId = UUID.randomUUID();
         UUID requestId = UUID.randomUUID();

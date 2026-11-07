@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
-import type { Arrival, BunchingAlert, DemoRun, PageResult, RouteDirection, RoutePositions } from '@/lib/api'
+import type { Arrival, BunchingAlert, DemoRun, EarlyControllerSuggestion, PageResult, RouteDirection, RoutePositions } from '@/lib/api'
 import { bunchingArrivals } from '@/lib/bunching'
 import { dataClassificationLabel } from '@/lib/presentation'
 import { formatSgtDateTime } from '@/lib/time'
@@ -1419,12 +1419,27 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
   </div>
 }
 
-export function ControllerAudit({ decisions, loading }: {
-  decisions: PagedCollection<Decision, PageResult<Decision>>; loading: boolean
+export function ControllerAudit({ decisions, suggestions, loading }: {
+  decisions: PagedCollection<Decision, PageResult<Decision>>
+  suggestions: PagedCollection<EarlyControllerSuggestion, PageResult<EarlyControllerSuggestion>>; loading: boolean
 }) {
   const items = !loading ? decisions.items : []
   const error = decisions.error !== null && !decisions.items.length ? 'Unable to load this data.' : ''
+  const suggestionItems = !loading ? suggestions.items : []
+  const suggestionError = suggestions.error !== null && !suggestions.items.length ? 'Unable to load early controller suggestions.' : ''
   return <div className="space-y-10">
+    <section aria-labelledby="early-suggestions-title" className="space-y-4"><h2 id="early-suggestions-title" className="font-medium">Early controller mitigation suggestions</h2>
+      <p className="text-sm text-muted-foreground">Actions recorded before an AI diagnosis or mitigation recommendation was available.</p>
+      <DataMessage error={suggestionError} loading={loading || suggestions.isLoading && !suggestions.latestPage} empty={!suggestionItems.length}>No early controller mitigation suggestions have been saved.</DataMessage>
+      {!!suggestionItems.length && <Table containerProps={{ role: 'region', 'aria-label': 'Early controller mitigation suggestions', tabIndex: 0,
+        onScroll: suggestions.onScroll, className: 'max-h-[26rem] overflow-auto rounded-lg border' }} className="min-w-[48rem]">
+        <TableCaption className="sr-only">Early controller mitigation suggestions</TableCaption>
+        <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-1 [&_th]:bg-background"><TableRow><TableHead>Recorded</TableHead><TableHead>Controller</TableHead><TableHead>Bus actions</TableHead><TableHead>Rationale</TableHead><TableHead>Diagnosis request ID</TableHead></TableRow></TableHeader>
+        <TableBody>{suggestionItems.map(suggestion => <TableRow key={suggestion.requestId}><TableCell>{timestamp(suggestion.suggestedAt)}</TableCell><TableCell className="text-muted-foreground">{suggestion.actorSubject}</TableCell><TableCell><ul className="space-y-2">{suggestion.instructions.map((instruction, index) => <li key={`${instruction.busReference}-${index}`}><span className="font-medium">{instruction.busReference}</span><span className="block text-xs text-muted-foreground">{instruction.instruction}</span></li>)}</ul></TableCell><TableCell className="max-w-72 text-muted-foreground">{suggestion.controllerRationale}</TableCell><TableCell className="text-xs text-muted-foreground">{suggestion.requestId}</TableCell></TableRow>)}</TableBody>
+      </Table>}
+      <PagedCollectionControls label="early controller suggestions" hasItems={!!suggestions.items.length} hasMore={suggestions.hasMore}
+        isLoading={suggestions.isLoading} isLoadingMore={suggestions.isLoadingMore} error={suggestions.error} refreshError={suggestions.refreshError} reload={suggestions.reload} loadNext={suggestions.loadNext} />
+    </section>
     <section aria-labelledby="decisions-title" className="space-y-4"><h2 id="decisions-title" className="font-medium">Controller decisions</h2>
       <DataMessage error={error} loading={loading || decisions.isLoading && !decisions.latestPage} empty={!items.length}>No controller decisions have been saved.</DataMessage>
       {!!items.length && <Table containerProps={{ role: 'region', 'aria-label': 'Controller decisions', tabIndex: 0,
