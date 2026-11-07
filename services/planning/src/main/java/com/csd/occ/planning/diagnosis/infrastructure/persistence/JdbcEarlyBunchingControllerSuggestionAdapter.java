@@ -18,6 +18,21 @@ import tools.jackson.databind.json.JsonMapper;
 public class JdbcEarlyBunchingControllerSuggestionAdapter implements EarlyBunchingControllerSuggestionPort {
     private static final String FIND = "SELECT request_id, instructions, controller_rationale, actor_subject, suggested_at FROM planning.early_bunching_controller_suggestion WHERE request_id = ?";
     private static final String INSERT = "INSERT INTO planning.early_bunching_controller_suggestion (request_id, instructions, controller_rationale, actor_subject, suggested_at) VALUES (?, CAST(? AS JSONB), ?, ?, ?) ON CONFLICT (request_id) DO NOTHING";
+    private static final String FIND_ALL = """
+            SELECT suggestion.request_id, suggestion.instructions, suggestion.controller_rationale, suggestion.actor_subject, suggestion.suggested_at
+              FROM planning.early_bunching_controller_suggestion suggestion
+              JOIN planning.planning_request request ON request.id = suggestion.request_id
+             WHERE cast(request.input_snapshot as jsonb) -> 'event' ->> 'classification' = ?
+               AND coalesce(cast(request.input_snapshot as jsonb) -> 'event' ->> 'demoRunId', '') = ?
+             ORDER BY suggestion.suggested_at DESC, suggestion.request_id
+             OFFSET ? LIMIT ?
+            """;
+    private static final String COUNT = """
+            SELECT count(*) FROM planning.early_bunching_controller_suggestion suggestion
+              JOIN planning.planning_request request ON request.id = suggestion.request_id
+             WHERE cast(request.input_snapshot as jsonb) -> 'event' ->> 'classification' = ?
+               AND coalesce(cast(request.input_snapshot as jsonb) -> 'event' ->> 'demoRunId', '') = ?
+            """;
     private final JdbcTemplate jdbc;
     private final JsonMapper json;
 
@@ -31,6 +46,15 @@ public class JdbcEarlyBunchingControllerSuggestionAdapter implements EarlyBunchi
         int inserted = jdbc.update(INSERT, suggestion.requestId(), json.writeValueAsString(suggestion.instructions()),
                 suggestion.controllerRationale(), suggestion.actorSubject(), Timestamp.from(suggestion.suggestedAt()));
         return inserted == 1 ? Optional.of(suggestion) : Optional.empty();
+    }
+
+    @Override public List<EarlyBunchingControllerSuggestion> findAll(String classification, UUID demoRunId, int offset, int limit) {
+        return jdbc.query(FIND_ALL, this::map, classification, demoRunId == null ? "" : demoRunId.toString(), offset, limit);
+    }
+
+    @Override public long count(String classification, UUID demoRunId) {
+        Long count = jdbc.queryForObject(COUNT, Long.class, classification, demoRunId == null ? "" : demoRunId.toString());
+        return count == null ? 0 : count;
     }
 
     private EarlyBunchingControllerSuggestion map(ResultSet result, int row) throws SQLException {
