@@ -31,6 +31,10 @@ function affectedBuses(recommendation: PendingRecommendation) {
     ? recommendation.affectedBusReferences : [recommendation.targetBusReference]
 }
 
+function hasAdvisoryOnlyDiagnosis(request: PlanningDiagnosisRequest) {
+  return request.policyOutcome === 'LIVE_DIAGNOSIS_NO_VALIDATED_OPERATIONAL_CONTEXT'
+}
+
 function initialInstructions(recommendation: PendingRecommendation): ControllerBusInstruction[] {
   return affectedBuses(recommendation).slice(0, 3).map((busReference, index) => ({
     busReference,
@@ -83,10 +87,14 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
       ? 'Data selection changed. Refresh before generating a diagnosis.' : ''
   const queuedRequests = !diagnosisError && diagnosisScopeMatches
     ? diagnosisRequests.items.filter(item => item.status !== 'COMPLETED') : []
-  const visibleRequests = queuedRequests.filter(item => item.serviceId?.includes(filter.trim()))
-  const visible = recommendationItems.filter(item => item.serviceId.includes(filter.trim()))
   const requestedId = searchParams.get('recommendation')
   const requestedRequestId = searchParams.get('request')
+  const retainedRequest = !diagnosisError && diagnosisScopeMatches
+    ? diagnosisRequests.items.find(item => item.requestId === requestedRequestId) ?? null : null
+  const visibleRequests = queuedRequests.filter(item => item.serviceId?.includes(filter.trim()))
+  const visibleRequestsWithRetained = retainedRequest && !visibleRequests.some(item => item.requestId === retainedRequest.requestId)
+    ? [retainedRequest, ...visibleRequests] : visibleRequests
+  const visible = recommendationItems.filter(item => item.serviceId.includes(filter.trim()))
   const scopeIdentity = `${mode}:${demoRunId ?? 'none'}`
   const { error: recommendationLoadError, hasMore: recommendationHasMore, isLoading: recommendationIsLoading,
     isLoadingMore: recommendationIsLoadingMore, loadNext: loadNextRecommendation } = recommendations
@@ -98,7 +106,7 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
   const selected = editingInScope && !editingItem && (editNeedsRevalidation || editingRecommendation?.pending) ? editingInScope.recommendation
     : recommendationItems.find(item => item.recommendationId === requestedId) ?? visible[0] ?? recommendationItems[0]
   const selectedIdentity = selected ? `${scopeIdentity}:${selected.recommendationId}` : null
-  const selectedRequest = visibleRequests.find(item => item.requestId === requestedRequestId) ?? visibleRequests[0] ?? null
+  const selectedRequest = retainedRequest ?? visibleRequestsWithRetained[0] ?? null
   const editorUnavailable = !!editingInScope && (!!modeError || recommendationLoadError !== null)
   const editorStale = editingRecommendation !== null && (editingRecommendation.scopeIdentity !== scopeIdentity ||
     !editNeedsRevalidation && selectedIdentity !== editingRecommendation.identity)
@@ -115,10 +123,10 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
     recommendationIsLoadingMore, recommendationLoadError])
 
   useEffect(() => {
-    if (selected && selected.recommendationId !== requestedId) {
+    if (!requestedRequestId && selected && selected.recommendationId !== requestedId) {
       setSearchParams({ recommendation: selected.recommendationId }, { replace: true })
     }
-  }, [requestedId, selected, setSearchParams])
+  }, [requestedId, requestedRequestId, selected, setSearchParams])
 
   function select(recommendationId: string) {
     setSearchParams({ recommendation: recommendationId })
@@ -136,7 +144,9 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
     try {
       const result = await triggerDiagnosis({ requestId: request.requestId }, token, controller.signal)
       if (!controller.signal.aborted) {
-        setMessage(result?.status === 'COMPLETED'
+        setMessage(result?.status === 'COMPLETED' && hasAdvisoryOnlyDiagnosis(request)
+          ? 'Diagnosis generated from live observations. AI mitigation is unavailable because validated operational context is not available.'
+          : result?.status === 'COMPLETED'
           ? 'Diagnosis generated. The recommendation is ready for review.'
           : 'Diagnosis generation has started. Refresh to see its latest status.')
       }
@@ -165,11 +175,15 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
         </div>
         <ScrollArea role="listbox" aria-label="Recommendations awaiting a decision" tabIndex={0} className="max-h-[28rem]"
           viewportProps={{ onScroll: event => { recommendations.onScroll(event); diagnosisRequests.onScroll(event) } }}><div className="divide-y">
-          {visibleRequests.map(item => <button type="button" role="option" aria-selected={selectedRequest?.requestId === item.requestId} key={item.requestId} onClick={() => selectRequest(item.requestId)}
+          {visibleRequestsWithRetained.map(item => <button type="button" role="option" aria-selected={selectedRequest?.requestId === item.requestId} key={item.requestId} onClick={() => selectRequest(item.requestId)}
             className="min-h-28 w-full space-y-2 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring aria-selected:bg-muted">
             <div className="flex items-start justify-between gap-3"><span className="font-medium">Service {item.serviceId ?? 'unknown'} · Direction {item.directionId ?? 'unknown'}</span><span className="shrink-0 text-xs text-muted-foreground">{timestamp(item.createdAt)}</span></div>
             <p className="text-xs text-muted-foreground">Stop {item.stopCode ?? 'unknown'} · Bunching detected</p>
-            <p className="text-sm">{item.status === 'PROCESSING' ? 'Diagnosis is being generated.' : item.status.startsWith('FAILED') ? 'Diagnosis needs to be retried.' : 'Diagnosis has not been generated yet.'}</p>
+            <p className="text-sm">{item.status === 'COMPLETED'
+              ? hasAdvisoryOnlyDiagnosis(item)
+                ? 'Diagnosis generated from live observations; AI mitigation is unavailable.'
+                : 'Diagnosis generated; keeping this incident open for review.'
+              : item.status === 'PROCESSING' ? 'Diagnosis is being generated.' : item.status.startsWith('FAILED') ? 'Diagnosis needs to be retried.' : 'Diagnosis has not been generated yet.'}</p>
             {item.failureCode && <p className="text-xs text-destructive">Last attempt: {item.failureCode}</p>}
           </button>)}
           {visible.map(item => <button type="button" role="option" aria-selected={selected?.recommendationId === item.recommendationId} key={item.recommendationId} onClick={() => select(item.recommendationId)}
@@ -180,7 +194,7 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
             <p className="text-xs text-muted-foreground">Affected buses · {affectedBuses(item).join(', ')}</p>
             <p className="text-xs text-muted-foreground">{item.mitigationType.replaceAll('_', ' ')} · Target: {item.targetBusReference}</p>
           </button>)}
-          {!visible.length && !visibleRequests.length && <p className="p-6 text-center text-sm text-muted-foreground">{filter.trim() ? 'No matching bus service.' : 'No requests are awaiting a decision yet.'}</p>}
+          {!visible.length && !visibleRequestsWithRetained.length && <p className="p-6 text-center text-sm text-muted-foreground">{filter.trim() ? 'No matching bus service.' : 'No requests are awaiting a decision yet.'}</p>}
         </div></ScrollArea>
         <div className="space-y-2 p-3"><PagedCollectionControls label="bunching requests" hasItems={!!diagnosisRequests.items.length} hasMore={diagnosisRequests.hasMore}
           isLoadingMore={diagnosisRequests.isLoadingMore} error={diagnosisRequests.error} refreshError={diagnosisRequests.refreshError} reload={diagnosisRequests.reload} loadNext={diagnosisRequests.loadNext} />
@@ -217,6 +231,8 @@ function DiagnosisRequestDetail({ request, detectedBusReferences, generating, su
 }) {
   const retry = request.status.startsWith('FAILED')
   const processing = request.status === 'PROCESSING'
+  const completed = request.status === 'COMPLETED'
+  const advisoryOnly = hasAdvisoryOnlyDiagnosis(request)
   const [editorOpen, setEditorOpen] = useState(false)
   const [message, setMessage] = useState('')
   const [instructions, setInstructions] = useState<ControllerBusInstruction[]>(() => detectedBusReferences.map(busReference => ({ busReference, instruction: '' })))
@@ -258,7 +274,11 @@ function DiagnosisRequestDetail({ request, detectedBusReferences, generating, su
       <span className="text-xs text-muted-foreground">{request.requestId}</span>
     </div>
     <div><h3 className="text-sm font-medium">Bunching detection</h3>
-      <p className="mt-1 text-sm text-muted-foreground">{processing ? 'Diagnosis is being generated.' : retry ? 'The previous diagnosis attempt needs to be retried.' : 'Generate a diagnosis to receive an AI mitigation recommendation for this detected bunching event.'}</p>
+      <p className="mt-1 text-sm text-muted-foreground">{completed
+        ? advisoryOnly
+          ? 'Diagnosis generated from live observations. AI mitigation is unavailable because validated operational context is not available; you can still record controller actions below.'
+          : 'Diagnosis generated. This incident remains open here while you review it or wait for the AI mitigation recommendation.'
+        : processing ? 'Diagnosis is being generated.' : retry ? 'The previous diagnosis attempt needs to be retried.' : 'Generate a diagnosis to receive an AI mitigation recommendation for this detected bunching event.'}</p>
       {request.failureCode && <p className="mt-2 text-sm text-destructive">Last attempt: {request.failureCode}</p>}</div>
     <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
       <Dialog open={editorOpen} onOpenChange={openEditor}>
@@ -278,9 +298,9 @@ function DiagnosisRequestDetail({ request, detectedBusReferences, generating, su
         </DialogContent>
       </Dialog>
       {!detectedBusReferences.length && <p className="self-center text-xs text-muted-foreground">Detected bus references are unavailable.</p>}
-      <Button disabled={generating || processing || suggesting} onClick={onGenerate}>
+      {!completed && <Button disabled={generating || processing || suggesting} onClick={onGenerate}>
         {generating ? 'Generating diagnosis…' : retry ? 'Retry diagnosis' : 'Generate diagnosis'}
-      </Button>
+      </Button>}
     </div>
   </CardContent></Card>
 }
