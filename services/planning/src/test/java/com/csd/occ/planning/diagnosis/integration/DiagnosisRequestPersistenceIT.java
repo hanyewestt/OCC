@@ -76,8 +76,8 @@ class DiagnosisRequestPersistenceIT {
 
     @BeforeEach
     void clearDiagnosisTables() {
-        jdbc.execute("TRUNCATE planning.model_invocation_record, planning.recommendation_job, "
-                + "planning.diagnosis_result, planning.planning_request");
+        jdbc.execute("TRUNCATE planning.early_bunching_controller_suggestion, planning.model_invocation_record, "
+                + "planning.recommendation_job, planning.diagnosis_result, planning.planning_request");
     }
 
     @Test
