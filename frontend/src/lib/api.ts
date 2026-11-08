@@ -3,11 +3,6 @@ export type Identity = { subject: string; role: 'CONTROLLER' | 'CAPTAIN' | 'ADMI
 export type InstructionType = 'BE_CAUTIOUS' | 'REDUCE_SPEED' | 'SLOW_DOWN_NEAR_STOPS' | 'HOLD' | 'DWELL_ADJUSTMENT'
 export type InstructionParameters = { stopCode: string | null; stopName: string | null; stopSequence: number | null;
   subsequentStopCount: number | null; speedReductionKmh: number | null; durationSeconds: number | null }
-export type AdvisoryCandidate = { type: InstructionType; parameters: InstructionParameters; rationale: string }
-export type Advisory = { id: string; disruptionId: string; demoRunId: string; busId: string; status: string;
-  candidate: AdvisoryCandidate; finalCandidate: AdvisoryCandidate | null; preview: string; hazardClassification: string; limitations: string[]; createdAt: string }
-export type AdvisoryGroup = { id: string; disruptionId: string; demoRunId: string; serviceId: string; directionId: number;
-  hazardTitle: string; hazardClassification: string; candidate: AdvisoryCandidate; preview: string; members: Advisory[] }
 export type CaptainInstruction = { id: string; demoRunId: string; busId: string; type: InstructionType;
   parameters: InstructionParameters; message: string; busClassification: string; hazardClassification: string;
   status: string; issuedAt: string; acknowledgementDeadline: string; acknowledgedAt: string | null;
@@ -86,8 +81,13 @@ export type BunchingAlert = {
   stopCode: string; detectedAt: string; directionId?: number | null
   fetchedAt?: string; rawObservationId?: string; pollRunId?: string
   stopName?: string | null; stopRoadName?: string | null; evidence?: string | null
+  leadingVehicle?: SimulationVehicle | null; followingVehicle?: SimulationVehicle | null
 }
-export type DemoRun = { id: string; status: string; alerts: BunchingAlert[] }
+export type SimulationVehicle = { registrationNumber: string; operator: string; vehicleType: string; captainCode: string; busId: string }
+export type DemoRun = {
+  id: string; status: string; alerts: BunchingAlert[]; serviceId: string; directionId: number
+  busCount: number; dispatchGapSeconds: number; busGapsSeconds: number[]; monitoredStopCode: string; scenario: 'NORMAL' | 'BUNCHING'
+}
 export type Recommendation = {
   recommendationId: string; classification: string; status: string; mitigationType: string
   targetBusReference: string; controlStopCode: string; adjustmentSeconds: number
@@ -118,6 +118,9 @@ export type PendingRecommendation = {
   explanation: RecommendationExplanation; expectedImpact: RecommendationImpact
 }
 export type ControllerBusInstruction = { busReference: string; instruction: string }
+export type EarlyControllerSuggestion = {
+  requestId: string; instructions: ControllerBusInstruction[]; controllerRationale: string; actorSubject: string; suggestedAt: string
+}
 export type Decision = {
   recommendationId: string; action: 'APPROVED' | 'REJECTED'; actorSubject: string
   overrideInstructions: ControllerBusInstruction[]; controllerRationale: string | null; decidedAt: string
@@ -186,13 +189,6 @@ export async function enrichBunchingStops(alerts: BunchingAlert[], token: string
   }))
 }
 
-export type PlanningDiagnosis = {
-  requestId: string; eventId: string; diagnosisId: string | null; classification: string; demoRunId: string | null
-  serviceId: string | null; directionId: number | null; stopCode: string | null; status: string; likelyCause: string | null
-  confidence: number | null; limitations: string[]; evidenceDetails?: DiagnosisEvidenceDetail[]
-  failureCode: string | null; policyOutcome: string | null; createdAt: string
-}
-export type PlanningDiagnosisPage = PageResult<PlanningDiagnosis> & { mode: 'LIVE' | 'DEMO'; demoRunId: string | null }
 export type PlanningHazardRequest = {
   requestId: string; eventId: string; disruptionId: string; eventType: 'HAZARD' | 'TRAFFIC_INCIDENT'
   status: 'PENDING' | 'PROCESSING' | 'FAILED_RETRYABLE' | 'FAILED_TERMINAL'; failureCode: string | null; createdAt: string
@@ -200,6 +196,20 @@ export type PlanningHazardRequest = {
 export type PlanningHazardRequestPage = PageResult<PlanningHazardRequest> & { mode: 'LIVE' | 'DEMO'; demoRunId: string | null }
 export type PlanningHazardHistory = Omit<PlanningHazardRequest, 'status'> & {
   status: 'COMPLETED' | 'FAILED_TERMINAL'; title: string; completedAt: string
+}
+
+export type PlanningDiagnosisRequest = {
+  requestId: string; eventId: string; diagnosisId: string | null
+  classification: string; demoRunId: string | null
+  serviceId: string | null; directionId: number | null; stopCode: string | null
+  affectedBusReferences: string[]
+  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED_RETRYABLE' | 'FAILED_TERMINAL'
+  likelyCause: string | null; confidence: number | null; limitations: string[]
+  evidenceDetails: DiagnosisEvidenceDetail[]; failureCode: string | null; policyOutcome: string | null
+  createdAt: string
+}
+export type PlanningDiagnosisRequestPage = PageResult<PlanningDiagnosisRequest> & {
+  mode: 'LIVE' | 'DEMO'; demoRunId: string | null
 }
 
 export type TriggerDiagnosisRequest = {

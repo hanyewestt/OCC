@@ -21,6 +21,10 @@ import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestStatus;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestView;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestService;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisTriggerService;
+import com.csd.occ.planning.diagnosis.domain.EarlyBunchingControllerSuggestionService;
+import com.csd.occ.planning.diagnosis.domain.EarlyBunchingControllerSuggestion;
+import com.csd.occ.planning.recommendation.domain.ControllerBusInstruction;
+import java.util.List;
 import com.csd.occ.planning.diagnosis.domain.EventType;
 import com.csd.occ.planning.diagnosis.domain.ProducerEventSubmission;
 import com.csd.occ.planning.diagnosis.domain.TrafficIncidentEventFacts;
@@ -56,6 +60,48 @@ class DiagnosisRequestControllerTest {
     @MockitoBean AdvisoryProposalRepository proposals;
     @MockitoBean IssuedInstructionRepository instructions;
     @MockitoBean DiagnosisTriggerService triggerService;
+    @MockitoBean EarlyBunchingControllerSuggestionService suggestions;
+
+    @Test
+    void recordsBusSpecificSuggestionBeforeDiagnosisCompletes() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        Instant suggestedAt = Instant.parse("2026-11-07T09:00:00Z");
+        var instructions = List.of(new ControllerBusInstruction("DEMO-190-01", "Hold at the next stop for 60 seconds."),
+                new ControllerBusInstruction("DEMO-190-02", "Continue at the planned pace."));
+        when(suggestions.suggest(eq(requestId), eq(instructions), eq("Restore a safe headway."), eq("controller-subject")))
+                .thenReturn(new EarlyBunchingControllerSuggestion(requestId, instructions,
+                        "Restore a safe headway.", "controller-subject", suggestedAt));
+
+        mvc.perform(post("/api/v1/planning/diagnoses/{requestId}/controller-suggestion", requestId)
+                        .with(jwt().jwt(jwt -> jwt.subject("controller-subject")).authorities(
+                                new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                        .contentType(MediaType.APPLICATION_JSON).content("""
+                                {"instructions":[
+                                  {"busReference":"DEMO-190-01","instruction":"Hold at the next stop for 60 seconds."},
+                                  {"busReference":"DEMO-190-02","instruction":"Continue at the planned pace."}
+                                ],"controllerRationale":"Restore a safe headway."}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.requestId").value(requestId.toString()))
+                .andExpect(jsonPath("$.instructions[1].busReference").value("DEMO-190-02"));
+        verify(suggestions).suggest(requestId, instructions, "Restore a safe headway.", "controller-subject");
+    }
+
+    @Test
+    void listsEarlyControllerSuggestionsForTheAuditLog() throws Exception {
+        UUID requestId = UUID.randomUUID();
+        when(suggestions.history(0, 50)).thenReturn(List.of(new EarlyBunchingControllerSuggestion(requestId,
+                List.of(new ControllerBusInstruction("DEMO-190-01", "Hold for 60 seconds.")),
+                "Restore a safe headway.", "controller-subject", Instant.parse("2026-11-07T09:00:00Z"))));
+        when(suggestions.countHistory()).thenReturn(1L);
+
+        mvc.perform(get("/api/v1/planning/diagnoses/controller-suggestions")
+                        .with(jwt().authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_CONTROLLER"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalItems").value(1))
+                .andExpect(jsonPath("$.items[0].actorSubject").value("controller-subject"))
+                .andExpect(jsonPath("$.items[0].instructions[0].busReference").value("DEMO-190-01"));
+    }
 
     @Test
     void exposesTerminalFailureByEventBeforeADiagnosisExists() throws Exception {
