@@ -4,6 +4,7 @@ import com.csd.occ.ingestion.api.dto.DemoBunchingAlertResponse;
 import com.csd.occ.ingestion.api.dto.DemoRunResponse;
 import com.csd.occ.ingestion.api.dto.DemoRecommendationResponse;
 import com.csd.occ.ingestion.api.dto.DemoVehicleResponse;
+import com.csd.occ.ingestion.api.dto.StartDemoRunRequest;
 import com.csd.occ.ingestion.domain.DemoAlertDetails;
 import com.csd.occ.ingestion.domain.DemoRunDetails;
 import com.csd.occ.ingestion.domain.DemoRunService;
@@ -19,6 +20,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -36,7 +39,15 @@ public class DemoRunController {
     @ApiResponses({@ApiResponse(responseCode = "201", description = "Demo run started"),
             @ApiResponse(responseCode = "409", description = "A demo run is already active"),
             @ApiResponse(responseCode = "503", description = "Bunching control is unavailable")})
-    public DemoRunResponse start() { return response(runs.start()); }
+    public DemoRunResponse start(@Valid @RequestBody(required = false) StartDemoRunRequest request,
+                                 org.springframework.validation.BindingResult bindingResult)
+            throws org.springframework.validation.BindException {
+        if (request == null || request.isEmpty()) return response(runs.start());
+        if (bindingResult.hasErrors()) {
+            throw new org.springframework.validation.BindException(bindingResult);
+        }
+        return response(runs.start(request.configuration()));
+    }
 
     @GetMapping("/active")
     @Operation(operationId = "getActiveDemoRun", summary = "Get the active simulation run for page recovery")
@@ -74,7 +85,12 @@ public class DemoRunController {
     public DemoRunResponse close(@PathVariable UUID id) { return response(runs.close(id)); }
 
     private static DemoRunResponse response(DemoRunDetails run) {
-        return new DemoRunResponse(run.id(), run.status(), run.currentStep(), run.alerts().stream()
+        var configuration = run.configuration();
+        return new DemoRunResponse(run.id(), run.status(), run.currentStep(), configuration.serviceId(),
+                configuration.directionId(), configuration.busCount(), configuration.dispatchGap().toSeconds(),
+                configuration.busGaps().stream().map(java.time.Duration::toSeconds).toList(),
+                configuration.monitoredStopCode(),
+                configuration.scenario().name(), run.alerts().stream()
                 .map(DemoRunController::alert).toList());
     }
 
