@@ -9,6 +9,11 @@ incident diagnosis and recovery planning.
 The web app currently provides sign-in and a minimal page for each supported
 operating role. These pages verify authentication and role access; operational
 controls, incident views and dispatch workflows are not yet part of the React frontend.
+The controller simulation configurator injects one localised fictional bunching
+event at a chosen stop on a selected route and direction. Each injection contains
+two or three buses, with an individual, persisted gap for every adjacent pair.
+Normal-operation buses use one fixed cruising speed, so their configured gaps
+remain stable while the route strip updates.
 The Captain page shows controller instructions to acknowledge first, then the
 route of the simulation bus assigned to the captain: the service and terminal,
 the stop just left, the next stop with its time, the following stops with

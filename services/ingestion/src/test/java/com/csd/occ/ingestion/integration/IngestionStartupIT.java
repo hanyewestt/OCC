@@ -348,14 +348,14 @@ class IngestionStartupIT {
                 .getContent()).isEmpty();
         assertThat(arrivals.findHistory("44251", "190", null, null, PageRequest.of(0, 50)).getContent()).isEmpty();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM ingestion.traffic_incident_observation "
-                + "WHERE demo_run_id=? AND classification='SIMULATION'", Integer.class, started.id())).isEqualTo(2);
+                + "WHERE demo_run_id=? AND classification='SIMULATION'", Integer.class, started.id())).isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM ingestion.hazard_observation "
                 + "WHERE demo_run_id=?", Integer.class, started.id())).isEqualTo(9);
         var trafficPolls = trafficIncidentPollFeed.page(null, null, 250).polls().stream()
                 .filter(poll -> started.id().equals(poll.demoRunId())).toList();
         assertThat(trafficPolls).hasSize(DemoReplayScenario.STEP_COUNT).allMatch(poll -> poll.complete()
                 && "SIMULATION".equals(poll.classification()));
-        assertThat(trafficPolls.stream().flatMap(poll -> poll.incidents().stream())).hasSize(2);
+        assertThat(trafficPolls.stream().flatMap(poll -> poll.incidents().stream())).isEmpty();
 
         DemoRunDetails closed = demoRuns.close(started.id());
 
@@ -397,15 +397,14 @@ class IngestionStartupIT {
         List<PacingMetric> simulation = pacing.refresh().metrics().stream()
                 .filter(metric -> "SIMULATION".equals(metric.classification())).toList();
 
-        // Only the latest step contributes: two route-190 buses and three route-972 buses.
+        // Only the latest step contributes: three route-190 buses from the injected simulation fleet.
         assertThat(simulation).extracting(PacingMetric::vehicleReference).containsExactlyInAnyOrder(
-                "SBS8027Y", "SBS5898U", "SMB3123A", "SMB4567B", "SMB5890C");
-        for (String serviceId : List.of("190", "972")) {
+                "DEMO-190-01", "DEMO-190-02", "DEMO-190-03");
+        for (String serviceId : List.of("190")) {
             List<PacingMetric> route = simulation.stream()
                     .filter(metric -> serviceId.equals(metric.serviceId())).toList();
             assertThat(route).extracting(PacingMetric::vehicleReference).containsExactlyElementsOf(
-                    "190".equals(serviceId) ? List.of("SBS8027Y", "SBS5898U")
-                            : List.of("SMB3123A", "SMB4567B", "SMB5890C"));
+                    List.of("DEMO-190-01", "DEMO-190-02", "DEMO-190-03"));
             for (int index = 0; index < route.size(); index++) {
                 PacingMetric metric = route.get(index);
                 assertThat(metric.stopCode()).isEqualTo("44251");
