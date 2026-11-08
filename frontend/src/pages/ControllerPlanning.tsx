@@ -8,9 +8,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
-import { ApiError, apiRequest, triggerDiagnosis, type ControllerBusInstruction, type Decision, type DiagnosisEvidenceDetail, type PendingRecommendation, type PlanningDiagnosisPage } from '@/lib/api'
+import { ApiError, apiRequest, triggerDiagnosis, type BunchingAlert, type ControllerBusInstruction, type Decision, type DiagnosisEvidenceDetail, type EarlyControllerSuggestion, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage } from '@/lib/api'
 import { signOut } from '@/lib/auth'
-import { dataClassificationLabel, diagnosisStatusLabel } from '@/lib/presentation'
 import type { Planning } from './ControllerPage'
 import type { PagedCollection } from '@/lib/paged-collection'
 import { DataMessage, timestamp } from './ControllerViews'
@@ -32,6 +31,10 @@ function affectedBuses(recommendation: PendingRecommendation) {
     ? recommendation.affectedBusReferences : [recommendation.targetBusReference]
 }
 
+function hasAdvisoryOnlyDiagnosis(request: PlanningDiagnosisRequest) {
+  return request.policyOutcome === 'LIVE_DIAGNOSIS_NO_VALIDATED_OPERATIONAL_CONTEXT'
+}
+
 function initialInstructions(recommendation: PendingRecommendation): ControllerBusInstruction[] {
   return affectedBuses(recommendation).slice(0, 3).map((busReference, index) => ({
     busReference,
@@ -39,36 +42,12 @@ function initialInstructions(recommendation: PendingRecommendation): ControllerB
   }))
 }
 
-function incidentTiming(item: DiagnosisEvidenceDetail) {
-  if (item.reportTime === null) {
-    return `Provider report time unavailable${item.fetchedAt ? `; fetched ${timestamp(item.fetchedAt)}, which does not establish incident chronology` : ''}.`
-  }
-  if (item.firstConfirmedAt === null || item.secondsBeforeFirstConfirmed === null) {
-    return `Report time ${timestamp(item.reportTime)} is available, but timing relative to the first confirmed irregularity is unavailable.`
-  }
-  if (item.reportTime === item.firstConfirmedAt) {
-    return `Reported at the same time as the first confirmed irregularity (${timestamp(item.reportTime)}).`
-  }
-
-  const differenceMs = Date.parse(item.firstConfirmedAt) - Date.parse(item.reportTime)
-  if (Math.abs(differenceMs) < 1_000) {
-    const direction = item.secondsBeforeFirstConfirmed < 0 ? 'after' : 'before'
-    return `Reported less than 1 second ${direction} the first confirmed irregularity (${timestamp(item.reportTime)}).`
-  }
-
-  const offset = Math.abs(item.secondsBeforeFirstConfirmed)
-  const unit = offset === 1 ? 'second' : 'seconds'
-  const direction = item.secondsBeforeFirstConfirmed > 0 ? 'before' : 'after'
-  return `Reported ${offset} ${unit} ${direction} the first confirmed irregularity (${timestamp(item.reportTime)}).`
-}
-
-function EvidenceDetailList({ items }: { items: DiagnosisEvidenceDetail[] }) {
+function RecommendationEvidenceList({ items }: { items: DiagnosisEvidenceDetail[] }) {
   if (!items.length) return null
   return <ul className="mt-2 list-disc space-y-3 pl-5 text-xs text-muted-foreground">
     {items.map(item => <li key={item.evidenceId}>
       {item.incidentType && <p className="font-medium text-foreground">{item.incidentType}</p>}
       {item.message && <p>{item.message}</p>}
-      <p>{incidentTiming(item)}</p>
       {item.distanceMetersFromSuppliedBusPosition !== null && <p>Approx. {Math.round(item.distanceMetersFromSuppliedBusPosition).toLocaleString('en-SG')} m from the supplied bus position near stop {item.monitoredStopCode}.</p>}
       <p>Incident evidence: {item.evidenceId}{item.busPositionEvidenceId ? ` · Bus-position evidence: ${item.busPositionEvidenceId}` : ''}</p>
     </li>)}
@@ -77,97 +56,21 @@ function EvidenceDetailList({ items }: { items: DiagnosisEvidenceDetail[] }) {
 
 type EditingRecommendation = { identity: string; scopeIdentity: string; recommendation: PendingRecommendation; pending?: boolean }
 
-export function ControllerPlanning({ recommendations, diagnoses, loading, modeError, mode, demoRunId, token, onPendingChange, onRefresh, onSaved }: {
+export function ControllerPlanning({ recommendations, diagnosisRequests, loading, modeError, mode, demoRunId, token, detectedAlerts, onPendingChange, onRefresh, onSaved }: {
   recommendations: PagedCollection<PendingRecommendation, Planning['recommendations']>
-  diagnoses: PagedCollection<PlanningDiagnosisPage['items'][number], PlanningDiagnosisPage>
+  diagnosisRequests: PagedCollection<PlanningDiagnosisRequest, PlanningDiagnosisRequestPage>
   loading: boolean; modeError: string; mode: 'LIVE' | 'DEMO'; demoRunId: string | null; token: string
+  detectedAlerts: BunchingAlert[]
   onRefresh: () => void; onSaved: () => void
   onPendingChange: (pending: boolean) => void
 }) {
   const [searchParams, setSearchParams] = useSearchParams()
-  const serviceParam = searchParams.get('service')
-  const stopParam = searchParams.get('stop')
-  const incidentParam = searchParams.get('incident')
-  const eventParam = searchParams.get('event')
-  const [diagnosing, setDiagnosing] = useState(false)
-  const [diagnosingMessage, setDiagnosingMessage] = useState('')
-  const [triggerError, setTriggerError] = useState<string | null>(null)
-  const triggeredEventsRef = useRef<Set<string>>(new Set())
-
-  const handleTrigger = (targetEventId?: string, targetRequestId?: string) => {
-    if (!token || diagnosing) return
-    const controller = new AbortController()
-    setDiagnosing(true)
-    setDiagnosingMessage('Analyzing root cause with Gemini AI...')
-    setTriggerError(null)
-
-    triggerDiagnosis({ eventId: targetEventId, requestId: targetRequestId }, token, controller.signal)
-      .then(() => {
-        if (!controller.signal.aborted) {
-          onRefresh()
-        }
-      })
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
-          setTriggerError(err instanceof Error ? err.message : 'Failed to diagnose root cause.')
-        }
-      })
-      .finally(() => {
-        setDiagnosing(false)
-        setDiagnosingMessage('')
-      })
-  }
-
-  useEffect(() => {
-    if (!eventParam || !token || modeError) return
-
-    const alreadyDiagnosed = diagnoses.items.some(
-      item => item.eventId === eventParam && item.status === 'COMPLETED'
-    )
-    if (alreadyDiagnosed) {
-      triggeredEventsRef.current.add(eventParam)
-      return
-    }
-
-    if (triggeredEventsRef.current.has(eventParam)) return
-    triggeredEventsRef.current.add(eventParam)
-
-    const controller = new AbortController()
-    setDiagnosing(true)
-    setDiagnosingMessage('Analyzing root cause with Gemini AI...')
-    setTriggerError(null)
-
-    triggerDiagnosis({ eventId: eventParam }, token, controller.signal)
-      .then(() => {
-        if (!controller.signal.aborted) {
-          onRefresh()
-        }
-      })
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
-          setTriggerError(err instanceof Error ? err.message : 'Failed to diagnose root cause.')
-        }
-      })
-      .finally(() => {
-        setDiagnosing(false)
-        setDiagnosingMessage('')
-      })
-
-    return () => {
-      controller.abort()
-    }
-  }, [eventParam, token, modeError, diagnoses.items, onRefresh])
-  const [userFilter, setUserFilter] = useState<string | null>(null)
-  const [prevServiceParam, setPrevServiceParam] = useState(serviceParam)
-  if (prevServiceParam !== serviceParam) {
-    setPrevServiceParam(serviceParam)
-    setUserFilter(null)
-  }
-  const filter = userFilter !== null ? userFilter : (serviceParam ?? '')
-
+  const [filter, setFilter] = useState('')
   const [message, setMessage] = useState('')
   const [editingRecommendation, setEditingRecommendation] = useState<EditingRecommendation | null>(null)
-  useEffect(() => { onPendingChange(diagnosing || !!editingRecommendation?.pending) }, [diagnosing, editingRecommendation?.pending, onPendingChange])
+  const [triggeringRequestId, setTriggeringRequestId] = useState<string | null>(null)
+  const [suggestingRequestId, setSuggestingRequestId] = useState<string | null>(null)
+  useEffect(() => { onPendingChange(!!editingRecommendation?.pending || triggeringRequestId !== null || suggestingRequestId !== null) }, [editingRecommendation?.pending, onPendingChange, suggestingRequestId, triggeringRequestId])
   useEffect(() => () => onPendingChange(false), [onPendingChange])
   const recommendationPage = recommendations.latestPage
   const recommendationScopeMatches = !modeError && recommendationPage?.mode === mode &&
@@ -175,15 +78,23 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
   const recommendationError = modeError ? 'Simulation state is unavailable.' : recommendations.error !== null && !recommendations.items.length
     ? 'Unable to load recommendations.' : recommendationPage && !recommendationScopeMatches && !loading
       ? 'Data selection changed. Refresh before making a decision.' : ''
-  const diagnosisPage = diagnoses.latestPage
-  const diagnosisScopeMatches = !modeError && diagnosisPage?.mode === mode && (diagnosisPage.demoRunId ?? null) === demoRunId
-  const diagnosisError = modeError ? 'Simulation state is unavailable.' : diagnoses.error !== null && !diagnoses.items.length
-    ? 'Unable to load diagnoses.' : diagnosisPage && !diagnosisScopeMatches && !loading
-      ? 'Data selection changed. Refresh to load the active mode.' : ''
   const recommendationItems = !recommendationError && recommendationScopeMatches ? recommendations.items : []
-  const diagnosisItems = !loading && !diagnosisError && diagnosisScopeMatches ? diagnoses.items : []
-  const visible = recommendationItems.filter(item => item.serviceId.includes(filter.trim()))
+  const diagnosisPage = diagnosisRequests.latestPage
+  const diagnosisScopeMatches = !modeError && diagnosisPage?.mode === mode &&
+    (diagnosisPage.demoRunId ?? null) === demoRunId
+  const diagnosisError = modeError ? 'Simulation state is unavailable.' : diagnosisRequests.error !== null && !diagnosisRequests.items.length
+    ? 'Unable to load bunching requests.' : diagnosisPage && !diagnosisScopeMatches && !loading
+      ? 'Data selection changed. Refresh before generating a diagnosis.' : ''
+  const queuedRequests = !diagnosisError && diagnosisScopeMatches
+    ? diagnosisRequests.items.filter(item => item.status !== 'COMPLETED') : []
   const requestedId = searchParams.get('recommendation')
+  const requestedRequestId = searchParams.get('request')
+  const retainedRequest = !diagnosisError && diagnosisScopeMatches
+    ? diagnosisRequests.items.find(item => item.requestId === requestedRequestId) ?? null : null
+  const visibleRequests = queuedRequests.filter(item => item.serviceId?.includes(filter.trim()))
+  const visibleRequestsWithRetained = retainedRequest && !visibleRequests.some(item => item.requestId === retainedRequest.requestId)
+    ? [retainedRequest, ...visibleRequests] : visibleRequests
+  const visible = recommendationItems.filter(item => item.serviceId.includes(filter.trim()))
   const scopeIdentity = `${mode}:${demoRunId ?? 'none'}`
   const { error: recommendationLoadError, hasMore: recommendationHasMore, isLoading: recommendationIsLoading,
     isLoadingMore: recommendationIsLoadingMore, loadNext: loadNextRecommendation } = recommendations
@@ -192,12 +103,10 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
   const editingItemIsLoaded = !!editingItem
   const editNeedsRevalidation = !!editingInScope && !editingItem && (!!modeError || recommendations.isLoading || recommendations.isLoadingMore ||
     recommendationHasMore || recommendationLoadError !== null)
-  const paramMatched = !requestedId && (serviceParam || stopParam)
-    ? recommendationItems.find(item => (!serviceParam || item.serviceId === serviceParam) && (!stopParam || item.controlStopCode === stopParam))
-    : null
   const selected = editingInScope && !editingItem && (editNeedsRevalidation || editingRecommendation?.pending) ? editingInScope.recommendation
-    : (recommendationItems.find(item => item.recommendationId === requestedId) ?? paramMatched ?? visible[0] ?? recommendationItems[0])
+    : recommendationItems.find(item => item.recommendationId === requestedId) ?? visible[0] ?? recommendationItems[0]
   const selectedIdentity = selected ? `${scopeIdentity}:${selected.recommendationId}` : null
+  const selectedRequest = retainedRequest ?? visibleRequestsWithRetained[0] ?? null
   const editorUnavailable = !!editingInScope && (!!modeError || recommendationLoadError !== null)
   const editorStale = editingRecommendation !== null && (editingRecommendation.scopeIdentity !== scopeIdentity ||
     !editNeedsRevalidation && selectedIdentity !== editingRecommendation.identity)
@@ -214,152 +123,191 @@ export function ControllerPlanning({ recommendations, diagnoses, loading, modeEr
     recommendationIsLoadingMore, recommendationLoadError])
 
   useEffect(() => {
-    if (selected && selected.recommendationId !== requestedId) {
-      setSearchParams(prev => {
-        const next = new URLSearchParams(prev)
-        next.set('recommendation', selected.recommendationId)
-        return next
-      }, { replace: true })
+    if (!requestedRequestId && selected && selected.recommendationId !== requestedId) {
+      setSearchParams({ recommendation: selected.recommendationId }, { replace: true })
     }
-  }, [requestedId, selected, setSearchParams])
+  }, [requestedId, requestedRequestId, selected, setSearchParams])
 
   function select(recommendationId: string) {
-    setSearchParams(prev => {
-      const next = new URLSearchParams(prev)
-      next.set('recommendation', recommendationId)
-      return next
-    })
+    setSearchParams({ recommendation: recommendationId })
+  }
+
+  function selectRequest(requestId: string) {
+    setSearchParams({ request: requestId })
+  }
+
+  async function generateDiagnosis(request: PlanningDiagnosisRequest) {
+    if (triggeringRequestId) return
+    setTriggeringRequestId(request.requestId)
+    setMessage('')
+    const controller = new AbortController()
+    try {
+      const result = await triggerDiagnosis({ requestId: request.requestId }, token, controller.signal)
+      if (!controller.signal.aborted) {
+        setMessage(result?.status === 'COMPLETED' && hasAdvisoryOnlyDiagnosis(request)
+          ? 'Diagnosis generated from live observations. AI mitigation is unavailable because validated operational context is not available.'
+          : result?.status === 'COMPLETED'
+          ? 'Diagnosis generated. The recommendation is ready for review.'
+          : 'Diagnosis generation has started. Refresh to see its latest status.')
+      }
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) void signOut(error.message)
+      else setMessage(error instanceof ApiError && error.status === 403
+        ? 'You do not have permission to generate a diagnosis.'
+        : 'Unable to generate a diagnosis. Try again.')
+    } finally {
+      setTriggeringRequestId(null)
+      onRefresh()
+    }
   }
 
   return <section aria-label="Mitigation recommendations" className="space-y-4">
-    <section aria-labelledby="planning-diagnoses-title" className="space-y-4">
-      <h2 id="planning-diagnoses-title" className="font-medium">Root-cause diagnoses</h2>
-      <p className="text-sm text-muted-foreground">Live diagnoses are advisory; actions require validated vehicle, control-stop and crowd-safety inputs.</p>
-      {diagnosing && (
-        <div className="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/10 p-4 text-sm text-foreground">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent shrink-0" />
-          <div>
-            <p className="font-medium">{diagnosingMessage || 'Analyzing root cause with Gemini AI...'}</p>
-            <p className="text-xs text-muted-foreground">Gathering corridor telemetry, assessing traffic incidents, and generating mitigation proposals.</p>
-          </div>
-        </div>
-      )}
-      {triggerError && (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
-          <p><strong>Diagnosis request failed:</strong> {triggerError}</p>
-          {eventParam && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs"
-              disabled={diagnosing}
-              onClick={() => handleTrigger(eventParam)}
-            >
-              {diagnosing ? 'Retrying…' : 'Retry'}
-            </Button>
-          )}
-        </div>
-      )}
-      <DataMessage error={diagnosisError} loading={loading || diagnoses.isLoading && !diagnosisPage} empty={!diagnosisItems.length}>No confirmed bunching events have reached Planning in this mode.</DataMessage>
-      {!!diagnosisItems.length && <ScrollArea role="region" aria-label="Root-cause diagnoses" tabIndex={0} className="max-h-[28rem]"
-        viewportProps={{ onScroll: diagnoses.onScroll }}><div className="space-y-3 p-1 pr-3.5">{diagnosisItems.map(item => <Card key={item.requestId} className="min-h-28">
-          <CardContent className="space-y-2 text-sm">
-            <p className="font-medium">Service {item.serviceId ?? 'unavailable'} · {item.directionId === null ? 'Direction unavailable' : `Direction ${item.directionId}`} · Stop {item.stopCode ?? 'unavailable'}</p>
-            <p className="text-xs text-muted-foreground">{dataClassificationLabel(item.classification)} · {diagnosisStatusLabel(item.status)} · {timestamp(item.createdAt)}</p>
-            {item.status === 'PENDING' && (
-              <div className="flex items-center justify-between pt-1">
-                <span className="text-xs text-muted-foreground">Not yet diagnosed (on-demand)</span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-xs"
-                  disabled={diagnosing}
-                  onClick={() => handleTrigger(item.eventId, item.requestId)}
-                >
-                  Analyze with AI →
-                </Button>
-              </div>
-            )}
-            {item.likelyCause && <p>{item.likelyCause}</p>}
-            {item.failureCode && <p role="alert">Diagnosis unavailable: {item.failureCode.replaceAll('_', ' ')}.</p>}
-            {!!item.evidenceDetails?.length || !!item.limitations.length ? <details className="text-xs text-muted-foreground"><summary className="cursor-pointer font-medium">Evidence and limitations</summary>
-              <EvidenceDetailList items={item.evidenceDetails ?? []} />
-              {!!item.limitations.length && <ul className="mt-2 list-disc space-y-1 pl-5">{item.limitations.map(value => <li key={value}>{value}</li>)}</ul>}
-            </details> : null}
-          </CardContent>
-        </Card>)}</div></ScrollArea>}
-      {!!diagnosisPage && diagnosisPage.totalItems > diagnosisItems.length && <p className="text-xs text-muted-foreground">Showing {diagnosisItems.length} of {diagnosisPage.totalItems} diagnoses.</p>}
-      <PagedCollectionControls label="diagnoses" hasItems={!!diagnoses.items.length} hasMore={diagnoses.hasMore}
-        isLoading={diagnoses.isLoading} isLoadingMore={diagnoses.isLoadingMore} error={diagnoses.error} refreshError={diagnoses.refreshError} reload={diagnoses.reload} loadNext={diagnoses.loadNext} />
-    </section>
-    <DataMessage error={recommendationError} loading={loading || recommendations.isLoading && !recommendationPage} empty={!recommendationItems.length && !detailRecommendation}>No recommendations are awaiting a decision.</DataMessage>
+    <DataMessage error={recommendationError || diagnosisError} loading={loading || recommendations.isLoading && !recommendationPage || diagnosisRequests.isLoading && !diagnosisPage} empty={false}>No requests are awaiting a decision.</DataMessage>
     {message && <p role="status" className="text-sm">{message}</p>}
     {editorStale && <p role="status" className="text-sm">This recommendation is no longer current. The editor was closed; review the latest data before making a decision.</p>}
     {editorUnavailable && !editorStale && <p role="status" className="text-sm">Unable to confirm this recommendation is current. Your draft is preserved; retry the check before deciding.</p>}
-    {(serviceParam || incidentParam) && (
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5 text-xs">
-        <span className="text-foreground">
-          Showing recommendations for <strong>Service {serviceParam || selected?.serviceId}</strong>
-          {stopParam && <> near stop <strong>{stopParam}</strong></>}
-          {incidentParam && <> (linked from Disruption)</>}
-        </span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-6 text-xs text-muted-foreground hover:text-foreground"
-          onClick={() => {
-            setSearchParams(prev => {
-              const next = new URLSearchParams(prev)
-              next.delete('incident')
-              next.delete('service')
-              next.delete('stop')
-              next.delete('event')
-              return next
-            })
-            setUserFilter('')
-          }}
-        >
-          Clear filter
-        </Button>
-      </div>
-    )}
-    {!!recommendationItems.length || !!detailRecommendation ? <div className="grid items-start gap-4 lg:grid-cols-[minmax(16rem,0.36fr)_minmax(0,1fr)]">
+    <div className="grid items-start gap-4 lg:grid-cols-[minmax(16rem,0.36fr)_minmax(0,1fr)]">
       <Card className="gap-0 py-0">
         <div className="space-y-3 border-b p-4">
           <div className="flex items-center justify-between gap-3"><h2 className="text-sm font-medium">Awaiting decision</h2><span className="text-xs text-muted-foreground">Oldest first</span></div>
           <Label htmlFor="service-filter" className="sr-only">Filter by bus service number</Label>
-          <Input id="service-filter" inputMode="numeric" placeholder="Filter bus no. e.g. 190" value={filter} onChange={event => setUserFilter(event.target.value)} />
+          <Input id="service-filter" inputMode="numeric" placeholder="Filter bus no. e.g. 190" value={filter} onChange={event => setFilter(event.target.value)} />
         </div>
         <ScrollArea role="listbox" aria-label="Recommendations awaiting a decision" tabIndex={0} className="max-h-[28rem]"
-          viewportProps={{ onScroll: recommendations.onScroll }}><div className="divide-y">
+          viewportProps={{ onScroll: event => { recommendations.onScroll(event); diagnosisRequests.onScroll(event) } }}><div className="divide-y">
+          {visibleRequestsWithRetained.map(item => <button type="button" role="option" aria-selected={selectedRequest?.requestId === item.requestId} key={item.requestId} onClick={() => selectRequest(item.requestId)}
+            className="min-h-28 w-full space-y-2 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring aria-selected:bg-muted">
+            <div className="flex items-start justify-between gap-3"><span className="font-medium">Service {item.serviceId ?? 'unknown'} · Direction {item.directionId ?? 'unknown'}</span><span className="shrink-0 text-xs text-muted-foreground">{timestamp(item.createdAt)}</span></div>
+            <p className="text-xs text-muted-foreground">Stop {item.stopCode ?? 'unknown'} · Bunching detected</p>
+            <p className="text-sm">{item.status === 'COMPLETED'
+              ? hasAdvisoryOnlyDiagnosis(item)
+                ? 'Diagnosis generated from live observations; AI mitigation is unavailable.'
+                : 'Diagnosis generated; keeping this incident open for review.'
+              : item.status === 'PROCESSING' ? 'Diagnosis is being generated.' : item.status.startsWith('FAILED') ? 'Diagnosis needs to be retried.' : 'Diagnosis has not been generated yet.'}</p>
+            {item.failureCode && <p className="text-xs text-destructive">Last attempt: {item.failureCode}</p>}
+          </button>)}
           {visible.map(item => <button type="button" role="option" aria-selected={selected?.recommendationId === item.recommendationId} key={item.recommendationId} onClick={() => select(item.recommendationId)}
             className="min-h-28 w-full space-y-2 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring aria-selected:bg-muted">
             <div className="flex items-start justify-between gap-3"><span className="font-medium">Service {item.serviceId} · Direction {item.directionId}</span><span className="shrink-0 text-xs text-muted-foreground">{timestamp(item.detectedAt)}</span></div>
             <p className="text-xs text-muted-foreground">Stop {item.monitoredStopCode}</p>
             <p className="text-sm">{item.explanation.likelyCause}</p>
-            <p className="text-xs text-muted-foreground">{item.mitigationType.replaceAll('_', ' ')} · {item.targetBusReference}</p>
+            <p className="text-xs text-muted-foreground">Affected buses · {affectedBuses(item).join(', ')}</p>
+            <p className="text-xs text-muted-foreground">{item.mitigationType.replaceAll('_', ' ')} · Target: {item.targetBusReference}</p>
           </button>)}
-          {!visible.length && <p className="p-6 text-center text-sm text-muted-foreground">No matching bus service.</p>}
+          {!visible.length && !visibleRequestsWithRetained.length && <p className="p-6 text-center text-sm text-muted-foreground">{filter.trim() ? 'No matching bus service.' : 'No requests are awaiting a decision yet.'}</p>}
         </div></ScrollArea>
-        <div className="p-3"><PagedCollectionControls label="recommendations" hasItems={!!recommendations.items.length} hasMore={recommendations.hasMore}
-          isLoading={recommendations.isLoading} isLoadingMore={recommendations.isLoadingMore} error={recommendations.error} refreshError={recommendations.refreshError} reload={recommendations.reload} loadNext={recommendations.loadNext} /></div>
+        <div className="space-y-2 p-3"><PagedCollectionControls label="bunching requests" hasItems={!!diagnosisRequests.items.length} hasMore={diagnosisRequests.hasMore}
+          isLoadingMore={diagnosisRequests.isLoadingMore} error={diagnosisRequests.error} refreshError={diagnosisRequests.refreshError} reload={diagnosisRequests.reload} loadNext={diagnosisRequests.loadNext} />
+          <PagedCollectionControls label="recommendations" hasItems={!!recommendations.items.length} hasMore={recommendations.hasMore}
+            isLoadingMore={recommendations.isLoadingMore} error={recommendations.error} refreshError={recommendations.refreshError} reload={recommendations.reload} loadNext={recommendations.loadNext} /></div>
       </Card>
 
-      {detailRecommendation && detailIdentity && <RecommendationDetail key={detailIdentity} selected={detailRecommendation} identity={detailIdentity}
+      {!selectedRequest && detailRecommendation && detailIdentity && <RecommendationDetail key={detailIdentity} selected={detailRecommendation} identity={detailIdentity}
         scopeIdentity={scopeIdentity} token={token} isCurrent={selectionIsCurrent} validationFailed={editorUnavailable}
-        checkingCurrent={recommendations.isLoading}
         retryCurrentCheck={modeError ? onRefresh : recommendations.reload}
         onSaved={onSaved} onMessage={setMessage} onEditorChange={setEditingRecommendation} />}
-    </div> : null}
+      {selectedRequest && <DiagnosisRequestDetail request={selectedRequest}
+        detectedBusReferences={detectedBusReferences(selectedRequest, detectedAlerts)}
+        generating={triggeringRequestId === selectedRequest.requestId} suggesting={suggestingRequestId === selectedRequest.requestId}
+        token={token} onSuggestionPending={pending => setSuggestingRequestId(pending ? selectedRequest.requestId : null)}
+        onSaved={onSaved} onGenerate={() => { void generateDiagnosis(selectedRequest) }} />}
+    </div>
   </section>
 }
 
-function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurrent, validationFailed, checkingCurrent = false, retryCurrentCheck, onSaved, onMessage, onEditorChange }: {
+function detectedBusReferences(request: PlanningDiagnosisRequest, alerts: BunchingAlert[]) {
+  const alert = alerts.find(item => item.eventId === request.eventId)
+  const simulationReferences = [alert?.leadingVehicle, alert?.followingVehicle].flatMap(vehicle => {
+    const reference = vehicle?.registrationNumber || vehicle?.busId
+    return reference ? [reference] : []
+  })
+  const references = simulationReferences.length ? simulationReferences : request.affectedBusReferences
+  return references.filter((reference, index, values) => values.indexOf(reference) === index)
+}
+
+function DiagnosisRequestDetail({ request, detectedBusReferences, generating, suggesting, token, onSuggestionPending, onSaved, onGenerate }: {
+  request: PlanningDiagnosisRequest; detectedBusReferences: string[]; generating: boolean; suggesting: boolean; token: string
+  onSuggestionPending: (pending: boolean) => void; onSaved: () => void; onGenerate: () => void
+}) {
+  const retry = request.status.startsWith('FAILED')
+  const processing = request.status === 'PROCESSING'
+  const completed = request.status === 'COMPLETED'
+  const advisoryOnly = hasAdvisoryOnlyDiagnosis(request)
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [message, setMessage] = useState('')
+  const [instructions, setInstructions] = useState<ControllerBusInstruction[]>(() => detectedBusReferences.map(busReference => ({ busReference, instruction: '' })))
+  const [rationale, setRationale] = useState('')
+  const firstInstruction = useRef<HTMLTextAreaElement>(null)
+
+  function openEditor(open: boolean) {
+    if (!open) { if (!suggesting) setEditorOpen(false); return }
+    setInstructions(detectedBusReferences.map(busReference => ({ busReference, instruction: '' })))
+    setRationale(''); setMessage(''); setEditorOpen(true)
+  }
+
+  async function saveSuggestion() {
+    const prepared = instructions.map(item => ({ busReference: item.busReference.trim(), instruction: item.instruction.trim() }))
+    if (!prepared.length || prepared.some(item => !item.busReference || !item.instruction) || !rationale.trim()) {
+      setMessage('Enter an action for every detected bus and a controller rationale.')
+      return
+    }
+    onSuggestionPending(true); setMessage('')
+    const controller = new AbortController()
+    try {
+      await apiRequest<EarlyControllerSuggestion>(`/api/v1/planning/diagnoses/${encodeURIComponent(request.requestId)}/controller-suggestion`, token, controller.signal, {
+        method: 'POST', body: { instructions: prepared, controllerRationale: rationale.trim() },
+      })
+      setEditorOpen(false)
+      onSaved()
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) void signOut(error.message)
+      else setMessage(error instanceof ApiError && error.status === 409
+        ? 'A different controller suggestion has already been recorded for this incident.'
+        : 'Unable to save the controller suggestion. Check the actions and try again.')
+    } finally { onSuggestionPending(false) }
+  }
+
+  return <Card><CardContent className="space-y-5 px-5">
+    <div className="flex flex-wrap items-start justify-between gap-4 border-b pb-4">
+      <div><h2 className="text-lg font-semibold">Service {request.serviceId ?? 'unknown'} · Direction {request.directionId ?? 'unknown'}</h2>
+        <p className="mt-1 text-xs text-muted-foreground">Stop {request.stopCode ?? 'unknown'} · detected {timestamp(request.createdAt)}</p></div>
+      <span className="text-xs text-muted-foreground">{request.requestId}</span>
+    </div>
+    <div><h3 className="text-sm font-medium">Bunching detection</h3>
+      <p className="mt-1 text-sm text-muted-foreground">{completed
+        ? advisoryOnly
+          ? 'Diagnosis generated from live observations. AI mitigation is unavailable because validated operational context is not available; you can still record controller actions below.'
+          : 'Diagnosis generated. This incident remains open here while you review it or wait for the AI mitigation recommendation.'
+        : processing ? 'Diagnosis is being generated.' : retry ? 'The previous diagnosis attempt needs to be retried.' : 'Generate a diagnosis to receive an AI mitigation recommendation for this detected bunching event.'}</p>
+      {request.failureCode && <p className="mt-2 text-sm text-destructive">Last attempt: {request.failureCode}</p>}</div>
+    <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
+      <Dialog open={editorOpen} onOpenChange={openEditor}>
+        <DialogTrigger asChild><Button variant="outline" disabled={suggesting || !detectedBusReferences.length}>Suggest actions for detected buses</Button></DialogTrigger>
+        <DialogContent className="sm:max-w-3xl" onOpenAutoFocus={event => { event.preventDefault(); firstInstruction.current?.focus() }}>
+          <DialogHeader><DialogTitle>Suggest mitigation actions</DialogTitle><DialogDescription>Record an action for each bus detected in this bunching incident. This is available before the AI diagnosis and does not dispatch an instruction.</DialogDescription></DialogHeader>
+          {!detectedBusReferences.length && <p role="alert" className="text-sm text-destructive">Detected bus references are unavailable for this incident.</p>}
+          {message && <p role="alert" className="rounded-lg border p-3 text-sm">{message}</p>}
+          <form className="space-y-4" noValidate onSubmit={event => { event.preventDefault(); void saveSuggestion() }}>
+            {instructions.map((item, index) => <div key={item.busReference} className="grid gap-3 rounded-lg border p-4 sm:grid-cols-[minmax(10rem,0.35fr)_1fr]">
+              <div className="space-y-2"><Label htmlFor={`early-bus-reference-${index}`}>Detected bus</Label><Input id={`early-bus-reference-${index}`} value={item.busReference} readOnly /></div>
+              <div className="space-y-2"><Label htmlFor={`early-bus-instruction-${index}`}>Suggested action</Label><textarea ref={index === 0 ? firstInstruction : undefined} id={`early-bus-instruction-${index}`} maxLength={500} rows={2} value={item.instruction} onChange={event => setInstructions(values => values.map((value, itemIndex) => itemIndex === index ? { ...value, instruction: event.target.value } : value))} required className="min-h-16 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring" /></div>
+            </div>)}
+            <div className="space-y-2"><Label htmlFor="early-controller-rationale">Controller rationale</Label><textarea id="early-controller-rationale" maxLength={1000} rows={3} value={rationale} onChange={event => setRationale(event.target.value)} required className="w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring" /></div>
+            <DialogFooter><Button type="button" variant="outline" disabled={suggesting} onClick={() => setEditorOpen(false)}>Cancel</Button><Button type="submit" disabled={suggesting || !detectedBusReferences.length}>{suggesting ? 'Saving…' : 'Save controller suggestion'}</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      {!detectedBusReferences.length && <p className="self-center text-xs text-muted-foreground">Detected bus references are unavailable.</p>}
+      {!completed && <Button disabled={generating || processing || suggesting} onClick={onGenerate}>
+        {generating ? 'Generating diagnosis…' : retry ? 'Retry diagnosis' : 'Generate diagnosis'}
+      </Button>}
+    </div>
+  </CardContent></Card>
+}
+
+function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurrent, validationFailed, retryCurrentCheck, onSaved, onMessage, onEditorChange }: {
   selected: PendingRecommendation; identity: string; scopeIdentity: string; token: string
-  isCurrent: boolean; validationFailed: boolean; checkingCurrent?: boolean; retryCurrentCheck: () => void
+  isCurrent: boolean; validationFailed: boolean; retryCurrentCheck: () => void
   onSaved: () => void; onMessage: (message: string) => void; onEditorChange: Dispatch<SetStateAction<EditingRecommendation | null>>
 }) {
   const [pending, setPending] = useState(false)
@@ -449,30 +397,9 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
       } else setMessage(error instanceof ApiError && error.status === 403 ? 'You do not have permission to record this decision.' : 'Unable to save the decision. Check the instructions and try again.')
     } finally {
       submitting.current = false
-      setPending(false)
-      onEditorChange(value => value?.identity === identity ? { ...value, pending: false } : value)
       if (!controller.signal.aborted) {
-        onSaved()
-      }
-    }
-  }
-
-  async function approveAndSendToObu() {
-    if (submitting.current || !isCurrent) return
-    submitting.current = true; setPending(true); setMessage('')
-    const controller = new AbortController()
-    mutationRef.current?.abort(); mutationRef.current = controller
-    onEditorChange({ identity, scopeIdentity, recommendation: selected, pending: true })
-    try {
-      await apiRequest(`/api/v1/planning/recommendations/${encodeURIComponent(selected.recommendationId)}/obu-decisions`, token, controller.signal, { method: 'POST' })
-      if (!controller.signal.aborted) setMessage('Validated instruction issued to the assigned captain.')
-    } catch (error) {
-      if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : 'Unable to issue the instruction.')
-    } finally {
-      submitting.current = false
-      setPending(false)
-      onEditorChange(value => value?.identity === identity ? { ...value, pending: false } : value)
-      if (!controller.signal.aborted) {
+        setPending(false)
+        onEditorChange(value => value?.identity === identity ? { ...value, pending: false } : value)
         onSaved()
       }
     }
@@ -484,31 +411,32 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
           <div><h2 className="text-lg font-semibold">Service {selected.serviceId} · Direction {selected.directionId}</h2><p className="mt-1 text-xs text-muted-foreground">Stop {selected.monitoredStopCode} · detected {timestamp(selected.detectedAt)}</p></div>
           <span className="text-xs text-muted-foreground">{selected.recommendationId}</span>
         </div>
+        <div><h3 className="text-sm font-medium">Affected buses</h3><p className="mt-1 text-sm text-muted-foreground">{affectedBuses(selected).join(', ')}</p></div>
 
         <div className="flex flex-wrap justify-end gap-2 border-b pb-4">
+          <Button disabled={pending || !isCurrent} onClick={() => { void decide('APPROVED') }}>Approve recommendation</Button>
           <Dialog open={editorOpen} onOpenChange={changeEditorOpen}>
-            <DialogTrigger asChild><Button variant="outline" disabled={pending || !isCurrent}>Enter controller recommendation</Button></DialogTrigger>
+          <DialogTrigger asChild><Button variant="outline" disabled={pending}>Enter controller recommendation</Button></DialogTrigger>
             <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl"
               onOpenAutoFocus={event => { event.preventDefault(); firstBusReference.current?.focus() }}
               onEscapeKeyDown={event => { if (pending) event.preventDefault() }}
-              onInteractOutside={event => { if (pending) event.preventDefault() }}>
+              onPointerDownOutside={event => { event.preventDefault(); requestClose() }}
+              onInteractOutside={event => { event.preventDefault(); requestClose() }}>
               <DialogHeader>
                 <DialogTitle>Enter controller recommendation</DialogTitle>
-                <DialogDescription>Replace the AI proposal with instructions for each affected bus. Enter a rationale to save.</DialogDescription>
+                <DialogDescription>Replace the AI recommendation with instructions for the affected buses and a controller rationale.</DialogDescription>
               </DialogHeader>
               {!isCurrent && <div role="alert" className="rounded-lg border p-3 text-sm">
                 <p>{validationFailed ? 'Unable to confirm this recommendation is current. Your draft is preserved; decisions are paused.'
                   : 'Checking that this recommendation is still pending. Decisions are paused.'}</p>
-                {validationFailed && <Button type="button" variant="outline" className="mt-3" disabled={pending || checkingCurrent} onClick={retryCurrentCheck}>{checkingCurrent ? 'Checking…' : 'Retry recommendation check'}</Button>}
+                {validationFailed && <Button type="button" variant="outline" className="mt-3" onClick={retryCurrentCheck}>Retry recommendation check</Button>}
               </div>}
               {message && <p role="alert" className="rounded-lg border p-3 text-sm">{message}</p>}
               <form className="space-y-4" noValidate onSubmit={event => { event.preventDefault(); void decide('REJECTED') }}>
                 {instructions.map((item, index) => <div key={index} className="grid gap-3 rounded-lg border p-4 sm:grid-cols-[minmax(10rem,0.35fr)_1fr_auto]">
-                  <div className="space-y-2"><Label htmlFor={`bus-reference-${index}`}>Bus reference</Label><Input ref={index === 0 ? firstBusReference : undefined} id={`bus-reference-${index}`} maxLength={80} value={item.busReference} onChange={event => updateInstruction(index, 'busReference', event.target.value)} required /></div>
+                  <div className="space-y-2"><Label htmlFor={`bus-reference-${index}`}>Bus reference</Label><Input ref={index === 0 ? firstBusReference : undefined} id={`bus-reference-${index}`} value={item.busReference} onChange={event => updateInstruction(index, 'busReference', event.target.value)} required /></div>
                   <div className="space-y-2"><Label htmlFor={`bus-instruction-${index}`}>Instruction</Label><textarea id={`bus-instruction-${index}`} maxLength={500} rows={2} value={item.instruction} onChange={event => updateInstruction(index, 'instruction', event.target.value)} required className="min-h-16 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring" /></div>
-                  {instructions.length > 1 && <Button type="button" variant="ghost" className="self-end" disabled={pending} onClick={() => setInstructions(items => items.filter((_, itemIndex) => itemIndex !== index))}>Remove</Button>}
                 </div>)}
-                {instructions.length < 3 && <Button type="button" variant="outline" disabled={pending} onClick={() => setInstructions(items => [...items, { busReference: '', instruction: '' }])}>Add bus instruction</Button>}
                 <div className="space-y-2"><Label htmlFor="controller-rationale">Controller rationale</Label><textarea id="controller-rationale" maxLength={1000} rows={3} value={rationale} onChange={event => { setRationale(event.target.value); setMessage('') }} required className="w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring" /></div>
                 <DialogFooter>
                   <DialogClose asChild><Button type="button" variant="outline" disabled={pending}>Close</Button></DialogClose>
@@ -532,8 +460,6 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
-          <Button disabled={pending || !isCurrent} onClick={() => void decide('APPROVED')}>{pending ? 'Saving…' : 'Approve recommendation'}</Button>
-          {['HOLD', 'DWELL_ADJUSTMENT'].includes(selected.mitigationType) && <Button variant="outline" disabled={pending || !isCurrent} onClick={() => void approveAndSendToObu()}>Approve and send to bus</Button>}
         </div>
 
         <div className="grid gap-4 rounded-lg bg-muted/50 p-4 sm:grid-cols-[1fr_auto]">
@@ -552,7 +478,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
 
         <details className="border-t pt-4"><summary className="cursor-pointer text-sm font-medium">Evidence and limitations</summary>
           <div className="mt-4 space-y-4">
-            {!!selected.explanation.evidenceDetails?.length && <div><h3 className="text-sm font-medium">Supporting incident evidence</h3><EvidenceDetailList items={selected.explanation.evidenceDetails} /></div>}
+            {!!selected.explanation.evidenceDetails?.length && <div><h3 className="text-sm font-medium">Supporting incident evidence</h3><RecommendationEvidenceList items={selected.explanation.evidenceDetails} /></div>}
             <div className="grid gap-5 sm:grid-cols-2"><div><h3 className="text-sm font-medium">Trade-offs</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.tradeOffs.map((item, index) => <li key={index}>{item}</li>)}</ul></div><div><h3 className="text-sm font-medium">Limitations</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.limitations.map((item, index) => <li key={index}>{item}</li>)}</ul></div></div>
           </div>
         </details>
