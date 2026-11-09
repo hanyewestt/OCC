@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type EarlyControllerSuggestion, type PageResult, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RoutePositions } from '@/lib/api'
+import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type AiAuditRecord, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type EarlyControllerSuggestion, type PageResult, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RoutePositions } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { ControllerSidebar, controllerPages } from '@/components/ControllerSidebar'
 import { ControllerOverview, ControllerDisruptions, ControllerAudit } from '@/pages/ControllerViews'
@@ -212,6 +212,17 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       throw error
     }
   }, suggestion => suggestion.requestId, scopeVerified && pathname === '/controller/audit')
+  const aiAuditCollection = usePagedCollection<AiAuditRecord, PageResult<AiAuditRecord>>(token, async (page, signal) => {
+    const params = new URLSearchParams({ page: String(page), size: '100' })
+    try {
+      const result = await apiRequest<PageResult<AiAuditRecord>>(`/api/v1/planning/ai-audit-records?${params}`, token, signal)
+      if (!result) throw new Error('AI audit response was empty.')
+      return result
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401 && !signal.aborted) void signOut(error.message)
+      throw error
+    }
+  }, record => record.invocationId, pathname === '/controller/audit')
   const requestLiveData = useCallback(async (signal: AbortSignal) => {
     const generation = ++liveRequestGenerationRef.current
     return { generation, data: await loadLiveData(token, signal) }
@@ -298,7 +309,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     ? arrivalCollection.isLoading || !simulation && alertCollection.isLoading || recommendationCollection.isLoading
     : pathname.endsWith('/disruptions') ? !simulation && alertCollection.isLoading
       : pathname.endsWith('/planning') ? recommendationCollection.isLoading || diagnosisCollection.isLoading
-      : pathname.endsWith('/audit') && (decisionCollection.isLoading || suggestionCollection.isLoading)
+      : pathname.endsWith('/audit') && (decisionCollection.isLoading || suggestionCollection.isLoading || aiAuditCollection.isLoading)
   const { requestRefresh, isRefreshing } = usePageRefresh(controllerRefreshIntervalSeconds, async signal => {
     const modeChanged = await loadShell(signal)
     if (signal.aborted || modeChanged) return
@@ -306,7 +317,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     if (pathname === '/controller') requests.push(arrivalCollection.refresh(signal), recommendationCollection.refresh(signal))
     if (!simulation && (pathname === '/controller' || pathname.endsWith('/disruptions'))) requests.push(alertCollection.refresh(signal))
     if (pathname === '/controller/planning') requests.push(recommendationCollection.refresh(signal), diagnosisCollection.refresh(signal))
-    if (pathname === '/controller/audit') requests.push(decisionCollection.refresh(signal), suggestionCollection.refresh(signal))
+    if (pathname === '/controller/audit') requests.push(decisionCollection.refresh(signal), suggestionCollection.refresh(signal), aiAuditCollection.refresh(signal))
     if (pathname !== '/controller' && !pathname.endsWith('/planning')) requests.push(refreshAdvisories.current(signal))
     await Promise.allSettled(requests)
   }, loading || collectionsLoading || advisoryPending || planningPending || switching, requestKey)
@@ -314,7 +325,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const refreshTimes = [shellRefreshTime.key === requestKey ? shellRefreshTime.at : null,
     ...(pathname === '/controller' ? [arrivalCollection.lastSuccessAt, recommendationCollection.lastSuccessAt]
       : pathname.endsWith('/planning') ? [recommendationCollection.lastSuccessAt, diagnosisCollection.lastSuccessAt]
-      : pathname.endsWith('/audit') ? [decisionCollection.lastSuccessAt, suggestionCollection.lastSuccessAt] : []),
+      : pathname.endsWith('/audit') ? [decisionCollection.lastSuccessAt, suggestionCollection.lastSuccessAt, aiAuditCollection.lastSuccessAt] : []),
     ...(!simulation && (pathname === '/controller' || pathname.endsWith('/disruptions')) ? [alertCollection.lastSuccessAt] : []),
     ...(pathname !== '/controller' && !pathname.endsWith('/planning') ? [advisoryRefreshTime.key === refreshScope ? advisoryRefreshTime.at : null] : [])]
   const lastPageRefresh = refreshTimes.includes(null) ? null : [...refreshTimes].sort()[0] ?? null
@@ -460,7 +471,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           loading={loading} modeError={run.error} mode={modeValue} demoRunId={simulation?.id ?? null} token={token}
           detectedAlerts={simulation?.alerts ?? []}
           onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { void requestRefresh('mutation') }} />}
-        {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} suggestions={suggestionCollection} loading={loading} />}
+        {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} suggestions={suggestionCollection} aiAudits={aiAuditCollection} loading={loading} />}
         {pathname !== '/controller' && !pathname.endsWith('/planning') && loaded === requestKey && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
           registerRefresh={registerAdvisoryRefresh} onRefresh={() => { void requestRefresh('mutation') }} onPendingChange={setAdvisoryPending} onRefreshTimeChange={reportAdvisoryRefresh}
           view={pathname.endsWith('/disruptions') ? 'hazards' : pathname.endsWith('/notices') ? 'notices' : 'audit'} />}
