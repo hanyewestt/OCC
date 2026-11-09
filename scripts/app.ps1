@@ -72,7 +72,14 @@ try {
     }
 
     switch ($Action) {
-        'up' { Build-Frontend; Invoke-AppCompose -Arguments @('up', '-d', '--build', '--wait') }
+        'up' {
+            Build-Frontend
+            Invoke-AppCompose -Arguments @('build')
+            Invoke-AppCompose -Arguments @('build', 'db-setup')
+            Invoke-AppCompose -Arguments @('up', '-d', '--wait', 'postgres')
+            Invoke-AppCompose -Arguments @('run', '--rm', '--no-deps', 'db-setup')
+            Invoke-AppCompose -Arguments @('up', '-d', '--remove-orphans', '--wait')
+        }
         'start' { Invoke-AppCompose -Arguments @('start', '--wait') }
         'stop' { Invoke-AppCompose -Arguments @('--profile', 'tools', 'stop') }
         'reset' {
@@ -81,8 +88,10 @@ try {
                 if ($answer -cne 'RESET') { Write-Host 'Reset cancelled.'; exit 0 }
             }
             Build-Frontend
-            Invoke-AppCompose -Arguments @('--profile', 'tools', 'down', '--volumes', '--remove-orphans')
-            Invoke-AppCompose -Arguments @('--profile', 'tools', 'build', '--pull', '--no-cache')
+            Invoke-AppCompose -Arguments @('--profile', 'tools', '--profile', 'setup', 'down', '--volumes', '--remove-orphans')
+            Invoke-AppCompose -Arguments @('--profile', 'tools', '--profile', 'setup', 'build', '--pull', '--no-cache')
+            Invoke-AppCompose -Arguments @('up', '-d', '--wait', 'postgres')
+            Invoke-AppCompose -Arguments @('run', '--rm', '--no-deps', 'db-setup')
             Invoke-AppCompose -Arguments @('up', '-d', '--force-recreate', '--wait')
         }
         'clear' {
@@ -90,7 +99,7 @@ try {
                 $answer = Read-Host "Delete all containers, networks, volumes and referenced images for '$resolvedProject'? Type CLEAR"
                 if ($answer -cne 'CLEAR') { Write-Host 'Clear cancelled.'; exit 0 }
             }
-            Invoke-AppCompose -Arguments @('--profile', 'tools', 'down', '--volumes', '--remove-orphans', '--rmi', 'all')
+            Invoke-AppCompose -Arguments @('--profile', 'tools', '--profile', 'setup', 'down', '--volumes', '--remove-orphans', '--rmi', 'all')
         }
         'start-pgadmin' { Invoke-AppCompose -Arguments @('--profile', 'tools', 'up', '-d', '--wait', 'pgadmin') }
         'stop-pgadmin' { Invoke-AppCompose -Arguments @('--profile', 'tools', 'stop', 'pgadmin') }

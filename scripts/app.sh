@@ -53,7 +53,12 @@ build_frontend() {
 }
 
 case "$action" in
-    up) build_frontend; "${compose[@]}" up -d --build --wait ;;
+    up) build_frontend
+        "${compose[@]}" build
+        "${compose[@]}" build db-setup
+        "${compose[@]}" up -d --wait postgres
+        "${compose[@]}" run --rm --no-deps db-setup
+        "${compose[@]}" up -d --remove-orphans --wait ;;
     start) "${compose[@]}" start --wait ;;
     stop) "${compose[@]}" --profile tools stop ;;
     reset)
@@ -70,8 +75,10 @@ case "$action" in
             fi
         fi
         build_frontend
-        "${compose[@]}" --profile tools down --volumes --remove-orphans
-        "${compose[@]}" --profile tools build --pull --no-cache
+        "${compose[@]}" --profile tools --profile setup down --volumes --remove-orphans
+        "${compose[@]}" --profile tools --profile setup build --pull --no-cache
+        "${compose[@]}" up -d --wait postgres
+        "${compose[@]}" run --rm --no-deps db-setup
         "${compose[@]}" up -d --force-recreate --wait ;;
     clear)
         if [[ "$yes" == false ]]; then
@@ -85,7 +92,7 @@ case "$action" in
                 printf '%s\n' 'Clear cancelled.'; exit 0
             fi
         fi
-        "${compose[@]}" --profile tools down --volumes --remove-orphans --rmi all ;;
+        "${compose[@]}" --profile tools --profile setup down --volumes --remove-orphans --rmi all ;;
     start-pgadmin) "${compose[@]}" --profile tools up -d --wait pgadmin ;;
     stop-pgadmin) "${compose[@]}" --profile tools stop pgadmin ;;
 esac

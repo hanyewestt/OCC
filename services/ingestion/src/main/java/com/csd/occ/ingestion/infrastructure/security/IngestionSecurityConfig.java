@@ -33,7 +33,6 @@ public class IngestionSecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/actuator/prometheus").hasRole("ADMIN")
                         .requestMatchers("/actuator/**").denyAll()
                         .requestMatchers(HttpMethod.GET, "/internal/v1/ingestion/demo-fleet",
                                 "/internal/v1/ingestion/bus-routes/*", "/internal/v1/ingestion/stations/*")
