@@ -82,6 +82,7 @@ export type BunchingAlert = {
   fetchedAt?: string; rawObservationId?: string; pollRunId?: string
   stopName?: string | null; stopRoadName?: string | null; evidence?: string | null
   leadingVehicle?: SimulationVehicle | null; followingVehicle?: SimulationVehicle | null
+  affectedObservationIds?: string[]; affectedVehicles?: SimulationVehicle[]
 }
 export type SimulationVehicle = { registrationNumber: string; operator: string; vehicleType: string; captainCode: string; busId: string }
 export type DemoRun = {

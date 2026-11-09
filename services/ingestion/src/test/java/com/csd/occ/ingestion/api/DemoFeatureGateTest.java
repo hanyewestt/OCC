@@ -23,6 +23,7 @@ import org.springframework.test.web.servlet.MockMvc;
         LiveBunchingAlertController.class
 })
 class DemoFeatureGateTest {
+    @MockitoBean com.csd.occ.ingestion.domain.BusArrivalObservationRepository arrivals;
     @Autowired MockMvc mvc;
     @MockitoBean DemoModeService mode;
     @MockitoBean DemoRunService runs;
