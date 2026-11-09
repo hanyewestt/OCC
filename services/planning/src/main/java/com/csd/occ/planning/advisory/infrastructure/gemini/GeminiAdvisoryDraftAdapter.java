@@ -84,7 +84,7 @@ public class GeminiAdvisoryDraftAdapter implements AdvisoryDraftPort {
         if (response == null || response.getResult() == null) throw new IllegalStateException("Empty notice model response");
         String output = response.getResult().getOutput().getText();
         PassengerText text = json.readValue(output, PassengerText.class);
-        if (text.title() == null || text.title().isBlank() || text.title().length() > 160
+        if (text == null || text.title() == null || text.title().isBlank() || text.title().length() > 160
                 || text.message() == null || text.message().isBlank() || text.message().length() > 2000
                 || text.services() == null || text.locations() == null
                 || !fallback.services().containsAll(text.services()) || !fallback.locations().containsAll(text.locations())

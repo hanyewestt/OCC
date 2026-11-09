@@ -22,4 +22,18 @@ class DemoReplayScenarioTest {
         assertThrows(IllegalArgumentException.class,
                 () -> DemoReplayScenario.headway(DemoReplayScenario.STEP_COUNT, THRESHOLD));
     }
+
+    @Test
+    void normalScenarioKeepsTheConfiguredDispatchGapAtEveryStep() {
+        Duration gap = Duration.ofSeconds(120);
+        for (int step = 0; step < DemoReplayScenario.STEP_COUNT; step++)
+            assertEquals(gap, DemoReplayScenario.headway(step, gap, THRESHOLD, DemoScenario.NORMAL));
+    }
+
+    @Test
+    void bunchingScenarioKeepsTheInitialGapThenClosesItBelowTheThreshold() {
+        Duration gap = Duration.ofSeconds(120);
+        assertEquals(gap, DemoReplayScenario.headway(0, gap, THRESHOLD, DemoScenario.BUNCHING));
+        assertEquals(Duration.ofSeconds(45), DemoReplayScenario.headway(1, gap, THRESHOLD, DemoScenario.BUNCHING));
+    }
 }

@@ -33,6 +33,7 @@ import org.springframework.web.context.WebApplicationContext;
 @TestConstructor(autowireMode = TestConstructor.AutowireMode.ALL)
 class GatewayRoutesTest {
     private static final AtomicReference<String> lastBackendPath = new AtomicReference<>();
+    private static final AtomicReference<String> lastBackendAuthorization = new AtomicReference<>();
     private static HttpServer backend;
     private final TestRestTemplate rest = new TestRestTemplate();
     private final WebApplicationContext applicationContext;
@@ -88,17 +89,43 @@ class GatewayRoutesTest {
     }
 
     @Test
-    void captainsReachPacingOnIngestionButNoOtherOperationalApi() {
-        ResponseEntity<String> stream = get("/api/v1/pacing-snapshots/stream", "CAPTAIN");
+    void fleetWidePacingReachesIngestionOnlyForControllersAndAdmins() {
+        ResponseEntity<String> stream = get("/api/v1/pacing-snapshots/stream", "CONTROLLER");
         assertThat(stream.getStatusCode().value()).isEqualTo(200);
         assertThat(lastBackendPath.get()).isEqualTo("/api/v1/pacing-snapshots/stream");
-        assertThat(get("/api/v1/pacing-snapshots/latest", "CAPTAIN").getStatusCode().value()).isEqualTo(200);
+        assertThat(get("/api/v1/pacing-snapshots/latest", "ADMIN").getStatusCode().value()).isEqualTo(200);
 
+        // Captains read only their own bus's pacing through /api/v1/captain-routes/current.
         lastBackendPath.set(null);
+        for (String role : List.of("CAPTAIN", "UNASSIGNED", "DRIVER")) {
+            assertThat(get("/api/v1/pacing-snapshots/latest", role).getStatusCode().value()).isEqualTo(403);
+            assertThat(get("/api/v1/pacing-snapshots/stream", role).getStatusCode().value()).isEqualTo(403);
+        }
         assertThat(get("/api/v1/arrivals", "CAPTAIN").getStatusCode().value()).isEqualTo(403);
-        assertThat(get("/api/v1/pacing-snapshots/latest", "UNASSIGNED").getStatusCode().value()).isEqualTo(403);
-        assertThat(get("/api/v1/pacing-snapshots/latest", "DRIVER").getStatusCode().value()).isEqualTo(403);
         assertThat(lastBackendPath.get()).isNull();
+    }
+
+    @Test
+    void noticeLifecycleRoutesPreservePathsAndTokensAndEnforceManagementRoles() {
+        String id = "00000000-0000-4000-8000-000000000018";
+        assertThat(exchange("/api/v1/planning/public/notices", HttpMethod.GET, null).getStatusCode().value()).isEqualTo(200);
+        assertThat(lastBackendAuthorization.get()).isNull();
+        for (String action : List.of("publications", "withdrawals", "replacements")) {
+            String path = "/api/v1/planning/notices/" + id + "/" + action;
+            for (String role : List.of("CONTROLLER", "ADMIN")) {
+                assertThat(exchange(path, HttpMethod.POST, role).getStatusCode().value()).isEqualTo(200);
+                assertThat(lastBackendPath.get()).isEqualTo(path);
+                assertThat(lastBackendAuthorization.get()).isEqualTo("Bearer " + role.toLowerCase());
+            }
+            for (String role : List.of("CAPTAIN", "UNASSIGNED")) {
+                lastBackendPath.set(null);
+                assertThat(exchange(path, HttpMethod.POST, role).getStatusCode().value()).isEqualTo(403);
+                assertThat(lastBackendPath.get()).isNull();
+            }
+            lastBackendPath.set(null);
+            assertThat(exchange(path, HttpMethod.POST, null).getStatusCode().value()).isEqualTo(401);
+            assertThat(lastBackendPath.get()).isNull();
+        }
     }
 
     @Test
@@ -122,10 +149,14 @@ class GatewayRoutesTest {
     }
 
     private ResponseEntity<String> get(String path, String role) {
+        return exchange(path, HttpMethod.GET, role);
+    }
+
+    private ResponseEntity<String> exchange(String path, HttpMethod method, String role) {
         String url = "http://localhost:" + applicationContext.getEnvironment().getProperty("local.server.port") + path;
         HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(role.toLowerCase());
-        return rest.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+        if (role != null) headers.setBearerAuth(role.toLowerCase());
+        return rest.exchange(url, method, new HttpEntity<>(headers), String.class);
     }
 
     private static synchronized void startBackend() {
@@ -135,6 +166,7 @@ class GatewayRoutesTest {
             backend.createContext("/", exchange -> {
                 String path = exchange.getRequestURI().getPath();
                 lastBackendPath.set(path);
+                lastBackendAuthorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
                 byte[] response = path.getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "text/plain");
                 exchange.sendResponseHeaders(200, response.length);

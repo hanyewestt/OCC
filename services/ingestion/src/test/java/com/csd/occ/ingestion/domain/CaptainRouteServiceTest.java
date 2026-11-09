@@ -2,6 +2,7 @@ package com.csd.occ.ingestion.domain;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -27,8 +28,9 @@ class CaptainRouteServiceTest {
     private final BusArrivalObservationRepository arrivals = mock(BusArrivalObservationRepository.class);
     private final ReferenceTopologyQueryService topology = mock(ReferenceTopologyQueryService.class);
     private final PollingConfigurationPort polling = mock(PollingConfigurationPort.class);
+    private final PacingService pacing = mock(PacingService.class);
     private final CaptainRouteService service = new CaptainRouteService(runs, assignments, fleet, arrivals, topology,
-            polling, Clock.fixed(NOW, ZoneOffset.UTC));
+            polling, pacing, Clock.fixed(NOW, ZoneOffset.UTC));
     private final UUID runId = UUID.randomUUID();
     private DemoRun run;
     private DemoVehicleAssignment assignment;
@@ -40,6 +42,7 @@ class CaptainRouteServiceTest {
         assignment = new DemoVehicleAssignment(new DemoVehicleAssignmentId(runId, "demo-190-b"),
                 "190", 1, "SBS5898U", "SBST", "DD", "DEMO-CAPTAIN", CAPTAIN);
         when(polling.staleAfterSeconds()).thenReturn(180);
+        when(pacing.latest()).thenReturn(new PacingSnapshot(NOW, List.of()));
         when(runs.findActive()).thenReturn(Optional.of(run));
         when(assignments.findByIdDemoRunIdAndCaptainUserId(runId, CAPTAIN)).thenReturn(Optional.of(assignment));
         when(topology.busRoute("190")).thenReturn(Optional.of(new ReferenceTopologyPort.BusRoute("190", List.of(
@@ -66,6 +69,35 @@ class CaptainRouteServiceTest {
         assertThat(route.position().lastStopSequence()).contains(7);
         assertThat(route.position().nextStopSequence()).contains(8);
         assertThat(route.stops().get(2).arrivalAt()).contains(NOW.plusSeconds(180));
+    }
+
+    @Test
+    void includesOnlyThisBusesPacingFromTheLatestCycle() {
+        when(fleet.progress(assignment)).thenReturn(Optional.empty());
+        var gap = Optional.of(new PacingGap(Duration.ofSeconds(45), PacingState.TOO_CLOSE));
+        var mine = new PacingMetric("SBS5898U", "SIMULATION", "44251", "190", 1, Duration.ofSeconds(180), gap,
+                Optional.empty(), NOW.minusSeconds(5));
+        var otherBus = new PacingMetric("SBS8027Y", "SIMULATION", "44251", "190", 1, Duration.ofSeconds(180),
+                Optional.empty(), gap, NOW.minusSeconds(5));
+        // A live queue-position reference can never match a simulation registration.
+        var live = new PacingMetric("SBS5898U", "OBSERVATION_ONLY", "44251", "190", 1, Duration.ofSeconds(180),
+                Optional.empty(), Optional.empty(), NOW.minusSeconds(5));
+        when(pacing.latest()).thenReturn(new PacingSnapshot(NOW, List.of(otherBus, live, mine)));
+
+        var result = service.current(CAPTAIN.toString()).orElseThrow().pacing().orElseThrow();
+
+        assertThat(result.metric()).isSameAs(mine);
+        assertThat(result.calculatedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void pacingIsAbsentBeforeTheFirstCycleOrWhenThisBusIsNotPaced() {
+        when(fleet.progress(assignment)).thenReturn(Optional.empty());
+        when(pacing.latest()).thenThrow(new PacingUnavailableException());
+        assertThat(service.current(CAPTAIN.toString()).orElseThrow().pacing()).isEmpty();
+
+        doReturn(new PacingSnapshot(NOW, List.of())).when(pacing).latest();
+        assertThat(service.current(CAPTAIN.toString()).orElseThrow().pacing()).isEmpty();
     }
 
     @Test

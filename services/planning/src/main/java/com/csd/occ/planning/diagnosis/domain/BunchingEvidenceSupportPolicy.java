@@ -2,15 +2,18 @@ package com.csd.occ.planning.diagnosis.domain;
 
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 
 /** Validates cited evidence and reports associations without assigning confidence or causation. */
 public final class BunchingEvidenceSupportPolicy {
-    public static final String VERSION = "bunching-evidence-association-v2";
+    public static final String VERSION = "bunching-evidence-association-v3";
 
     public AssociatedEvidence associate(BunchingEventFacts event, RootCauseContext context, ModelOutput output,
                                         Duration lookback, double radiusKm) {
@@ -21,7 +24,7 @@ public final class BunchingEvidenceSupportPolicy {
         if (lookback == null || lookback.isZero() || lookback.isNegative()
                 || !Double.isFinite(radiusKm) || radiusKm <= 0)
             throw new IllegalArgumentException("Positive evidence lookback and radius are required");
-        if (!List.of("TRAFFIC_INCIDENT", "UNKNOWN").contains(output.causeCode()))
+        if (!List.of("TRAFFIC_INCIDENT", "PASSENGER_SURGE", "HEADWAY_DECAY", "UNKNOWN").contains(output.causeCode()))
             throw new IllegalArgumentException("Unsupported cause code");
 
         List<String> availableIds = java.util.stream.Stream.of(event.evidenceIds().stream(),
@@ -32,7 +35,16 @@ public final class BunchingEvidenceSupportPolicy {
             throw new IllegalArgumentException("Model cited evidence outside the supplied snapshot");
         if ("UNKNOWN".equals(output.causeCode()))
             return new AssociatedEvidence("UNKNOWN", null, event.evidenceIds(), List.of(),
-                    List.of("Available evidence does not identify a supported contributing incident."));
+                    List.of("Available evidence does not identify a supported contributing incident or operational cause."));
+
+        if ("PASSENGER_SURGE".equals(output.causeCode())) {
+            return associatePassengerSurge(event, context, output);
+        }
+
+        if ("HEADWAY_DECAY".equals(output.causeCode())) {
+            return associateHeadwayDecay(event, context, output);
+        }
+
         if (output.supportingEvidenceIds().isEmpty())
             throw new IllegalArgumentException("Traffic incident diagnosis requires supporting evidence");
 
@@ -93,6 +105,92 @@ public final class BunchingEvidenceSupportPolicy {
         List<String> ids = java.util.stream.Stream.concat(event.evidenceIds().stream(),
                 associated.stream().map(IncidentEvidence::evidenceId)).distinct().toList();
         return new AssociatedEvidence("TRAFFIC_INCIDENT", subtype, ids, facts, limitations);
+    }
+
+    private AssociatedEvidence associatePassengerSurge(BunchingEventFacts event, RootCauseContext context, ModelOutput output) {
+        if (output.supportingEvidenceIds().isEmpty())
+            throw new IllegalArgumentException("Passenger surge diagnosis requires supporting evidence");
+        List<ArrivalEvidence> cited = context.arrivals().stream()
+                .filter(arrival -> output.supportingEvidenceIds().contains(arrival.evidenceId()))
+                .sorted(Comparator.comparing(ArrivalEvidence::evidenceId)).toList();
+        if (cited.isEmpty()) throw new IllegalArgumentException("Passenger surge diagnosis must cite arrival evidence");
+        if (cited.stream().anyMatch(arrival -> !event.classification().equals(arrival.classification())
+                || !Objects.equals(event.demoRunId(), arrival.demoRunId())))
+            throw new IllegalArgumentException("Cited arrival provenance does not match event");
+
+        List<String> facts = new ArrayList<>();
+        List<String> limitations = new ArrayList<>();
+        List<ArrivalEvidence> scoped = context.arrivals().stream()
+                .filter(arr -> Objects.equals(event.classification(), arr.classification())
+                        && Objects.equals(event.demoRunId(), arr.demoRunId())
+                        && Objects.equals(event.serviceId(), arr.serviceId())
+                        && Objects.equals(event.directionId(), arr.directionId())
+                        && Objects.equals(event.monitoredStopCode(), arr.stopCode()))
+                .sorted(Comparator.comparing(ArrivalEvidence::estimatedArrivalAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(ArrivalEvidence::evidenceId)).toList();
+
+        ArrivalEvidence lead = scoped.size() >= 1 ? scoped.get(0) : null;
+        ArrivalEvidence follow = scoped.size() >= 2 ? scoped.get(1) : null;
+        if (lead != null && follow != null) {
+            facts.add(String.format(Locale.ROOT, "%s: leading bus passenger load %s; %s: trailing bus passenger load %s.",
+                    lead.evidenceId(), lead.loadCategory() != null ? lead.loadCategory() : "unknown",
+                    follow.evidenceId(), follow.loadCategory() != null ? follow.loadCategory() : "unknown"));
+        }
+        facts.add("Passenger boarding volume disparity between lead and following vehicles contributed to dwell delay at monitored stop "
+                + event.monitoredStopCode() + ".");
+        limitations.add("Passenger load categories (SEA/SDA/LSD) reflect telemetry tiers, not continuous passenger boardings.");
+
+        List<String> ids = java.util.stream.Stream.concat(event.evidenceIds().stream(),
+                cited.stream().map(ArrivalEvidence::evidenceId)).distinct().toList();
+        String subtype = output.causeSubtype() != null ? output.causeSubtype() : "BOARDING_IMBALANCE";
+        return new AssociatedEvidence("PASSENGER_SURGE", subtype, ids, facts, limitations);
+    }
+
+    private AssociatedEvidence associateHeadwayDecay(BunchingEventFacts event, RootCauseContext context, ModelOutput output) {
+        List<String> facts = new ArrayList<>();
+        List<String> limitations = new ArrayList<>();
+        Integer observed = event.observedHeadwaySeconds() == null || event.observedHeadwaySeconds().isEmpty()
+                ? null : event.observedHeadwaySeconds().getFirst();
+        int expected = event.expectedHeadwaySeconds();
+        facts.add(String.format(Locale.ROOT, "Headway compressed to %ss against scheduled %ss at stop %s.",
+                observed != null ? observed : "unknown", expected, event.monitoredStopCode()));
+        facts.add("No active external traffic incident was identified within the corridor proximity window.");
+
+        ZonedDateTime sgtTime = event.firstConfirmedAt() != null
+                ? event.firstConfirmedAt().atZone(ZoneId.of("Asia/Singapore")) : null;
+        int hour = sgtTime != null ? sgtTime.getHour() : 12;
+        boolean isPeak = (hour >= 7 && hour < 10) || (hour >= 17 && hour < 20);
+
+        List<ArrivalEvidence> arrivals = context.arrivals();
+        String leadVeh = arrivals.size() >= 1 ? arrivals.get(0).vehicleType() : null;
+        String followVeh = arrivals.size() >= 2 ? arrivals.get(1).vehicleType() : null;
+        boolean capacityMismatch = leadVeh != null && followVeh != null && !leadVeh.equalsIgnoreCase(followVeh);
+
+        String derivedSubtype;
+        if (output.causeSubtype() != null && Set.of("PEAK_CONGESTION", "TERMINAL_DISPATCH", "FLEET_CAPACITY_ASYMMETRY", "CUMULATIVE_DRIFT").contains(output.causeSubtype())) {
+            derivedSubtype = output.causeSubtype();
+        } else if (isPeak) {
+            derivedSubtype = "PEAK_CONGESTION";
+        } else if (capacityMismatch) {
+            derivedSubtype = "FLEET_CAPACITY_ASYMMETRY";
+        } else {
+            derivedSubtype = "CUMULATIVE_DRIFT";
+        }
+
+        if ("PEAK_CONGESTION".equals(derivedSubtype)) {
+            facts.add(String.format(Locale.ROOT, "Event confirmed during Singapore peak traffic window (%02d:00 SGT) with arterial corridor delay.", hour));
+        } else if ("FLEET_CAPACITY_ASYMMETRY".equals(derivedSubtype)) {
+            facts.add(String.format(Locale.ROOT, "Vehicle fleet capacity asymmetry observed between leading (%s) and trailing (%s) vehicles.", leadVeh, followVeh));
+        } else if ("TERMINAL_DISPATCH".equals(derivedSubtype)) {
+            facts.add("Irregularity occurred near route origin, indicating dispatch or berth spacing variation.");
+        } else {
+            facts.add("Cumulative off-peak spacing drift compounded along route corridor.");
+        }
+        limitations.add("Corridor traffic signal timings and micro-segment vehicle trajectories were not directly telemetered.");
+
+        List<String> ids = java.util.stream.Stream.concat(event.evidenceIds().stream(),
+                output.supportingEvidenceIds().stream()).distinct().toList();
+        return new AssociatedEvidence("HEADWAY_DECAY", derivedSubtype, ids, facts, limitations);
     }
 
     static java.util.Optional<ArrivalEvidence> busPositionFor(BunchingEventFacts event, RootCauseContext context) {

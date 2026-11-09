@@ -27,6 +27,8 @@ public class ModelInvocationRecord {
     @Id private UUID id;
     private String purpose;
     private UUID requestId;
+    private UUID recommendationId;
+    private UUID correlationId;
     private String provider;
     @Column(name = "model") private String configuredModel;
     @Column(name = "provider_response_id") private String responseId;
@@ -34,7 +36,7 @@ public class ModelInvocationRecord {
     @Column(name = "output_schema_version") private String schemaVersion;
     private String evidenceSnapshotHash;
     @Column(name = "attempt_type") private String invocationType;
-    private int attemptNumber;
+    private Integer attemptNumber;
     private Instant startedAt;
     private Instant completedAt;
     private long latencyMillis;
@@ -43,8 +45,29 @@ public class ModelInvocationRecord {
     private Integer totalTokens;
     @Column(name = "outcome") private String validationOutcome;
     private String failureCategory;
+    private Boolean deterministicFallbackUsed;
     // Legacy attempts and provider failures may have no returned response.
     @jakarta.persistence.Column(columnDefinition = "text") private String generatedResponse;
     // Legacy attempts predate self-contained input capture.
     @jakarta.persistence.Column(columnDefinition = "text") private String inputSnapshot;
+
+    public UUID id() { return id; }
+    public String purpose() { return purpose; }
+    public UUID requestId() { return requestId; }
+    public UUID recommendationId() { return recommendationId; }
+    public String provider() { return provider; }
+    public String configuredModel() { return configuredModel; }
+    public String promptVersion() { return promptVersion; }
+    public String schemaVersion() { return schemaVersion; }
+    public String invocationType() { return invocationType; }
+    public Integer attemptNumber() { return attemptNumber; }
+    public Instant startedAt() { return startedAt; }
+    public Instant completedAt() { return completedAt; }
+    public long latencyMillis() { return latencyMillis; }
+    public Integer promptTokens() { return promptTokens; }
+    public Integer completionTokens() { return completionTokens; }
+    public Integer totalTokens() { return totalTokens; }
+    public String validationOutcome() { return validationOutcome; }
+    public String failureCategory() { return failureCategory; }
+    public Boolean deterministicFallbackUsed() { return deterministicFallbackUsed; }
 }

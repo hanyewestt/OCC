@@ -57,6 +57,22 @@ class DemoRunServiceTest {
     }
 
     @Test
+    void startingWithAConfigurationPassesThatExactFleetToReplay() {
+        UUID runId = UUID.randomUUID();
+        var fleet = new DemoRunConfiguration("972", 1, 3, java.time.Duration.ofSeconds(120), DemoScenario.NORMAL);
+        DemoRun run = new DemoRun(runId, Instant.parse("2026-09-26T00:00:00Z"), "route190-bunching-v1", 190, fleet);
+        when(runs.findActive()).thenReturn(Optional.empty());
+        when(replay.start(fleet)).thenReturn(run);
+        when(bunching.alerts(runId)).thenReturn(List.of());
+
+        DemoRunDetails details = service.start(fleet);
+
+        assertEquals(fleet, details.configuration());
+        verify(replay).start(fleet);
+        verify(bunching).selectDemo(runId);
+    }
+
+    @Test
     void disablingRuntimeModeSelectsLiveAndClosesActiveReplay() {
         UUID runId = UUID.randomUUID();
         DemoRun run = new DemoRun(runId, Instant.parse("2026-09-26T00:00:00Z"), "route190-bunching-v1", 190);

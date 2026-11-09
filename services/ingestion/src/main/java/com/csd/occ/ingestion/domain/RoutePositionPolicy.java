@@ -577,7 +577,17 @@ public final class RoutePositionPolicy {
         for (int slot = 0; slot < multiplicity; slot++) {
             List<RoutePositionReading> evidence = new ArrayList<>();
             for (List<RoutePositionReading> snapshot : readingsBySnapshot.values()) {
-                if (slot < snapshot.size()) evidence.add(snapshot.get(slot));
+                if (snapshot.size() == 1 && multiplicity > 1) {
+                    /*
+                     * A single provider row can be a merged measurement for
+                     * several buses that were previously observed together.
+                     * Share it across the compatible hypotheses instead of
+                     * assigning it to slot one and fragmenting the others.
+                     */
+                    evidence.add(snapshot.getFirst());
+                } else if (slot < snapshot.size()) {
+                    evidence.add(snapshot.get(slot));
+                }
             }
             buses.add(List.copyOf(evidence));
         }

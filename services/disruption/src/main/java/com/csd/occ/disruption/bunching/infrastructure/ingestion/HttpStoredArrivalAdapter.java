@@ -83,10 +83,14 @@ public class HttpStoredArrivalAdapter implements StoredArrivalPort, com.csd.occ.
             throw new com.csd.occ.disruption.bunching.domain.PendingArrivalException();
         Optional<UUID> reference = source.arrivals().stream().map(Arrival::referenceVersionId).distinct().reduce(
                 (first, second) -> { throw new com.csd.occ.disruption.bunching.domain.InvalidArrivalException("MIXED_REFERENCE_VERSIONS"); });
-        return new ArrivalSnapshot(source.rawObservationId(), source.pollRunId(), reference, source.fetchedAt(),
+        return new ArrivalSnapshot(source.rawObservationId(), source.pollRunId(),
+                Optional.ofNullable(source.sourcePollCycleId()), reference, source.fetchedAt(),
                 source.arrivals().stream().map(arrival -> new ArrivalSnapshot.Arrival(arrival.observationId(),
                         arrival.serviceId(), arrival.stopCode(), Optional.ofNullable(arrival.directionId()),
-                        arrival.visitOrder(), Optional.ofNullable(arrival.estimatedArrivalAt()))).toList(),
+                        arrival.visitOrder(), Optional.ofNullable(arrival.estimatedArrivalAt()), arrival.operator(),
+                        arrival.visitNumber(), arrival.originCode(), arrival.destinationCode(),
+                        arrival.latitude(), arrival.longitude(),
+                        arrival.routeStopSequence())).toList(),
                 feed.classification(), feed.demoRunId());
     }
 
@@ -189,10 +193,13 @@ public class HttpStoredArrivalAdapter implements StoredArrivalPort, com.csd.occ.
     private record FeedPage(List<Snapshot> items, long nextSequence) {
         private FeedPage { items = List.copyOf(items); }
     }
-    private record Snapshot(long sequence, UUID rawObservationId, UUID pollRunId, String sourceKey, Instant fetchedAt,
-                            String normalizationState, List<Arrival> arrivals) {
+    private record Snapshot(long sequence, UUID rawObservationId, UUID pollRunId, UUID sourcePollCycleId,
+                            String sourceKey, Instant fetchedAt, String normalizationState, List<Arrival> arrivals) {
         private Snapshot { arrivals = List.copyOf(arrivals); }
     }
     private record Arrival(UUID observationId, UUID referenceVersionId, String stopCode, String serviceId,
-                           Integer directionId, int visitOrder, Instant estimatedArrivalAt) {}
+                           String operator, Integer directionId, int visitOrder, Integer visitNumber,
+                           Instant estimatedArrivalAt, String originCode, String destinationCode,
+                           java.math.BigDecimal latitude, java.math.BigDecimal longitude,
+                           Integer routeStopSequence) {}
 }
