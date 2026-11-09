@@ -129,7 +129,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const [switching, setSwitching] = useState(false)
   const [modeError, setModeError] = useState('')
   const [simulationDialogOpen, setSimulationDialogOpen] = useState(false)
-  const [simulationConfig, setSimulationConfig] = useState({ serviceId: '190', directionId: 1, busCount: 3, dispatchGapSeconds: 90, busGapsSeconds: [90, 90], monitoredStopCode: '44251', scenario: 'BUNCHING' as 'NORMAL' | 'BUNCHING' })
+  const [simulationConfig, setSimulationConfig] = useState({ serviceId: '190', directionId: 1, busCount: 3, dispatchGapSeconds: 90, busGapsSeconds: [90, 90], monitoredStopCode: '44251', scenario: 'BUNCHING' as 'NORMAL' | 'BUNCHING', captainUserIds: ['', '', ''] })
   const modeRequestRef = useRef<AbortController | null>(null)
   const liveRequestGenerationRef = useRef(0)
   const switchingRef = useRef(false)
@@ -137,6 +137,10 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const loading = loaded !== requestKey || switching
   const scopeVerified = loaded === requestKey && !run.error
   const simulation = run.data && run.data.status !== 'CLOSED' ? run.data : null
+  const captainIds = simulationConfig.captainUserIds.slice(0, simulationConfig.busCount)
+  const captainIdFormat = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  const captainAssignmentInvalid = captainIds.some(Boolean) && (captainIds.some(id => !captainIdFormat.test(id.trim()))
+    || new Set(captainIds.map(id => id.trim().toLowerCase())).size !== captainIds.length)
   const simulationDirections = routeStops.data?.filter(route => route.serviceId === simulationConfig.serviceId) ?? []
   const simulationStops = simulationDirections.find(route => route.directionId === simulationConfig.directionId)?.stops ?? []
   const refreshScope = `${requestKey}:${simulation?.id ?? 'LIVE'}`
@@ -349,7 +353,10 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     modeRequestRef.current = controller
     const path = simulation ? `/api/v1/demo-runs/${encodeURIComponent(simulation.id)}/close` : '/api/v1/demo-runs'
     try {
-      await apiRequest<DemoRun>(path, token, controller.signal, { method: 'POST', ...(configuration ? { body: configuration } : {}) })
+      await apiRequest<DemoRun>(path, token, controller.signal, { method: 'POST', ...(configuration ? { body: {
+        ...configuration,
+        ...(configuration.captainUserIds.every(id => id.trim()) ? { captainUserIds: configuration.captainUserIds.map(id => id.trim()) } : { captainUserIds: undefined }),
+      } } : {}) })
     } catch (error) {
       if (controller.signal.aborted) return
       if (error instanceof ApiError && error.status === 401) void signOut(error.message)
@@ -387,7 +394,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         </div>
       </header>
       <Dialog open={simulationDialogOpen} onOpenChange={open => { if (!switching) setSimulationDialogOpen(open) }}>
-        <DialogContent><DialogHeader><DialogTitle>Configure simulation</DialogTitle><DialogDescription>Choose one fictional route and fleet. The same buses send updated positions throughout the run.</DialogDescription></DialogHeader>
+        <DialogContent className="max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>Configure simulation</DialogTitle><DialogDescription>Choose one fictional route and fleet. The same buses send updated positions throughout the run.</DialogDescription></DialogHeader>
           <div className="grid gap-4">
             <label className="grid gap-1.5 text-sm font-medium">Route
               <select value={simulationConfig.serviceId} onChange={event => setSimulationConfig(value => {
@@ -409,9 +416,17 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
             <label className="grid gap-1.5 text-sm font-medium">Buses in this injection
               <Input type="number" min="2" max="3" value={simulationConfig.busCount} onChange={event => setSimulationConfig(value => {
                 const busCount = Math.max(2, Math.min(3, Number(event.target.value) || 2))
-                return { ...value, busCount, busGapsSeconds: Array.from({ length: busCount - 1 }, (_, index) => value.busGapsSeconds[index] ?? value.dispatchGapSeconds) }
+                return { ...value, busCount, busGapsSeconds: Array.from({ length: busCount - 1 }, (_, index) => value.busGapsSeconds[index] ?? value.dispatchGapSeconds), captainUserIds: Array.from({ length: busCount }, (_, index) => value.captainUserIds[index] ?? '') }
               })} />
             </label>
+            <fieldset className="grid gap-2"><legend className="text-sm font-medium">Captain account for each bus</legend>
+              <p className="text-xs text-muted-foreground">Enter each captain’s Supabase Auth UUID. Assign all buses or leave all blank.</p>
+              {simulationConfig.captainUserIds.slice(0, simulationConfig.busCount).map((userId, index) => <label key={index} className="grid gap-1.5 text-sm">Bus {index + 1} captain user ID
+                <Input value={userId} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" aria-invalid={!!userId && !captainIdFormat.test(userId.trim())}
+                  onChange={event => setSimulationConfig(value => ({ ...value, captainUserIds: value.captainUserIds.map((id, itemIndex) => itemIndex === index ? event.target.value : id) }))} />
+              </label>)}
+              {captainAssignmentInvalid && <p role="alert" className="text-xs text-destructive">Enter a valid, unique UUID for every bus, or clear all captain IDs.</p>}
+            </fieldset>
             <label className="grid gap-1.5 text-sm font-medium">Injection stop
               {simulationStops.length ? <select value={simulationConfig.monitoredStopCode} onChange={event => setSimulationConfig(value => ({ ...value, monitoredStopCode: event.target.value }))} className="h-10 rounded-md border bg-background px-3">
                 {simulationStops.map(stop => <option key={stop.stopCode} value={stop.stopCode}>{stop.description || stop.stopCode} ({stop.stopCode})</option>)}
@@ -436,7 +451,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
               })} />{label}</label>)}
             </fieldset>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setSimulationDialogOpen(false)}>Cancel</Button><Button onClick={startSimulation}>Start simulation</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setSimulationDialogOpen(false)}>Cancel</Button><Button disabled={captainAssignmentInvalid} onClick={startSimulation}>Start simulation</Button></DialogFooter>
         </DialogContent>
       </Dialog>
       <div className="mx-auto max-w-7xl space-y-7 p-5 md:p-8">

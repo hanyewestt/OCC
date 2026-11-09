@@ -37,7 +37,13 @@ public class IssuedInstruction {
     public IssuedInstruction(UUID proposalId, UUID replacedInstructionId, UUID disruptionId, UUID runId, AdvisoryContextPort.Bus bus,
             AdvisoryCandidate chosen, String message, String hazardClassification, String controller, Instant now,
             java.time.Duration acknowledgementWindow) {
-        id = proposalId; this.proposalId = proposalId; this.disruptionId = disruptionId; demoRunId = runId;
+        this(proposalId, proposalId, replacedInstructionId, disruptionId, runId, bus, chosen, message,
+                hazardClassification, controller, now, acknowledgementWindow);
+    }
+    public IssuedInstruction(UUID id, UUID proposalId, UUID replacedInstructionId, UUID disruptionId, UUID runId,
+            AdvisoryContextPort.Bus bus, AdvisoryCandidate chosen, String message, String hazardClassification,
+            String controller, Instant now, java.time.Duration acknowledgementWindow) {
+        this.id = id; this.proposalId = proposalId; this.disruptionId = disruptionId; demoRunId = runId;
         this.replacedInstructionId = replacedInstructionId;
         busId = bus.busId(); captainUserId = java.util.Objects.requireNonNull(bus.captainUserId()); type = chosen.type();
         parameters = chosen.parameters(); this.message = message; this.hazardClassification = hazardClassification;

@@ -47,11 +47,18 @@ function isSgtToday(isoString: string, currentMs = 0): boolean {
   return sgtDateStr === sgtNowStr
 }
 
-function initialInstructions(recommendation: PendingRecommendation): ControllerBusInstruction[] {
-  return affectedBuses(recommendation).slice(0, 3).map((busReference, index) => ({
-    busReference,
-    instruction: index === 0 ? suggestedInstruction(recommendation) : '',
-  }))
+type ControllerReplacement = { action: 'HOLD' | 'DWELL_ADJUSTMENT'; adjustmentSeconds: number }
+type BusReplacement = ControllerReplacement & { busReference: string }
+
+function initialInstruction(recommendation: PendingRecommendation): ControllerReplacement {
+  const action = recommendation.mitigationType === 'DWELL_ADJUSTMENT' ? 'DWELL_ADJUSTMENT' : 'HOLD'
+  return { action, adjustmentSeconds: recommendation.adjustmentSeconds }
+}
+
+function initialBusInstructions(recommendation: PendingRecommendation): BusReplacement[] {
+  const references = recommendation.affectedBusReferences.length
+    ? recommendation.affectedBusReferences : [recommendation.targetBusReference]
+  return references.map(busReference => ({ busReference, ...initialInstruction(recommendation) }))
 }
 
 function RecommendationEvidenceList({ items }: { items: DiagnosisEvidenceDetail[] }) {
@@ -868,18 +875,18 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
   const [message, setMessage] = useState('')
   const [editorOpen, setEditorOpen] = useState(false)
   const [discardOpen, setDiscardOpen] = useState(false)
-  const [instructions, setInstructions] = useState<ControllerBusInstruction[]>(() => initialInstructions(selected))
+  const [instructions, setInstructions] = useState<BusReplacement[]>(() => initialBusInstructions(selected))
   const [rationale, setRationale] = useState('')
-  const [openingDraft, setOpeningDraft] = useState<{ instructions: ControllerBusInstruction[]; rationale: string } | null>(null)
+  const [openingDraft, setOpeningDraft] = useState<{ instructions: BusReplacement[]; rationale: string } | null>(null)
   const submitting = useRef(false)
   const mutationRef = useRef<AbortController | null>(null)
-  const firstBusReference = useRef<HTMLInputElement>(null)
+  const firstAction = useRef<HTMLSelectElement>(null)
   const dirty = openingDraft !== null && (rationale !== openingDraft.rationale || JSON.stringify(instructions) !== JSON.stringify(openingDraft.instructions))
 
   useEffect(() => () => mutationRef.current?.abort(), [])
 
   function openEditor() {
-    const nextInstructions = initialInstructions(selected)
+    const nextInstructions = initialBusInstructions(selected)
     setInstructions(nextInstructions)
     setRationale('')
     setOpeningDraft({ instructions: nextInstructions, rationale: '' })
@@ -893,7 +900,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
     if (pending && !force) return
     setEditorOpen(false)
     setDiscardOpen(false)
-    setInstructions(initialInstructions(selected))
+    setInstructions(initialBusInstructions(selected))
     setRationale('')
     setOpeningDraft(null)
     setMessage('')
@@ -911,18 +918,16 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
     else requestClose()
   }
 
-  function updateInstruction(index: number, field: keyof ControllerBusInstruction, value: string) {
+  function updateInstruction(index: number, changes: Partial<ControllerReplacement>) {
     setMessage('')
-    setInstructions(items => items.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: value } : item))
+    setInstructions(items => items.map((item, itemIndex) => itemIndex === index ? { ...item, ...changes } : item))
   }
 
   async function decide(action: Decision['action']) {
     if (submitting.current || !isCurrent) return
-    const overrideInstructions = action === 'REJECTED' ? instructions.map(item => ({
-      busReference: item.busReference.trim(), instruction: item.instruction.trim(),
-    })) : []
-    if (action === 'REJECTED' && (!rationale.trim() || overrideInstructions.some(item => !item.busReference || !item.instruction))) {
-      setMessage('Enter a bus reference and instruction for every affected bus, plus a controller rationale.')
+    if (action === 'REJECTED' && (!rationale.trim() || !instructions.length || instructions.some(item =>
+        !Number.isInteger(item.adjustmentSeconds) || item.adjustmentSeconds < 1 || item.adjustmentSeconds > 120))) {
+      setMessage('Enter a 1–120 second HOLD or DWELL action for every affected bus and a controller rationale.')
       return
     }
     submitting.current = true; setPending(true); setMessage('')
@@ -934,12 +939,16 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
       await apiRequest<Decision>(`/api/v1/planning/recommendations/${encodeURIComponent(selected.recommendationId)}/decision`, token, controller.signal, {
         method: 'POST', body: {
           action,
-          overrideInstructions,
+          replacementAction: null,
+          adjustmentSeconds: null,
+          replacementInstructions: action === 'REJECTED' ? instructions.map(item => ({
+            busReference: item.busReference, action: item.action, adjustmentSeconds: item.adjustmentSeconds,
+          })) : null,
           controllerRationale: action === 'REJECTED' ? rationale.trim() : null,
         },
       })
       if (!controller.signal.aborted) {
-        onMessage(action === 'APPROVED' ? 'Recommendation approved.' : 'AI recommendation replaced with controller instructions.')
+        onMessage(action === 'APPROVED' ? 'Recommendation approved and instruction issued to the assigned captain.' : 'Replacement instructions issued to the affected captains.')
         closeEditor(true)
       }
     } catch (error) {
@@ -972,13 +981,13 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
           <Dialog open={editorOpen} onOpenChange={changeEditorOpen}>
           <DialogTrigger asChild><Button variant="outline" disabled={pending}>Enter controller recommendation</Button></DialogTrigger>
             <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl"
-              onOpenAutoFocus={event => { event.preventDefault(); firstBusReference.current?.focus() }}
+              onOpenAutoFocus={event => { event.preventDefault(); firstAction.current?.focus() }}
               onEscapeKeyDown={event => { if (pending) event.preventDefault() }}
               onPointerDownOutside={event => { event.preventDefault(); requestClose() }}
               onInteractOutside={event => { event.preventDefault(); requestClose() }}>
               <DialogHeader>
                 <DialogTitle>Enter controller recommendation</DialogTitle>
-                <DialogDescription>Replace the AI recommendation with instructions for the affected buses and a controller rationale.</DialogDescription>
+                <DialogDescription>Replace the AI recommendation with one HOLD or DWELL action for each affected bus. Each action can be adjusted by up to 120 seconds.</DialogDescription>
               </DialogHeader>
               {!isCurrent && <div role="alert" className="rounded-lg border p-3 text-sm">
                 <p>{validationFailed ? 'Unable to confirm this recommendation is current. Your draft is preserved; decisions are paused.'
@@ -987,9 +996,9 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
               </div>}
               {message && <p role="alert" className="rounded-lg border p-3 text-sm">{message}</p>}
               <form className="space-y-4" noValidate onSubmit={event => { event.preventDefault(); void decide('REJECTED') }}>
-                {instructions.map((item, index) => <div key={index} className="grid gap-3 rounded-lg border p-4 sm:grid-cols-[minmax(10rem,0.35fr)_1fr_auto]">
-                  <div className="space-y-2"><Label htmlFor={`bus-reference-${index}`}>Bus reference</Label><Input ref={index === 0 ? firstBusReference : undefined} id={`bus-reference-${index}`} value={item.busReference} onChange={event => updateInstruction(index, 'busReference', event.target.value)} required /></div>
-                  <div className="space-y-2"><Label htmlFor={`bus-instruction-${index}`}>Instruction</Label><textarea id={`bus-instruction-${index}`} maxLength={500} rows={2} value={item.instruction} onChange={event => updateInstruction(index, 'instruction', event.target.value)} required className="min-h-16 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring" /></div>
+                {instructions.map((item, index) => <div key={item.busReference} className="grid gap-3 rounded-lg border p-4 sm:grid-cols-[1fr_8rem]">
+                  <div className="space-y-2"><Label htmlFor={`bus-action-${index}`}>Action for {item.busReference}</Label><select ref={index === 0 ? firstAction : undefined} id={`bus-action-${index}`} value={item.action} onChange={event => updateInstruction(index, { action: event.target.value as ControllerReplacement['action'] })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"><option value="HOLD">Hold at next stop</option><option value="DWELL_ADJUSTMENT">Extend dwell at stop {selected.controlStopCode}</option></select></div>
+                  <div className="space-y-2"><Label htmlFor={`bus-adjustment-${index}`}>Seconds</Label><Input id={`bus-adjustment-${index}`} type="number" min="1" max="120" step="1" value={item.adjustmentSeconds} onChange={event => updateInstruction(index, { adjustmentSeconds: Number(event.target.value) })} required /></div>
                 </div>)}
                 <div className="space-y-2"><Label htmlFor="controller-rationale">Controller rationale</Label><textarea id="controller-rationale" maxLength={1000} rows={3} value={rationale} onChange={event => { setRationale(event.target.value); setMessage('') }} required className="w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring" /></div>
                 <DialogFooter>
@@ -1002,7 +1011,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
           </Dialog>
           <AlertDialog open={discardOpen} onOpenChange={open => { if (!open) setDiscardOpen(false) }}>
             <AlertDialogContent onCloseAutoFocus={event => {
-              if (editorOpen) { event.preventDefault(); firstBusReference.current?.focus() }
+                  if (editorOpen) { event.preventDefault(); firstAction.current?.focus() }
             }}>
               <AlertDialogHeader>
                 <AlertDialogTitle>Discard unsaved changes?</AlertDialogTitle>
