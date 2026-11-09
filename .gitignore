@@ -62,3 +62,10 @@ frontend/coverage/
 test-results/
 
 .superpowers
+
+# Agent skills installed locally
+.agents/
+.claude/skills/
+agent/skills/
+skills-lock.json
+.commandcode
