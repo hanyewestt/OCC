@@ -978,7 +978,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
           replacementInstructions: action === 'REJECTED' ? activeInstructions.map(item => ({
             busReference: item.busReference, action: item.action, adjustmentSeconds: item.adjustmentSeconds,
           })) : null,
-          controllerRationale: action === 'REJECTED' ? rationale.trim() : null,
+          controllerRationale: action === 'REJECTED' ? rationale.trim() || null : null,
         },
       })
       if (!controller.signal.aborted) {
