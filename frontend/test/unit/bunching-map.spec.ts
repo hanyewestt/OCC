@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import type { RouteDirection } from '../../src/lib/api'
 import {
+  areBusesConfirmedBunched,
   clusterProjectedBuses,
   computeBusLatLng,
   computeCorridorFit,
@@ -192,6 +193,70 @@ test('clusterProjectedBuses does not group buses from different services', () =>
 
   expect(clusters).toHaveLength(2)
   expect(clusters.map(c => c.serviceId)).toEqual(['972', '190'])
+})
+
+test('clusterProjectedBuses does not merge nearby buses if they are not confirmed bunched by an alert', () => {
+  // Buses 4, 7, 8 on Service 190 are close to each other at a terminal, but have no bunching alerts
+  const buses = [
+    { serviceId: '190', directionId: 1, order: 4, x: 100, y: 100, label: 'Bus 4', latitude: 1.28, longitude: 103.85 },
+    { serviceId: '190', directionId: 1, order: 7, x: 104, y: 104, label: 'Bus 7', latitude: 1.281, longitude: 103.851 },
+    { serviceId: '190', directionId: 1, order: 8, x: 108, y: 106, label: 'Bus 8', latitude: 1.282, longitude: 103.852 },
+  ]
+  const clusters = clusterProjectedBuses(buses, new Set(), [], 28)
+
+  // Must NOT merge into [ 4 · 7 · 8 ] because no bunching alert exists between them
+  expect(clusters).toHaveLength(3)
+  expect(clusters.every(c => c.buses.length === 1)).toBe(true)
+  expect(clusters.every(c => !c.hasIncident)).toBe(true)
+  expect(clusters.map(c => c.text)).toEqual(['4', '7', '8'])
+})
+
+test('clusterProjectedBuses does not merge nearby buses traveling in opposite directions', () => {
+  // Bus 2 Direction 1 and Bus 2 Direction 2 near Choa Chu Kang interchange
+  const buses = [
+    { serviceId: '190', directionId: 1, order: 2, x: 100, y: 100, label: 'Bus 2 Dir 1', latitude: 1.38, longitude: 103.75 },
+    { serviceId: '190', directionId: 2, order: 2, x: 105, y: 105, label: 'Bus 2 Dir 2', latitude: 1.381, longitude: 103.751 },
+  ]
+  const clusters = clusterProjectedBuses(buses, new Set(), [], 28)
+
+  // Must NOT merge into [ 2 · 2 ] because directionId differs
+  expect(clusters).toHaveLength(2)
+  expect(clusters.every(c => c.buses.length === 1)).toBe(true)
+})
+
+test('areBusesConfirmedBunched validates bunching link between candidate buses', () => {
+  const b1 = { serviceId: '972', directionId: 1, order: 2, x: 0, y: 0, label: '2', latitude: 1, longitude: 103 }
+  const b2 = { serviceId: '972', directionId: 1, order: 3, x: 0, y: 0, label: '3', latitude: 1, longitude: 103 }
+  const b3 = { serviceId: '972', directionId: 1, order: 4, x: 0, y: 0, label: '4', latitude: 1, longitude: 103 }
+
+  const incidents = [
+    {
+      id: 'inc-1',
+      serviceId: '972',
+      directionId: 1,
+      routeKey: '972-1',
+      alerts: [],
+      stopCodes: ['44101'],
+      stopNames: ['Senja'],
+      firstDetectedAt: '2026-11-09T10:00:00Z',
+      latestDetectedAt: '2026-11-09T10:05:00Z',
+      gapSeconds: 45,
+      ageSeconds: 30,
+      historical: false,
+      latestStopIndex: 5,
+      stripLink: { frontOrder: 2, followingOrder: 3, stopCode: '44101', match: 'evidence' as const },
+    },
+  ]
+
+  // Buses 2 and 3 match active incident
+  expect(areBusesConfirmedBunched(b1, b2, incidents, new Set())).toBe(true)
+  expect(areBusesConfirmedBunched(b2, b1, incidents, new Set())).toBe(true)
+
+  // Buses 3 and 4 do NOT match active incident
+  expect(areBusesConfirmedBunched(b2, b3, incidents, new Set())).toBe(false)
+
+  // Selected buses match explicitly
+  expect(areBusesConfirmedBunched(b2, b3, [], new Set(['972-3', '972-4']))).toBe(true)
 })
 
 test('filterMapBuses returns all fleet buses when viewing a single corridor', () => {
