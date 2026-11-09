@@ -138,6 +138,7 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
 
   async function generateDiagnosis(request: PlanningDiagnosisRequest) {
     if (triggeringRequestId) return
+    setSearchParams({ request: request.requestId }, { replace: true })
     setTriggeringRequestId(request.requestId)
     setMessage('')
     const controller = new AbortController()
@@ -280,6 +281,19 @@ function DiagnosisRequestDetail({ request, detectedBusReferences, generating, su
           : 'Diagnosis generated. This incident remains open here while you review it or wait for the AI mitigation recommendation.'
         : processing ? 'Diagnosis is being generated.' : retry ? 'The previous diagnosis attempt needs to be retried.' : 'Generate a diagnosis to receive an AI mitigation recommendation for this detected bunching event.'}</p>
       {request.failureCode && <p className="mt-2 text-sm text-destructive">Last attempt: {request.failureCode}</p>}</div>
+    {completed && <div className="rounded-lg border p-4">
+      <h3 className="text-sm font-medium">AI diagnosis</h3>
+      {request.likelyCause
+        ? <p className="mt-2 text-sm">{request.likelyCause}</p>
+        : <p className="mt-2 text-sm text-muted-foreground">No supported contributing cause was identified from the available evidence.</p>}
+      {request.confidence !== null && request.confidence > 0 && <p className="mt-2 text-xs text-muted-foreground">Confidence: {Math.round(request.confidence * 100)}%</p>}
+      {request.limitations.length > 0 && <div className="mt-3">
+        <p className="text-xs font-medium text-muted-foreground">Limitations</p>
+        <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+          {request.limitations.map(limitation => <li key={limitation}>{limitation}</li>)}
+        </ul>
+      </div>}
+    </div>}
     <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
       <Dialog open={editorOpen} onOpenChange={openEditor}>
         <DialogTrigger asChild><Button variant="outline" disabled={suggesting || !detectedBusReferences.length}>Suggest actions for detected buses</Button></DialogTrigger>
