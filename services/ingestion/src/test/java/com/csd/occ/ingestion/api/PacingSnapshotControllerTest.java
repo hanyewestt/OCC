@@ -3,6 +3,8 @@ package com.csd.occ.ingestion.api;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -59,23 +61,21 @@ class PacingSnapshotControllerTest {
     }
 
     @Test
-    void unassignedUsersAndTheRetiredDriverRoleCannotReadPacing() throws Exception {
-        mvc.perform(get("/api/v1/pacing-snapshots/latest").with(user("old").roles("DRIVER")))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/api/v1/pacing-snapshots/latest").with(user("new").roles("UNASSIGNED")))
-                .andExpect(status().isForbidden());
-        mvc.perform(get("/api/v1/pacing-snapshots/stream").with(user("new").roles("UNASSIGNED")))
-                .andExpect(status().isForbidden());
-    }
-
-    @Test
-    void captainsCanReadPacingButNoOtherOperationalApi() throws Exception {
+    void onlyControllersAndAdminsCanReadFleetWidePacing() throws Exception {
         when(pacing.latest()).thenReturn(SNAPSHOT);
-
-        mvc.perform(get("/api/v1/pacing-snapshots/latest").with(user("captain").roles("CAPTAIN")))
-                .andExpect(status().isOk());
-        mvc.perform(get("/api/v1/live-bunching-alerts").with(user("captain").roles("CAPTAIN")))
-                .andExpect(status().isForbidden());
+        // Captains read only their own bus's pacing through /api/v1/captain-routes/current.
+        for (String role : List.of("CAPTAIN", "UNASSIGNED", "DRIVER")) {
+            mvc.perform(get("/api/v1/pacing-snapshots/latest").with(user("user").roles(role)))
+                    .andExpect(status().isForbidden());
+            mvc.perform(get("/api/v1/pacing-snapshots/stream").with(user("user").roles(role)))
+                    .andExpect(status().isForbidden());
+        }
+        verify(pacing, never()).latest();
+        verify(pacing, never()).subscribe(any());
+        for (String role : List.of("CONTROLLER", "ADMIN")) {
+            mvc.perform(get("/api/v1/pacing-snapshots/latest").with(user("user").roles(role)))
+                    .andExpect(status().isOk());
+        }
     }
 
     @Test
@@ -101,7 +101,7 @@ class PacingSnapshotControllerTest {
     void latestBeforeTheFirstCalculationIsAProblemResponse() throws Exception {
         when(pacing.latest()).thenThrow(new PacingUnavailableException());
 
-        mvc.perform(get("/api/v1/pacing-snapshots/latest").with(user("captain").roles("CAPTAIN")))
+        mvc.perform(get("/api/v1/pacing-snapshots/latest").with(user("controller").roles("CONTROLLER")))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.title").value("Pacing metrics unavailable"));
     }
@@ -115,7 +115,7 @@ class PacingSnapshotControllerTest {
         });
 
         var result = mvc.perform(get("/api/v1/pacing-snapshots/stream").param("vehicleReference", "DEMO-BUS-190-01")
-                        .with(user("captain").roles("CAPTAIN")))
+                        .with(user("controller").roles("CONTROLLER")))
                 .andExpect(request().asyncStarted())
                 .andExpect(header().string("X-Accel-Buffering", "no"))
                 .andReturn();
@@ -130,7 +130,7 @@ class PacingSnapshotControllerTest {
     void streamAtCapacityIsRefused() throws Exception {
         when(pacing.subscribe(any())).thenThrow(new PacingSubscriberLimitException(200));
 
-        mvc.perform(get("/api/v1/pacing-snapshots/stream").with(user("captain").roles("CAPTAIN")))
+        mvc.perform(get("/api/v1/pacing-snapshots/stream").with(user("controller").roles("CONTROLLER")))
                 .andExpect(status().isServiceUnavailable());
     }
 
