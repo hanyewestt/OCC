@@ -77,7 +77,9 @@ class DemoReplayServiceTest {
                 Clock.fixed(NOW, ZoneOffset.UTC), mock(DemoModeService.class),
                 new DemoReplayConfiguration("multi-route-bunching-v2", 190, Duration.ofSeconds(90)), mock(DemoHazardReplayService.class));
 
-        service.start(new DemoRunConfiguration("972", 2, 3, Duration.ofSeconds(120), DemoScenario.NORMAL));
+        var captains = List.of(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        service.start(new DemoRunConfiguration("972", 2, 3, Duration.ofSeconds(120),
+                List.of(Duration.ofSeconds(120), Duration.ofSeconds(120)), "44251", DemoScenario.NORMAL, captains));
 
         @SuppressWarnings("unchecked") var capture = org.mockito.ArgumentCaptor.forClass(Iterable.class);
         verify(assignments).saveAll(capture.capture());
@@ -88,6 +90,8 @@ class DemoReplayServiceTest {
             org.assertj.core.api.Assertions.assertThat(bus.serviceId()).isEqualTo("972");
             org.assertj.core.api.Assertions.assertThat(bus.directionId()).isEqualTo(2);
         });
+        org.assertj.core.api.Assertions.assertThat(buses).extracting(bus -> bus.captainUserId().orElseThrow())
+                .containsExactlyElementsOf(captains);
     }
 
     @Test

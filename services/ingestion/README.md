@@ -44,9 +44,11 @@ unresolved. Each imported station retains the source document checksum.
 
 ### Demo identity
 
-Set `OCC_DEMO_CAPTAIN_USER_ID` to the stable Supabase UUID of `captain1@occ.com`
-to bind the first generated bus (`demo-<service>-1`) to that account when preparing a run. Blank leaves buses
-unassigned and does not prevent replay. Assignments are immutable for a run;
+The simulation start request can include `captainUserIds`, one distinct stable
+Supabase user UUID per generated bus. The controller configurator sends these
+IDs with the run; this binds each bus to its captain at run creation. Omit the
+list to use the legacy `OCC_DEMO_CAPTAIN_USER_ID` setting for the first bus, or
+leave buses unassigned when that setting is blank. Assignments are immutable for a run;
 configuration changes apply to the next run. Scenario bus IDs equal the existing
 stable trip IDs; always pair them with the run ID. Email and captain codes never
 authorize access. `/internal/v1/ingestion/demo-fleet?demoRunId=<uuid>&page=0&size=20`
