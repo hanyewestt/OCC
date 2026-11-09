@@ -5,7 +5,9 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
@@ -86,8 +88,12 @@ public class DemoReplayService {
     private void emit(DemoRun run) {
         Instant now = clock.instant(); int step = run.currentStep();
         var configuration = run.configuration();
-        java.time.Duration headway = DemoReplayScenario.headway(step, configuration.dispatchGap(),
+        java.time.Duration defaultHeadway = DemoReplayScenario.headway(step, configuration.dispatchGap(),
                 settings.bunchingThreshold(), configuration.scenario());
+        List<Duration> headways = step > 0 && configuration.scenario() == DemoScenario.BUNCHING
+                && configuration.busGaps().stream().anyMatch(gap -> !gap.equals(configuration.dispatchGap()))
+                ? configuration.busGaps()
+                : java.util.Collections.nCopies(configuration.busCount() - 1, defaultHeadway);
         UUID pollId = UUID.randomUUID();
         PollRun poll = new PollRun(); poll.setId(pollId); poll.setSource("DEMO"); poll.setScopeKey("demo:" + run.id());
         poll.setIdempotencyKey("demo:" + run.id() + ":" + step); poll.setStartedAt(now); poll.setCompletedAt(now);
@@ -100,10 +106,14 @@ public class DemoReplayService {
         raw.setClassification("SIMULATION"); raw.setDemoRunId(run.id()); rawObservations.save(raw);
         UUID reference = topology.activeVersion().orElseThrow().id();
         Instant firstEta = now.plusSeconds(120L - step * 20L);
-        arrivals.saveAll(java.util.stream.IntStream.rangeClosed(1, configuration.busCount())
-                .mapToObj(number -> arrival(raw.getId(), pollId, reference, run.id(),
-                        tripId(configuration.serviceId(), number), configuration.serviceId(), configuration.directionId(), configuration.monitoredStopCode(), number,
-                        firstEta.plus(headway.multipliedBy(number - 1L)), now)).toList());
+        List<BusArrivalObservation> emittedArrivals = new ArrayList<>();
+        Instant eta = firstEta;
+        for (int number = 1; number <= configuration.busCount(); number++) {
+            emittedArrivals.add(arrival(raw.getId(), pollId, reference, run.id(), tripId(configuration.serviceId(), number),
+                    configuration.serviceId(), configuration.directionId(), configuration.monitoredStopCode(), number, eta, now));
+            if (number < configuration.busCount()) eta = eta.plus(headways.get(number - 1));
+        }
+        arrivals.saveAll(emittedArrivals);
         hazards.emit(run, step, now);
         run.advance(); if (run.currentStep() >= DemoReplayScenario.STEP_COUNT) run.complete(now);
     }

@@ -92,7 +92,7 @@ class DemoRunControllerTest {
         var leading = new DemoVehicleDetails("DEMO-190-01", "DEMO-OPERATOR", "DD", "DEMO-CAPTAIN-01");
         var following = new DemoVehicleDetails("DEMO-190-02", "DEMO-OPERATOR", "DD", "DEMO-CAPTAIN-02");
         var alert = new DemoAlertDetails(UUID.randomUUID(), UUID.randomUUID(), "OPENED", "SIMULATION", "190", "44251", "Teck Whye Secondary School",
-                "Teck Whye Ave", 1, Instant.parse("2026-09-26T05:00:00Z"), 45L, leading, following,
+                "Teck Whye Ave", 1, Instant.parse("2026-09-26T05:00:00Z"), 45L, leading, following, List.of(leading, following),
                 "{\"snapshot\":{\"arrivals\":[{\"visitOrder\":1,\"estimatedArrivalAt\":\"2026-09-26T05:02:00Z\"}]}}");
         when(runs.status(runId)).thenReturn(new DemoRunDetails(runId, "REPLAY_COMPLETE", 3, List.of(alert)));
 

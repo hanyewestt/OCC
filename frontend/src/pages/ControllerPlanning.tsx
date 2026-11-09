@@ -225,7 +225,7 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
 
 function detectedBusReferences(request: PlanningDiagnosisRequest, alerts: BunchingAlert[]) {
   const alert = alerts.find(item => item.eventId === request.eventId)
-  const simulationReferences = [alert?.leadingVehicle, alert?.followingVehicle].flatMap(vehicle => {
+  const simulationReferences = (alert?.affectedVehicles?.length ? alert.affectedVehicles : [alert?.leadingVehicle, alert?.followingVehicle]).flatMap(vehicle => {
     const reference = vehicle?.registrationNumber || vehicle?.busId
     return reference ? [reference] : []
   })
