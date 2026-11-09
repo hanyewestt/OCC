@@ -4,7 +4,7 @@ import { createElement } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { ControllerPlanning } from '../../src/pages/ControllerPlanning'
 import type { PagedCollection, PagedResult } from '../../src/lib/paged-collection'
-import type { BunchingAlert, PendingRecommendation, PlanningDiagnosisRequest, PlanningDiagnosisRequestPage } from '../../src/lib/api'
+import type { BunchingAlert, PendingRecommendation, PlanningDiagnosisRequest, PlanningDiagnosisRequestPage, RouteDirection } from '../../src/lib/api'
 import type { Planning } from '../../src/pages/ControllerPage'
 
 function mockPagedCollection<T, P extends PagedResult<T>>(items: T[], page: P | null): PagedCollection<T, P> {
@@ -25,6 +25,16 @@ function mockPagedCollection<T, P extends PagedResult<T>>(items: T[], page: P | 
     updateItem: () => {},
     onScroll: () => {},
   }
+}
+
+const sampleRoute: RouteDirection = {
+  serviceId: '190',
+  operator: 'SMRT',
+  directionId: 2,
+  stops: [
+    { stopCode: '40191', description: 'Opp Blk 223', roadName: 'Bukit Panjang Rd', latitude: 1.378, longitude: 103.771, stopSequence: 1, distanceKm: 0.5 },
+    { stopCode: '40201', description: 'Blk 220', roadName: 'Bukit Panjang Rd', latitude: 1.379, longitude: 103.772, stopSequence: 2, distanceKm: 0.9 },
+  ],
 }
 
 const sampleRequest: PlanningDiagnosisRequest = {
@@ -72,7 +82,7 @@ const sampleAlert: BunchingAlert = {
   serviceId: '190',
   stopCode: '40191',
   directionId: 2,
-  detectedAt: '2026-11-09T08:50:00Z',
+  detectedAt: new Date().toISOString(),
   stopName: 'Opp Blk 223',
   stopRoadName: 'Bukit Panjang Rd',
 }
@@ -101,6 +111,8 @@ test('ControllerPlanning pre-fills service filter and displays corridor link not
         demoRunId: null,
         token: 'test-token',
         detectedAlerts: [sampleAlert],
+        routes: [sampleRoute],
+        nowMs: Date.now(),
         onPendingChange: () => {},
         onRefresh: () => {},
         onSaved: () => {},
@@ -112,6 +124,7 @@ test('ControllerPlanning pre-fills service filter and displays corridor link not
   expect(html).toContain('Linked from corridor incident in Disruptions')
   expect(html).toMatch(/Service\s*(<!-- -->)?\s*190/)
   expect(html).toMatch(/Stop\s*(<!-- -->)?\s*40191/)
+  expect(html).toContain('Corridor:')
 })
 
 test('ControllerPlanning displays Active and All status buttons and retains matching request', () => {
@@ -136,6 +149,8 @@ test('ControllerPlanning displays Active and All status buttons and retains matc
         demoRunId: null,
         token: 'test-token',
         detectedAlerts: [sampleAlert],
+        routes: [sampleRoute],
+        nowMs: Date.now(),
         onPendingChange: () => {},
         onRefresh: () => {},
         onSaved: () => {},
@@ -148,7 +163,7 @@ test('ControllerPlanning displays Active and All status buttons and retains matc
   expect(activeHtml).toMatch(/Stop\s*(<!-- -->)?\s*40191/)
 
   const allHtml = renderToString(
-    createElement(MemoryRouter, { initialEntries: ['/controller/planning?status=all'] },
+    createElement(MemoryRouter, { initialEntries: ['/controller/planning?status=all&time=all'] },
       createElement(ControllerPlanning, {
         recommendations,
         diagnosisRequests,
@@ -158,6 +173,8 @@ test('ControllerPlanning displays Active and All status buttons and retains matc
         demoRunId: null,
         token: 'test-token',
         detectedAlerts: [sampleAlert],
+        routes: [sampleRoute],
+        nowMs: Date.now(),
         onPendingChange: () => {},
         onRefresh: () => {},
         onSaved: () => {},
@@ -166,10 +183,10 @@ test('ControllerPlanning displays Active and All status buttons and retains matc
   )
 
   expect(allHtml).toMatch(/Stop\s*(<!-- -->)?\s*40191/)
-  expect(allHtml).toMatch(/Stop\s*(<!-- -->)?\s*40201/)
+  expect(allHtml).toMatch(/Service\s*(<!-- -->)?\s*190/)
 })
 
-test('ControllerPlanning hides outdated requests by default and shows them when All time is selected', () => {
+test('ControllerPlanning hides past requests by default in Live mode and shows them when All time is selected', () => {
   const recommendations = mockPagedCollection<PendingRecommendation, Planning['recommendations']>([], {
     items: [], page: 0, totalItems: 0, totalPages: 0, mode: 'LIVE', demoRunId: null,
   })
@@ -180,7 +197,7 @@ test('ControllerPlanning hides outdated requests by default and shows them when 
     [sampleRequest, sampleOutdatedRequest], diagnosisPage
   )
 
-  // Default: < 2h hides the outdated 48h-old request
+  // Default: Live mode shows active on-road incident and hides the past 48h-old request
   const defaultHtml = renderToString(
     createElement(MemoryRouter, { initialEntries: ['/controller/planning'] },
       createElement(ControllerPlanning, {
@@ -192,6 +209,8 @@ test('ControllerPlanning hides outdated requests by default and shows them when 
         demoRunId: null,
         token: 'test-token',
         detectedAlerts: [sampleAlert],
+        routes: [sampleRoute],
+        nowMs: Date.now(),
         onPendingChange: () => {},
         onRefresh: () => {},
         onSaved: () => {},
@@ -201,9 +220,9 @@ test('ControllerPlanning hides outdated requests by default and shows them when 
 
   expect(defaultHtml).toMatch(/Stop\s*(<!-- -->)?\s*40191/)
   expect(defaultHtml).not.toMatch(/Stop\s*(<!-- -->)?\s*40999/)
-  expect(defaultHtml).toMatch(/1\s*(<!-- -->)?\s*outdated hidden/)
+  expect(defaultHtml).toMatch(/1\s*(<!-- -->)?\s*past hidden/)
 
-  // When All time is selected, the outdated request appears
+  // When All time is selected, the past request appears
   const allTimeHtml = renderToString(
     createElement(MemoryRouter, { initialEntries: ['/controller/planning?time=all'] },
       createElement(ControllerPlanning, {
@@ -215,6 +234,8 @@ test('ControllerPlanning hides outdated requests by default and shows them when 
         demoRunId: null,
         token: 'test-token',
         detectedAlerts: [sampleAlert],
+        routes: [sampleRoute],
+        nowMs: Date.now(),
         onPendingChange: () => {},
         onRefresh: () => {},
         onSaved: () => {},
@@ -223,5 +244,5 @@ test('ControllerPlanning hides outdated requests by default and shows them when 
   )
 
   expect(allTimeHtml).toMatch(/Stop\s*(<!-- -->)?\s*40191/)
-  expect(allTimeHtml).toMatch(/Stop\s*(<!-- -->)?\s*40999/)
+  expect(allTimeHtml).toMatch(/40999/)
 })
