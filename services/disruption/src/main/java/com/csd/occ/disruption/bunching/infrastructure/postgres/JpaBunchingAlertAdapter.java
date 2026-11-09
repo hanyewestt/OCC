@@ -138,8 +138,7 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
                 previous.clearCandidate();
                 return;
             }
-            BunchingEvaluation.Headway current = result.headways().stream()
-                    .filter(BunchingEvaluation.Headway::isBunched).findFirst().orElse(null);
+            BunchingEvaluation.Headway current = result.triggeringHeadway().orElse(null);
             if (current == null || current.gap().toSeconds() < 0 || current.gap().toSeconds() > Integer.MAX_VALUE) {
                 previous.update(fetchedAt, null, null, null);
                 previous.clearCandidate();

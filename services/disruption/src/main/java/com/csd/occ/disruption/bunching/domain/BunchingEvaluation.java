@@ -31,6 +31,12 @@ public record BunchingEvaluation(
         public GroupEvaluation {
             headways = List.copyOf(headways);
         }
+
+        /** Tightest adjacent pair that triggered bunching, if this group has one. */
+        public Optional<Headway> triggeringHeadway() {
+            return headways.stream().filter(Headway::isBunched).min(java.util.Comparator.comparing(Headway::gap));
+        }
+
     }
 
     public record Headway(UUID leadingObservationId, UUID followingObservationId,

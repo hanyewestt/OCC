@@ -15,6 +15,8 @@ public interface IssuedInstructionRepository extends JpaRepository<IssuedInstruc
     List<UUID> findActiveDemoRunIds();
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select i from IssuedInstruction i where i.id=:id")
     Optional<IssuedInstruction> findForUpdate(UUID id);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select i from IssuedInstruction i where i.proposalId=:proposalId order by i.issuedAt asc")
+    List<IssuedInstruction> findByProposalIdForUpdate(UUID proposalId);
     List<IssuedInstruction> findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(UUID runId, String busId, List<String> statuses);
     Page<IssuedInstruction> findByDemoRunIdOrderByIssuedAtDesc(UUID runId, Pageable page);
     @org.springframework.data.jpa.repository.Modifying

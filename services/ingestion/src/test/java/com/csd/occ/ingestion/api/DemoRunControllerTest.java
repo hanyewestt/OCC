@@ -60,11 +60,14 @@ class DemoRunControllerTest {
         UUID runId = UUID.randomUUID();
         var configuration = new com.csd.occ.ingestion.domain.DemoRunConfiguration("972", 1, 3,
                 java.time.Duration.ofSeconds(120), List.of(java.time.Duration.ofSeconds(120),
-                java.time.Duration.ofSeconds(150)), "44251", com.csd.occ.ingestion.domain.DemoScenario.NORMAL);
+                java.time.Duration.ofSeconds(150)), "44251", com.csd.occ.ingestion.domain.DemoScenario.NORMAL,
+                List.of(UUID.fromString("10000000-0000-4000-8000-000000000001"),
+                        UUID.fromString("10000000-0000-4000-8000-000000000002"),
+                        UUID.fromString("10000000-0000-4000-8000-000000000003")));
         when(runs.start(eq(configuration))).thenReturn(new DemoRunDetails(runId, "RUNNING", 0, configuration, List.of()));
 
         mvc.perform(post("/api/v1/demo-runs").contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"serviceId\":\"972\",\"directionId\":1,\"busCount\":3,\"dispatchGapSeconds\":120,\"busGapsSeconds\":[120,150],\"monitoredStopCode\":\"44251\",\"scenario\":\"NORMAL\"}"))
+                        .content("{\"serviceId\":\"972\",\"directionId\":1,\"busCount\":3,\"dispatchGapSeconds\":120,\"busGapsSeconds\":[120,150],\"monitoredStopCode\":\"44251\",\"scenario\":\"NORMAL\",\"captainUserIds\":[\"10000000-0000-4000-8000-000000000001\",\"10000000-0000-4000-8000-000000000002\",\"10000000-0000-4000-8000-000000000003\"]}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.serviceId").value("972"))
                 .andExpect(jsonPath("$.busCount").value(3))
