@@ -44,7 +44,7 @@ const sampleRequest: PlanningDiagnosisRequest = {
   evidenceDetails: [],
   failureCode: null,
   policyOutcome: null,
-  createdAt: '2026-11-09T08:50:00Z',
+  createdAt: new Date().toISOString(),
 }
 
 const sampleCompletedRequest: PlanningDiagnosisRequest = {
@@ -54,7 +54,15 @@ const sampleCompletedRequest: PlanningDiagnosisRequest = {
   stopCode: '40201',
   status: 'COMPLETED',
   policyOutcome: 'LIVE_DIAGNOSIS_NO_VALIDATED_OPERATIONAL_CONTEXT',
-  createdAt: '2026-11-09T08:45:00Z',
+  createdAt: new Date().toISOString(),
+}
+
+const sampleOutdatedRequest: PlanningDiagnosisRequest = {
+  ...sampleRequest,
+  requestId: 'req-outdated',
+  eventId: 'evt-outdated',
+  stopCode: '40999',
+  createdAt: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
 }
 
 const sampleAlert: BunchingAlert = {
@@ -159,4 +167,61 @@ test('ControllerPlanning displays Active and All status buttons and retains matc
 
   expect(allHtml).toMatch(/Stop\s*(<!-- -->)?\s*40191/)
   expect(allHtml).toMatch(/Stop\s*(<!-- -->)?\s*40201/)
+})
+
+test('ControllerPlanning hides outdated requests by default and shows them when All time is selected', () => {
+  const recommendations = mockPagedCollection<PendingRecommendation, Planning['recommendations']>([], {
+    items: [], page: 0, totalItems: 0, totalPages: 0, mode: 'LIVE', demoRunId: null,
+  })
+  const diagnosisPage: PlanningDiagnosisRequestPage = {
+    items: [sampleRequest, sampleOutdatedRequest], page: 0, totalItems: 2, totalPages: 1, mode: 'LIVE', demoRunId: null,
+  }
+  const diagnosisRequests = mockPagedCollection<PlanningDiagnosisRequest, PlanningDiagnosisRequestPage>(
+    [sampleRequest, sampleOutdatedRequest], diagnosisPage
+  )
+
+  // Default: < 2h hides the outdated 48h-old request
+  const defaultHtml = renderToString(
+    createElement(MemoryRouter, { initialEntries: ['/controller/planning'] },
+      createElement(ControllerPlanning, {
+        recommendations,
+        diagnosisRequests,
+        loading: false,
+        modeError: '',
+        mode: 'LIVE',
+        demoRunId: null,
+        token: 'test-token',
+        detectedAlerts: [sampleAlert],
+        onPendingChange: () => {},
+        onRefresh: () => {},
+        onSaved: () => {},
+      })
+    )
+  )
+
+  expect(defaultHtml).toMatch(/Stop\s*(<!-- -->)?\s*40191/)
+  expect(defaultHtml).not.toMatch(/Stop\s*(<!-- -->)?\s*40999/)
+  expect(defaultHtml).toMatch(/1\s*(<!-- -->)?\s*outdated hidden/)
+
+  // When All time is selected, the outdated request appears
+  const allTimeHtml = renderToString(
+    createElement(MemoryRouter, { initialEntries: ['/controller/planning?time=all'] },
+      createElement(ControllerPlanning, {
+        recommendations,
+        diagnosisRequests,
+        loading: false,
+        modeError: '',
+        mode: 'LIVE',
+        demoRunId: null,
+        token: 'test-token',
+        detectedAlerts: [sampleAlert],
+        onPendingChange: () => {},
+        onRefresh: () => {},
+        onSaved: () => {},
+      })
+    )
+  )
+
+  expect(allTimeHtml).toMatch(/Stop\s*(<!-- -->)?\s*40191/)
+  expect(allTimeHtml).toMatch(/Stop\s*(<!-- -->)?\s*40999/)
 })
