@@ -366,7 +366,8 @@ class AdvisoryPersistenceIT {
                                 """))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.overrideInstructions.length()").value(3));
 
-        var issuedForRecommendation = issued.findByProposalIdForUpdate(recommendation);
+        var issuedForRecommendation = issued.findAll().stream()
+                .filter(item -> item.proposalId().equals(recommendation)).toList();
         assertThat(issuedForRecommendation).hasSize(3)
                 .extracting(item -> item.busId() + ":" + item.parameters().durationSeconds())
                 .containsExactlyInAnyOrder("demo-190-b:60", "demo-190-c:45", "demo-190-d:30");
