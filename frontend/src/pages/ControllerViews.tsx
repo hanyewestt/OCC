@@ -202,6 +202,168 @@ export function computeBusLatLng(
 
 export type PositionedIncident = RouteIncident & { stripLink: IncidentStripLink | null }
 
+export type ProjectedBus = {
+  serviceId: string
+  directionId: number
+  order: number
+  x: number
+  y: number
+  label: string
+  latitude: number
+  longitude: number
+}
+
+export type BusCluster = {
+  key: string
+  serviceId: string
+  directionId: number
+  buses: ProjectedBus[]
+  x: number
+  y: number
+  isSelected: boolean
+  hasIncident: boolean
+  label: string
+  text: string
+}
+
+export function areBusesConfirmedBunched(
+  b1: ProjectedBus,
+  b2: ProjectedBus,
+  incidents: PositionedIncident[],
+  selectedBuses: Set<string>,
+): boolean {
+  if (b1.serviceId !== b2.serviceId) return false
+  if (b1.directionId !== b2.directionId) return false
+
+  const key1 = `${b1.serviceId}-${b1.order}`
+  const key2 = `${b2.serviceId}-${b2.order}`
+
+  // Check if both buses belong to the selected incident's bunched pair
+  if (selectedBuses.has(key1) && selectedBuses.has(key2)) {
+    return true
+  }
+
+  // Check if they are linked as a bunched pair in any active bunching incident
+  for (const inc of incidents) {
+    if (inc.historical) continue
+    if (inc.serviceId !== b1.serviceId) continue
+    if (inc.directionId !== null && inc.directionId !== b1.directionId) continue
+
+    if (inc.stripLink) {
+      const { frontOrder, followingOrder } = inc.stripLink
+      if (
+        (frontOrder === b1.order && followingOrder === b2.order) ||
+        (frontOrder === b2.order && followingOrder === b1.order)
+      ) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+export function clusterProjectedBuses(
+  buses: ProjectedBus[],
+  selectedBuses: Set<string>,
+  incidents: PositionedIncident[],
+  thresholdPx = 28
+): BusCluster[] {
+  const visited = new Set<number>()
+  const clusters: BusCluster[] = []
+
+  for (let i = 0; i < buses.length; i++) {
+    if (visited.has(i)) continue
+    const b1 = buses[i]
+    const group = [b1]
+    visited.add(i)
+
+    for (let j = i + 1; j < buses.length; j++) {
+      if (visited.has(j)) continue
+      const b2 = buses[j]
+      if (b1.serviceId !== b2.serviceId) continue
+      if (b1.directionId !== b2.directionId) continue
+
+      // ONLY merge if confirmed as bunched by a bunching alert AND nearby on map
+      const isConfirmed = group.some(existing => areBusesConfirmedBunched(existing, b2, incidents, selectedBuses))
+      if (!isConfirmed) continue
+
+      const isNearby = group.some(existing => Math.hypot(existing.x - b2.x, existing.y - b2.y) <= thresholdPx)
+      if (isNearby) {
+        visited.add(j)
+        group.push(b2)
+      }
+    }
+
+    group.sort((a, b) => a.order - b.order)
+    const avgX = group.reduce((sum, b) => sum + b.x, 0) / group.length
+    const avgY = group.reduce((sum, b) => sum + b.y, 0) / group.length
+    const isSelected = group.some(b => selectedBuses.has(`${b.serviceId}-${b.order}`))
+    const hasIncident = group.length > 1 || group.some(b =>
+      incidents.some(inc =>
+        inc.stripLink &&
+        (!inc.historical || selectedBuses.has(`${b.serviceId}-${b.order}`)) &&
+        (inc.stripLink.frontOrder === b.order || inc.stripLink.followingOrder === b.order) &&
+        inc.serviceId === b.serviceId
+      )
+    )
+    const text = group.map(b => b.order).join(' · ')
+    const label = group.length === 1
+      ? group[0].label
+      : `Bunched buses #${group.map(b => b.order).join(' & #')} on service ${b1.serviceId}`
+
+    clusters.push({
+      key: `cluster-${b1.serviceId}-${b1.directionId}-${group.map(b => b.order).join('-')}-${i}`,
+      serviceId: b1.serviceId,
+      directionId: b1.directionId,
+      buses: group,
+      x: avgX,
+      y: avgY,
+      isSelected,
+      hasIncident,
+      label,
+      text,
+    })
+  }
+
+  // If distinct single-bus markers visually collide on screen, apply a slight radial offset so numbers stay legible
+  for (let a = 0; a < clusters.length; a++) {
+    if (clusters[a].buses.length > 1) continue
+    for (let b = a + 1; b < clusters.length; b++) {
+      if (clusters[b].buses.length > 1) continue
+      const dx = clusters[b].x - clusters[a].x
+      const dy = clusters[b].y - clusters[a].y
+      const d = Math.hypot(dx, dy)
+      if (d < 14) {
+        const offset = 8
+        const angle = d > 0 ? Math.atan2(dy, dx) : (a % 4) * (Math.PI / 2)
+        clusters[b].x += Math.cos(angle) * offset
+        clusters[b].y += Math.sin(angle) * offset
+      }
+    }
+  }
+
+  return clusters
+}
+
+export function filterMapBuses<T extends { serviceId: string; bus: { order: number } }>(
+  buses: T[],
+  isAllCorridors: boolean,
+  incidentBusKeys: Set<string>,
+): T[] {
+  if (!isAllCorridors) return buses
+  return buses.filter(b => incidentBusKeys.has(`${b.serviceId}-${b.bus.order}`))
+}
+
+export function filterMapRoutes<T extends { serviceId: string; directionId: number }>(
+  routes: T[],
+  isAllCorridors: boolean,
+  disruptedRouteKeys: Set<string>,
+): T[] {
+  if (!isAllCorridors) return routes
+  return routes.filter(r => disruptedRouteKeys.has(`${r.serviceId}-${r.directionId}`))
+}
+
 export interface BunchingMapProps {
   routes: RouteDirection[]
   affectedStopCodes: Set<string>
@@ -210,6 +372,7 @@ export interface BunchingMapProps {
   incidents?: PositionedIncident[]
   onSelectIncident?: (incidentId: string | null) => void
   routeGeometries?: Record<string, LatLng[]>
+  isAllCorridors?: boolean
 }
 
 export function BunchingMap({
@@ -220,7 +383,32 @@ export function BunchingMap({
   incidents = [],
   onSelectIncident,
   routeGeometries,
+  isAllCorridors = false,
 }: BunchingMapProps) {
+  const incidentBusKeys = useMemo(() => {
+    const keys = new Set<string>()
+    for (const inc of incidents) {
+      if (inc.stripLink && (!inc.historical || inc.id === selectedIncident?.id)) {
+        keys.add(`${inc.serviceId}-${inc.stripLink.frontOrder}`)
+        keys.add(`${inc.serviceId}-${inc.stripLink.followingOrder}`)
+      }
+    }
+    return keys
+  }, [incidents, selectedIncident])
+
+  const disruptedRouteKeys = useMemo(() => {
+    const set = new Set<string>()
+    for (const i of incidents) {
+      if (!i.historical || i.id === selectedIncident?.id) {
+        set.add(`${i.serviceId}-${i.directionId ?? 1}`)
+        if (i.directionId === null) {
+          routes.filter(r => r.serviceId === i.serviceId).forEach(r => set.add(`${r.serviceId}-${r.directionId}`))
+        }
+      }
+    }
+    return set
+  }, [incidents, routes, selectedIncident])
+
   const containerRef = useRef<HTMLDivElement>(null)
   const [loadedGeometries, setLoadedGeometries] = useState<Record<string, LatLng[]>>({})
 
@@ -296,20 +484,43 @@ export function BunchingMap({
     for (const route of routes) {
       for (const stop of route.stops) {
         if (validCoord(stop.latitude, stop.longitude) && !map.has(stop.stopCode)) {
+          const affected = affectedStopCodes.has(stop.stopCode)
+          // In All Corridors hotspot mode, only display affected stops
+          if (isAllCorridors && !affected) continue
           map.set(stop.stopCode, {
             stopCode: stop.stopCode,
             description: stop.description,
             latitude: stop.latitude!,
             longitude: stop.longitude!,
-            affected: affectedStopCodes.has(stop.stopCode),
+            affected,
           })
         }
       }
     }
+    // Fallback if no stops matched (only for single corridor inspection mode)
+    if (!isAllCorridors && map.size === 0) {
+      for (const route of routes) {
+        for (const stop of route.stops) {
+          if (validCoord(stop.latitude, stop.longitude) && !map.has(stop.stopCode)) {
+            map.set(stop.stopCode, {
+              stopCode: stop.stopCode,
+              description: stop.description,
+              latitude: stop.latitude!,
+              longitude: stop.longitude!,
+              affected: affectedStopCodes.has(stop.stopCode),
+            })
+          }
+        }
+      }
+    }
     return [...map.values()]
-  }, [routes, affectedStopCodes])
+  }, [routes, affectedStopCodes, isAllCorridors])
 
-  const busMarkers = useMemo(() => buses.flatMap(({ serviceId, directionId, routeLengthM, bus }) => {
+  const filteredBuses = useMemo(() => {
+    return filterMapBuses(buses, isAllCorridors, incidentBusKeys)
+  }, [buses, isAllCorridors, incidentBusKeys])
+
+  const busMarkers = useMemo(() => filteredBuses.flatMap(({ serviceId, directionId, routeLengthM, bus }) => {
     const route = routes.find(candidate => candidate.serviceId === serviceId && candidate.directionId === directionId)
     if (!route) return []
     const key = `${serviceId}-${directionId}`
@@ -323,14 +534,21 @@ export function BunchingMap({
       order: bus.order,
       label: `Estimated bus ${bus.order} on service ${serviceId}`,
     }]
-  }), [buses, routes, activeGeometries])
+  }), [filteredBuses, routes, activeGeometries])
 
   const corridorFocusPoints = useMemo(() => {
+    if (isAllCorridors) {
+      const pts: Array<{ latitude: number; longitude: number }> = [
+        ...allStops.map(s => ({ latitude: s.latitude, longitude: s.longitude })),
+        ...busMarkers.map(b => ({ latitude: b.latitude, longitude: b.longitude })),
+      ]
+      return pts
+    }
     if (allStops.length > 0) {
       return allStops.map(s => ({ latitude: s.latitude, longitude: s.longitude }))
     }
     return busMarkers.map(b => ({ latitude: b.latitude, longitude: b.longitude }))
-  }, [allStops, busMarkers])
+  }, [allStops, busMarkers, isAllCorridors])
 
   const selectedFocusPoints = useMemo(() => {
     if (!selectedIncident) return []
@@ -343,8 +561,9 @@ export function BunchingMap({
   const fitKey = useMemo(() => {
     const rKey = routes.map(r => `${r.serviceId}-${r.directionId}`).sort().join(',')
     const aKey = [...affectedStopCodes].sort().join(',')
-    return `${rKey}:${aKey}`
-  }, [routes, affectedStopCodes])
+    const bKey = [...incidentBusKeys].sort().join(',')
+    return `${rKey}:${aKey}:${bKey}`
+  }, [routes, affectedStopCodes, incidentBusKeys])
 
   const initialFit = useMemo(() => {
     return computeCorridorFit(corridorFocusPoints, width, height, 48)
@@ -499,7 +718,7 @@ export function BunchingMap({
     }
   }
 
-  if (allStops.length < 2) {
+  if (!isAllCorridors && allStops.length < 2) {
     return <p className="rounded-lg border p-4 text-sm text-muted-foreground">Stop coordinates are unavailable for this detection.</p>
   }
 
@@ -538,7 +757,9 @@ export function BunchingMap({
     }
   }
 
-  const routePolylines = routes.map(route => {
+  const activeRoutes = filterMapRoutes(routes, isAllCorridors, disruptedRouteKeys)
+
+  const routePolylines = activeRoutes.map(route => {
     const key = `${route.serviceId}-${route.directionId}`
     const geom = activeGeometries[key]
     const pts = (geom && geom.length > 1)
@@ -562,6 +783,8 @@ export function BunchingMap({
     ...bus,
     ...project(bus.latitude, bus.longitude),
   }))
+
+  const busClusters = clusterProjectedBuses(projectedBuses, selectedBuses, incidents, 28)
 
   return (
     <div className="overflow-hidden rounded-lg border bg-muted/10">
@@ -590,7 +813,11 @@ export function BunchingMap({
                 : !selectedIncident.stripLink
                   ? `Active detection · No current bus position estimate is linked to this corridor segment (buses have traversed this segment or observation cycle has rolled over).`
                   : `Focusing on ${selectedIncident.stopCodes.length} affected stop${selectedIncident.stopCodes.length === 1 ? '' : 's'}. Click any stop or bus to select or switch incident.`
-              : 'Stops are sourced from route topology; buses are current position estimates. Click a stop or bus to focus.'}
+              : isAllCorridors
+                ? (incidents.some(i => !i.historical)
+                    ? 'Showing active bunching hotspots across all corridors. Select a corridor to inspect all fleet buses.'
+                    : 'No active bunching hotspots across corridors. Select a corridor to inspect all fleet buses.')
+                : 'Stops are sourced from route topology; buses are current position estimates. Click a stop or bus to focus.'}
           </p>
         </div>
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -605,9 +832,22 @@ export function BunchingMap({
               Fit corridor
             </Button>
           )}
-          <span><span className="mr-1 inline-block size-2 rounded-full bg-destructive" />Affected stop</span>
-          <span><span className="mr-1 inline-block size-2 rounded-full bg-primary" />Estimated bus</span>
-          {selectedIncident && <span><span className="mr-1 inline-block size-2 rounded-full bg-amber-500" />Bunched bus</span>}
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block size-2.5 rounded-full border border-white bg-slate-600 shadow-xs" />
+            Bus stop
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block size-2.5 rounded-full border-2 border-red-500 bg-destructive shadow-xs" />
+            Affected stop
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-flex items-center justify-center size-3.5 rounded-full bg-sky-600 text-[9px] font-bold text-white shadow-xs">#</span>
+            Estimated bus
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-flex items-center justify-center min-w-5 h-3.5 px-1 rounded-full bg-amber-600 text-[9px] font-bold text-white shadow-xs">2 · 3</span>
+            Bunched cluster
+          </span>
         </div>
       </div>
       <div
@@ -731,66 +971,130 @@ export function BunchingMap({
               </g>
             )
           })}
-          {projectedBuses.map((bus, index) => {
-            const busKey = `${bus.serviceId}-${bus.order}`
-            const isSelectedBus = selectedBuses.has(busKey)
-            const isDimmed = selectedIncident && !isSelectedBus
-            const hasIncident = incidents.some(i =>
-              i.stripLink && (i.stripLink.frontOrder === bus.order || i.stripLink.followingOrder === bus.order) && i.serviceId === bus.serviceId
-            )
+          {busClusters.map(cluster => {
+            const isDimmed = selectedIncident && !cluster.isSelected
+            const isMulti = cluster.buses.length > 1
+            const pillW = isMulti ? Math.max(38, cluster.text.length * 8 + 16) : 26
+            const pillH = isMulti ? 22 : 26
+            const pillX = cluster.x - pillW / 2
+            const pillY = cluster.y - pillH / 2
+
+            const handleClick = () => {
+              if (!onSelectIncident) return
+              for (const b of cluster.buses) {
+                const matching = incidents.find(i =>
+                  i.stripLink && (i.stripLink.frontOrder === b.order || i.stripLink.followingOrder === b.order) && i.serviceId === b.serviceId
+                )
+                if (matching) {
+                  onSelectIncident(selectedIncident?.id === matching.id ? null : matching.id)
+                  document.getElementById(`incident-${matching.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+                  return
+                }
+              }
+              onBusClick(cluster.serviceId, cluster.buses[0].order)
+            }
 
             return (
               <g
-                key={`bus-${bus.serviceId}-${bus.order}-${index}`}
-                role={hasIncident && onSelectIncident ? "button" : undefined}
-                tabIndex={hasIncident && onSelectIncident ? 0 : undefined}
-                aria-label={`${bus.label}${isSelectedBus ? ' - Bunched pair for selected incident' : ''}`}
+                key={cluster.key}
+                role={cluster.hasIncident && onSelectIncident ? "button" : undefined}
+                tabIndex={cluster.hasIncident && onSelectIncident ? 0 : undefined}
+                aria-label={`${cluster.label}${cluster.isSelected ? ' - Bunched pair for selected incident' : ''}`}
                 className={cn(
                   "pointer-events-auto transition-opacity duration-300",
-                  hasIncident && onSelectIncident ? "cursor-pointer outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-700" : "cursor-default"
+                  cluster.hasIncident && onSelectIncident ? "cursor-pointer outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-700" : "cursor-default"
                 )}
                 opacity={isDimmed ? 0.35 : 1}
-                onClick={() => onBusClick(bus.serviceId, bus.order)}
+                onClick={handleClick}
                 onPointerDown={e => e.stopPropagation()}
                 onKeyDown={e => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
-                    onBusClick(bus.serviceId, bus.order)
+                    handleClick()
                   }
                 }}
               >
-                <title>{`${bus.label}${isSelectedBus ? ' [Bunched pair for selected incident]' : ''}${hasIncident && onSelectIncident ? ' - Click to view incident' : ''}`}</title>
-                {isSelectedBus && (
-                  <circle
-                    cx={bus.x}
-                    cy={bus.y}
-                    r="18"
-                    fill="none"
-                    stroke="#f59e0b"
-                    strokeWidth="2.5"
-                    className="animate-pulse"
-                  />
+                <title>{`${cluster.label}${cluster.isSelected ? ' [Bunched pair for selected incident]' : ''}${cluster.hasIncident && onSelectIncident ? ' - Click to view incident' : ''}`}</title>
+                {cluster.isSelected && (
+                  isMulti ? (
+                    <rect
+                      x={pillX - 4}
+                      y={pillY - 4}
+                      width={pillW + 8}
+                      height={pillH + 8}
+                      rx="15"
+                      ry="15"
+                      fill="none"
+                      stroke="#f59e0b"
+                      strokeWidth="2.5"
+                      className="animate-pulse"
+                    />
+                  ) : (
+                    <circle
+                      cx={cluster.x}
+                      cy={cluster.y}
+                      r="18"
+                      fill="none"
+                      stroke="#f59e0b"
+                      strokeWidth="2.5"
+                      className="animate-pulse"
+                    />
+                  )
                 )}
-                <circle cx={bus.x} cy={bus.y} r={isSelectedBus ? "14" : "13"} fill="white" className="drop-shadow" />
-                <circle
-                  cx={bus.x}
-                  cy={bus.y}
-                  r={isSelectedBus ? "11" : "10"}
-                  fill={isSelectedBus ? "#ea580c" : "#0284c7"}
-                  stroke="#0c1a2b"
-                  strokeWidth={isSelectedBus ? 2 : 1.5}
-                />
+                {isMulti ? (
+                  <>
+                    <rect
+                      x={pillX - 2}
+                      y={pillY - 2}
+                      width={pillW + 4}
+                      height={pillH + 4}
+                      rx="13"
+                      ry="13"
+                      fill="white"
+                      className="drop-shadow"
+                    />
+                    <rect
+                      x={pillX}
+                      y={pillY}
+                      width={pillW}
+                      height={pillH}
+                      rx="11"
+                      ry="11"
+                      fill={cluster.isSelected || cluster.hasIncident ? "#ea580c" : "#0284c7"}
+                      stroke="#0c1a2b"
+                      strokeWidth={cluster.isSelected ? 2 : 1.5}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <circle
+                      cx={cluster.x}
+                      cy={cluster.y}
+                      r={cluster.isSelected ? "14" : "13"}
+                      fill="white"
+                      className="drop-shadow"
+                    />
+                    <circle
+                      cx={cluster.x}
+                      cy={cluster.y}
+                      r={cluster.isSelected ? "11" : "10"}
+                      fill={cluster.isSelected || cluster.hasIncident ? "#ea580c" : "#0284c7"}
+                      stroke="#0c1a2b"
+                      strokeWidth={cluster.isSelected ? 2 : 1.5}
+                    />
+                  </>
+                )}
                 <text
-                  x={bus.x}
-                  y={bus.y}
+                  x={cluster.x}
+                  y={cluster.y}
                   textAnchor="middle"
                   dominantBaseline="central"
                   fill="white"
-                  fontSize={isSelectedBus ? "11" : "10"}
+                  fontSize={isMulti ? "11" : cluster.isSelected ? "11" : "10"}
                   fontWeight="bold"
                   className="select-none pointer-events-none"
                 >
-                  {bus.order}
+                  {cluster.text}
                 </text>
               </g>
             )
@@ -855,18 +1159,70 @@ export function BunchingMap({
   )
 }
 
-function simulationBusLabel(bus: BunchingAlert['leadingVehicle']) {
-  if (!bus) return 'Unavailable'
-  return bus.registrationNumber === bus.busId ? bus.busId : `${bus.registrationNumber} (${bus.busId})`
+function alertBunchedVisitOrders(alert: BunchingAlert): { leadingVisitOrder: number | null; followingVisitOrder: number | null } {
+  if (!alert.evidence) return { leadingVisitOrder: null, followingVisitOrder: null }
+  try {
+    const data = JSON.parse(alert.evidence)
+    const arrivals = data?.snapshot?.arrivals as Array<{ visitOrder?: number; observationId?: string }> | undefined
+    const headways = data?.groups?.[0]?.headways as Array<{ leadingObservationId?: string; followingObservationId?: string; isBunched?: boolean }> | undefined
+    const bunched = headways?.find(h => h.isBunched)
+    if (!bunched || !arrivals) return { leadingVisitOrder: null, followingVisitOrder: null }
+    const lead = arrivals.find(a => a.observationId === bunched.leadingObservationId)
+    const follow = arrivals.find(a => a.observationId === bunched.followingObservationId)
+    return {
+      leadingVisitOrder: lead?.visitOrder ?? null,
+      followingVisitOrder: follow?.visitOrder ?? null,
+    }
+  } catch {
+    return { leadingVisitOrder: null, followingVisitOrder: null }
+  }
 }
 
-export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], positions = [], pollIntervalSeconds = 60 }: {
+function formatVehicleCell(
+  vehicle: BunchingAlert['leadingVehicle'],
+  order: number | null | undefined,
+  fallbackVisitOrder?: number | null
+) {
+  if (vehicle) {
+    const reg = vehicle.registrationNumber === vehicle.busId ? vehicle.busId : `${vehicle.registrationNumber} (${vehicle.busId})`
+    return (
+      <div>
+        <p className="font-medium text-foreground">{reg}</p>
+        {vehicle.captainCode && <p className="text-[10px] text-muted-foreground">Capt: {vehicle.captainCode}</p>}
+      </div>
+    )
+  }
+  if (order !== null && order !== undefined) {
+    return (
+      <div>
+        <span className="inline-flex items-center rounded-md bg-sky-500/10 px-1.5 py-0.5 text-xs font-semibold text-sky-700 dark:text-sky-300">
+          Bus #{order}
+        </span>
+        <span className="block text-[10px] text-muted-foreground mt-0.5">Estimated order</span>
+      </div>
+    )
+  }
+  if (fallbackVisitOrder !== null && fallbackVisitOrder !== undefined) {
+    return (
+      <div>
+        <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+          NextBus {fallbackVisitOrder}
+        </span>
+        <span className="block text-[10px] text-muted-foreground mt-0.5">Arrival forecast</span>
+      </div>
+    )
+  }
+  return <span className="text-muted-foreground">Unavailable</span>
+}
+
+export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], positions = [], pollIntervalSeconds = 60, gapToleranceSeconds = 30 }: {
   liveAlerts: PagedCollection<BunchingAlert, PageResult<BunchingAlert>>
   run: Resource<DemoRun>
   loading: boolean
   routes?: RouteDirection[]
   positions?: RoutePositions[]
   pollIntervalSeconds?: number
+  gapToleranceSeconds?: number
 }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const incidentParam = searchParams.get('incident')
@@ -886,8 +1242,8 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
   const nowMs = Date.parse(liveAlerts.lastSuccessAt ?? '') || 0
   const incidents = useMemo(() => {
     if (viewMode !== 'grouped' || !items.length) return []
-    return groupRouteIncidents(items, routes, nowMs, pollIntervalSeconds, 20)
-  }, [viewMode, items, routes, nowMs, pollIntervalSeconds])
+    return groupRouteIncidents(items, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds)
+  }, [viewMode, items, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds])
 
   type PositionSnapshot = {
     position: RoutePositions['directions'][number]
@@ -1043,28 +1399,34 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
     })
   }
 
-  const renderAlertRow = (alert: BunchingAlert) => (
-    <TableRow key={alert.eventId}>
-      <TableCell className="font-medium">{alert.serviceId}</TableCell>
-      <TableCell>
-        <p className="font-medium">{alert.stopName || 'Stop name unavailable'}</p>
-        <p className="mt-1 text-xs text-muted-foreground">{alert.stopRoadName ? `${alert.stopRoadName} · ` : ''}{alert.stopCode}</p>
-      </TableCell>
-      <TableCell>{alert.directionId ? `Direction ${alert.directionId}` : 'Unavailable'}</TableCell>
-      <TableCell>{simulationBusLabel(alert.leadingVehicle)}</TableCell>
-      <TableCell>{simulationBusLabel(alert.followingVehicle)}</TableCell>
-      {bunchingArrivals(alert).map((value, index) => (
-        <TableCell key={index}>
-          {value === 'No prediction' || value === 'Unavailable' ? (
-            <span className="text-muted-foreground">{value}</span>
-          ) : timestamp(value)}
+  const renderAlertRow = (alert: BunchingAlert, parentIncident?: PositionedIncident | null) => {
+    const visitOrders = alertBunchedVisitOrders(alert)
+    const frontOrder = parentIncident?.stripLink?.frontOrder
+    const followingOrder = parentIncident?.stripLink?.followingOrder
+
+    return (
+      <TableRow key={alert.eventId}>
+        <TableCell className="font-medium">{alert.serviceId}</TableCell>
+        <TableCell>
+          <p className="font-medium">{alert.stopName || 'Stop name unavailable'}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{alert.stopRoadName ? `${alert.stopRoadName} · ` : ''}{alert.stopCode}</p>
         </TableCell>
-      ))}
-      <TableCell>{alert.action}</TableCell>
-      <TableCell>{timestamp(alert.detectedAt)}</TableCell>
-      <TableCell>{dataClassificationLabel(alert.classification)}</TableCell>
-    </TableRow>
-  )
+        <TableCell>{alert.directionId ? `Direction ${alert.directionId}` : 'Unavailable'}</TableCell>
+        <TableCell>{formatVehicleCell(alert.leadingVehicle, frontOrder, visitOrders.leadingVisitOrder)}</TableCell>
+        <TableCell>{formatVehicleCell(alert.followingVehicle, followingOrder, visitOrders.followingVisitOrder)}</TableCell>
+        {bunchingArrivals(alert).map((value, index) => (
+          <TableCell key={index}>
+            {value === 'No prediction' || value === 'Unavailable' ? (
+              <span className="text-muted-foreground">{value}</span>
+            ) : timestamp(value)}
+          </TableCell>
+        ))}
+        <TableCell>{alert.action}</TableCell>
+        <TableCell>{timestamp(alert.detectedAt)}</TableCell>
+        <TableCell>{dataClassificationLabel(alert.classification)}</TableCell>
+      </TableRow>
+    )
+  }
 
   const renderIncidentCard = (incident: PositionedIncident) => {
     const isExpanded = expandedIncidents.has(incident.id) || simulation !== null
@@ -1231,7 +1593,7 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {incident.alerts.map(alert => renderAlertRow(alert))}
+                {incident.alerts.map(alert => renderAlertRow(alert, incident))}
               </TableBody>
             </Table>
           </div>
@@ -1361,6 +1723,7 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
           selectedIncident={selectedIncident}
           incidents={positionedIncidents}
           onSelectIncident={handleSelectIncident}
+          isAllCorridors={selectedCorridorKey === 'all'}
         />
       )}
 
@@ -1414,7 +1777,10 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
             </TableRow>
           </TableHeader>
           <TableBody>
-            {flatItems.map(alert => renderAlertRow(alert))}
+            {flatItems.map(alert => {
+              const matchingIncident = positionedIncidents.find(inc => inc.alerts.some(a => a.eventId === alert.eventId))
+              return renderAlertRow(alert, matchingIncident)
+            })}
           </TableBody>
         </Table>
       )}
