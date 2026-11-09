@@ -11,6 +11,7 @@ second copy of the PR checks. Its independent jobs cover:
 
 | Job | Coverage |
 | --- | --- |
+| Launcher and setup checks | Bash and PowerShell startup, reset/clear, pgAdmin actions and failure handling on Windows and Linux, using fake Docker/npm commands. |
 | Reactor tests and migration checks | All four Java services, unit/slice tests, database integration tests and contract export; no skipped tests allowed. |
 | Frontend checks | Reproducible install, lint, TypeScript and production build. |
 | Configuration and API contract checks | Example Compose configurations, OpenAPI validation and API compatibility baselines. |
@@ -142,8 +143,8 @@ The repository secret/misconfiguration job sets the CI-tool-only
 It still scans source files and enforces HIGH/CRITICAL findings through the
 sanitizer. Separate image vulnerability jobs use current vulnerability databases
 and retain their HIGH/CRITICAL failure gates and SBOM output.
-The image matrix covers all four applications and all three schema-migration
-images; the pinned Nginx image has its own scan and SBOM job.
+The image matrix covers all four applications and the combined database-setup
+image; the pinned Nginx image has its own scan and SBOM job.
 
 The edge and CI fixtures use the same digest-pinned official Nginx Alpine slim
 image. OCC does not use the optional modules bundled in the full Alpine image;

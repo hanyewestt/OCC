@@ -35,9 +35,14 @@ jobs:
           npm ci
           npm run build
       - name: Start isolated application stack
-        run: >-
-          docker compose -p occ-edge-ci --env-file .env.example
-          -f compose.yaml -f infra/compose.test.yaml up -d --build --wait
+        run: |
+          set -euo pipefail
+          compose=(docker compose -p occ-edge-ci --env-file .env.example -f compose.yaml -f infra/compose.test.yaml)
+          "${compose[@]}" --profile setup build
+          "${compose[@]}" up -d --wait postgres
+          "${compose[@]}" run --rm --no-deps db-setup
+          test -z "$("${compose[@]}" ps -a -q db-setup)"
+          "${compose[@]}" up -d --wait
       - name: Configure an ephemeral local JWKS issuer for end-to-end role checks
         shell: bash
         run: |
