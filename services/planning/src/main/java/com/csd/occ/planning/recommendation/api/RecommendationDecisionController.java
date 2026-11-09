@@ -4,6 +4,7 @@ import com.csd.occ.planning.recommendation.api.dto.RecommendationDecisionRequest
 import com.csd.occ.planning.recommendation.api.dto.RecommendationDecisionResponse;
 import com.csd.occ.planning.recommendation.api.dto.RecommendationDecisionPageResponse;
 import com.csd.occ.planning.recommendation.domain.RecommendationDecisionService;
+import com.csd.occ.planning.advisory.domain.BunchingInstructionService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -32,18 +33,20 @@ import org.springframework.http.ResponseEntity;
 public class RecommendationDecisionController {
     private static final Logger log = LoggerFactory.getLogger(RecommendationDecisionController.class);
     private final RecommendationDecisionService decisions;
+    private final BunchingInstructionService instructions;
     private final MeterRegistry metrics;
 
-    public RecommendationDecisionController(RecommendationDecisionService decisions, MeterRegistry metrics) {
+    public RecommendationDecisionController(RecommendationDecisionService decisions, BunchingInstructionService instructions, MeterRegistry metrics) {
         this.decisions = decisions;
+        this.instructions = instructions;
         this.metrics = metrics;
     }
 
     @PostMapping("/{recommendationId}/decision")
     @Operation(operationId = "decideBunchingRecommendation",
             summary = "Approve or replace a recommendation",
-            description = "The first decision is stored with the authenticated controller subject. A rejection requires one to three replacement bus instructions and a rationale. Repeating the same complete decision is safe; changing it returns 409. A decision records controller intent only and does not dispatch a bus instruction.")
-    @ApiResponse(responseCode = "200", description = "Decision stored or the same decision replayed")
+            description = "Stores the authenticated controller decision. A rejection validates and issues one typed replacement instruction to the assigned captain in the same transaction. The target bus and control stop come from the stored recommendation. Repeating the same request returns the existing decision and instruction; conflicting or unsafe requests return 409.")
+    @ApiResponse(responseCode = "200", description = "Decision and replacement instruction stored, or the same request replayed")
     @ApiResponse(responseCode = "400", description = "Decision request is invalid")
     @ApiResponse(responseCode = "404", description = "Recommendation not found")
     @ApiResponse(responseCode = "409", description = "A different or ineligible decision was supplied")
@@ -52,9 +55,9 @@ public class RecommendationDecisionController {
             @Valid @RequestBody RecommendationDecisionRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         try {
-            var decision = decisions.decide(recommendationId, request.action(), jwt.getSubject(),
-                    request.overrideInstructions().stream().map(instruction -> instruction.toDomain()).toList(),
-                    request.controllerRationale());
+            var decision = request.action() == com.csd.occ.planning.recommendation.domain.RecommendationDecisionAction.REJECTED
+                    ? issueReplacement(recommendationId, jwt.getSubject(), request)
+                    : decisions.decide(recommendationId, request.action(), jwt.getSubject(), List.of(), null);
             metrics.counter("occ.planning.recommendation.decision", "action", request.action().name(),
                     "result", "accepted_or_replayed").increment();
             log.info("Recommendation decision recorded: recommendationId={} action={}",
@@ -71,6 +74,13 @@ public class RecommendationDecisionController {
                     "result", "not_actionable").increment();
             throw exception;
         }
+    }
+
+    private com.csd.occ.planning.recommendation.domain.RecommendationDecision issueReplacement(
+            UUID recommendationId, String actor, RecommendationDecisionRequest request) {
+        instructions.rejectAndIssue(recommendationId, actor, request.replacementAction().toMitigationType(), request.adjustmentSeconds(),
+                request.controllerRationale());
+        return decisions.findDecision(recommendationId).orElseThrow();
     }
 
     @GetMapping("/{recommendationId}/decision")

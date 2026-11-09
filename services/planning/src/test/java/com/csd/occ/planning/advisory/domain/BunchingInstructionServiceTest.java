@@ -37,7 +37,17 @@ class BunchingInstructionServiceTest {
                 "Extend dwell at City Hall by 75 sec.");
     }
 
+    @Test
+    void rejectedRecommendationIssuesTheTypedReplacementToItsTargetCaptain() {
+        assertIssued(FollowingBusState.READY_TO_DEPART, MitigationType.HOLD,
+                "Hold at City Hall for 60 sec.", true);
+    }
+
     private void assertIssued(FollowingBusState busState, MitigationType type, String expectedMessage) {
+        assertIssued(busState, type, expectedMessage, false);
+    }
+
+    private void assertIssued(FollowingBusState busState, MitigationType type, String expectedMessage, boolean rejected) {
         var event = new ConfirmedBunchingEvent(ID, "190", 1, "44251", BunchingEventStatus.CONFIRMED,
                 600, List.of(276, 221), NOW, List.of("arrival-1", "arrival-2"));
         var diagnosis = new BunchingRootCauseDiagnosis(UUID.randomUUID(), "synthetic scenario evidence", null,
@@ -78,13 +88,17 @@ class BunchingInstructionServiceTest {
 
         var service = new BunchingInstructionService(records, decisions, instructions, current, context,
                 scopes, Clock.fixed(NOW, ZoneOffset.UTC));
-        var issued = service.approveAndIssue(ID, "controller-subject");
+        var issued = rejected
+                ? service.rejectAndIssue(ID, "controller-subject", type, 60, "Use a shorter hold.")
+                : service.approveAndIssue(ID, "controller-subject");
 
         assertThat(issued.busId()).isEqualTo("demo-bus-2");
         assertThat(issued.captainUserId()).isEqualTo(CAPTAIN);
         assertThat(issued.type().name()).isEqualTo(type.name());
         assertThat(issued.message()).isEqualTo(expectedMessage);
         assertThat(issued.status()).isEqualTo("ISSUED");
-        verify(decisions).decide(ID, RecommendationDecisionAction.APPROVED, "controller-subject", List.of(), null);
+        if (rejected) verify(decisions).decide(ID, RecommendationDecisionAction.REJECTED, "controller-subject",
+                List.of(new ControllerBusInstruction("SBS5898U", "HOLD FOR 60s at next stop")), "Use a shorter hold.");
+        else verify(decisions).decide(ID, RecommendationDecisionAction.APPROVED, "controller-subject", List.of(), null);
     }
 }

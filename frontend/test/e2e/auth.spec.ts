@@ -234,6 +234,8 @@ async function mockDashboard(context: BrowserContext, options: { arrivalFailure?
   await context.route('**/api/v1/planning/recommendations/decisions?*', route => route.fulfill({ json: {
     items: decision ? [decision] : [], page: 0, totalItems: decision ? 1 : 0, totalPages: decision ? 1 : 0,
   } }))
+  await context.route('**/api/v1/planning/ai-audit-records?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
+  await context.route('**/api/v1/planning/diagnoses/controller-suggestions?*', route => route.fulfill({ json: { items: [], page: 0, totalItems: 0, totalPages: 0 } }))
   await context.route('**/api/v1/planning/recommendations/recommendation-1/decision', route => {
     expect(route.request().headers().authorization).toMatch(/^Bearer /)
     if (route.request().method() === 'POST') {
@@ -242,7 +244,12 @@ async function mockDashboard(context: BrowserContext, options: { arrivalFailure?
         decision = { recommendationId: 'recommendation-1', action: 'REJECTED', actorSubject: userId, overrideInstructions: [{ busReference: 'SAMPLE-BUS', instruction: 'Hold for 60 seconds.' }], controllerRationale: 'Earlier controller decision.', decidedAt: '2026-10-22T01:10:00Z' }
         return route.fulfill({ status: 409 })
       }
-      decision = { recommendationId: 'recommendation-1', action: body.action, actorSubject: userId, overrideInstructions: body.overrideInstructions ?? [], controllerRationale: body.controllerRationale ?? null, decidedAt: '2026-10-22T01:10:00Z' }
+      const instruction = body.replacementAction === 'HOLD'
+        ? `HOLD FOR ${body.adjustmentSeconds}s at next stop`
+        : `EXTEND DWELL BY ${body.adjustmentSeconds}s at stop B01`
+      decision = { recommendationId: 'recommendation-1', action: body.action, actorSubject: userId,
+        overrideInstructions: body.action === 'REJECTED' ? [{ busReference: 'SAMPLE-BUS', instruction }] : [],
+        controllerRationale: body.controllerRationale ?? null, decidedAt: '2026-10-22T01:10:00Z' }
     }
     return decision ? route.fulfill({ json: decision }) : route.fulfill({ status: 204 })
   })
@@ -696,7 +703,7 @@ test('controller switches the shared backend mode from the dashboard without lea
   await context.route('**/api/v1/demo-runs', route => {
     expect(route.request().method()).toBe('POST')
     expect(route.request().headers().authorization).toMatch(/^Bearer /)
-    expect(route.request().postDataJSON()).toEqual({ serviceId: '190', directionId: 1, busCount: 3, dispatchGapSeconds: 90, busGapsSeconds: [90, 90], monitoredStopCode: '44251', scenario: 'BUNCHING' })
+    expect(route.request().postDataJSON()).toEqual({ serviceId: '190', directionId: 1, busCount: 3, dispatchGapSeconds: 90, busGapsSeconds: [90, 90], monitoredStopCode: '44251', scenario: 'BUNCHING', captainUserIds: ['10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000003'] })
     active = true; starts++
     return route.fulfill({ status: 201, json: simulation })
   })
@@ -713,6 +720,9 @@ test('controller switches the shared backend mode from the dashboard without lea
   } }))
   await login(page)
   await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
+  for (const [index, userId] of ['10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000003'].entries()) {
+    await page.getByLabel(`Bus ${index + 1} captain user ID`).fill(userId)
+  }
   await page.getByRole('dialog').getByRole('button', { name: 'Start simulation', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Return to live', exact: true })).toBeEnabled()
   await expect(page.getByRole('status').filter({ hasText: /^Simulation$/ })).toBeVisible()
@@ -782,22 +792,24 @@ for (const [action, button] of [['APPROVED', 'Approve recommendation'], ['REJECT
     if (action === 'REJECTED') {
       const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
       await expect(editor).toBeVisible()
-      await expect(editor.getByLabel('Bus reference').first()).toBeFocused()
+      await expect(editor.getByLabel('Action for SAMPLE-BUS')).toBeFocused()
       await editor.getByLabel('Controller rationale').fill('Use a shorter hold to reduce passenger delay.')
       await editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true }).click()
       await expect(editor).toHaveCount(0)
     }
     const body = (await posted).postDataJSON()
     expect(body.action).toBe(action)
-    expect(body.overrideInstructions).toEqual(action === 'REJECTED'
-      ? [{ busReference: 'SAMPLE-BUS', instruction: 'Hold for 120 seconds at stop B01.' }] : [])
+    expect(body.replacementAction).toBe(action === 'REJECTED' ? 'HOLD' : null)
+    expect(body.adjustmentSeconds).toBe(action === 'REJECTED' ? 120 : null)
     expect(body.controllerRationale).toBe(action === 'REJECTED' ? 'Use a shorter hold to reduce passenger delay.' : null)
-    await expect(page.getByText(action === 'APPROVED' ? 'Recommendation approved.' : 'AI recommendation replaced with controller instructions.')).toBeVisible()
+    await expect(page.getByText(action === 'APPROVED' ? 'Recommendation approved.' : 'Replacement instruction issued to the assigned captain.')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toHaveCount(0)
     await page.getByRole('link', { name: 'Audit log', exact: true }).click()
     await expect(page.getByRole('cell', { name: action, exact: true })).toBeVisible()
+    if (action === 'REJECTED') await expect(page.getByText('HOLD FOR 120s at next stop')).toBeVisible()
     await page.reload()
     await expect(page.getByRole('cell', { name: action, exact: true })).toBeVisible()
+    if (action === 'REJECTED') await expect(page.getByText('HOLD FOR 120s at next stop')).toBeVisible()
     const header = page.locator('header').first()
     const tableHeader = page.getByRole('columnheader', { name: 'Decision', exact: true })
     await tableHeader.scrollIntoViewIfNeeded()
@@ -836,18 +848,18 @@ test('dirty controller recommendation editor confirms dismissal and discards onl
   await page.keyboard.press('Enter')
   const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
   await expect(editor).toBeVisible()
-  const busReference = editor.getByLabel('Bus reference').first()
-  const instruction = editor.getByLabel('Instruction').first()
+  const action = editor.getByLabel('Action for SAMPLE-BUS')
+  const adjustment = editor.getByLabel('Seconds').first()
   const rationale = editor.getByLabel('Controller rationale')
-  await expect(busReference).toBeFocused()
+  await expect(action).toBeFocused()
   const submit = editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true })
   await submit.focus()
   await page.keyboard.press('Tab')
-  await expect(busReference).toBeFocused()
-  await busReference.fill('SAMPLE-BUS-EDITED')
-  await instruction.fill('Take the next stop slowly.')
+  await expect(action).toBeFocused()
+  await action.selectOption('DWELL_ADJUSTMENT')
+  await adjustment.fill('65')
   await submit.click()
-  await expect(editor.getByRole('alert')).toContainText('Enter a bus reference and instruction for every affected bus, plus a controller rationale.')
+  await expect(editor.getByRole('alert')).toContainText('1–120 second HOLD or DWELL action')
   expect(decisionRequests).toBe(0)
   await rationale.fill('Avoid sudden braking near the report.')
   await expect(editor.getByRole('alert')).toHaveCount(0)
@@ -864,8 +876,8 @@ test('dirty controller recommendation editor confirms dismissal and discards onl
   await page.keyboard.press('Escape')
   await expect(confirmation).toHaveCount(0)
   await expect(editor).toBeVisible()
-  await expect(busReference).toHaveValue('SAMPLE-BUS-EDITED')
-  await expect(instruction).toHaveValue('Take the next stop slowly.')
+  await expect(action).toHaveValue('DWELL_ADJUSTMENT')
+  await expect(adjustment).toHaveValue('65')
   await expect(rationale).toHaveValue('Avoid sudden braking near the report.')
 
   await editor.getByRole('button', { name: 'Cancel', exact: true }).click()
@@ -873,11 +885,11 @@ test('dirty controller recommendation editor confirms dismissal and discards onl
   await expect(confirmation).toBeVisible()
   await confirmation.getByRole('button', { name: 'Keep editing', exact: true }).click()
   await expect(editor).toBeVisible()
-  await expect(busReference).toHaveValue('SAMPLE-BUS-EDITED')
-  await expect(instruction).toHaveValue('Take the next stop slowly.')
+  await expect(action).toHaveValue('DWELL_ADJUSTMENT')
+  await expect(adjustment).toHaveValue('65')
   await expect(rationale).toHaveValue('Avoid sudden braking near the report.')
 
-  await page.mouse.click(4, 4)
+  await page.locator('[data-slot="dialog-overlay"]').click({ position: { x: 4, y: 4 } })
   confirmation = page.getByRole('alertdialog', { name: 'Discard unsaved changes?', exact: true })
   await expect(confirmation).toBeVisible()
   await confirmation.getByRole('button', { name: 'Discard changes', exact: true }).click()
@@ -887,8 +899,8 @@ test('dirty controller recommendation editor confirms dismissal and discards onl
 
   await opener.click()
   const reopened = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
-  await expect(reopened.getByLabel('Bus reference').first()).toHaveValue('SAMPLE-BUS')
-  await expect(reopened.getByLabel('Instruction').first()).toHaveValue('Hold for 120 seconds at stop B01.')
+  await expect(reopened.getByLabel('Action for SAMPLE-BUS')).toHaveValue('HOLD')
+  await expect(reopened.getByLabel('Seconds').first()).toHaveValue('120')
   await reopened.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(reopened).toHaveCount(0)
   await expect(page.getByRole('alertdialog')).toHaveCount(0)
@@ -935,7 +947,7 @@ test('recommendation editor keeps edits on API failure and cannot close or submi
   await save.click()
   await expect.poll(() => attempts).toBe(2)
   await expect(editor).toHaveCount(0)
-  await expect(page.getByText('AI recommendation replaced with controller instructions.')).toBeVisible()
+  await expect(page.getByText('Replacement instruction issued to the assigned captain.')).toBeVisible()
 })
 
 test('saving pauses polling and reconciles the decision after the response', async ({ page, context }) => {
@@ -969,7 +981,7 @@ test('saving pauses polling and reconciles the decision after the response', asy
   release()
   await expect.poll(() => pollsWhileSaving).toBe(1)
   await expect(editor).toHaveCount(0)
-  await expect(page.getByText('AI recommendation replaced with controller instructions.')).toBeVisible()
+  await expect(page.getByText('Replacement instruction issued to the assigned captain.')).toBeVisible()
 })
 
 test('recommendation editor retains its draft during an unrelated refresh', async ({ page, context }) => {
@@ -2539,7 +2551,7 @@ test('captain without an assigned bus or fresh progress gets a clear route state
 
 test('instruction headlines, states and pacing sentences read plainly', () => {
   const none = { stopCode: null, stopName: null, stopSequence: null, subsequentStopCount: null, speedReductionKmh: null, durationSeconds: null }
-  expect(instructionHeadline('HOLD', { ...none, durationSeconds: 90, stopName: 'Bt Panjang Stn' })).toBe('Hold 1 min 30 s at Bt Panjang Stn')
+  expect(instructionHeadline('HOLD', { ...none, durationSeconds: 90, stopName: 'Bt Panjang Stn' })).toBe('HOLD FOR 90s at next stop')
   expect(instructionHeadline('DWELL_ADJUSTMENT', { ...none, durationSeconds: 45 })).toBe('Stay 45 s longer')
   expect(instructionHeadline('DWELL_ADJUSTMENT', none)).toBe('Stay longer')
   expect(instructionHeadline('REDUCE_SPEED', { ...none, speedReductionKmh: 5, durationSeconds: 300 })).toBe('Reduce speed by 5 km/h for 5 min')
@@ -2565,7 +2577,9 @@ test('instruction headlines, states and pacing sentences read plainly', () => {
 test('an instruction awaiting acknowledgement is the most prominent, full-width action', async ({ page, context }) => {
   await mockAuth(context, 'CAPTAIN')
   const now = new Date()
-  let instruction = syntheticInstruction(now)
+  let instruction = { ...syntheticInstruction(now), type: 'HOLD' as const,
+    parameters: { stopCode: 'B01', stopName: 'Next stop', stopSequence: 3, subsequentStopCount: null,
+      speedReductionKmh: null, durationSeconds: 120 }, message: 'Hold at Next stop for 120 sec.' }
   await context.route('**/api/v1/planning/captain/instructions?*', route => route.fulfill({
     json: { items: [instruction], page: 0, totalItems: 1, totalPages: 1, serverTime: now.toISOString() } }))
   await context.route(`**/api/v1/planning/captain/instructions/${instruction.id}/acknowledgements`, route => {
@@ -2578,7 +2592,7 @@ test('an instruction awaiting acknowledgement is the most prominent, full-width 
   const display = page.getByRole('region', { name: 'Controller instructions', exact: true })
   const card = display.locator('[data-state="action"]')
   await expect(display.getByText('1 instruction needs acknowledgement', { exact: true })).toBeVisible()
-  await expect(card.getByText('Reduce speed by 5 km/h for 5 min', { exact: true })).toBeVisible()
+  await expect(card.getByText('HOLD FOR 120s at next stop', { exact: true })).toBeVisible()
   await expect(card.getByText(/^Acknowledge within \d:\d\d$/)).toBeVisible()
   const button = card.getByRole('button', { name: 'Acknowledge', exact: true })
   const [buttonBox, cardBox] = [await button.boundingBox(), await card.boundingBox()]
