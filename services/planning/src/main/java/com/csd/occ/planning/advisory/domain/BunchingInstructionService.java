@@ -117,8 +117,22 @@ public class BunchingInstructionService {
                     .toList();
             if (stops.size() != 1) throw new AdvisoryConflictException("Upcoming control stop unavailable or ambiguous for " + action.busReference());
             var stop = stops.getFirst();
+            // Lock and cancel the named predecessor; cancellation and issue roll back together.
+            if (index == 0 && replaceInstructionId != null) {
+                var predecessor = instructions.findForUpdate(replaceInstructionId).orElseThrow(AdvisoryNotFoundException::new);
+                if (!predecessor.demoRunId().equals(run) || !predecessor.busId().equals(bus.busId()))
+                    throw new AdvisoryConflictException("Replacement instruction belongs to another bus or run");
+                if (predecessor.type() == InstructionType.BE_CAUTIOUS || !predecessor.isCurrent(clock.instant())) {
+                    var winner = instructions.findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(run, bus.busId(), List.of("ISSUED", "ACKNOWLEDGED"))
+                            .stream().filter(i -> i.type() != InstructionType.BE_CAUTIOUS && !i.id().equals(replaceInstructionId))
+                            .findFirst();
+                    if (winner.isPresent()) throw new AdvisoryConflictException("Active movement instruction " + winner.get().id() + " won the replacement");
+                    throw new AdvisoryConflictException("Replacement instruction is not an active movement instruction");
+                }
+                predecessor.cancel("CONTROLLER_REPLACED");
+            }
             for (var active : currentInstructions.captain(bus.captainUserId().toString()))
-                if (active.type() != InstructionType.BE_CAUTIOUS)
+                if (active.type() != InstructionType.BE_CAUTIOUS && !active.id().equals(replaceInstructionId))
                     throw new AdvisoryConflictException("Active movement instruction " + active.id() + " must be replaced first");
             var instructionType = InstructionType.valueOf(action.type().name());
             var parameters = new InstructionParameters(stop.stopCode(), stop.description(), stop.stopSequence(), null, null, action.seconds());
