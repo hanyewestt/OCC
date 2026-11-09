@@ -35,7 +35,6 @@ public class PlanningSecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/actuator/prometheus").hasRole("ADMIN")
                         .requestMatchers("/actuator/**").denyAll()
                         .requestMatchers(HttpMethod.POST, "/internal/v1/planning/requests")
                         .hasAuthority(PeerCapabilityAuthenticationFilter.DISRUPTION_AUTHORITY)

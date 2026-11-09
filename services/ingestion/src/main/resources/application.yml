@@ -10,6 +10,9 @@ spring:
     url: ${OCC_INGESTION_DB_INTERNAL_URL}
     username: ${OCC_INGESTION_DB_USERNAME:occ_ingestion}
     password: ${OCC_INGESTION_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 4
+      minimum-idle: 1
   jpa:
     hibernate:
       ddl-auto: ${OCC_INGESTION_JPA_DDL_AUTO:validate}
@@ -24,7 +27,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus
+        include: health
   endpoint:
     health:
       probes:

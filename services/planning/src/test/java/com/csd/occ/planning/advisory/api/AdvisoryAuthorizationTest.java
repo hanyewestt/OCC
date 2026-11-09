@@ -9,8 +9,6 @@ import com.csd.occ.planning.advisory.domain.*;
 import com.csd.occ.planning.api.error.GlobalExceptionHandler;
 import com.csd.occ.planning.infrastructure.security.PlanningSecurityConfig;
 import com.csd.occ.planning.infrastructure.security.SupabaseRoleConverter;
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import java.time.Clock;
 import java.time.Instant;
@@ -42,7 +40,6 @@ class AdvisoryAuthorizationTest {
     @MockitoBean InstructionService instructions;
     @MockitoBean AdvisoryGroupService groups;
     @MockitoBean PublicNoticeService notices;
-    @MockitoBean MeterRegistry metrics;
     @MockitoBean JwtDecoder decoder;
     @MockitoBean Clock clock;
     @MockitoBean AdvisoryProposalRepository proposals;
@@ -193,7 +190,6 @@ class AdvisoryAuthorizationTest {
         when(instructions.captain(subject)).thenReturn(List.of(issued));
         when(instructions.acknowledge(id, subject)).thenReturn(issued);
         when(clock.instant()).thenReturn(Instant.parse("2026-10-25T02:00:00Z"));
-        when(metrics.counter(anyString(), eq("type"), anyString())).thenReturn(mock(Counter.class));
         var principal = jwt().jwt(token -> token.subject(subject)).authorities(new SimpleGrantedAuthority("ROLE_CAPTAIN"));
         var page = mvc.get().uri("/api/v1/planning/captain/instructions").with(principal).exchange();
         assertThat(page).hasStatusOk().bodyJson().extractingPath("$.items[0].id").isEqualTo(id.toString());
@@ -210,7 +206,6 @@ class AdvisoryAuthorizationTest {
         UUID id = UUID.randomUUID();
         when(instructions.decide(eq(id), isNull(), isNull(), eq("verified-controller"), isNull()))
                 .thenReturn(instruction(id, UUID.randomUUID()));
-        when(metrics.counter(anyString(), eq("type"), anyString())).thenReturn(mock(Counter.class));
         assertThat(mvc.post().uri("/api/v1/planning/advisories/{id}/decisions", id)
                 .with(jwt().jwt(token -> token.subject("verified-controller"))
                         .authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))

@@ -1,28 +1,9 @@
 # Disposable integration stack. Always pass an isolated Compose project name.
 services:
-  ingestion-migrate:
+  db-setup:
     build:
       context: .
       dockerfile: infra/flyway.Dockerfile
-      args:
-        OCC_SERVICE: ingestion
-        OCC_MIGRATION_SOURCE: services/ingestion/src/main/resources/db/migration
-
-  disruption-migrate:
-    build:
-      context: .
-      dockerfile: infra/flyway.Dockerfile
-      args:
-        OCC_SERVICE: disruption
-        OCC_MIGRATION_SOURCE: services/disruption/src/main/resources/db/migration
-
-  planning-migrate:
-    build:
-      context: .
-      dockerfile: infra/flyway.Dockerfile
-      args:
-        OCC_SERVICE: planning
-        OCC_MIGRATION_SOURCE: services/planning/src/main/resources/db/migration
 
   ingestion:
     build:

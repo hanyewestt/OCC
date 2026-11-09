@@ -21,7 +21,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -74,7 +73,6 @@ class PlanningRecommendationPersistenceIT {
     }
 
     @Autowired private JdbcTemplate jdbc;
-    @Autowired private MeterRegistry meterRegistry;
     @Autowired private MockMvc mvc;
     @Autowired private PlanningRecommendationAdapter planningRecommendations;
     @Autowired private ModelInvocationRecordPort modelInvocations;
@@ -105,15 +103,13 @@ class PlanningRecommendationPersistenceIT {
     }
 
     @Test
-    void exposesPlanningQueueMetricsOnlyToAdministrators() throws Exception {
-        assertThat(meterRegistry.get("occ.planning.request.pending_count").gauge().value()).isEqualTo(0.0);
-        mvc.perform(get("/actuator/prometheus")).andExpect(status().isUnauthorized());
-        mvc.perform(get("/actuator/prometheus").with(SecurityMockMvcRequestPostProcessors.jwt()
-                        .jwt(token -> token.claim("occ_role", "ADMIN"))
-                        .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
-                .andExpect(status().isOk())
-                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().string(
-                        org.hamcrest.Matchers.containsString("occ_planning_retention_deleted_rows_total")));
+    void keepsReadinessAvailableAndDeniesRemovedMetricsEndpoint() throws Exception {
+        mvc.perform(get("/actuator/health/readiness"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+        mvc.perform(get("/actuator/prometheus").with(
+                        org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt()
+                                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isForbidden());
     }
 
     @Test

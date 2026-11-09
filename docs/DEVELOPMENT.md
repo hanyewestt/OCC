@@ -21,6 +21,50 @@ Maven Wrapper. Use the Node.js version pinned in the repository-root `.nvmrc`
 server and browser tests. The app start scripts build the frontend on the host, so Node
 is required even when Java services are built entirely in Docker.
 
+## Service memory and native diagnostics
+
+Compose budgets Ingestion at 640 MiB and Disruption/Planning at 512 MiB, each
+with a 192 MiB maximum Java heap. Gateway has 384 MiB with a 128 MiB heap. Heaps start at 32 MiB. These
+small-service defaults use Serial GC and expose two CPUs to JVM ergonomics;
+`ActiveProcessorCount` does not impose a Docker CPU quota. Database pools allow
+four connections per business service and keep one idle connection.
+
+Override `OCC_<SERVICE>_MEMORY_LIMIT` and `OCC_<SERVICE>_JAVA_TOOL_OPTIONS` in the
+root `.env` when sizing a deployment. The latter replaces the complete JVM
+option string. Leave room above `-Xmx` for class metadata, native allocations,
+thread stacks and diagnostic overhead. Hikari settings can be overridden through
+Spring's normal `SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE` and
+`SPRING_DATASOURCE_HIKARI_MINIMUMIDLE` environment variables in a Compose override;
+adding arbitrary variables to `.env` alone does not inject them into containers.
+Recreate affected containers after changing their environment or memory budget.
+
+Native Memory Tracking (NMT) summary is enabled in the default JVM options.
+It reports JVM allocations, not total resident RAM or all third-party native
+allocations. `reserved` is address space; `committed` is backed allocation and
+must not be confused with Docker's working-set measurement. NMT has overhead;
+remove `-XX:NativeMemoryTracking=summary` from the full option override to disable
+it, or use `detail` when allocation-site diagnostics are needed. Changing the
+tracking mode requires a restart.
+
+Runtime images contain a JRE rather than `jcmd`. On a local Docker engine, use
+the pinned matching JDK as an ephemeral helper sharing only the target PID
+namespace. This command works in PowerShell and Bash; replace `local-ingestion-1`
+with the target container name for a different project or service:
+
+```shell
+docker stats --no-stream
+docker run --rm --network none --pid=container:local-ingestion-1 --user 10001:10001 --cap-drop ALL --entrypoint /opt/java/openjdk/bin/jcmd eclipse-temurin:25.0.4.1_1-jdk-noble@sha256:589ff4cc3f71aab462e7048a47a0d10edf57fbccde3fceea2281e610bf5880b4 1 VM.native_memory summary scale=MB
+```
+
+Use `GC.heap_info` instead of `VM.native_memory summary scale=MB` to inspect heap
+occupancy. For growth over an operation, run `VM.native_memory baseline`, exercise
+the workload, then run `VM.native_memory summary.diff scale=MB`. Keep the helper
+JDK version aligned with `BUILD_IMAGE` in `infra/java.Dockerfile`. NMT supplements
+health checks; it does not expose a network management endpoint.
+
+See [the measured memory comparison](PERFORMANCE.md) for the workload, before/after
+results, native-memory breakdown and limits of the measurement.
+
 ## First-time configuration
 
 Create the ignored root `.env` only if it does not already exist:
@@ -62,7 +106,7 @@ containers and database.
 
 | Action | PowerShell | Bash | Behavior |
 | --- | --- | --- | --- |
-| Up app (build) | `.\scripts\app.ps1 up` | `bash scripts/app.sh up` | Install/build React assets, build application/migration images, create or update containers and wait for health checks |
+| Up app (build) | `.\scripts\app.ps1 up` | `bash scripts/app.sh up` | Install/build React assets, build application/setup images, create or update containers and wait for health checks |
 | Start app | `.\scripts\app.ps1 start` | `bash scripts/app.sh start` | Resume existing containers and wait for health checks; do not build, create or recreate containers |
 | Stop app | `.\scripts\app.ps1 stop` | `bash scripts/app.sh stop` | Stop project containers, including pgAdmin; preserve containers, networks and data volumes |
 | Reset app | `.\scripts\app.ps1 reset` | `bash scripts/app.sh reset` | Delete project containers/networks and database/pgAdmin volumes, rebuild images without layer cache, then start the app |
@@ -108,10 +152,21 @@ Repeat that project option for up, stop, reset, clear and pgAdmin actions. Use `
 Linux container engine. PowerShell launchers support Windows PowerShell 5.1+ and
 PowerShell 7; Bash launchers support Linux, macOS, WSL and Git Bash.
 
-PostgreSQL starts first, bootstrap configures database roles, and Flyway applies
-migrations before the services start. Expect PostgreSQL, Ingestion, Disruption,
-Planning, Gateway and Nginx to be healthy. Bootstrap and migration containers
-should show `Exited (0)`; they are one-shot jobs.
+The launcher starts PostgreSQL and waits for health, then runs
+`docker compose run --rm --no-deps db-setup`. This single temporary job provisions
+roles and applies each service's Flyway migrations with its own credentials.
+Applications start only after setup succeeds. The setup container is removed on
+success or failure; failure output remains in the invoking terminal. Expect
+PostgreSQL, Ingestion, Disruption, Planning, Gateway and Nginx to be healthy.
+`up` also removes obsolete bootstrap/migration containers without deleting data.
+`start` only resumes existing application containers and does not rerun setup.
+
+For deployment or CI with explicit Compose files, use the same files and project
+for every command: build or pull `db-setup`, `up -d --wait postgres`,
+`run --rm --no-deps db-setup`, then `up -d --wait`. Stop on any failed command.
+The setup profile excludes the job from ordinary `up`; a bare `up` does not
+initialize a fresh database. Production now publishes one `OCC_DB_SETUP_IMAGE`
+digest instead of the three former `OCC_*_MIGRATION_IMAGE` digests.
 
 ## Frontend development
 
@@ -165,7 +220,7 @@ cd frontend
 npm ci
 npm run build
 cd ..
-docker compose --env-file .env up -d --build --wait
+./scripts/app.ps1 up
 ```
 
 Rebuild after frontend source changes when testing through Nginx. Node and Vite
@@ -207,7 +262,7 @@ refresh, not after loading additional pages. A successful refresh returns the
 collection to its first page. Authentication and configuration retain their own
 existing lifecycles.
 
-After Java, dependency, Dockerfile or migration changes, run the start action
+After Java, dependency, Dockerfile or migration changes, run the up action
 again to rebuild changed images. To rebuild only Gateway, use Compose directly:
 
 ```shell
@@ -228,11 +283,12 @@ docker compose --env-file .env ps -a
 docker compose --env-file .env logs --tail 100 nginx gateway ingestion disruption planning
 ```
 
-If startup fails, inspect `ps -a` and the failed service's logs. For a migration
-failure, inspect its one-shot container, for example:
+If startup fails, inspect `ps -a` and the failed application's logs. Setup
+failures appear in the launcher terminal because the temporary container is
+removed. After correcting the cause, rerun setup against the running database:
 
 ```shell
-docker compose --env-file .env logs ingestion-migrate
+docker compose --env-file .env run --rm --no-deps db-setup
 ```
 
 Add `--project-name <name>` to direct Compose commands when managing a custom
@@ -289,7 +345,7 @@ browser's view; arrivals remain live. Browser journeys use synthetic Supabase
 and API responses and do not create real approval records. To verify the real
 local flow:
 
-1. Start the stack with `docker compose --env-file .env up -d --build --wait`.
+1. Start the stack with `./scripts/app.ps1 up`.
 2. Sign in to `/controller`, start a fresh simulation, then open
    `/controller/planning` and wait for the current diagnosis and recommendation.
 3. Inspect the diagnosis summary and its **Evidence and limitations** disclosure.
@@ -335,17 +391,17 @@ ADMIN token:
 | Route / endpoint | Nginx response | Reason |
 | --- | --- | --- |
 | `/internal` and `/internal/**` | `404` in local and production | Private service-to-service APIs; no public Gateway route |
-| `/actuator` and `/actuator/**` | `404` in local and production | Health, metrics and management access is separate from the public app |
+| `/actuator` and `/actuator/**` | `404` in local and production | Health and management access is separate from the public app |
 | `/v3/api-docs` and `/v3/api-docs/**` | `404` in local and production | OpenAPI documents are restricted to direct development service access |
 | `/swagger-ui.html` and `/swagger-ui/**` | `404` in local and production | Swagger is a developer interface, not a public app page |
 | `/auth-test` and `/auth-test/**` | `404` in local and production | Retired temporary authentication page |
 
 Direct backend, Gateway, PostgreSQL and pgAdmin ports are not published by the
 production configuration. Local development port access still follows each
-service's authentication rules; for example, readiness is anonymous on the
-direct service port, whereas Prometheus requires ADMIN. Protected operational
-APIs return `401` for missing/invalid tokens and `403` for insufficient roles.
-For metrics endpoints, see [Monitoring](MONITORING.md).
+service's authentication rules. Readiness is anonymous on the direct service
+port. Only Actuator health endpoints are exposed; Prometheus export and custom
+metrics instrumentation are not enabled. Protected operational APIs return
+`401` for missing/invalid tokens and `403` for insufficient roles.
 
 Start optional pgAdmin with `.\scripts\app.ps1 start-pgadmin` (PowerShell)
 or `bash scripts/app.sh start-pgadmin` (Bash).
@@ -432,7 +488,6 @@ See [testing](TESTING.md) for system tests and CI.
 - [Authentication](AUTHENTICATION.md): public configuration, roles and sessions.
 - [Testing](TESTING.md): service tests, browser tests and CI.
 - [Deployment](DEPLOYMENT.md): container topology and production HTTPS.
-- [Monitoring](MONITORING.md): metrics and diagnostic access.
 - [Frontend conventions](frontend-convention.md) and [service conventions](CONVENTIONS.md).
 
 ### Captain live-auth test configuration
