@@ -657,10 +657,11 @@ test('controller can opt into diagnosis from a queued bunching request', async (
   const request = {
     requestId: 'bunching-request-1', eventId: 'bunching-event-1', diagnosisId: null, classification: 'SIMULATION', demoRunId: 'run-1',
     serviceId: '190', directionId: 1, stopCode: '44251', status: 'PENDING', likelyCause: null, confidence: null,
-    limitations: [], evidenceDetails: [], failureCode: null, policyOutcome: null, createdAt: '2026-10-22T01:00:00Z',
+    affectedBusReferences: ['demo-190-1', 'demo-190-2'], limitations: [], evidenceDetails: [], failureCode: null,
+    policyOutcome: null, createdAt: '2026-10-22T01:00:00Z',
   }
   await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: {
-    mode: 'DEMO', demoRunId: 'run-1', items: completed ? [{ ...request, status: 'COMPLETED' }] : [request], page: 0, totalItems: completed ? 0 : 1, totalPages: 1,
+    mode: 'DEMO', demoRunId: 'run-1', items: completed ? [{ ...request, status: 'COMPLETED', likelyCause: 'The trailing bus encountered a passenger surge.', confidence: 0.82, limitations: ['Crowding data was unavailable.'] }] : [request], page: 0, totalItems: completed ? 0 : 1, totalPages: 1,
   } }))
   await context.route('**/api/v1/planning/diagnoses/trigger', route => {
     expect(route.request().method()).toBe('POST')
@@ -679,6 +680,10 @@ test('controller can opt into diagnosis from a queued bunching request', async (
   await page.getByRole('button', { name: 'Generate diagnosis', exact: true }).click()
   await expect.poll(() => triggered).toBe(true)
   await expect(page.getByText('Diagnosis generated. The recommendation is ready for review.')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'AI diagnosis', exact: true })).toBeVisible()
+  await expect(page.getByText('The trailing bus encountered a passenger surge.')).toBeVisible()
+  await expect(page.getByText('Confidence: 82%')).toBeVisible()
+  await expect(page.getByText('Crowding data was unavailable.')).toBeVisible()
 })
 
 test('controller switches the shared backend mode from the dashboard without leaving the page', async ({ page, context }) => {
