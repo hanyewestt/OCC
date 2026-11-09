@@ -398,7 +398,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
         },
       })
       if (!controller.signal.aborted) {
-        onMessage(action === 'APPROVED' ? 'Recommendation approved.' : 'Replacement instruction issued to the assigned captain.')
+        onMessage(action === 'APPROVED' ? 'Recommendation approved and instruction issued to the assigned captain.' : 'Replacement instruction issued to the assigned captain.')
         closeEditor(true)
       }
     } catch (error) {
