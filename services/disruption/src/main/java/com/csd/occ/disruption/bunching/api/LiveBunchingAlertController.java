@@ -45,6 +45,6 @@ public class LiveBunchingAlertController {
     private LiveBunchingAlertResponse response(AlertEvent event) {
         return new LiveBunchingAlertResponse(event.id(), event.alertId(), event.action(), event.classification(),
                 event.serviceId(), event.stopCode(), event.directionId(), event.triggeredAt(), event.fetchedAt(),
-                event.rawObservationId(), event.pollRunId(), event.evidence());
+                event.rawObservationId(), event.pollRunId(), event.evidence(), event.affectedObservationIds(), event.demoRunId());
     }
 }

@@ -19,6 +19,7 @@ import com.csd.occ.disruption.bunching.infrastructure.config.BunchingConfirmatio
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
@@ -147,7 +148,7 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
             if (previous.pendingHeadwaySeconds() == null || previous.pendingDetectedAt() == null) {
                 previous.recordCandidate(fetchedAt, Math.toIntExact(current.gap().toSeconds()),
                         current.leadingObservationId(), current.followingObservationId(),
-                        evaluation.snapshot().rawObservationId(), evaluation.snapshot().pollRunId());
+                        evaluation.snapshot().rawObservationId(), evaluation.snapshot().pollRunId(), affectedIds(result));
                 return;
             }
 
@@ -160,7 +161,9 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
                     current.leadingObservationId(), current.followingObservationId(), confirmation.expectedHeadwaySeconds(),
                     previous.pendingHeadwaySeconds(), secondHeadway, previous.pendingDetectedAt(), fetchedAt,
                     previous.pendingLeadingObservationId(), previous.pendingFollowingObservationId(),
-                    current.leadingObservationId(), current.followingObservationId(), "bunching-gap-v1"));
+                    current.leadingObservationId(), current.followingObservationId(), "bunching-gap-v1",
+                    java.util.stream.Stream.concat(previous.pendingAffectedObservationIds().stream(), affectedIds(result).stream())
+                            .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new)).stream().toList()));
             events.notifyListeners(event.id().toString());
             var registration = diagnosisLinks.register(event.id(),
                     diagnosisCorrelation.correlationFor(evaluation.snapshot(), result.group(), current), confirmedAt);
@@ -195,5 +198,11 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
                         ? "SIMULATION" : "OBSERVATION_ONLY", event.demoRunId(), cleared ? "CLEARED" : "ACTIVE",
                 event.triggeredAt(), event.triggeredAt(), cleared ? event.triggeredAt() : null);
         return events.saveAndFlush(event);
+    }
+
+    private java.util.List<UUID> affectedIds(BunchingEvaluation.GroupEvaluation result) {
+        return result.headways().stream().filter(BunchingEvaluation.Headway::isBunched)
+                .flatMap(headway -> java.util.stream.Stream.of(headway.leadingObservationId(), headway.followingObservationId()))
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new)).stream().toList();
     }
 }

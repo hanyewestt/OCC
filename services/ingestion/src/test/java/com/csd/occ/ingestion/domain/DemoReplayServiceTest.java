@@ -181,4 +181,42 @@ class DemoReplayServiceTest {
         verify(pollRuns, times(3)).save(org.mockito.ArgumentMatchers.any(PollRun.class));
         verify(incidents, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any(TrafficIncidentObservation.class));
     }
+
+    @Test
+    void replayPreservesConfiguredAdjacentBunchingGaps() {
+        DemoRunRepository runs = mock(DemoRunRepository.class);
+        BusArrivalObservationRepository arrivals = mock(BusArrivalObservationRepository.class);
+        ReferenceTopologyPort topology = mock(ReferenceTopologyPort.class);
+        DemoModeService mode = mock(DemoModeService.class);
+        DemoRun run = new DemoRun(UUID.randomUUID(), NOW, "route190-bunching-v1", 190,
+                new DemoRunConfiguration("190", 1, 3, Duration.ofSeconds(90),
+                        List.of(Duration.ofSeconds(100), Duration.ofSeconds(40)), "44251", DemoScenario.BUNCHING));
+        run.startReplay();
+        when(runs.findActive()).thenReturn(Optional.of(run));
+        when(mode.enabled()).thenReturn(true);
+        var reference = new ReferenceTopologyPort.ReferenceTopologyVersion(UUID.randomUUID(), "a".repeat(64));
+        when(topology.activeVersion()).thenReturn(Optional.of(reference));
+        var route = new ReferenceTopologyPort.BusRoute("190", List.of(
+                new ReferenceTopologyPort.BusRouteOperator("SBST", "DD", List.of(
+                        new ReferenceTopologyPort.BusRouteDirection(1, List.of(
+                                new ReferenceTopologyPort.BusRouteStop("44251", "A", "Stop A", null, null, 10, null)))))));
+        when(topology.busRoute(reference.id(), "190")).thenReturn(Optional.of(route));
+        List<List<BusArrivalObservation>> batches = new ArrayList<>();
+        doAnswer(invocation -> {
+            List<BusArrivalObservation> batch = StreamSupport.stream(((Iterable<BusArrivalObservation>) invocation.getArgument(0)).spliterator(), false).toList();
+            batches.add(batch);
+            return batch;
+        }).when(arrivals).saveAll(org.mockito.ArgumentMatchers.any());
+        DemoReplayService service = new DemoReplayService(runs, mock(DemoVehicleAssignmentRepository.class),
+                mock(PollRunRepository.class), mock(RawObservationRepository.class), arrivals,
+                mock(TrafficIncidentObservationRepository.class), topology, Clock.fixed(NOW, ZoneOffset.UTC), mode,
+                new DemoReplayConfiguration("route190-bunching-v1", 190, Duration.ofSeconds(90)), mock(DemoHazardReplayService.class));
+
+        service.replayNext();
+        service.replayNext();
+
+        assertEquals(List.of(Duration.ofSeconds(100), Duration.ofSeconds(40)), List.of(
+                Duration.between(batches.get(1).get(0).getEstimatedArrivalAt(), batches.get(1).get(1).getEstimatedArrivalAt()),
+                Duration.between(batches.get(1).get(1).getEstimatedArrivalAt(), batches.get(1).get(2).getEstimatedArrivalAt())));
+    }
 }

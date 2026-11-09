@@ -2,6 +2,7 @@ package com.csd.occ.ingestion.api.dto;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.List;
 
 @Schema(description = "Bunching transition detected from simulation observations")
 public record DemoBunchingAlertResponse(UUID eventId, UUID bunchingEventId, String action, String classification, String serviceId, String stopCode,
@@ -9,5 +10,6 @@ public record DemoBunchingAlertResponse(UUID eventId, UUID bunchingEventId, Stri
                                         @Schema(description = "Absolute predicted-arrival gap between the bunched buses, in seconds", nullable = true)
                                         Long headwaySeconds, DemoVehicleResponse leadingVehicle,
                                         DemoVehicleResponse followingVehicle,
+                                        List<DemoVehicleResponse> affectedVehicles,
                                         @Schema(description = "Saved detection evidence JSON, including the simulation snapshot's arrival slots")
                                         String evidence) {}

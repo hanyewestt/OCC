@@ -15,6 +15,7 @@ import { groupRouteIncidents, type RouteIncident } from '@/lib/route-strip'
 import type { Planning } from './ControllerPage'
 import type { PagedCollection } from '@/lib/paged-collection'
 import { DataMessage, timestamp } from './ControllerViews'
+import { adjacentBunchingGaps, bunchedArrivalGaps, formatGap } from '@/lib/route-strip'
 
 function seconds(value: number) {
   const minutes = Math.floor(value / 60)
@@ -33,6 +34,35 @@ function affectedBuses(recommendation: PendingRecommendation) {
     ? recommendation.affectedBusReferences : [recommendation.targetBusReference]
 }
 
+function BunchedPairs({ alert }: { alert: BunchingAlert | undefined }) {
+  const pairs = alert ? bunchedArrivalGaps(alert) : []
+  return pairs.length ? <p className="text-xs text-muted-foreground">{pairs.map(pair =>
+    `Buses #${pair.leadingOrder} & #${pair.followingOrder} · ${formatGap(pair.seconds)}`).join(' · ')}</p> : null
+}
+
+function recommendationAlert(recommendation: PendingRecommendation, alerts: BunchingAlert[]) {
+  const byEventId = recommendation.bunchingEventId && alerts.find(alert =>
+    (alert.bunchingEventId ?? alert.alertId) === recommendation.bunchingEventId)
+  return byEventId ?? alerts.find(alert => alert.serviceId === recommendation.serviceId &&
+    alert.directionId === recommendation.directionId && alert.stopCode === recommendation.monitoredStopCode &&
+    alert.detectedAt === recommendation.detectedAt)
+}
+
+function RecommendationBunchingGaps({ recommendation, alerts }: { recommendation: PendingRecommendation; alerts: BunchingAlert[] }) {
+  const alert = recommendationAlert(recommendation, alerts)
+  const detectedPairs = alert ? adjacentBunchingGaps(alert) : []
+  const buses = affectedBuses(recommendation)
+  const pairs = Array.from({ length: Math.max(1, buses.length - 1) }, (_, index) => {
+    const leadingOrder = index + 1
+    const followingOrder = index + 2
+    const detected = detectedPairs.find(pair => pair.leadingOrder === leadingOrder && pair.followingOrder === followingOrder)
+    return { leadingOrder, followingOrder, seconds: detected?.isBunched ? detected.seconds : null }
+  })
+  return <div><p className="text-xs text-muted-foreground">Observed bunching gaps</p>
+    <ul className="mt-1 space-y-1 font-medium tabular-nums">{pairs.map(pair => <li key={`${pair.leadingOrder}-${pair.followingOrder}`}>Buses #{pair.leadingOrder}–{pair.followingOrder}: {pair.seconds === null ? 'NA' : seconds(pair.seconds)}</li>)}</ul>
+  </div>
+}
+
 function hasAdvisoryOnlyDiagnosis(request: PlanningDiagnosisRequest) {
   return request.policyOutcome === 'LIVE_DIAGNOSIS_NO_VALIDATED_OPERATIONAL_CONTEXT'
 }
@@ -47,7 +77,7 @@ function isSgtToday(isoString: string, currentMs = 0): boolean {
   return sgtDateStr === sgtNowStr
 }
 
-type ControllerReplacement = { action: 'HOLD' | 'DWELL_ADJUSTMENT'; adjustmentSeconds: number }
+type ControllerReplacement = { action: 'HOLD' | 'DWELL_ADJUSTMENT' | 'NONE'; adjustmentSeconds: number }
 type BusReplacement = ControllerReplacement & { busReference: string }
 
 function initialInstruction(recommendation: PendingRecommendation): ControllerReplacement {
@@ -651,6 +681,8 @@ export function ControllerPlanning({
             <p className="text-xs text-muted-foreground">Stop {item.monitoredStopCode}</p>
             <p className="text-sm">{item.explanation.likelyCause}</p>
             <p className="text-xs text-muted-foreground">Affected buses · {affectedBuses(item).join(', ')}</p>
+            <BunchedPairs alert={detectedAlerts.find(alert => alert.serviceId === item.serviceId && alert.directionId === item.directionId &&
+              alert.stopCode === item.monitoredStopCode && alert.detectedAt === item.detectedAt)} />
             <p className="text-xs text-muted-foreground">{item.mitigationType.replaceAll('_', ' ')} · Target: {item.targetBusReference}</p>
           </button>)}
           {!visibleWithRetained.length && !visibleCorridors.length && (
@@ -676,7 +708,7 @@ export function ControllerPlanning({
       </Card>
 
       {!selectedRequest && detailRecommendation && detailIdentity && <RecommendationDetail key={detailIdentity} selected={detailRecommendation} identity={detailIdentity}
-        scopeIdentity={scopeIdentity} token={token} isCurrent={selectionIsCurrent} validationFailed={editorUnavailable}
+        scopeIdentity={scopeIdentity} token={token} detectedAlerts={detectedAlerts} isCurrent={selectionIsCurrent} validationFailed={editorUnavailable}
         retryCurrentCheck={modeError ? onRefresh : recommendations.reload}
         onSaved={onSaved} onMessage={setMessage} onEditorChange={setEditingRecommendation} />}
       {selectedRequest && <DiagnosisRequestDetail request={selectedRequest}
@@ -866,8 +898,9 @@ function DiagnosisRequestDetail({ request, corridor, detectedBusReferences, gene
   </CardContent></Card>
 }
 
-function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurrent, validationFailed, retryCurrentCheck, onSaved, onMessage, onEditorChange }: {
+function RecommendationDetail({ selected, identity, scopeIdentity, token, detectedAlerts, isCurrent, validationFailed, retryCurrentCheck, onSaved, onMessage, onEditorChange }: {
   selected: PendingRecommendation; identity: string; scopeIdentity: string; token: string
+  detectedAlerts: BunchingAlert[]
   isCurrent: boolean; validationFailed: boolean; retryCurrentCheck: () => void
   onSaved: () => void; onMessage: (message: string) => void; onEditorChange: Dispatch<SetStateAction<EditingRecommendation | null>>
 }) {
@@ -881,7 +914,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
   const submitting = useRef(false)
   const mutationRef = useRef<AbortController | null>(null)
   const firstAction = useRef<HTMLSelectElement>(null)
-  const dirty = openingDraft !== null && (rationale !== openingDraft.rationale || JSON.stringify(instructions) !== JSON.stringify(openingDraft.instructions))
+  const dirty = openingDraft !== null && JSON.stringify(instructions) !== JSON.stringify(openingDraft.instructions)
 
   useEffect(() => () => mutationRef.current?.abort(), [])
 
@@ -925,9 +958,10 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
 
   async function decide(action: Decision['action']) {
     if (submitting.current || !isCurrent) return
-    if (action === 'REJECTED' && (!rationale.trim() || !instructions.length || instructions.some(item =>
+    const activeInstructions = instructions.filter(item => item.action !== 'NONE')
+    if (action === 'REJECTED' && (!activeInstructions.length || activeInstructions.some(item =>
         !Number.isInteger(item.adjustmentSeconds) || item.adjustmentSeconds < 1 || item.adjustmentSeconds > 120))) {
-      setMessage('Enter a 1–120 second HOLD or DWELL action for every affected bus and a controller rationale.')
+      setMessage('Enter at least one 1–120 second HOLD or DWELL action.')
       return
     }
     submitting.current = true; setPending(true); setMessage('')
@@ -941,10 +975,10 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
           action,
           replacementAction: null,
           adjustmentSeconds: null,
-          replacementInstructions: action === 'REJECTED' ? instructions.map(item => ({
+          replacementInstructions: action === 'REJECTED' ? activeInstructions.map(item => ({
             busReference: item.busReference, action: item.action, adjustmentSeconds: item.adjustmentSeconds,
           })) : null,
-          controllerRationale: action === 'REJECTED' ? rationale.trim() : null,
+          controllerRationale: action === 'REJECTED' ? rationale.trim() || null : null,
         },
       })
       if (!controller.signal.aborted) {
@@ -987,7 +1021,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
               onInteractOutside={event => { event.preventDefault(); requestClose() }}>
               <DialogHeader>
                 <DialogTitle>Enter controller recommendation</DialogTitle>
-                <DialogDescription>Replace the AI recommendation with one HOLD or DWELL action for each affected bus. Each action can be adjusted by up to 120 seconds.</DialogDescription>
+                <DialogDescription>Choose HOLD, DWELL, or no instruction for each affected bus. Actions can be adjusted by up to 120 seconds.</DialogDescription>
               </DialogHeader>
               {!isCurrent && <div role="alert" className="rounded-lg border p-3 text-sm">
                 <p>{validationFailed ? 'Unable to confirm this recommendation is current. Your draft is preserved; decisions are paused.'
@@ -997,10 +1031,9 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
               {message && <p role="alert" className="rounded-lg border p-3 text-sm">{message}</p>}
               <form className="space-y-4" noValidate onSubmit={event => { event.preventDefault(); void decide('REJECTED') }}>
                 {instructions.map((item, index) => <div key={item.busReference} className="grid gap-3 rounded-lg border p-4 sm:grid-cols-[1fr_8rem]">
-                  <div className="space-y-2"><Label htmlFor={`bus-action-${index}`}>Action for {item.busReference}</Label><select ref={index === 0 ? firstAction : undefined} id={`bus-action-${index}`} value={item.action} onChange={event => updateInstruction(index, { action: event.target.value as ControllerReplacement['action'] })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"><option value="HOLD">Hold at next stop</option><option value="DWELL_ADJUSTMENT">Extend dwell at stop {selected.controlStopCode}</option></select></div>
-                  <div className="space-y-2"><Label htmlFor={`bus-adjustment-${index}`}>Seconds</Label><Input id={`bus-adjustment-${index}`} type="number" min="1" max="120" step="1" value={item.adjustmentSeconds} onChange={event => updateInstruction(index, { adjustmentSeconds: Number(event.target.value) })} required /></div>
+                  <div className="space-y-2"><Label htmlFor={`bus-action-${index}`}>Action for {item.busReference}</Label><select ref={index === 0 ? firstAction : undefined} id={`bus-action-${index}`} value={item.action} onChange={event => updateInstruction(index, { action: event.target.value as ControllerReplacement['action'] })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"><option value="HOLD">Hold at next stop</option><option value="DWELL_ADJUSTMENT">Extend dwell at stop {selected.controlStopCode}</option><option value="NONE">No instruction</option></select></div>
+                  <div className="space-y-2"><Label htmlFor={`bus-adjustment-${index}`}>Seconds</Label><Input id={`bus-adjustment-${index}`} type="number" min="1" max="120" step="1" value={item.adjustmentSeconds} onChange={event => updateInstruction(index, { adjustmentSeconds: Number(event.target.value) })} required={item.action !== 'NONE'} disabled={item.action === 'NONE'} /></div>
                 </div>)}
-                <div className="space-y-2"><Label htmlFor="controller-rationale">Controller rationale</Label><textarea id="controller-rationale" maxLength={1000} rows={3} value={rationale} onChange={event => { setRationale(event.target.value); setMessage('') }} required className="w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring" /></div>
                 <DialogFooter>
                   <DialogClose asChild><Button type="button" variant="outline" disabled={pending}>Close</Button></DialogClose>
                   <Button type="button" variant="outline" disabled={pending} onClick={requestClose}>Cancel</Button>
@@ -1027,7 +1060,10 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
 
         <div className="grid gap-4 rounded-lg bg-muted/50 p-4 sm:grid-cols-[1fr_auto]">
           <div><p className="text-xs text-muted-foreground">Diagnosis</p><p className="mt-1 font-medium">{selected.explanation.likelyCause}</p></div>
-          <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-1"><div><dt className="text-xs text-muted-foreground">Observed gap</dt><dd className="mt-1 font-medium tabular-nums">{seconds(selected.observedHeadwaySeconds)}</dd></div><div><dt className="text-xs text-muted-foreground">Target gap</dt><dd className="mt-1 font-medium tabular-nums">{seconds(selected.expectedHeadwaySeconds)}</dd></div></dl>
+          <div className="grid gap-4 text-sm sm:min-w-40">
+            <RecommendationBunchingGaps recommendation={selected} alerts={detectedAlerts} />
+            <div><p className="text-xs text-muted-foreground">Target gap</p><p className="mt-1 font-medium tabular-nums">{seconds(selected.expectedHeadwaySeconds)}</p></div>
+          </div>
         </div>
 
         <section aria-labelledby="affected-buses" className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 id="affected-buses" className="text-sm font-medium">Buses bunching</h3><span className="text-xs text-muted-foreground">Expected gap {seconds(selected.expectedImpact.headwayAfterSeconds)}</span></div>

@@ -31,6 +31,27 @@ class BunchingPolicyTest {
     }
 
     @Test
+    void marksOnlyAdjacentGapsBelowThresholdAndAllThreeWhenBothAreBunched() {
+        var pairBunched = policy.evaluate(snapshot(NOW, arrival(1, 0), arrival(2, 100), arrival(3, 140)),
+                NOW, Duration.ofSeconds(60), FRESHNESS);
+        assertEquals(List.of(false, true), pairBunched.groups().getFirst().headways().stream()
+                .map(BunchingEvaluation.Headway::isBunched).toList());
+
+        var allBunched = policy.evaluate(snapshot(NOW, arrival(1, 0), arrival(2, 40), arrival(3, 80)),
+                NOW, Duration.ofSeconds(60), FRESHNESS);
+        assertEquals(List.of(true, true), allBunched.groups().getFirst().headways().stream()
+                .map(BunchingEvaluation.Headway::isBunched).toList());
+        assertEquals(List.of(id(2), id(3)), affected(pairBunched.groups().getFirst()));
+        assertEquals(List.of(id(1), id(2), id(3)), affected(allBunched.groups().getFirst()));
+    }
+
+    private List<UUID> affected(GroupEvaluation group) {
+        return group.headways().stream().filter(Headway::isBunched)
+                .flatMap(headway -> java.util.stream.Stream.of(headway.leadingObservationId(), headway.followingObservationId()))
+                .distinct().toList();
+    }
+
+    @Test
     void preservesSubsecondPrecisionAtThreshold() {
         var second = new ArrivalSnapshot.Arrival(id(2), "190", "44009", Optional.of(1), 2,
                 Optional.of(NOW.plusSeconds(390).minusNanos(1)));
