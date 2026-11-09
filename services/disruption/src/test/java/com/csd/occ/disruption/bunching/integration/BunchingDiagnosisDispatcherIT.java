@@ -26,7 +26,6 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -74,7 +73,6 @@ class BunchingDiagnosisDispatcherIT {
     @Autowired PlanningEventSubmissionPort submissions;
     @Autowired JsonMapper json;
     @Autowired JdbcTemplate jdbc;
-    @Autowired MeterRegistry meterRegistry;
     @Autowired MockMvc mvc;
 
     @BeforeEach
@@ -83,19 +81,13 @@ class BunchingDiagnosisDispatcherIT {
     }
 
     @Test
-    void exposesPlanningOutboxMetricsOnlyToAdministrators() throws Exception {
-        insertDueOutbox();
-
-        assertThat(meterRegistry.get("occ.disruption.planning_outbox.pending_count").gauge().value())
-                .isEqualTo(1.0);
-        mvc.perform(get("/actuator/prometheus"))
-                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnauthorized());
-        mvc.perform(get("/actuator/prometheus").with(SecurityMockMvcRequestPostProcessors.jwt()
-                        .jwt(token -> token.claim("occ_role", "ADMIN"))
-                        .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
-                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
-                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().string(
-                        org.hamcrest.Matchers.containsString("occ_disruption_retention_deleted_rows_total")));
+    void keepsReadinessAvailableAndDeniesRemovedMetricsEndpoint() throws Exception {
+        mvc.perform(get("/actuator/health/readiness"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+        mvc.perform(get("/actuator/prometheus").with(
+                        org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt()
+                                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isForbidden());
     }
 
     @Test

@@ -64,14 +64,8 @@ public class RecommendationDecisionController {
                     recommendationId, request.action());
             return RecommendationDecisionResponse.from(decision);
         } catch (RecommendationDecisionService.RecommendationDecisionConflictException exception) {
-            metrics.counter("occ.planning.recommendation.decision", "action", request.action().name(),
-                    "result", "conflict").increment();
             log.warn("Recommendation decision conflict: recommendationId={} action={}",
                     recommendationId, request.action());
-            throw exception;
-        } catch (RecommendationDecisionService.RecommendationNotActionableException exception) {
-            metrics.counter("occ.planning.recommendation.decision", "action", request.action().name(),
-                    "result", "not_actionable").increment();
             throw exception;
         }
     }

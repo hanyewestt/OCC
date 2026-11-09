@@ -116,16 +116,16 @@ OCC_INGESTION_DB_PASSWORD=your-database-password
 DATAMALL_API_KEY=your-datamall-key
 ```
 
-Use unquoted values, without `export`. The host-facing local URL is `OCC_INGESTION_DB_PUBLIC_URL`; Compose uses `OCC_INGESTION_DB_INTERNAL_URL`. The runtime username and password must match the account provisioned by `infra/postgres/bootstrap.sql`. On a Compose startup that recreates the bootstrap job, it reconciles existing runtime and migrator role passwords with the configured environment values before Flyway or the services start; updating a local role password therefore requires the matching root `.env` value. Schema changes run through the `ingestion-migrate` Compose job using `OCC_INGESTION_DB_MIGRATOR_USERNAME` and `OCC_INGESTION_DB_MIGRATOR_PASSWORD`; the application does not run Flyway at startup.
+Use unquoted values, without `export`. The host-facing local URL is `OCC_INGESTION_DB_PUBLIC_URL`; Compose uses `OCC_INGESTION_DB_INTERNAL_URL`. The runtime username and password must match the account provisioned by `infra/postgres/bootstrap.sql`. When the launcher runs the temporary setup job, it reconciles existing runtime and migrator role passwords with the configured environment values before Flyway or the services start; updating a local role password therefore requires the matching root `.env` value. Schema changes run through the `db-setup` Compose job using `OCC_INGESTION_DB_MIGRATOR_USERNAME` and `OCC_INGESTION_DB_MIGRATOR_PASSWORD`; the application does not run Flyway at startup.
 
 PostgreSQL must be running before the app starts. To start the shared local database, run this from the repository root:
 
 ```powershell
-docker compose --env-file .env up -d --build
+.\scripts\app.ps1 up
 ```
 
 ```bash
-docker compose --env-file .env up -d --build
+bash scripts/app.sh up
 ```
 
 This starts the shared PostgreSQL service and Phase 1 application stack. See the [local stack setup](../../docs/LOCAL-DEVELOPMENT.md).
@@ -151,7 +151,7 @@ database and API credentials are supplied through deployment configuration.
 
 ## Startup behavior and API
 
-Compose runs the `ingestion-migrate` Flyway job before starting the service; Hibernate validates entity mappings at startup. The service then imports versioned DataMall bus stops, services and route topology. It creates only missing polling targets for `occ.ingestion.monitored-services` (190 and 972 by default). `BusArrivalSchedule` polls each enabled stop every minute. Each successful poll keeps the original response in `raw_observation`, writes one normalized row per service and NextBus position to `bus_arrival_observation`, and updates `feed_status`. Retention removes raw and normalized observations after `occ.ingestion.retention` (12 hours by default), bounds history reads to that same window, and only removes superseded topology after all retained observations stop referencing it. Increasing the window cannot restore already purged rows.
+The launcher runs the temporary `db-setup` job before starting the service; Hibernate validates entity mappings at startup. The service then imports versioned DataMall bus stops, services and route topology. It creates only missing polling targets for `occ.ingestion.monitored-services` (190 and 972 by default). `BusArrivalSchedule` polls each enabled stop every minute. Each successful poll keeps the original response in `raw_observation`, writes one normalized row per service and NextBus position to `bus_arrival_observation`, and updates `feed_status`. Retention removes raw and normalized observations after `occ.ingestion.retention` (12 hours by default), bounds history reads to that same window, and only removes superseded topology after all retained observations stop referencing it. Increasing the window cannot restore already purged rows.
 
 If the active reference topology is absent, the scheduler first retries the reference import and target seeding. If that import fails, it skips the poll cycle without sending per-stop arrival requests; the terminal log records the single import failure.
 

@@ -3,7 +3,6 @@ package com.csd.occ.planning.advisory.api;
 import com.csd.occ.planning.advisory.api.dto.*;
 import com.csd.occ.planning.advisory.domain.InstructionService;
 import com.csd.occ.planning.advisory.domain.AdvisoryGroupService;
-import io.micrometer.core.instrument.MeterRegistry;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -25,10 +24,9 @@ public class AdvisoryController {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AdvisoryController.class);
     private final InstructionService instructions;
     private final AdvisoryGroupService groups;
-    private final MeterRegistry metrics;
     private final Clock clock;
-    public AdvisoryController(InstructionService instructions, AdvisoryGroupService groups, MeterRegistry metrics, Clock clock) {
-        this.instructions = instructions; this.groups = groups; this.metrics = metrics; this.clock = clock;
+    public AdvisoryController(InstructionService instructions, AdvisoryGroupService groups, Clock clock) {
+        this.instructions = instructions; this.groups = groups; this.clock = clock;
     }
     @GetMapping("/advisory-groups")
     @Operation(operationId = "listAdvisoryGroups", summary = "Review pending hazard advisories by service and direction",
@@ -50,7 +48,6 @@ public class AdvisoryController {
     public InstructionResponse.PageResponse decideGroup(@RequestBody @Valid DecideAdvisoryGroupRequest body,
                                                         @AuthenticationPrincipal Jwt jwt) {
         var issued = groups.decide(body.proposalIds(), jwt.getSubject());
-        issued.forEach(value -> metrics.counter("occ.planning.instruction.issue", "type", value.type().name()).increment());
         log.info("Advisory group issued: controllerSubject={} recipients={}", jwt.getSubject(), issued.size());
         return new InstructionResponse.PageResponse(issued.stream().map(InstructionResponse::from).toList(),
                 0, issued.size(), issued.size(), 1, clock.instant());
@@ -80,7 +77,7 @@ public class AdvisoryController {
     public InstructionResponse decide(@PathVariable UUID id, @RequestBody @Valid DecideAdvisoryRequest body,
                                       @AuthenticationPrincipal Jwt jwt) {
         var result = instructions.decide(id, body.override(), body.rationale(), jwt.getSubject(), body.replaceInstructionId());
-        metrics.counter("occ.planning.instruction.issue", "type", result.type().name()).increment();
+
         log.info("Instruction issued: instructionId={} controllerSubject={}", result.id(), jwt.getSubject());
         return InstructionResponse.from(result);
     }
@@ -113,7 +110,6 @@ public class AdvisoryController {
     @ApiResponse(responseCode = "409", description = "Instruction is expired, cancelled or outside the active run", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = org.springframework.http.ProblemDetail.class)))
     public InstructionResponse acknowledge(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
         var result = instructions.acknowledge(id, jwt.getSubject());
-        metrics.counter("occ.planning.instruction.acknowledgement", "type", result.type().name()).increment();
         log.info("Instruction acknowledged: instructionId={} captainSubject={}", result.id(), jwt.getSubject());
         return InstructionResponse.from(result);
     }
