@@ -457,7 +457,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           </div>
           <ControllerRouteStrip alerts={alertResource} run={run} stops={routeStops} positions={routePositions}
             arrivals={routeArrivals} pollIntervalSeconds={pollIntervalSeconds}
-            incidentGapToleranceSeconds={routeIncidentGapToleranceSeconds} lastUpdated={arrivalCollection.lastSuccessAt ?? ''} loading={loading || alertCollection.isLoading}
+            incidentGapToleranceSeconds={Math.max(30, routeIncidentGapToleranceSeconds)} lastUpdated={arrivalCollection.lastSuccessAt ?? ''} loading={loading || alertCollection.isLoading}
             fetchStopArrivals={fetchStopArrivals} fetchStopName={fetchStopName} />
           <ControllerOverview collection={arrivalCollection} search={arrivalStopName} onSearch={setArrivalStopName}
             sortBy={arrivalSortBy} sortDirection={arrivalSortDirection} onSort={column => {
@@ -466,11 +466,13 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
             }} />
         </>}
         {pathname.endsWith('/disruptions') && <ControllerDisruptions liveAlerts={alertCollection} run={run} loading={loading}
-          routes={routeStops.data ?? []} positions={routePositions.data ?? []} pollIntervalSeconds={pollIntervalSeconds} />}
+          routes={routeStops.data ?? []} positions={routePositions.data ?? []} pollIntervalSeconds={pollIntervalSeconds}
+          gapToleranceSeconds={Math.max(30, routeIncidentGapToleranceSeconds)} />}
         {pathname.endsWith('/planning') && <ControllerPlanning recommendations={recommendationCollection} diagnosisRequests={diagnosisCollection}
           loading={loading} modeError={run.error} mode={modeValue} demoRunId={simulation?.id ?? null} token={token}
           detectedAlerts={simulation ? simulation.alerts : alertCollection.items}
           routes={routeStops.data ?? []} pollIntervalSeconds={pollIntervalSeconds}
+          gapToleranceSeconds={Math.max(30, routeIncidentGapToleranceSeconds)}
           nowMs={Date.parse(alertCollection.lastSuccessAt ?? '') || 0}
           onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { void requestRefresh('mutation') }} />}
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} suggestions={suggestionCollection} aiAudits={aiAuditCollection} loading={loading} />}

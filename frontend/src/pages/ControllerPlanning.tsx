@@ -194,6 +194,7 @@ export function ControllerPlanning({
   routes = [],
   pollIntervalSeconds = 60,
   nowMs = 0,
+  gapToleranceSeconds = 30,
   onPendingChange,
   onRefresh,
   onSaved,
@@ -209,6 +210,7 @@ export function ControllerPlanning({
   routes?: RouteDirection[]
   pollIntervalSeconds?: number
   nowMs?: number
+  gapToleranceSeconds?: number
   onRefresh: () => void
   onSaved: () => void
   onPendingChange: (pending: boolean) => void
@@ -271,8 +273,8 @@ export function ControllerPlanning({
   // Live corridors computed with identical logic to Disruptions
   const liveCorridorIncidents = useMemo(() => {
     if (!detectedAlerts.length || !routes.length) return []
-    return groupRouteIncidents(detectedAlerts, routes, nowMs, pollIntervalSeconds, 20)
-  }, [detectedAlerts, routes, nowMs, pollIntervalSeconds])
+    return groupRouteIncidents(detectedAlerts, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds)
+  }, [detectedAlerts, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds])
 
   // Build corridor groups from diagnosis requests + live corridors
   const allCorridorGroups = useMemo(() => {
