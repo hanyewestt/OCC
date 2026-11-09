@@ -57,10 +57,10 @@ public class BunchingInstructionService {
                 || !List.of(MitigationType.HOLD, MitigationType.DWELL_ADJUSTMENT).contains(recommendation.mitigationType()))
             throw new AdvisoryConflictException("Only validated synthetic HOLD/DWELL recommendations can be issued");
         var target = recommendation.targetBusReference();
-        var actions = decisionAction == RecommendationDecisionAction.APPROVED
+        var initialActions = decisionAction == RecommendationDecisionAction.APPROVED
                 ? List.of(new ReplacementBusInstruction(target, recommendation.mitigationType(), recommendation.adjustmentSeconds()))
                 : requested;
-        actions = actions.stream().sorted(java.util.Comparator.comparing(action -> !action.busReference().equals(target))).toList();
+        var actions = initialActions.stream().sorted(java.util.Comparator.comparing(action -> !action.busReference().equals(target))).toList();
         if (actions.isEmpty() || actions.size() > 3 || actions.stream().map(ReplacementBusInstruction::busReference).distinct().count() != actions.size())
             throw new AdvisoryConflictException("One unique instruction per affected bus is required");
         var allowedReferences = record.mitigationContext().affectedBusReferences();
@@ -101,6 +101,24 @@ public class BunchingInstructionService {
             throw new AdvisoryConflictException("Bunching episode is no longer active in this run");
         var fleet = context.fleet(run);
         if (!List.of("RUNNING", "REPLAY_COMPLETE").contains(fleet.status())) throw new AdvisoryConflictException("Run is closed");
+        if (replaceInstructionId != null) {
+            var predecessor = instructions.findForUpdate(replaceInstructionId).orElseThrow(AdvisoryNotFoundException::new);
+            boolean busMatches = fleet.items().stream().anyMatch(b -> b.serviceId().equals(record.bunchingEvent().serviceId())
+                    && b.directionId() == record.bunchingEvent().directionId()
+                    && b.busId().equals(predecessor.busId())
+                    && actions.stream().anyMatch(a -> b.busId().equals(a.busReference()) || b.registrationNumber().equals(a.busReference())));
+            if (!predecessor.demoRunId().equals(run) || !busMatches)
+                throw new AdvisoryConflictException("Replacement instruction belongs to another bus or run");
+            if (predecessor.type() == InstructionType.BE_CAUTIOUS || !predecessor.isCurrent(clock.instant())) {
+                var winner = instructions.findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(run, predecessor.busId(), List.of("ISSUED", "ACKNOWLEDGED"))
+                        .stream().filter(i -> i.type() != InstructionType.BE_CAUTIOUS && !i.id().equals(replaceInstructionId))
+                        .findFirst();
+                if (winner.isPresent()) throw new AdvisoryConflictException("Active movement instruction " + winner.get().id() + " won the replacement");
+                throw new AdvisoryConflictException("Replacement instruction is not an active movement instruction");
+            }
+            predecessor.cancel("CONTROLLER_REPLACED");
+            instructions.flush();
+        }
         var issued = new java.util.ArrayList<IssuedInstruction>();
         for (int index = 0; index < actions.size(); index++) {
             var action = actions.get(index);
