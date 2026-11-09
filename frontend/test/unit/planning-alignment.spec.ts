@@ -127,7 +127,7 @@ test('ControllerPlanning pre-fills service filter and displays corridor link not
   expect(html).toContain('Corridor:')
 })
 
-test('ControllerPlanning displays Active and All status buttons and retains matching request', () => {
+test('ControllerPlanning displays Active, Today, and All time scope buttons and retains matching request', () => {
   const recommendations = mockPagedCollection<PendingRecommendation, Planning['recommendations']>([], {
     items: [], page: 0, totalItems: 0, totalPages: 0, mode: 'LIVE', demoRunId: null,
   })
@@ -159,11 +159,13 @@ test('ControllerPlanning displays Active and All status buttons and retains matc
   )
 
   expect(activeHtml).toContain('Active')
-  expect(activeHtml).toContain('All')
+  expect(activeHtml).toContain('Today')
+  expect(activeHtml).toContain('All time')
   expect(activeHtml).toMatch(/Stop\s*(<!-- -->)?\s*40191/)
+  expect(activeHtml).toContain('Live on route')
 
   const allHtml = renderToString(
-    createElement(MemoryRouter, { initialEntries: ['/controller/planning?status=all&time=all'] },
+    createElement(MemoryRouter, { initialEntries: ['/controller/planning?time=all'] },
       createElement(ControllerPlanning, {
         recommendations,
         diagnosisRequests,
@@ -186,7 +188,7 @@ test('ControllerPlanning displays Active and All status buttons and retains matc
   expect(allHtml).toMatch(/Service\s*(<!-- -->)?\s*190/)
 })
 
-test('ControllerPlanning hides past requests by default in Live mode and shows them when All time is selected', () => {
+test('ControllerPlanning hides past requests by default in Active mode and shows them when All time is selected', () => {
   const recommendations = mockPagedCollection<PendingRecommendation, Planning['recommendations']>([], {
     items: [], page: 0, totalItems: 0, totalPages: 0, mode: 'LIVE', demoRunId: null,
   })
@@ -197,7 +199,7 @@ test('ControllerPlanning hides past requests by default in Live mode and shows t
     [sampleRequest, sampleOutdatedRequest], diagnosisPage
   )
 
-  // Default: Live mode shows active on-road incident and hides the past 48h-old request
+  // Default: Active mode shows active on-road incident and hides the past 48h-old request
   const defaultHtml = renderToString(
     createElement(MemoryRouter, { initialEntries: ['/controller/planning'] },
       createElement(ControllerPlanning, {
@@ -245,4 +247,46 @@ test('ControllerPlanning hides past requests by default in Live mode and shows t
 
   expect(allTimeHtml).toMatch(/Stop\s*(<!-- -->)?\s*40191/)
   expect(allTimeHtml).toMatch(/40999/)
+})
+
+test('ControllerPlanning defaults to Today and shows Cleared on route when deep-linking a historical incident', () => {
+  const todayRequest: PlanningDiagnosisRequest = {
+    ...sampleOutdatedRequest,
+    createdAt: new Date().toISOString(),
+  }
+  const recommendations = mockPagedCollection<PendingRecommendation, Planning['recommendations']>([], {
+    items: [], page: 0, totalItems: 0, totalPages: 0, mode: 'LIVE', demoRunId: null,
+  })
+  const diagnosisPage: PlanningDiagnosisRequestPage = {
+    items: [todayRequest], page: 0, totalItems: 1, totalPages: 1, mode: 'LIVE', demoRunId: null,
+  }
+  const diagnosisRequests = mockPagedCollection<PlanningDiagnosisRequest, PlanningDiagnosisRequestPage>(
+    [todayRequest], diagnosisPage
+  )
+
+  const clearedHtml = renderToString(
+    createElement(MemoryRouter, { initialEntries: ['/controller/planning?service=190&stop=40999'] },
+      createElement(ControllerPlanning, {
+        recommendations,
+        diagnosisRequests,
+        loading: false,
+        modeError: '',
+        mode: 'LIVE',
+        demoRunId: null,
+        token: 'test-token',
+        detectedAlerts: [], // no live alerts: incident has cleared on road
+        routes: [sampleRoute],
+        nowMs: Date.now(),
+        onPendingChange: () => {},
+        onRefresh: () => {},
+        onSaved: () => {},
+      })
+    )
+  )
+
+  // Smart default landed on Today, displaying the cleared card with Cleared on route badge
+  expect(clearedHtml).toMatch(/Today\s*\(\s*(<!-- -->)?\s*1\s*(<!-- -->)?\s*\)/)
+  expect(clearedHtml).toMatch(/Active\s*\(\s*(<!-- -->)?\s*0\s*(<!-- -->)?\s*\)/)
+  expect(clearedHtml).toContain('Cleared on route')
+  expect(clearedHtml).toMatch(/Stop\s*(<!-- -->)?\s*40999/)
 })

@@ -221,9 +221,13 @@ export function ControllerPlanning({
   const requestedService = searchParams.get('service')
   const requestedIncident = searchParams.get('incident')
   const statusParam = searchParams.get('status')
-  const statusFilter: 'active' | 'all' = statusParam === 'all' ? 'all' : 'active'
   const timeParam = searchParams.get('time')
-  const timeFilter: 'live' | 'today' | 'all' = timeParam === 'all' ? 'all' : timeParam === 'today' ? 'today' : 'live'
+  const explicitScope: 'active' | 'today' | 'all' | null = useMemo(() => {
+    if (timeParam === 'all' || statusParam === 'all') return 'all'
+    if (timeParam === 'today') return 'today'
+    if (timeParam === 'live' || timeParam === 'active' || statusParam === 'active') return 'active'
+    return null
+  }, [timeParam, statusParam])
 
   const [filterInput, setFilterInput] = useState<string | null>(null)
   const filter = filterInput ?? searchParams.get('service') ?? ''
@@ -308,48 +312,59 @@ export function ControllerPlanning({
     return null
   }, [allCorridorGroups, requestedIncident, requestedRequestId, requestedEventId, requestedService, requestedStop])
 
-  // Filter corridors by status and freshness
+  const scopeFilter: 'active' | 'today' | 'all' = useMemo(() => {
+    if (explicitScope) return explicitScope
+    // Smart default on deep link: if user linked to an incident that has already cleared on road, default to 'today'
+    if (matchedCorridor && !matchedCorridor.isLive) return 'today'
+    return 'active'
+  }, [explicitScope, matchedCorridor])
+
+  // Filter corridors by scope
   const filteredCorridors = useMemo(() => {
     return allCorridorGroups.filter(group => {
-      if (statusFilter === 'active' && group.status === 'COMPLETED') return false
-      if (timeFilter === 'all') return true
-      if (timeFilter === 'live') return group.isLive
-      if (timeFilter === 'today') return isSgtToday(group.latestDetectedAt, nowMs)
+      if (scopeFilter === 'all') return true
+      if (scopeFilter === 'active') return group.isLive
+      if (scopeFilter === 'today') return isSgtToday(group.latestDetectedAt, nowMs)
       return true
     })
-  }, [allCorridorGroups, statusFilter, timeFilter, nowMs])
+  }, [allCorridorGroups, scopeFilter, nowMs])
 
   const serviceFilteredCorridors = useMemo(() => {
     return filteredCorridors.filter(g => !filter.trim() || g.serviceId.includes(filter.trim()))
   }, [filteredCorridors, filter])
 
-  const retainedCorridor = matchedCorridor
-  const visibleCorridorsWithRetained = useMemo(() => {
-    if (retainedCorridor && !serviceFilteredCorridors.some(g => g.id === retainedCorridor.id)) {
-      return [retainedCorridor, ...serviceFilteredCorridors]
+  const visibleCorridors = useMemo(() => {
+    if (matchedCorridor) {
+      const scopeMatches =
+        scopeFilter === 'all' ||
+        (scopeFilter === 'active' && matchedCorridor.isLive) ||
+        (scopeFilter === 'today' && isSgtToday(matchedCorridor.latestDetectedAt, nowMs))
+      if (scopeMatches && !serviceFilteredCorridors.some(g => g.id === matchedCorridor.id)) {
+        return [matchedCorridor, ...serviceFilteredCorridors]
+      }
     }
     return serviceFilteredCorridors
-  }, [retainedCorridor, serviceFilteredCorridors])
+  }, [matchedCorridor, scopeFilter, serviceFilteredCorridors, nowMs])
 
   // Accurate counter metrics
-  const liveCount = useMemo(() => {
-    return allCorridorGroups.filter(g => g.isLive && (statusFilter !== 'active' || g.status !== 'COMPLETED') && (!filter.trim() || g.serviceId.includes(filter.trim()))).length
-  }, [allCorridorGroups, statusFilter, filter])
+  const activeCount = useMemo(() => {
+    return allCorridorGroups.filter(g => g.isLive && (!filter.trim() || g.serviceId.includes(filter.trim()))).length
+  }, [allCorridorGroups, filter])
 
   const todayCount = useMemo(() => {
-    return allCorridorGroups.filter(g => isSgtToday(g.latestDetectedAt, nowMs) && (statusFilter !== 'active' || g.status !== 'COMPLETED') && (!filter.trim() || g.serviceId.includes(filter.trim()))).length
-  }, [allCorridorGroups, statusFilter, filter, nowMs])
+    return allCorridorGroups.filter(g => isSgtToday(g.latestDetectedAt, nowMs) && (!filter.trim() || g.serviceId.includes(filter.trim()))).length
+  }, [allCorridorGroups, filter, nowMs])
 
   const allCount = useMemo(() => {
-    return allCorridorGroups.filter(g => (statusFilter !== 'active' || g.status !== 'COMPLETED') && (!filter.trim() || g.serviceId.includes(filter.trim()))).length
-  }, [allCorridorGroups, statusFilter, filter])
+    return allCorridorGroups.filter(g => !filter.trim() || g.serviceId.includes(filter.trim())).length
+  }, [allCorridorGroups, filter])
 
   const outdatedCount = useMemo(() => {
-    const candidateGroups = allCorridorGroups.filter(g => statusFilter !== 'active' || g.status !== 'COMPLETED')
-    if (timeFilter === 'live') return candidateGroups.filter(g => !g.isLive).length
-    if (timeFilter === 'today') return candidateGroups.filter(g => !isSgtToday(g.latestDetectedAt, nowMs)).length
+    const candidateGroups = allCorridorGroups.filter(g => !filter.trim() || g.serviceId.includes(filter.trim()))
+    if (scopeFilter === 'active') return candidateGroups.filter(g => !g.isLive).length
+    if (scopeFilter === 'today') return candidateGroups.filter(g => !isSgtToday(g.latestDetectedAt, nowMs)).length
     return 0
-  }, [allCorridorGroups, statusFilter, timeFilter, nowMs])
+  }, [allCorridorGroups, filter, scopeFilter, nowMs])
 
   // Recommendations matching and filtering
   const matchedRecommendation = useMemo(() => {
@@ -369,16 +384,26 @@ export function ControllerPlanning({
   const visibleRecommendations = useMemo(() => {
     if (recommendationError || !recommendationScopeMatches) return []
     return recommendationItems.filter(item => {
-      if (timeFilter === 'all') return true
-      if (timeFilter === 'live') return detectedAlerts.some(a => a.serviceId === item.serviceId && a.stopCode === item.monitoredStopCode)
-      if (timeFilter === 'today') return isSgtToday(item.detectedAt, nowMs)
+      if (scopeFilter === 'all') return true
+      if (scopeFilter === 'active') return detectedAlerts.some(a => a.serviceId === item.serviceId && a.stopCode === item.monitoredStopCode)
+      if (scopeFilter === 'today') return isSgtToday(item.detectedAt, nowMs)
       return true
     })
-  }, [recommendationError, recommendationScopeMatches, recommendationItems, timeFilter, detectedAlerts, nowMs])
+  }, [recommendationError, recommendationScopeMatches, recommendationItems, scopeFilter, detectedAlerts, nowMs])
 
   const visible = visibleRecommendations.filter(item => item.serviceId.includes(filter.trim()))
-  const visibleWithRetained = matchedRecommendation && !visible.some(item => item.recommendationId === matchedRecommendation.recommendationId)
-    ? [matchedRecommendation, ...visible] : visible
+  const visibleWithRetained = useMemo(() => {
+    if (matchedRecommendation) {
+      const scopeMatches =
+        scopeFilter === 'all' ||
+        (scopeFilter === 'active' && detectedAlerts.some(a => a.serviceId === matchedRecommendation.serviceId && a.stopCode === matchedRecommendation.monitoredStopCode)) ||
+        (scopeFilter === 'today' && isSgtToday(matchedRecommendation.detectedAt, nowMs))
+      if (scopeMatches && !visible.some(item => item.recommendationId === matchedRecommendation.recommendationId)) {
+        return [matchedRecommendation, ...visible]
+      }
+    }
+    return visible
+  }, [matchedRecommendation, scopeFilter, detectedAlerts, nowMs, visible])
 
   const scopeIdentity = `${mode}:${demoRunId ?? 'none'}`
   const { error: recommendationLoadError, hasMore: recommendationHasMore, isLoading: recommendationIsLoading,
@@ -392,7 +417,7 @@ export function ControllerPlanning({
   const isRequestSelection = Boolean(
     requestedRequestId ||
     (!requestedId && matchedCorridor) ||
-    (!requestedId && !matchedRecommendation && visibleCorridorsWithRetained.length > 0)
+    (!requestedId && !matchedRecommendation && visibleCorridors.length > 0)
   )
 
   const selected = editingInScope && !editingItem && (editNeedsRevalidation || editingRecommendation?.pending) ? editingInScope.recommendation
@@ -402,10 +427,10 @@ export function ControllerPlanning({
   const selectedCorridor = useMemo(() => {
     if (!isRequestSelection) return null
     if (selectedCorridorId) {
-      return visibleCorridorsWithRetained.find(g => g.id === selectedCorridorId) ?? null
+      return visibleCorridors.find(g => g.id === selectedCorridorId) ?? null
     }
-    return matchedCorridor ?? visibleCorridorsWithRetained[0] ?? null
-  }, [isRequestSelection, selectedCorridorId, visibleCorridorsWithRetained, matchedCorridor])
+    return matchedCorridor ?? visibleCorridors[0] ?? null
+  }, [isRequestSelection, selectedCorridorId, visibleCorridors, matchedCorridor])
 
   const selectedRequest = useMemo(() => {
     if (!selectedCorridor) return null
@@ -480,20 +505,16 @@ export function ControllerPlanning({
     })
   }
 
-  function handleStatusFilter(newStatus: 'active' | 'all') {
+  function handleScopeFilter(newScope: 'active' | 'today' | 'all') {
     setSearchParams(prev => {
       const next = new URLSearchParams(prev)
-      if (newStatus === 'all') next.set('status', 'all')
-      else next.delete('status')
-      return next
-    })
-  }
-
-  function handleTimeFilter(newTime: 'live' | 'today' | 'all') {
-    setSearchParams(prev => {
-      const next = new URLSearchParams(prev)
-      if (newTime === 'live') next.delete('time')
-      else next.set('time', newTime)
+      if (newScope === 'active') {
+        next.delete('time')
+        next.delete('status')
+      } else {
+        next.set('time', newScope)
+        next.delete('status')
+      }
       return next
     })
   }
@@ -532,27 +553,7 @@ export function ControllerPlanning({
       <Card className="gap-0 py-0">
         <div className="space-y-3 border-b p-4">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="text-sm font-medium">Awaiting decision</h2>
-            <div className="flex items-center gap-1 rounded-md border p-0.5 text-xs">
-              <Button
-                type="button"
-                variant={statusFilter === 'active' ? 'secondary' : 'ghost'}
-                size="sm"
-                className="h-6 px-2 text-xs"
-                onClick={() => handleStatusFilter('active')}
-              >
-                Active
-              </Button>
-              <Button
-                type="button"
-                variant={statusFilter === 'all' ? 'secondary' : 'ghost'}
-                size="sm"
-                className="h-6 px-2 text-xs"
-                onClick={() => handleStatusFilter('all')}
-              >
-                All
-              </Button>
-            </div>
+            <h2 id="awaiting-title" className="text-sm font-medium">Awaiting decision</h2>
           </div>
           <Label htmlFor="service-filter" className="sr-only">Filter by bus service number</Label>
           <Input id="service-filter" inputMode="numeric" placeholder="Filter bus no. e.g. 190" value={filter} onChange={event => setFilterInput(event.target.value)} />
@@ -560,33 +561,36 @@ export function ControllerPlanning({
             <div className="flex items-center gap-1 rounded-md border p-0.5 text-xs">
               <Button
                 type="button"
-                variant={timeFilter === 'live' ? 'secondary' : 'ghost'}
+                variant={scopeFilter === 'active' ? 'secondary' : 'ghost'}
                 size="sm"
                 className="h-6 px-2 text-xs"
-                onClick={() => handleTimeFilter('live')}
+                onClick={() => handleScopeFilter('active')}
+                aria-pressed={scopeFilter === 'active'}
               >
-                Live ({liveCount})
+                Active ({activeCount})
               </Button>
               <Button
                 type="button"
-                variant={timeFilter === 'today' ? 'secondary' : 'ghost'}
+                variant={scopeFilter === 'today' ? 'secondary' : 'ghost'}
                 size="sm"
                 className="h-6 px-2 text-xs"
-                onClick={() => handleTimeFilter('today')}
+                onClick={() => handleScopeFilter('today')}
+                aria-pressed={scopeFilter === 'today'}
               >
                 Today ({todayCount})
               </Button>
               <Button
                 type="button"
-                variant={timeFilter === 'all' ? 'secondary' : 'ghost'}
+                variant={scopeFilter === 'all' ? 'secondary' : 'ghost'}
                 size="sm"
                 className="h-6 px-2 text-xs"
-                onClick={() => handleTimeFilter('all')}
+                onClick={() => handleScopeFilter('all')}
+                aria-pressed={scopeFilter === 'all'}
               >
                 All time ({allCount})
               </Button>
             </div>
-            {outdatedCount > 0 && timeFilter !== 'all' ? (
+            {outdatedCount > 0 && scopeFilter !== 'all' ? (
               <span className="text-[11px] text-muted-foreground shrink-0">
                 {outdatedCount} past hidden
               </span>
@@ -600,14 +604,18 @@ export function ControllerPlanning({
         </div>
         <ScrollArea role="listbox" aria-label="Recommendations awaiting a decision" tabIndex={0} className="max-h-[28rem]"
           viewportProps={{ onScroll: event => { recommendations.onScroll(event); diagnosisRequests.onScroll(event) } }}><div className="divide-y">
-          {visibleCorridorsWithRetained.map(group => <button type="button" role="option" aria-selected={selectedCorridor?.id === group.id} key={group.id} onClick={() => selectCorridor(group)}
+          {visibleCorridors.map(group => <button type="button" role="option" aria-selected={selectedCorridor?.id === group.id} key={group.id} onClick={() => selectCorridor(group)}
             className="min-h-28 w-full space-y-2 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring aria-selected:bg-muted">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-2">
                 <span className="font-medium">Service {group.serviceId} · Direction {group.directionId ?? 1}</span>
-                {group.isLive && (
+                {group.isLive ? (
                   <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
                     Live on route
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    Cleared on route
                   </span>
                 )}
               </div>
@@ -635,11 +643,16 @@ export function ControllerPlanning({
             <p className="text-xs text-muted-foreground">Affected buses · {affectedBuses(item).join(', ')}</p>
             <p className="text-xs text-muted-foreground">{item.mitigationType.replaceAll('_', ' ')} · Target: {item.targetBusReference}</p>
           </button>)}
-          {!visibleWithRetained.length && !visibleCorridorsWithRetained.length && (
+          {!visibleWithRetained.length && !visibleCorridors.length && (
             <div className="space-y-2 p-6 text-center text-sm text-muted-foreground">
-              <p>{filter.trim() ? 'No matching bus service.' : timeFilter === 'live' ? 'No active bunching detected on routes right now.' : 'No bunching requests in this time window.'}</p>
-              {outdatedCount > 0 && timeFilter !== 'all' && (
-                <Button variant="outline" size="sm" onClick={() => handleTimeFilter('all')}>
+              <p>{filter.trim() ? 'No matching bus service.' : scopeFilter === 'active' ? 'No active bunching detected on routes right now.' : 'No bunching requests in this time window.'}</p>
+              {todayCount > 0 && scopeFilter === 'active' && (
+                <Button variant="outline" size="sm" onClick={() => handleScopeFilter('today')}>
+                  View today's incidents ({todayCount})
+                </Button>
+              )}
+              {outdatedCount > 0 && scopeFilter !== 'all' && scopeFilter !== 'active' && (
+                <Button variant="outline" size="sm" onClick={() => handleScopeFilter('all')}>
                   View {outdatedCount} past corridor{outdatedCount === 1 ? '' : 's'}
                 </Button>
               )}
@@ -666,13 +679,17 @@ export function ControllerPlanning({
         <Card><CardContent className="space-y-4 p-6">
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-semibold">Service {selectedCorridor.serviceId} · Direction {selectedCorridor.directionId ?? 1}</h2>
-            {selectedCorridor.isLive && (
+            {selectedCorridor.isLive ? (
               <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
                 Live on route
               </span>
+            ) : (
+              <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                Cleared on route
+              </span>
             )}
           </div>
-          <p className="text-sm text-muted-foreground">Corridor with {selectedCorridor.stopCodes.length} affected stops currently active on route.</p>
+          <p className="text-sm text-muted-foreground">{selectedCorridor.isLive ? `Corridor with ${selectedCorridor.stopCodes.length} affected stops currently active on route.` : `Corridor with ${selectedCorridor.stopCodes.length} affected stops has cleared on route.`}</p>
           <div className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground">
             {selectedCorridor.stopNames.join(' → ')}
           </div>
@@ -759,9 +776,13 @@ function DiagnosisRequestDetail({ request, corridor, detectedBusReferences, gene
       <div>
         <div className="flex items-center gap-2">
           <h2 className="text-lg font-semibold">Service {request.serviceId ?? 'unknown'} · Direction {request.directionId ?? 'unknown'}</h2>
-          {corridor?.isLive && (
+          {corridor?.isLive ? (
             <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
               Live on route
+            </span>
+          ) : (
+            <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+              Cleared on route
             </span>
           )}
         </div>
