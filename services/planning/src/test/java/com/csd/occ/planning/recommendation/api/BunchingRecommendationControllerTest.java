@@ -195,11 +195,9 @@ class BunchingRecommendationControllerTest {
     @Test
     void recordsOneClickDecisionUsingTheAuthenticatedSubject() {
         Instant decidedAt = Instant.parse("2026-10-21T10:00:00Z");
-        org.mockito.Mockito.when(decisions.decide(RECOMMENDATION_ID,
-                RecommendationDecisionAction.APPROVED, "controller-subject", java.util.List.of(), null))
-                .thenReturn(new RecommendationDecision(RECOMMENDATION_ID,
-                        RecommendationDecisionAction.APPROVED, "controller-subject",
-                        java.util.List.of(), null, decidedAt));
+        org.mockito.Mockito.when(decisions.findDecision(RECOMMENDATION_ID)).thenReturn(Optional.of(
+                new RecommendationDecision(RECOMMENDATION_ID, RecommendationDecisionAction.APPROVED,
+                        "controller-subject", java.util.List.of(), null, decidedAt)));
 
         var response = mvc.post()
                 .uri("/api/v1/planning/recommendations/{id}/decision", RECOMMENDATION_ID)
@@ -211,8 +209,7 @@ class BunchingRecommendationControllerTest {
 
         assertThat(response).hasStatus(200)
                 .bodyJson().extractingPath("action").isEqualTo("APPROVED");
-        verify(decisions).decide(RECOMMENDATION_ID, RecommendationDecisionAction.APPROVED,
-                "controller-subject", java.util.List.of(), null);
+        verify(bunchingInstructions).approveAndIssue(RECOMMENDATION_ID, "controller-subject");
     }
 
     @Test

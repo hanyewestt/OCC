@@ -45,7 +45,7 @@ public class RecommendationDecisionController {
     @PostMapping("/{recommendationId}/decision")
     @Operation(operationId = "decideBunchingRecommendation",
             summary = "Approve or replace a recommendation",
-            description = "Stores the authenticated controller decision. A rejection validates and issues one typed replacement instruction to the assigned captain in the same transaction. The target bus and control stop come from the stored recommendation. Repeating the same request returns the existing decision and instruction; conflicting or unsafe requests return 409.")
+            description = "Stores the authenticated controller decision and issues the validated recommendation or one typed replacement to its assigned captain in the same transaction. The target bus and control stop come from the stored recommendation. Repeating the same request returns the existing decision and instruction; conflicting or unsafe requests return 409.")
     @ApiResponse(responseCode = "200", description = "Decision and replacement instruction stored, or the same request replayed")
     @ApiResponse(responseCode = "400", description = "Decision request is invalid")
     @ApiResponse(responseCode = "404", description = "Recommendation not found")
@@ -57,7 +57,7 @@ public class RecommendationDecisionController {
         try {
             var decision = request.action() == com.csd.occ.planning.recommendation.domain.RecommendationDecisionAction.REJECTED
                     ? issueReplacement(recommendationId, jwt.getSubject(), request)
-                    : decisions.decide(recommendationId, request.action(), jwt.getSubject(), List.of(), null);
+                    : issueApproval(recommendationId, jwt.getSubject());
             metrics.counter("occ.planning.recommendation.decision", "action", request.action().name(),
                     "result", "accepted_or_replayed").increment();
             log.info("Recommendation decision recorded: recommendationId={} action={}",
@@ -80,6 +80,11 @@ public class RecommendationDecisionController {
             UUID recommendationId, String actor, RecommendationDecisionRequest request) {
         instructions.rejectAndIssue(recommendationId, actor, request.replacementAction().toMitigationType(), request.adjustmentSeconds(),
                 request.controllerRationale());
+        return decisions.findDecision(recommendationId).orElseThrow();
+    }
+
+    private com.csd.occ.planning.recommendation.domain.RecommendationDecision issueApproval(UUID recommendationId, String actor) {
+        instructions.approveAndIssue(recommendationId, actor);
         return decisions.findDecision(recommendationId).orElseThrow();
     }
 

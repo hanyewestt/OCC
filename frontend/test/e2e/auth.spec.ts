@@ -802,7 +802,7 @@ for (const [action, button] of [['APPROVED', 'Approve recommendation'], ['REJECT
     expect(body.replacementAction).toBe(action === 'REJECTED' ? 'HOLD' : null)
     expect(body.adjustmentSeconds).toBe(action === 'REJECTED' ? 120 : null)
     expect(body.controllerRationale).toBe(action === 'REJECTED' ? 'Use a shorter hold to reduce passenger delay.' : null)
-    await expect(page.getByText(action === 'APPROVED' ? 'Recommendation approved.' : 'Replacement instruction issued to the assigned captain.')).toBeVisible()
+    await expect(page.getByText(action === 'APPROVED' ? 'Recommendation approved and instruction issued to the assigned captain.' : 'Replacement instruction issued to the assigned captain.')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toHaveCount(0)
     await page.getByRole('link', { name: 'Audit log', exact: true }).click()
     await expect(page.getByRole('cell', { name: action, exact: true })).toBeVisible()
