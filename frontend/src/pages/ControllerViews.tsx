@@ -285,6 +285,24 @@ export function clusterProjectedBuses(
   return clusters
 }
 
+export function filterMapBuses<T extends { serviceId: string; bus: { order: number } }>(
+  buses: T[],
+  isAllCorridors: boolean,
+  incidentBusKeys: Set<string>,
+): T[] {
+  if (!isAllCorridors) return buses
+  return buses.filter(b => incidentBusKeys.has(`${b.serviceId}-${b.bus.order}`))
+}
+
+export function filterMapRoutes<T extends { serviceId: string; directionId: number }>(
+  routes: T[],
+  isAllCorridors: boolean,
+  disruptedRouteKeys: Set<string>,
+): T[] {
+  if (!isAllCorridors) return routes
+  return routes.filter(r => disruptedRouteKeys.has(`${r.serviceId}-${r.directionId}`))
+}
+
 export interface BunchingMapProps {
   routes: RouteDirection[]
   affectedStopCodes: Set<string>
@@ -309,18 +327,18 @@ export function BunchingMap({
   const incidentBusKeys = useMemo(() => {
     const keys = new Set<string>()
     for (const inc of incidents) {
-      if (inc.stripLink && !inc.historical) {
+      if (inc.stripLink && (!inc.historical || inc.id === selectedIncident?.id)) {
         keys.add(`${inc.serviceId}-${inc.stripLink.frontOrder}`)
         keys.add(`${inc.serviceId}-${inc.stripLink.followingOrder}`)
       }
     }
     return keys
-  }, [incidents])
+  }, [incidents, selectedIncident])
 
   const disruptedRouteKeys = useMemo(() => {
     const set = new Set<string>()
     for (const i of incidents) {
-      if (!i.historical) {
+      if (!i.historical || i.id === selectedIncident?.id) {
         set.add(`${i.serviceId}-${i.directionId ?? 1}`)
         if (i.directionId === null) {
           routes.filter(r => r.serviceId === i.serviceId).forEach(r => set.add(`${r.serviceId}-${r.directionId}`))
@@ -328,7 +346,7 @@ export function BunchingMap({
       }
     }
     return set
-  }, [incidents, routes])
+  }, [incidents, routes, selectedIncident])
 
   const containerRef = useRef<HTMLDivElement>(null)
   const [loadedGeometries, setLoadedGeometries] = useState<Record<string, LatLng[]>>({})
@@ -406,8 +424,8 @@ export function BunchingMap({
       for (const stop of route.stops) {
         if (validCoord(stop.latitude, stop.longitude) && !map.has(stop.stopCode)) {
           const affected = affectedStopCodes.has(stop.stopCode)
-          // In All Corridors hotspot mode, only display affected stops if disruptions exist
-          if (isAllCorridors && affectedStopCodes.size > 0 && !affected) continue
+          // In All Corridors hotspot mode, only display affected stops
+          if (isAllCorridors && !affected) continue
           map.set(stop.stopCode, {
             stopCode: stop.stopCode,
             description: stop.description,
@@ -418,8 +436,8 @@ export function BunchingMap({
         }
       }
     }
-    // Fallback if no stops matched
-    if (map.size === 0) {
+    // Fallback if no stops matched (only for single corridor inspection mode)
+    if (!isAllCorridors && map.size === 0) {
       for (const route of routes) {
         for (const stop of route.stops) {
           if (validCoord(stop.latitude, stop.longitude) && !map.has(stop.stopCode)) {
@@ -437,11 +455,11 @@ export function BunchingMap({
     return [...map.values()]
   }, [routes, affectedStopCodes, isAllCorridors])
 
-  const busMarkers = useMemo(() => buses.flatMap(({ serviceId, directionId, routeLengthM, bus }) => {
-    // In All Corridors hotspot mode, only render buses involved in active bunching
-    if (isAllCorridors && incidentBusKeys.size > 0 && !incidentBusKeys.has(`${serviceId}-${bus.order}`)) {
-      return []
-    }
+  const filteredBuses = useMemo(() => {
+    return filterMapBuses(buses, isAllCorridors, incidentBusKeys)
+  }, [buses, isAllCorridors, incidentBusKeys])
+
+  const busMarkers = useMemo(() => filteredBuses.flatMap(({ serviceId, directionId, routeLengthM, bus }) => {
     const route = routes.find(candidate => candidate.serviceId === serviceId && candidate.directionId === directionId)
     if (!route) return []
     const key = `${serviceId}-${directionId}`
@@ -455,14 +473,21 @@ export function BunchingMap({
       order: bus.order,
       label: `Estimated bus ${bus.order} on service ${serviceId}`,
     }]
-  }), [buses, routes, activeGeometries, isAllCorridors, incidentBusKeys])
+  }), [filteredBuses, routes, activeGeometries])
 
   const corridorFocusPoints = useMemo(() => {
+    if (isAllCorridors) {
+      const pts: Array<{ latitude: number; longitude: number }> = [
+        ...allStops.map(s => ({ latitude: s.latitude, longitude: s.longitude })),
+        ...busMarkers.map(b => ({ latitude: b.latitude, longitude: b.longitude })),
+      ]
+      return pts
+    }
     if (allStops.length > 0) {
       return allStops.map(s => ({ latitude: s.latitude, longitude: s.longitude }))
     }
     return busMarkers.map(b => ({ latitude: b.latitude, longitude: b.longitude }))
-  }, [allStops, busMarkers])
+  }, [allStops, busMarkers, isAllCorridors])
 
   const selectedFocusPoints = useMemo(() => {
     if (!selectedIncident) return []
@@ -475,8 +500,9 @@ export function BunchingMap({
   const fitKey = useMemo(() => {
     const rKey = routes.map(r => `${r.serviceId}-${r.directionId}`).sort().join(',')
     const aKey = [...affectedStopCodes].sort().join(',')
-    return `${rKey}:${aKey}`
-  }, [routes, affectedStopCodes])
+    const bKey = [...incidentBusKeys].sort().join(',')
+    return `${rKey}:${aKey}:${bKey}`
+  }, [routes, affectedStopCodes, incidentBusKeys])
 
   const initialFit = useMemo(() => {
     return computeCorridorFit(corridorFocusPoints, width, height, 48)
@@ -631,7 +657,7 @@ export function BunchingMap({
     }
   }
 
-  if (allStops.length < 2) {
+  if (!isAllCorridors && allStops.length < 2) {
     return <p className="rounded-lg border p-4 text-sm text-muted-foreground">Stop coordinates are unavailable for this detection.</p>
   }
 
@@ -670,12 +696,10 @@ export function BunchingMap({
     }
   }
 
-  const routePolylines = routes.map(route => {
+  const activeRoutes = filterMapRoutes(routes, isAllCorridors, disruptedRouteKeys)
+
+  const routePolylines = activeRoutes.map(route => {
     const key = `${route.serviceId}-${route.directionId}`
-    // In All Corridors hotspot mode, only draw polylines for routes with active disruptions
-    if (isAllCorridors && disruptedRouteKeys.size > 0 && !disruptedRouteKeys.has(key)) {
-      return { key, points: '', count: 0 }
-    }
     const geom = activeGeometries[key]
     const pts = (geom && geom.length > 1)
       ? geom.map(p => project(p.latitude, p.longitude))
@@ -729,7 +753,9 @@ export function BunchingMap({
                   ? `Active detection · No current bus position estimate is linked to this corridor segment (buses have traversed this segment or observation cycle has rolled over).`
                   : `Focusing on ${selectedIncident.stopCodes.length} affected stop${selectedIncident.stopCodes.length === 1 ? '' : 's'}. Click any stop or bus to select or switch incident.`
               : isAllCorridors
-                ? 'Showing active bunching hotspots across all corridors. Select a corridor to inspect all fleet buses.'
+                ? (incidents.some(i => !i.historical)
+                    ? 'Showing active bunching hotspots across all corridors. Select a corridor to inspect all fleet buses.'
+                    : 'No active bunching hotspots across corridors. Select a corridor to inspect all fleet buses.')
                 : 'Stops are sourced from route topology; buses are current position estimates. Click a stop or bus to focus.'}
           </p>
         </div>

@@ -5,6 +5,8 @@ import {
   computeBusLatLng,
   computeCorridorFit,
   DEFAULT_CENTER,
+  filterMapBuses,
+  filterMapRoutes,
   latLngToWorld,
   MAX_ZOOM,
   MIN_ZOOM,
@@ -190,4 +192,70 @@ test('clusterProjectedBuses does not group buses from different services', () =>
 
   expect(clusters).toHaveLength(2)
   expect(clusters.map(c => c.serviceId)).toEqual(['972', '190'])
+})
+
+test('filterMapBuses returns all fleet buses when viewing a single corridor', () => {
+  const buses = [
+    { serviceId: '190', directionId: 1, routeLengthM: 10000, bus: { order: 1, distanceAlongRouteM: 1000 } },
+    { serviceId: '190', directionId: 1, routeLengthM: 10000, bus: { order: 2, distanceAlongRouteM: 2000 } },
+    { serviceId: '190', directionId: 1, routeLengthM: 10000, bus: { order: 3, distanceAlongRouteM: 3000 } },
+  ]
+  const incidentBusKeys = new Set(['190-2'])
+  const result = filterMapBuses(buses, false, incidentBusKeys)
+  expect(result).toHaveLength(3)
+  expect(result.map(b => b.bus.order)).toEqual([1, 2, 3])
+})
+
+test('filterMapBuses filters strictly to bunched buses when viewing All Corridors', () => {
+  const buses = [
+    { serviceId: '190', directionId: 1, routeLengthM: 10000, bus: { order: 1, distanceAlongRouteM: 1000 } },
+    { serviceId: '190', directionId: 1, routeLengthM: 10000, bus: { order: 2, distanceAlongRouteM: 2000 } },
+    { serviceId: '972', directionId: 1, routeLengthM: 8000, bus: { order: 2, distanceAlongRouteM: 2200 } },
+    { serviceId: '972', directionId: 1, routeLengthM: 8000, bus: { order: 3, distanceAlongRouteM: 2250 } },
+  ]
+  const incidentBusKeys = new Set(['972-2', '972-3'])
+  const result = filterMapBuses(buses, true, incidentBusKeys)
+  expect(result).toHaveLength(2)
+  expect(result.map(b => `${b.serviceId}-${b.bus.order}`)).toEqual(['972-2', '972-3'])
+})
+
+test('filterMapBuses returns empty array when All Corridors has no active bunching detections', () => {
+  const buses = [
+    { serviceId: '190', directionId: 1, routeLengthM: 10000, bus: { order: 1, distanceAlongRouteM: 1000 } },
+    { serviceId: '190', directionId: 1, routeLengthM: 10000, bus: { order: 2, distanceAlongRouteM: 2000 } },
+    { serviceId: '190', directionId: 1, routeLengthM: 10000, bus: { order: 3, distanceAlongRouteM: 3000 } },
+  ]
+  const emptyIncidentBusKeys = new Set<string>()
+  const result = filterMapBuses(buses, true, emptyIncidentBusKeys)
+  expect(result).toEqual([])
+})
+
+test('filterMapRoutes returns all corridor routes when viewing a single corridor', () => {
+  const routes = [
+    { serviceId: '190', directionId: 1 },
+  ]
+  const result = filterMapRoutes(routes, false, new Set())
+  expect(result).toHaveLength(1)
+})
+
+test('filterMapRoutes returns only disrupted routes in All Corridors hotspot mode', () => {
+  const routes = [
+    { serviceId: '190', directionId: 1 },
+    { serviceId: '190', directionId: 2 },
+    { serviceId: '972', directionId: 1 },
+  ]
+  const disruptedRouteKeys = new Set(['972-1'])
+  const result = filterMapRoutes(routes, true, disruptedRouteKeys)
+  expect(result).toHaveLength(1)
+  expect(result[0].serviceId).toBe('972')
+})
+
+test('filterMapRoutes returns empty array in All Corridors when no routes are disrupted', () => {
+  const routes = [
+    { serviceId: '190', directionId: 1 },
+    { serviceId: '190', directionId: 2 },
+    { serviceId: '972', directionId: 1 },
+  ]
+  const result = filterMapRoutes(routes, true, new Set())
+  expect(result).toEqual([])
 })
