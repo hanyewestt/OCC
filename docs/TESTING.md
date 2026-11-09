@@ -84,10 +84,12 @@ independently enforce the controller/captain role matrix. See
 [development guide](DEVELOPMENT.md) for Nginx-targeted browser runs and
 [authentication](AUTHENTICATION.md) for opt-in live checks.
 
-Captain browser tests also cover pacing thresholds, timed sample updates,
-scenario switching, narrow-screen layout and persistent day/night mode. They
-verify that pacing makes no operational API requests. The React pacing tests
-are included in the frontend browser suite.
+Captain browser tests also cover pacing thresholds, instruction
+acknowledgement, the assigned route, narrow-screen layout and persistent
+day/night mode. They verify that the captain screen does not call the
+fleet-wide pacing API. Planning, ingestion and Gateway tests enforce that
+captains read and acknowledge only instructions and pacing for the bus assigned
+to their verified identity.
 
 Controller browser tests cover dashboard navigation, simulation controls,
 bunching arrival evidence and approve/reject controls. These use mocked APIs

@@ -296,7 +296,9 @@ tie-breakers. Page size remains bounded to 200.
 Ingestion recalculates each bus's gap to the bus ahead and behind every
 `OCC_INGESTION_PACING_INTERVAL` (default `10s`) on a dedicated thread, so slow
 DataMall polls cannot delay it, and pushes the snapshot to every subscriber.
-Unlike the other APIs, these two are readable by ADMIN, CONTROLLER and CAPTAIN:
+These fleet-wide endpoints are readable by ADMIN and CONTROLLER only. A
+CAPTAIN reads just their assigned bus's latest pacing through
+`GET /api/v1/captain-routes/current`, resolved from the verified token subject:
 
 | Endpoint | Purpose |
 | --- | --- |
