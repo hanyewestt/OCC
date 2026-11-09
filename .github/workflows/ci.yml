@@ -14,6 +14,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  launcher-checks:
+    name: Launcher and setup checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify launchers and setup failure handling without live resources
+        run: python -m unittest discover -s tests/system -p "test_*.py"
+
   verify:
     name: Reactor tests and migration checks
     runs-on: ubuntu-24.04
@@ -300,18 +315,9 @@ jobs:
           - service: gateway
             port: 8004
             image: occ-gateway:ci
-          - service: ingestion-migrations
-            module: ingestion
-            migration_source: services/ingestion/src/main/resources/db/migration
-            image: occ-ingestion-migrations:ci
-          - service: disruption-migrations
-            module: disruption
-            migration_source: services/disruption/src/main/resources/db/migration
-            image: occ-disruption-migrations:ci
-          - service: planning-migrations
-            module: planning
-            migration_source: services/planning/src/main/resources/db/migration
-            image: occ-planning-migrations:ci
+          - service: db-setup
+            migration_source: all
+            image: occ-db-setup:ci
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -328,8 +334,6 @@ jobs:
         if: ${{ matrix.migration_source }}
         run: >-
           docker build --pull --file infra/flyway.Dockerfile
-          --build-arg OCC_SERVICE=${{ matrix.module }}
-          --build-arg OCC_MIGRATION_SOURCE=${{ matrix.migration_source }}
           --tag ${{ matrix.image }} .
       - name: Fail on HIGH or CRITICAL OS/library findings
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

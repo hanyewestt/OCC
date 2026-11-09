@@ -48,6 +48,8 @@ docs/*
 !docs/AUTHENTICATION.md
 !docs/TESTING.md
 !docs/DEVELOPMENT.md
+!docs/PERFORMANCE.md
+!docs/performance-memory-results.json
 !docs/frontend-convention.md
 
 
@@ -61,3 +63,10 @@ test-results/
 
 .superpowers
 .DS_Store
+
+# Agent skills installed locally
+.agents/
+.claude/skills/
+agent/skills/
+skills-lock.json
+.commandcode
