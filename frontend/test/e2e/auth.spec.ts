@@ -3,7 +3,7 @@ import { auditFocus, auditPage } from './accessibility'
 import { clockText, deltaText, gapSummary } from '../../src/lib/obu-pacing'
 import { bunchingArrivals } from '../../src/lib/bunching'
 import { compactStops, distanceText, routeProgress, stopName } from '../../src/lib/captain-route'
-import { acknowledgementTimeLeft, durationText, instructionHeadline, instructionState } from '../../src/lib/captain-instructions'
+import { acknowledgementTimeLeft, durationText, instructionHeadline, instructionState, instructionTimeLeft } from '../../src/lib/captain-instructions'
 import { formatSgtDateTime } from '../../src/lib/time'
 import type { CaptainInstruction, CaptainRoute, InstructionParameters, InstructionType } from '../../src/lib/api'
 
@@ -205,13 +205,14 @@ function syntheticInstruction(now: Date): CaptainInstruction {
 }
 
 // Dashboard journeys use synthetic API fixtures and never write real decisions.
-async function mockDashboard(context: BrowserContext, options: { arrivalFailure?: boolean; conflict?: boolean } = {}) {
+async function mockDashboard(context: BrowserContext, options: { arrivalFailure?: boolean; conflict?: boolean; affectedBusReferences?: string[]; bunchingPair?: [string, string] } = {}) {
   await mockAuth(context, 'CONTROLLER')
-  const alert = { eventId: 'event-1', action: 'OPENED', classification: 'SIMULATION', serviceId: '190', stopCode: 'B01', stopName: 'Teck Whye Secondary School', directionId: 1, detectedAt: '2026-10-22T01:00:00Z', leadingVehicle: { registrationNumber: 'DEMO-190-01', operator: 'DEMO-OPERATOR', vehicleType: 'DD', captainCode: 'CAPTAIN-01', busId: 'demo-190-1' }, followingVehicle: { registrationNumber: 'DEMO-190-02', operator: 'DEMO-OPERATOR', vehicleType: 'DD', captainCode: 'CAPTAIN-02', busId: 'demo-190-2' }, evidence: arrivalEvidence('SIMULATION', 1) }
+  const [leadingRegistration, followingRegistration] = options.bunchingPair ?? ['DEMO-190-01', 'DEMO-190-02']
+  const alert = { eventId: 'event-1', action: 'OPENED', classification: 'SIMULATION', serviceId: '190', stopCode: 'B01', stopName: 'Teck Whye Secondary School', directionId: 1, detectedAt: '2026-10-22T01:00:00Z', leadingVehicle: { registrationNumber: leadingRegistration, operator: 'DEMO-OPERATOR', vehicleType: 'DD', captainCode: 'CAPTAIN-01', busId: leadingRegistration.toLowerCase() }, followingVehicle: { registrationNumber: followingRegistration, operator: 'DEMO-OPERATOR', vehicleType: 'DD', captainCode: 'CAPTAIN-02', busId: followingRegistration.toLowerCase() }, evidence: arrivalEvidence('SIMULATION', 1) }
   const recommendation = {
     recommendationId: 'recommendation-1', classification: 'SIMULATION', status: 'RECOMMENDED',
     serviceId: '190', directionId: 1, monitoredStopCode: 'B01', detectedAt: '2026-10-22T01:00:00Z', createdAt: '2026-10-22T01:01:00Z',
-    expectedHeadwaySeconds: 180, observedHeadwaySeconds: 60, mitigationType: 'HOLD', targetBusReference: 'SAMPLE-BUS', affectedBusReferences: ['SAMPLE-BUS'], controlStopCode: 'B01', adjustmentSeconds: 120,
+    expectedHeadwaySeconds: 180, observedHeadwaySeconds: 60, mitigationType: 'HOLD', targetBusReference: 'SAMPLE-BUS', affectedBusReferences: options.affectedBusReferences ?? ['SAMPLE-BUS'], controlStopCode: 'B01', adjustmentSeconds: 120,
     explanation: { rationale: 'Restore spacing between the buses.', likelyCause: 'Sample congestion', diagnosisConfidence: 0.86, tradeOffs: ['Adds waiting time at the stop.'], limitations: ['Simulation only.'] },
     expectedImpact: { headwayBeforeSeconds: 60, headwayAfterSeconds: 180, queueBeforePassengers: 20, queueAfterPassengers: 12, passengerMinutesBefore: 40, passengerMinutesAfter: 28 },
   }
@@ -244,11 +245,12 @@ async function mockDashboard(context: BrowserContext, options: { arrivalFailure?
         decision = { recommendationId: 'recommendation-1', action: 'REJECTED', actorSubject: userId, overrideInstructions: [{ busReference: 'SAMPLE-BUS', instruction: 'Hold for 60 seconds.' }], controllerRationale: 'Earlier controller decision.', decidedAt: '2026-10-22T01:10:00Z' }
         return route.fulfill({ status: 409 })
       }
-      const instruction = body.replacementAction === 'HOLD'
-        ? `HOLD FOR ${body.adjustmentSeconds}s at next stop`
-        : `EXTEND DWELL BY ${body.adjustmentSeconds}s at stop B01`
+      const replacements = body.replacementInstructions ?? [{ busReference: 'SAMPLE-BUS', action: body.replacementAction, adjustmentSeconds: body.adjustmentSeconds }]
       decision = { recommendationId: 'recommendation-1', action: body.action, actorSubject: userId,
-        overrideInstructions: body.action === 'REJECTED' ? [{ busReference: 'SAMPLE-BUS', instruction }] : [],
+        overrideInstructions: body.action === 'REJECTED' ? replacements.map((item: { busReference: string; action: string; adjustmentSeconds: number }) => ({
+          busReference: item.busReference, instruction: item.action === 'HOLD'
+            ? `HOLD FOR ${item.adjustmentSeconds}s at next stop` : `EXTEND DWELL BY ${item.adjustmentSeconds}s at stop B01`,
+        })) : [],
         controllerRationale: body.controllerRationale ?? null, decidedAt: '2026-10-22T01:10:00Z' }
     }
     return decision ? route.fulfill({ json: decision }) : route.fulfill({ status: 204 })
@@ -693,6 +695,27 @@ test('controller can opt into diagnosis from a queued bunching request', async (
   await expect(page.getByText('Crowding data was unavailable.')).toBeVisible()
 })
 
+test('early controller suggestions show identified bus registrations, not observation UUIDs', async ({ page, context }) => {
+  await mockDashboard(context, { bunchingPair: ['DEMO-190-02', 'DEMO-190-03'] })
+  const observationIds = ['66a893e5-102c-4008-a9d9-39a7e98a491b', '7d445d55-75f5-4080-a1e1-123456789abc']
+  await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: {
+    mode: 'DEMO', demoRunId: 'run-1', items: [{
+      requestId: 'early-request', eventId: 'event-1', diagnosisId: null, classification: 'SIMULATION', demoRunId: 'run-1',
+      serviceId: '190', directionId: 1, stopCode: 'B01', affectedBusReferences: observationIds,
+      status: 'PENDING', likelyCause: null, confidence: null, limitations: [], evidenceDetails: [], failureCode: null,
+      policyOutcome: null, createdAt: '2026-10-22T01:00:00Z',
+    }], page: 0, totalItems: 1, totalPages: 1,
+  } }))
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await page.getByRole('button', { name: 'Suggest actions for detected buses', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'Suggest mitigation actions', exact: true })
+  await expect(editor.getByLabel('Detected bus')).toHaveCount(2)
+  await expect(editor.getByLabel('Detected bus').nth(0)).toHaveValue('DEMO-190-02')
+  await expect(editor.getByLabel('Detected bus').nth(1)).toHaveValue('DEMO-190-03')
+  await expect(editor.locator('input')).toHaveCount(2)
+})
+
 test('controller switches the shared backend mode from the dashboard without leaving the page', async ({ page, context }) => {
   await mockDashboard(context)
   const simulation = { id: 'run-1', status: 'REPLAY_COMPLETE', serviceId: '190', directionId: 1, busCount: 3, dispatchGapSeconds: 90, busGapsSeconds: [90, 90], monitoredStopCode: '44251', scenario: 'BUNCHING', alerts: [{ eventId: 'event-1', action: 'OPENED', classification: 'SIMULATION', serviceId: '190', stopCode: 'B01', detectedAt: '2026-10-22T01:00:00Z' }] }
@@ -799,10 +822,12 @@ for (const [action, button] of [['APPROVED', 'Approve recommendation'], ['REJECT
     }
     const body = (await posted).postDataJSON()
     expect(body.action).toBe(action)
-    expect(body.replacementAction).toBe(action === 'REJECTED' ? 'HOLD' : null)
-    expect(body.adjustmentSeconds).toBe(action === 'REJECTED' ? 120 : null)
+    expect(body.replacementAction).toBeNull()
+    expect(body.adjustmentSeconds).toBeNull()
+    expect(body.replacementInstructions).toEqual(action === 'REJECTED'
+      ? [{ busReference: 'SAMPLE-BUS', action: 'HOLD', adjustmentSeconds: 120 }] : null)
     expect(body.controllerRationale).toBe(action === 'REJECTED' ? 'Use a shorter hold to reduce passenger delay.' : null)
-    await expect(page.getByText(action === 'APPROVED' ? 'Recommendation approved and instruction issued to the assigned captain.' : 'Replacement instruction issued to the assigned captain.')).toBeVisible()
+    await expect(page.getByText(action === 'APPROVED' ? 'Recommendation approved and instruction issued to the assigned captain.' : 'Replacement instructions issued to the affected captains.')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toHaveCount(0)
     await page.getByRole('link', { name: 'Audit log', exact: true }).click()
     await expect(page.getByRole('cell', { name: action, exact: true })).toBeVisible()
@@ -822,6 +847,27 @@ for (const [action, button] of [['APPROVED', 'Approve recommendation'], ['REJECT
     expect(elementAtHeaderPoint).toBe('header')
   })
 }
+
+test('controller replacement editor collects and submits one instruction for each of three buses', async ({ page, context }) => {
+  await mockDashboard(context, { affectedBusReferences: ['SAMPLE-BUS', 'BUS-2', 'BUS-3'] })
+  await login(page)
+  await page.getByRole('link', { name: /Awaiting decision/ }).click()
+  await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
+  for (const bus of ['SAMPLE-BUS', 'BUS-2', 'BUS-3']) await expect(editor.getByLabel(`Action for ${bus}`)).toBeVisible()
+  await editor.getByLabel('Seconds').nth(0).fill('60')
+  await editor.getByLabel('Seconds').nth(1).fill('45')
+  await editor.getByLabel('Seconds').nth(2).fill('30')
+  await editor.getByLabel('Controller rationale').fill('Apply tailored holds across the detected bunch.')
+  const posted = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/decision'))
+  await editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true }).click()
+  const body = (await posted).postDataJSON()
+  expect(body.replacementInstructions).toEqual([
+    { busReference: 'SAMPLE-BUS', action: 'HOLD', adjustmentSeconds: 60 },
+    { busReference: 'BUS-2', action: 'HOLD', adjustmentSeconds: 45 },
+    { busReference: 'BUS-3', action: 'HOLD', adjustmentSeconds: 30 },
+  ])
+})
 
 test('controller handles conflicting decisions by retrieving the saved result', async ({ page, context }) => {
   await mockDashboard(context, { conflict: true })
@@ -1488,13 +1534,13 @@ test('captain retries failed acknowledgement and keeps the persisted receipt aft
   await expect(display.getByText(/^Acknowledged /)).toHaveCount(0)
   await display.getByRole('button', { name: 'Acknowledge', exact: true }).click()
   await expect(display.getByText(/^Acknowledged /)).toBeVisible()
-  await expect(display.getByText(/sec remaining · advisory window/)).toBeVisible()
+  await expect(display.getByText(/\d+:\d{2} remaining · advisory window/)).toBeVisible()
   await expect(display.getByRole('button', { name: 'Acknowledge', exact: true })).toHaveCount(0)
   await expect(display.getByRole('alert')).toHaveCount(0)
-  const before = Number((await display.getByText(/sec remaining · advisory window/).innerText()).split(' ')[0])
+  const before = (await display.getByText(/\d+:\d{2} remaining · advisory window/).innerText()).split(' ')[0]
   await page.clock.fastForward(10_000)
-  await expect.poll(async () => Number((await display.getByText(/sec remaining · advisory window/).innerText()).split(' ')[0]))
-    .toBeLessThan(before)
+  await expect.poll(async () => (await display.getByText(/\d+:\d{2} remaining · advisory window/).innerText()).split(' ')[0])
+    .not.toBe(before)
   const receipt = await display.getByText(/^Acknowledged /).innerText()
   await page.reload()
   await expect(display.getByText(receipt, { exact: true })).toBeVisible()
@@ -2566,6 +2612,14 @@ test('instruction headlines, states and pacing sentences read plainly', () => {
   expect(instructionState(issued, Date.parse(issued.acknowledgementDeadline))).toBe('closed')
   expect(instructionState({ ...issued, status: 'EXPIRED' }, now.getTime())).toBe('closed')
   expect(instructionState({ ...issued, acknowledgedAt: now.toISOString() }, now.getTime())).toBe('acknowledged')
+  const timed = { ...issued, acknowledgedAt: now.toISOString(), applicableUntil: new Date(now.getTime() + 90_000).toISOString() }
+  expect(instructionState(timed, now.getTime() + 89_000)).toBe('acknowledged')
+  expect(instructionState(timed, now.getTime() + 90_000)).toBe('closed')
+  expect(instructionTimeLeft(timed, now.getTime() + 1_000)).toBe('1:29')
+  expect(instructionTimeLeft(timed, null)).toBeNull()
+  const durationOnly = { ...timed, parameters: { ...timed.parameters, durationSeconds: 90 }, applicableUntil: null }
+  expect(instructionState(durationOnly, now.getTime() + 90_000)).toBe('closed')
+  expect(instructionTimeLeft(durationOnly, now.getTime() + 1_000)).toBe('1:29')
   expect(instructionState({ ...issued, status: 'CANCELLED' }, now.getTime())).toBe('cancelled')
   expect(acknowledgementTimeLeft(issued.acknowledgementDeadline, now.getTime() + 1_000)).toBe('4:59')
   expect(acknowledgementTimeLeft(issued.acknowledgementDeadline, null)).toBeNull()
@@ -2691,8 +2745,8 @@ test('captain acknowledgement timing follows the server clock when the device cl
   const acknowledge = page.getByRole('button', { name: 'Acknowledge', exact: true })
   await expect(acknowledge).toBeEnabled()
   await acknowledge.click()
-  await expect(page.getByRole('status').filter({ hasText: /sec remaining · advisory window/ })).toBeVisible()
-  await expect(page.getByRole('status').filter({ hasText: /301 sec remaining/ })).toHaveCount(0)
+  await expect(page.getByRole('status').filter({ hasText: /\d+:\d{2} remaining · advisory window/ })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: /5:01 remaining/ })).toHaveCount(0)
 })
 
 // Contrast, keyboard access, visible focus, keyboard scrolling and no sideways scroll at practical screen sizes.

@@ -78,8 +78,10 @@ public class RecommendationDecisionController {
 
     private com.csd.occ.planning.recommendation.domain.RecommendationDecision issueReplacement(
             UUID recommendationId, String actor, RecommendationDecisionRequest request) {
-        instructions.rejectAndIssue(recommendationId, actor, request.replacementAction().toMitigationType(), request.adjustmentSeconds(),
-                request.controllerRationale());
+        var replacements = request.normalizedReplacements().stream()
+                .map(item -> new BunchingInstructionService.ReplacementBusInstruction(item.busReference(),
+                        item.action().toMitigationType(), item.adjustmentSeconds())).toList();
+        instructions.rejectAndIssue(recommendationId, actor, replacements, request.controllerRationale());
         return decisions.findDecision(recommendationId).orElseThrow();
     }
 

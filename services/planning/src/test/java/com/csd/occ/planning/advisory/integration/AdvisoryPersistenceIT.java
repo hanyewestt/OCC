@@ -335,6 +335,45 @@ class AdvisoryPersistenceIT {
         for (var other : fleet.subList(1, fleet.size())) readsNothing(other.captainUserId());
     }
 
+    @Test
+    void recommendationApprovalIssuesToCaptainAndAppearsInInstructionHistory() throws Exception {
+        var fleet = groupedFleet();
+        var recommendation = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
+        mvc.perform(post("/api/v1/planning/recommendations/" + recommendation + "/decision").with(controller())
+                        .contentType("application/json").content("{\"action\":\"APPROVED\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("action").value("APPROVED"));
+
+        var delivered = issued.findById(recommendation).orElseThrow();
+        assertThat(delivered.busId()).isEqualTo(bus.busId());
+        mvc.perform(get("/api/v1/planning/instructions").with(controller()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].id").value(recommendation.toString()));
+        readsOnly(captain, delivered);
+        for (var other : fleet.subList(1, fleet.size())) readsNothing(other.captainUserId());
+    }
+
+    @Test
+    void rejectedRecommendationIssuesOneValidatedInstructionPerAffectedBus() throws Exception {
+        var fleet = groupedFleet();
+        var recommendation = bunchingRecommendation(FollowingBusState.READY_TO_DEPART,
+                List.of("SBS5898U", "BUS-C", "BUS-D"));
+        mvc.perform(post("/api/v1/planning/recommendations/" + recommendation + "/decision").with(controller())
+                        .contentType("application/json").content("""
+                                {"action":"REJECTED","controllerRationale":"Reduce the bunching safely.",
+                                 "replacementInstructions":[
+                                   {"busReference":"SBS5898U","action":"HOLD","adjustmentSeconds":60},
+                                   {"busReference":"BUS-C","action":"HOLD","adjustmentSeconds":45},
+                                   {"busReference":"BUS-D","action":"HOLD","adjustmentSeconds":30}]}
+                                """))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.overrideInstructions.length()").value(3));
+
+        var issuedForRecommendation = issued.findByProposalIdForUpdate(recommendation);
+        assertThat(issuedForRecommendation).hasSize(3)
+                .extracting(item -> item.busId() + ":" + item.parameters().durationSeconds())
+                .containsExactlyInAnyOrder("demo-190-b:60", "demo-190-c:45", "demo-190-d:30");
+        mvc.perform(get("/api/v1/planning/instructions").with(controller()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(3));
+    }
+
     private static org.springframework.test.web.servlet.request.RequestPostProcessor controller() {
         return jwt().jwt(token -> token.subject("controller")).authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"));
     }
@@ -883,12 +922,15 @@ class AdvisoryPersistenceIT {
     }
 
     private UUID bunchingRecommendation(FollowingBusState state) {
+        return bunchingRecommendation(state, List.of("SBS5898U"));
+    }
+    private UUID bunchingRecommendation(FollowingBusState state, List<String> affectedBusReferences) {
         UUID id = UUID.randomUUID();
         var event = new ConfirmedBunchingEvent(id, "190", 1, "44251", BunchingEventStatus.CONFIRMED,
                 600, List.of(276, 221), NOW, List.of("arrival-1", "arrival-2"));
         var diagnosis = new BunchingRootCauseDiagnosis(UUID.randomUUID(), "synthetic scenario evidence", null,
                 List.of("scenario-fixture"), List.of("Synthetic demonstration only"));
-        var mitigation = new ValidatedMitigationContext("SBS5898U", "44251", state, 120, 75,
+        var mitigation = new ValidatedMitigationContext("SBS5898U", affectedBusReferences, "44251", state, 120, 75,
                 CrowdSafetyStatus.PASSED, MitigationValidationStatus.VALIDATED, List.of("scenario-fixture"));
         var recommendation = new BunchingRecommendationPolicy().evaluate(id, SourceClassification.SIMULATION,
                 event, diagnosis, mitigation, new SimulatedImpactEstimate(221, 341, 38, 24,

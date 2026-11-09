@@ -83,7 +83,7 @@ class BunchingInstructionServiceTest {
         when(context.limits()).thenReturn(new AdvisoryContextPort.Limits(20, 1800, 5,
                 Duration.ofMinutes(5), Duration.ofDays(30)));
         when(current.captain(CAPTAIN.toString())).thenReturn(List.of());
-        when(instructions.findForUpdate(ID)).thenReturn(Optional.empty());
+        when(instructions.findByProposalIdForUpdate(ID)).thenReturn(List.of());
         when(instructions.saveAndFlush(any())).thenAnswer(call -> call.getArgument(0));
 
         var service = new BunchingInstructionService(records, decisions, instructions, current, context,

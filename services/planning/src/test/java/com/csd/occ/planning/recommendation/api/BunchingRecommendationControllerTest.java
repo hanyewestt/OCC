@@ -213,9 +213,10 @@ class BunchingRecommendationControllerTest {
     }
 
     @Test
-    void dispatchesOneTypedControllerReplacementAndReturnsItsAuditDecision() {
+    void dispatchesPerBusControllerReplacementsAndReturnsItsAuditDecision() {
         Instant decidedAt = Instant.parse("2026-10-21T10:00:00Z");
-        var auditInstruction = java.util.List.of(new ControllerBusInstruction("SBS5898U", "HOLD FOR 60s at next stop"));
+        var auditInstruction = java.util.List.of(new ControllerBusInstruction("DEMO-190-B", "HOLD FOR 60s at next stop"),
+                new ControllerBusInstruction("DEMO-190-A", "HOLD FOR 45s at next stop"));
         org.mockito.Mockito.when(decisions.findDecision(RECOMMENDATION_ID)).thenReturn(Optional.of(new RecommendationDecision(
                 RECOMMENDATION_ID, RecommendationDecisionAction.REJECTED, "controller-subject",
                 auditInstruction, "Widen the gap for the target bus.", decidedAt)));
@@ -224,7 +225,9 @@ class BunchingRecommendationControllerTest {
                 .uri("/api/v1/planning/recommendations/{id}/decision", RECOMMENDATION_ID)
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .content("""
-                        {"action":"REJECTED","replacementAction":"HOLD","adjustmentSeconds":60,
+                        {"action":"REJECTED","replacementInstructions":[
+                          {"busReference":"DEMO-190-B","action":"HOLD","adjustmentSeconds":60},
+                          {"busReference":"DEMO-190-A","action":"HOLD","adjustmentSeconds":45}],
                          "controllerRationale":"Widen the gap for the target bus."}
                         """)
                 .with(jwt().jwt(token -> token.subject("controller-subject"))
@@ -232,9 +235,12 @@ class BunchingRecommendationControllerTest {
                 .exchange();
 
         assertThat(response).hasStatus(200)
-                .bodyJson().extractingPath("overrideInstructions[0].instruction").isEqualTo("HOLD FOR 60s at next stop");
+                .bodyJson().extractingPath("overrideInstructions[1].instruction").isEqualTo("HOLD FOR 45s at next stop");
         verify(bunchingInstructions).rejectAndIssue(RECOMMENDATION_ID, "controller-subject",
-                com.csd.occ.planning.recommendation.domain.MitigationType.HOLD, 60,
+                java.util.List.of(new com.csd.occ.planning.advisory.domain.BunchingInstructionService.ReplacementBusInstruction(
+                                "DEMO-190-B", com.csd.occ.planning.recommendation.domain.MitigationType.HOLD, 60),
+                        new com.csd.occ.planning.advisory.domain.BunchingInstructionService.ReplacementBusInstruction(
+                                "DEMO-190-A", com.csd.occ.planning.recommendation.domain.MitigationType.HOLD, 45)),
                 "Widen the gap for the target bus.");
     }
 
