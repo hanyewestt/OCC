@@ -1534,12 +1534,13 @@ test('captain retries failed acknowledgement and keeps the persisted receipt aft
   await expect(display.getByText(/^Acknowledged /)).toHaveCount(0)
   await display.getByRole('button', { name: 'Acknowledge', exact: true }).click()
   await expect(display.getByText(/^Acknowledged /)).toBeVisible()
-  await expect(display.getByText(/\d+:\d{2} remaining · advisory window/)).toBeVisible()
+  await expect(display.getByRole('timer', { name: 'Instruction time remaining' })).toContainText(/\d+:\d{2}/)
   await expect(display.getByRole('button', { name: 'Acknowledge', exact: true })).toHaveCount(0)
   await expect(display.getByRole('alert')).toHaveCount(0)
-  const before = (await display.getByText(/\d+:\d{2} remaining · advisory window/).innerText()).split(' ')[0]
+  const timer = display.getByRole('timer', { name: 'Instruction time remaining' })
+  const before = (await timer.innerText()).match(/\d+:\d{2}/)?.[0]
   await page.clock.fastForward(10_000)
-  await expect.poll(async () => (await display.getByText(/\d+:\d{2} remaining · advisory window/).innerText()).split(' ')[0])
+  await expect.poll(async () => (await timer.innerText()).match(/\d+:\d{2}/)?.[0])
     .not.toBe(before)
   const receipt = await display.getByText(/^Acknowledged /).innerText()
   await page.reload()

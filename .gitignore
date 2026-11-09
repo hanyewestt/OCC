@@ -60,3 +60,4 @@ frontend/coverage/
 test-results/
 
 .superpowers
+.DS_Store
