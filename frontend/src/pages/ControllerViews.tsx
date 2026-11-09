@@ -690,7 +690,7 @@ export function BunchingMap({
                 aria-label={`${isAffected ? 'Affected ' : ''}stop ${stop.description || stop.stopCode} (${stop.stopCode})${isSelectedStop ? ' - selected incident' : ''}`}
                 className={cn(
                   "pointer-events-auto transition-opacity duration-300",
-                  hasIncident && onSelectIncident ? "cursor-pointer outline-none" : "cursor-default"
+                  hasIncident && onSelectIncident ? "cursor-pointer outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-700" : "cursor-default"
                 )}
                 opacity={isDimmed ? 0.35 : 1}
                 onClick={() => onStopClick(stop.stopCode)}
@@ -747,7 +747,7 @@ export function BunchingMap({
                 aria-label={`${bus.label}${isSelectedBus ? ' - Bunched pair for selected incident' : ''}`}
                 className={cn(
                   "pointer-events-auto transition-opacity duration-300",
-                  hasIncident && onSelectIncident ? "cursor-pointer outline-none" : "cursor-default"
+                  hasIncident && onSelectIncident ? "cursor-pointer outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-700" : "cursor-default"
                 )}
                 opacity={isDimmed ? 0.35 : 1}
                 onClick={() => onBusClick(bus.serviceId, bus.order)}
@@ -1205,7 +1205,8 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
         </div>
         
         {isExpanded && (
-          <div className="mt-4 overflow-x-auto rounded-md border">
+          <div tabIndex={0} role="region" aria-label="Stop-level details for this incident"
+            className="mt-4 overflow-x-auto rounded-md border outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <Table className="min-w-[60rem]">
               <TableCaption className="sr-only">Stop-level details for this incident</TableCaption>
               <TableHeader>
@@ -1325,7 +1326,7 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
                 >
                   <span>{label}</span>
                   {alertCount > 0 && (
-                    <span className="rounded-full bg-destructive px-1.5 py-0.2 text-[10px] font-bold text-destructive-foreground">
+                    <span className="rounded-full bg-destructive px-1.5 py-0.2 text-[10px] font-bold text-white">
                       {alertCount}
                     </span>
                   )}
