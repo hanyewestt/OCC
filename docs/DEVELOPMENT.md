@@ -106,7 +106,7 @@ containers and database.
 
 | Action | PowerShell | Bash | Behavior |
 | --- | --- | --- | --- |
-| Up app (build) | `.\scripts\app.ps1 up` | `bash scripts/app.sh up` | Install/build React assets, build application/migration images, create or update containers and wait for health checks |
+| Up app (build) | `.\scripts\app.ps1 up` | `bash scripts/app.sh up` | Install/build React assets, build application/setup images, create or update containers and wait for health checks |
 | Start app | `.\scripts\app.ps1 start` | `bash scripts/app.sh start` | Resume existing containers and wait for health checks; do not build, create or recreate containers |
 | Stop app | `.\scripts\app.ps1 stop` | `bash scripts/app.sh stop` | Stop project containers, including pgAdmin; preserve containers, networks and data volumes |
 | Reset app | `.\scripts\app.ps1 reset` | `bash scripts/app.sh reset` | Delete project containers/networks and database/pgAdmin volumes, rebuild images without layer cache, then start the app |
@@ -152,10 +152,21 @@ Repeat that project option for up, stop, reset, clear and pgAdmin actions. Use `
 Linux container engine. PowerShell launchers support Windows PowerShell 5.1+ and
 PowerShell 7; Bash launchers support Linux, macOS, WSL and Git Bash.
 
-PostgreSQL starts first, bootstrap configures database roles, and Flyway applies
-migrations before the services start. Expect PostgreSQL, Ingestion, Disruption,
-Planning, Gateway and Nginx to be healthy. Bootstrap and migration containers
-should show `Exited (0)`; they are one-shot jobs.
+The launcher starts PostgreSQL and waits for health, then runs
+`docker compose run --rm --no-deps db-setup`. This single temporary job provisions
+roles and applies each service's Flyway migrations with its own credentials.
+Applications start only after setup succeeds. The setup container is removed on
+success or failure; failure output remains in the invoking terminal. Expect
+PostgreSQL, Ingestion, Disruption, Planning, Gateway and Nginx to be healthy.
+`up` also removes obsolete bootstrap/migration containers without deleting data.
+`start` only resumes existing application containers and does not rerun setup.
+
+For deployment or CI with explicit Compose files, use the same files and project
+for every command: build or pull `db-setup`, `up -d --wait postgres`,
+`run --rm --no-deps db-setup`, then `up -d --wait`. Stop on any failed command.
+The setup profile excludes the job from ordinary `up`; a bare `up` does not
+initialize a fresh database. Production now publishes one `OCC_DB_SETUP_IMAGE`
+digest instead of the three former `OCC_*_MIGRATION_IMAGE` digests.
 
 ## Frontend development
 
@@ -209,7 +220,7 @@ cd frontend
 npm ci
 npm run build
 cd ..
-docker compose --env-file .env up -d --build --wait
+./scripts/app.ps1 up
 ```
 
 Rebuild after frontend source changes when testing through Nginx. Node and Vite
@@ -251,7 +262,7 @@ refresh, not after loading additional pages. A successful refresh returns the
 collection to its first page. Authentication and configuration retain their own
 existing lifecycles.
 
-After Java, dependency, Dockerfile or migration changes, run the start action
+After Java, dependency, Dockerfile or migration changes, run the up action
 again to rebuild changed images. To rebuild only Gateway, use Compose directly:
 
 ```shell
@@ -272,11 +283,12 @@ docker compose --env-file .env ps -a
 docker compose --env-file .env logs --tail 100 nginx gateway ingestion disruption planning
 ```
 
-If startup fails, inspect `ps -a` and the failed service's logs. For a migration
-failure, inspect its one-shot container, for example:
+If startup fails, inspect `ps -a` and the failed application's logs. Setup
+failures appear in the launcher terminal because the temporary container is
+removed. After correcting the cause, rerun setup against the running database:
 
 ```shell
-docker compose --env-file .env logs ingestion-migrate
+docker compose --env-file .env run --rm --no-deps db-setup
 ```
 
 Add `--project-name <name>` to direct Compose commands when managing a custom
@@ -333,7 +345,7 @@ browser's view; arrivals remain live. Browser journeys use synthetic Supabase
 and API responses and do not create real approval records. To verify the real
 local flow:
 
-1. Start the stack with `docker compose --env-file .env up -d --build --wait`.
+1. Start the stack with `./scripts/app.ps1 up`.
 2. Sign in to `/controller`, start a fresh simulation, then open
    `/controller/planning` and wait for the current diagnosis and recommendation.
 3. Inspect the diagnosis summary and its **Evidence and limitations** disclosure.
