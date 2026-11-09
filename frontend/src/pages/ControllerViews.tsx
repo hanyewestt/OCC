@@ -226,6 +226,43 @@ export type BusCluster = {
   text: string
 }
 
+export function areBusesConfirmedBunched(
+  b1: ProjectedBus,
+  b2: ProjectedBus,
+  incidents: PositionedIncident[],
+  selectedBuses: Set<string>,
+): boolean {
+  if (b1.serviceId !== b2.serviceId) return false
+  if (b1.directionId !== b2.directionId) return false
+
+  const key1 = `${b1.serviceId}-${b1.order}`
+  const key2 = `${b2.serviceId}-${b2.order}`
+
+  // Check if both buses belong to the selected incident's bunched pair
+  if (selectedBuses.has(key1) && selectedBuses.has(key2)) {
+    return true
+  }
+
+  // Check if they are linked as a bunched pair in any active bunching incident
+  for (const inc of incidents) {
+    if (inc.historical) continue
+    if (inc.serviceId !== b1.serviceId) continue
+    if (inc.directionId !== null && inc.directionId !== b1.directionId) continue
+
+    if (inc.stripLink) {
+      const { frontOrder, followingOrder } = inc.stripLink
+      if (
+        (frontOrder === b1.order && followingOrder === b2.order) ||
+        (frontOrder === b2.order && followingOrder === b1.order)
+      ) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
 export function clusterProjectedBuses(
   buses: ProjectedBus[],
   selectedBuses: Set<string>,
@@ -245,8 +282,14 @@ export function clusterProjectedBuses(
       if (visited.has(j)) continue
       const b2 = buses[j]
       if (b1.serviceId !== b2.serviceId) continue
-      const dist = Math.hypot(b1.x - b2.x, b1.y - b2.y)
-      if (dist <= thresholdPx) {
+      if (b1.directionId !== b2.directionId) continue
+
+      // ONLY merge if confirmed as bunched by a bunching alert AND nearby on map
+      const isConfirmed = group.some(existing => areBusesConfirmedBunched(existing, b2, incidents, selectedBuses))
+      if (!isConfirmed) continue
+
+      const isNearby = group.some(existing => Math.hypot(existing.x - b2.x, existing.y - b2.y) <= thresholdPx)
+      if (isNearby) {
         visited.add(j)
         group.push(b2)
       }
@@ -256,9 +299,10 @@ export function clusterProjectedBuses(
     const avgX = group.reduce((sum, b) => sum + b.x, 0) / group.length
     const avgY = group.reduce((sum, b) => sum + b.y, 0) / group.length
     const isSelected = group.some(b => selectedBuses.has(`${b.serviceId}-${b.order}`))
-    const hasIncident = group.some(b =>
+    const hasIncident = group.length > 1 || group.some(b =>
       incidents.some(inc =>
         inc.stripLink &&
+        (!inc.historical || selectedBuses.has(`${b.serviceId}-${b.order}`)) &&
         (inc.stripLink.frontOrder === b.order || inc.stripLink.followingOrder === b.order) &&
         inc.serviceId === b.serviceId
       )
@@ -266,10 +310,10 @@ export function clusterProjectedBuses(
     const text = group.map(b => b.order).join(' · ')
     const label = group.length === 1
       ? group[0].label
-      : `Buses #${group.map(b => b.order).join(' & #')} on service ${b1.serviceId}`
+      : `Bunched buses #${group.map(b => b.order).join(' & #')} on service ${b1.serviceId}`
 
     clusters.push({
-      key: `cluster-${b1.serviceId}-${group.map(b => b.order).join('-')}-${i}`,
+      key: `cluster-${b1.serviceId}-${b1.directionId}-${group.map(b => b.order).join('-')}-${i}`,
       serviceId: b1.serviceId,
       directionId: b1.directionId,
       buses: group,
@@ -280,6 +324,23 @@ export function clusterProjectedBuses(
       label,
       text,
     })
+  }
+
+  // If distinct single-bus markers visually collide on screen, apply a slight radial offset so numbers stay legible
+  for (let a = 0; a < clusters.length; a++) {
+    if (clusters[a].buses.length > 1) continue
+    for (let b = a + 1; b < clusters.length; b++) {
+      if (clusters[b].buses.length > 1) continue
+      const dx = clusters[b].x - clusters[a].x
+      const dy = clusters[b].y - clusters[a].y
+      const d = Math.hypot(dx, dy)
+      if (d < 14) {
+        const offset = 8
+        const angle = d > 0 ? Math.atan2(dy, dx) : (a % 4) * (Math.PI / 2)
+        clusters[b].x += Math.cos(angle) * offset
+        clusters[b].y += Math.sin(angle) * offset
+      }
+    }
   }
 
   return clusters
