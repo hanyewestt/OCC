@@ -860,13 +860,14 @@ function simulationBusLabel(bus: BunchingAlert['leadingVehicle']) {
   return bus.registrationNumber === bus.busId ? bus.busId : `${bus.registrationNumber} (${bus.busId})`
 }
 
-export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], positions = [], pollIntervalSeconds = 60 }: {
+export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], positions = [], pollIntervalSeconds = 60, gapToleranceSeconds = 30 }: {
   liveAlerts: PagedCollection<BunchingAlert, PageResult<BunchingAlert>>
   run: Resource<DemoRun>
   loading: boolean
   routes?: RouteDirection[]
   positions?: RoutePositions[]
   pollIntervalSeconds?: number
+  gapToleranceSeconds?: number
 }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const incidentParam = searchParams.get('incident')
@@ -886,8 +887,8 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
   const nowMs = Date.parse(liveAlerts.lastSuccessAt ?? '') || 0
   const incidents = useMemo(() => {
     if (viewMode !== 'grouped' || !items.length) return []
-    return groupRouteIncidents(items, routes, nowMs, pollIntervalSeconds, 20)
-  }, [viewMode, items, routes, nowMs, pollIntervalSeconds])
+    return groupRouteIncidents(items, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds)
+  }, [viewMode, items, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds])
 
   type PositionSnapshot = {
     position: RoutePositions['directions'][number]
