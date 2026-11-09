@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
-import type { Arrival, BunchingAlert, DemoRun, EarlyControllerSuggestion, PageResult, RouteDirection, RoutePositions } from '@/lib/api'
+import type { AiAuditRecord, Arrival, BunchingAlert, DemoRun, EarlyControllerSuggestion, PageResult, RouteDirection, RoutePositions } from '@/lib/api'
 import { bunchingArrivals } from '@/lib/bunching'
 import { dataClassificationLabel } from '@/lib/presentation'
 import { formatSgtDateTime } from '@/lib/time'
@@ -1420,14 +1420,17 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
   </div>
 }
 
-export function ControllerAudit({ decisions, suggestions, loading }: {
+export function ControllerAudit({ decisions, suggestions, aiAudits, loading }: {
   decisions: PagedCollection<Decision, PageResult<Decision>>
-  suggestions: PagedCollection<EarlyControllerSuggestion, PageResult<EarlyControllerSuggestion>>; loading: boolean
+  suggestions: PagedCollection<EarlyControllerSuggestion, PageResult<EarlyControllerSuggestion>>
+  aiAudits: PagedCollection<AiAuditRecord, PageResult<AiAuditRecord>>; loading: boolean
 }) {
   const items = !loading ? decisions.items : []
   const error = decisions.error !== null && !decisions.items.length ? 'Unable to load this data.' : ''
   const suggestionItems = !loading ? suggestions.items : []
   const suggestionError = suggestions.error !== null && !suggestions.items.length ? 'Unable to load early controller suggestions.' : ''
+  const aiAuditItems = !loading ? aiAudits.items : []
+  const aiAuditError = aiAudits.error !== null && !aiAudits.items.length ? 'Unable to load AI audit records.' : ''
   return <div className="space-y-10">
     <section aria-labelledby="early-suggestions-title" className="space-y-4"><h2 id="early-suggestions-title" className="font-medium">Early controller mitigation suggestions</h2>
       <p className="text-sm text-muted-foreground">Actions recorded before an AI diagnosis or mitigation recommendation was available.</p>
@@ -1453,6 +1456,17 @@ export function ControllerAudit({ decisions, suggestions, loading }: {
       <PagedCollectionControls label="decisions" hasItems={!!decisions.items.length} hasMore={decisions.hasMore}
         isLoading={decisions.isLoading} isLoadingMore={decisions.isLoadingMore} error={decisions.error} refreshError={decisions.refreshError} reload={decisions.reload} loadNext={decisions.loadNext} />
     </section>
-    <section aria-labelledby="ai-audit-title" className="space-y-2 border-t pt-6"><h2 id="ai-audit-title" className="font-medium">AI audit logs</h2><p className="text-sm text-muted-foreground">Not connected yet. AI audit records will appear here when available.</p></section>
+    <section aria-labelledby="ai-audit-title" className="space-y-4 border-t pt-6"><h2 id="ai-audit-title" className="font-medium">AI audit logs</h2>
+      <p className="text-sm text-muted-foreground">Retained model-invocation metadata for diagnosis and mitigation generation. Raw prompts and responses are not displayed.</p>
+      <DataMessage error={aiAuditError} loading={loading || aiAudits.isLoading && !aiAudits.latestPage} empty={!aiAuditItems.length}>No AI invocations have been retained.</DataMessage>
+      {!!aiAuditItems.length && <Table containerProps={{ role: 'region', 'aria-label': 'AI audit logs', tabIndex: 0,
+        onScroll: aiAudits.onScroll, className: 'max-h-[26rem] overflow-auto rounded-lg border' }} className="min-w-[64rem]">
+        <TableCaption className="sr-only">AI audit logs</TableCaption>
+        <TableHeader className="[&_th]:sticky [&_th]:top-0 [&_th]:z-1 [&_th]:bg-background"><TableRow><TableHead>Completed</TableHead><TableHead>Purpose</TableHead><TableHead>Outcome</TableHead><TableHead>Model</TableHead><TableHead>Latency</TableHead><TableHead>Tokens</TableHead><TableHead>Linked record</TableHead></TableRow></TableHeader>
+        <TableBody>{aiAuditItems.map(record => <TableRow key={record.invocationId}><TableCell>{timestamp(record.completedAt)}</TableCell><TableCell>{record.purpose === 'RECOMMENDATION' ? 'Mitigation' : 'Diagnosis'}</TableCell><TableCell><span className="font-medium">{record.outcome.replaceAll('_', ' ')}</span>{record.failureCategory && <span className="block text-xs text-destructive">{record.failureCategory.replaceAll('_', ' ')}</span>}{record.deterministicFallbackUsed && <span className="block text-xs text-muted-foreground">Deterministic fallback used</span>}</TableCell><TableCell><span>{record.provider} · {record.model}</span><span className="block text-xs text-muted-foreground">Prompt {record.promptVersion}</span></TableCell><TableCell>{record.latencyMillis.toLocaleString('en-SG')} ms</TableCell><TableCell>{record.totalTokens?.toLocaleString('en-SG') ?? '—'}</TableCell><TableCell className="text-xs text-muted-foreground">{record.requestId ?? record.recommendationId ?? '—'}</TableCell></TableRow>)}</TableBody>
+      </Table>}
+      <PagedCollectionControls label="AI audit records" hasItems={!!aiAudits.items.length} hasMore={aiAudits.hasMore}
+        isLoading={aiAudits.isLoading} isLoadingMore={aiAudits.isLoadingMore} error={aiAudits.error} refreshError={aiAudits.refreshError} reload={aiAudits.reload} loadNext={aiAudits.loadNext} />
+    </section>
   </div>
 }
