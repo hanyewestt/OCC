@@ -212,6 +212,13 @@ export type PlanningDiagnosisRequestPage = PageResult<PlanningDiagnosisRequest> 
   mode: 'LIVE' | 'DEMO'; demoRunId: string | null
 }
 
+export type AiAuditRecord = {
+  invocationId: string; purpose: 'DIAGNOSIS' | 'RECOMMENDATION'; requestId: string | null; recommendationId: string | null
+  provider: string; model: string; promptVersion: string; schemaVersion: string; attemptType: string | null; attemptNumber: number | null
+  startedAt: string; completedAt: string; latencyMillis: number; promptTokens: number | null; completionTokens: number | null; totalTokens: number | null
+  outcome: string; failureCategory: string | null; deterministicFallbackUsed: boolean | null
+}
+
 export type TriggerDiagnosisRequest = {
   eventId?: string
   requestId?: string
