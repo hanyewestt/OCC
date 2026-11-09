@@ -165,9 +165,10 @@ resulting `frontend/dist/` read-only. There is no separate React/Vite container.
 Open [the app](http://localhost/login), adjusting the port to `OCC_NGINX_PORT`.
 The [root README](../README.md#pages-and-access) lists the frontend routes.
 
-The OBU pacing display is the CAPTAIN-only `/captain` screen. It uses built-in
-sample gaps; no operational API or live-data polling was added. Day/night mode
-is saved in the `occ-obu-theme` browser preference.
+The OBU display is the CAPTAIN-only `/captain` screen. It reads the captain's
+instructions from Planning and their assigned route with its pacing from
+`/api/v1/captain-routes/current`; both resolve the bus from the token subject.
+Day/night mode is saved in the `occ-obu-theme` browser preference.
 
 Use the controller dashboard for simulation controls, bunching detections and
 recommendation review. These workflows use the React app's verified Supabase
@@ -240,7 +241,7 @@ manual refresh and polling update the same relevant collections, and the next
 poll waits until the current cycle finishes. Controller Disruptions refreshes
 both bunching detections and multi-hazard conditions. Planning and Audit refresh
 their visible decision, instruction and notice collections. Captain polls assigned
-instructions; its pacing samples and countdowns use local display timers.
+instructions and its route with pacing; countdowns use local display timers.
 
 Successful saves request reconciliation through the same page cycle. Polling
 pauses while a save is pending, and editor drafts survive background refresh.
@@ -431,7 +432,7 @@ npx playwright install chromium
 npm test
 ```
 
-The browser suite mocks Supabase/Gateway responses and starts Vite by default.
+The browser suite mocks Supabase/Gateway responses and starts Vite.
 It proves frontend behavior, not provider behavior or backend authorization.
 To run it against the built app served by Nginx, set the test target first:
 
@@ -447,6 +448,11 @@ Bash:
 ```bash
 OCC_FRONTEND_TEST_PUBLIC_URL=http://127.0.0.1 npm test
 ```
+
+The `application` project uses the selected target. The `hooks` project always
+uses Vite because its source fixtures are intentionally excluded from the
+production build. Use `--project=application` or `--project=hooks` to select one;
+the default runs both. Hook fixtures are never exposed through Nginx.
 
 Use the actual Nginx host port if changed. For Vite-targeted tests, its configured
 port must match `OCC_FRONTEND_DEV_PORT`. Browser test deadlines use

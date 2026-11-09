@@ -124,6 +124,58 @@ class DiagnosisSummaryPolicyTest {
     }
 
     @Test
+    void summarizesPassengerSurgeWithHumanReadableLoadTiers() {
+        var leadArrival = new ArrivalEvidence("bus-arrival:lead", UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                "190", "44251", 1, CONFIRMED, CONFIRMED, new BigDecimal("1.3"), new BigDecimal("103.8"),
+                "LSD", "DD", "SIMULATION", RUN_ID, null);
+        var followArrival = new ArrivalEvidence("bus-arrival:follow", UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                "190", "44251", 1, CONFIRMED.plusSeconds(45), CONFIRMED, new BigDecimal("1.3"), new BigDecimal("103.8"),
+                "SEA", "DD", "SIMULATION", RUN_ID, null);
+
+        var event = new BunchingEventFacts(UUID.randomUUID(), UUID.randomUUID(), "SIMULATION", RUN_ID,
+                "190", 1, "44251", leadArrival.observationId(), followArrival.observationId(), "CONFIRMED", 600,
+                List.of(45, 45), CONFIRMED, List.of(CONFIRMED.minusSeconds(10), CONFIRMED),
+                List.of(UUID.randomUUID(), UUID.randomUUID()), List.of("bunching:event"), "test-rule");
+        var context = new RootCauseContext("SIMULATION", RUN_ID, null, List.of(leadArrival, followArrival), List.of(), List.of());
+        var snapshot = new EvidenceSnapshot(event, context, List.of("bunching:event", "bus-arrival:lead", "bus-arrival:follow"), "SIMULATION");
+
+        var result = policy.summarize("PASSENGER_SURGE", "BOARDING_IMBALANCE",
+                List.of("bunching:event", "bus-arrival:lead", "bus-arrival:follow"), snapshot);
+
+        assertThat(result.likelyCause()).contains("Passenger boarding surge", "Limited Standing", "Seats Available", "stop 44251");
+        assertThat(result.evidenceDetails()).isEmpty();
+    }
+
+    @Test
+    void summarizesHeadwayDecaySubtypesClearly() {
+        var leadArrival = new ArrivalEvidence("bus-arrival:lead", UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                "190", "44251", 1, CONFIRMED, CONFIRMED, new BigDecimal("1.3"), new BigDecimal("103.8"),
+                "SEA", "SD", "SIMULATION", RUN_ID, null);
+        var followArrival = new ArrivalEvidence("bus-arrival:follow", UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                "190", "44251", 1, CONFIRMED.plusSeconds(50), CONFIRMED, new BigDecimal("1.3"), new BigDecimal("103.8"),
+                "SEA", "DD", "SIMULATION", RUN_ID, null);
+
+        var event = new BunchingEventFacts(UUID.randomUUID(), UUID.randomUUID(), "SIMULATION", RUN_ID,
+                "190", 1, "44251", leadArrival.observationId(), followArrival.observationId(), "CONFIRMED", 600,
+                List.of(50, 50), CONFIRMED, List.of(CONFIRMED.minusSeconds(10), CONFIRMED),
+                List.of(UUID.randomUUID(), UUID.randomUUID()), List.of("bunching:event"), "test-rule");
+        var context = new RootCauseContext("SIMULATION", RUN_ID, null, List.of(leadArrival, followArrival), List.of(), List.of());
+        var snapshot = new EvidenceSnapshot(event, context, List.of("bunching:event"), "SIMULATION");
+
+        var peakResult = policy.summarize("HEADWAY_DECAY", "PEAK_CONGESTION", List.of("bunching:event"), snapshot);
+        assertThat(peakResult.likelyCause()).contains("Peak arterial traffic friction", "rush hour", "600s", "50s", "stop 44251");
+
+        var dispatchResult = policy.summarize("HEADWAY_DECAY", "TERMINAL_DISPATCH", List.of("bunching:event"), snapshot);
+        assertThat(dispatchResult.likelyCause()).contains("Terminal dispatch irregularity", "route origin", "stop 44251");
+
+        var capacityResult = policy.summarize("HEADWAY_DECAY", "FLEET_CAPACITY_ASYMMETRY", List.of("bunching:event"), snapshot);
+        assertThat(capacityResult.likelyCause()).contains("Fleet capacity asymmetry", "Differing vehicle passenger capacities", "stop 44251");
+
+        var driftResult = policy.summarize("HEADWAY_DECAY", "CUMULATIVE_DRIFT", List.of("bunching:event"), snapshot);
+        assertThat(driftResult.likelyCause()).contains("Cumulative route drift", "Long-distance spacing decay", "stop 44251");
+    }
+
+    @Test
     void sanitizesHtmlLikeTextAndTruncatesWithoutSplittingSurrogatePairs() {
         String source = "<script>alert('x')</script><b>Near the bridge</b> " + "🚧".repeat(220);
         var incidents = new java.util.ArrayList<IncidentEvidence>();

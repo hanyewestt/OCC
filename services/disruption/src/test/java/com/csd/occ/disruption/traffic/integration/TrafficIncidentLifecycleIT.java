@@ -58,7 +58,7 @@ class TrafficIncidentLifecycleIT {
     void resetRows() {
         reset(feed, evidenceCodec);
         org.mockito.Mockito.when(evidenceCodec.encode(any(), any(), any())).thenReturn("{}");
-        jdbc.execute("TRUNCATE disruption.hazard_state, disruption.planning_outbox, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption");
+        jdbc.execute("TRUNCATE disruption.hazard_state, disruption.planning_outbox, disruption.bunching_diagnosis_link, disruption.bunching_diagnosis_correlation, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption");
         jdbc.update("UPDATE disruption.traffic_poll_checkpoint SET completed_at = NULL, poll_run_id = NULL WHERE id = 1");
     }
 

@@ -17,7 +17,18 @@ export const controllerPages = [
 export function ControllerSidebar({ email }: { email: string }) {
   const { pathname } = useLocation()
   const [expanded, setExpanded] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
   const closeMobile = () => { if (!window.matchMedia('(min-width: 768px)').matches) setExpanded(false) }
+  const handleSignOut = async () => {
+    if (signingOut) return
+    setSigningOut(true)
+    try {
+      await signOut()
+    } finally {
+      setSigningOut(false)
+    }
+  }
+
   return <>
     {expanded && <button aria-label="Close navigation" className="fixed inset-0 z-20 bg-black/20 md:hidden" onClick={() => setExpanded(false)} />}
     <Collapsible open={expanded} onOpenChange={setExpanded} asChild>
@@ -39,9 +50,9 @@ export function ControllerSidebar({ email }: { email: string }) {
         </nav>
         <div className="mt-auto space-y-3 border-t pt-4">
           <CollapsibleContent><div className="space-y-1 px-2 text-xs text-muted-foreground"><p className="break-all">{email}</p><p>Access verified</p></div></CollapsibleContent>
-          <Button variant="ghost" className="h-10 w-full gap-3" onClick={() => void signOut()} aria-label="Sign out" title="Sign out">
+          <Button variant="ghost" className="h-10 w-full gap-3" disabled={signingOut} onClick={() => void handleSignOut()} aria-label="Sign out" title="Sign out">
             <LogOut aria-hidden="true" />
-            {expanded && 'Sign out'}
+            {expanded && (signingOut ? 'Signing out…' : 'Sign out')}
           </Button>
         </div>
       </aside>

@@ -1,5 +1,6 @@
 package com.csd.occ.disruption.bunching.domain;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
@@ -10,6 +11,7 @@ import java.util.UUID;
 public record ArrivalSnapshot(
         UUID rawObservationId,
         UUID pollRunId,
+        Optional<UUID> sourcePollCycleId,
         Optional<UUID> referenceVersionId,
         Instant fetchedAt,
         List<Arrival> arrivals,
@@ -19,6 +21,7 @@ public record ArrivalSnapshot(
     public ArrivalSnapshot {
         Objects.requireNonNull(rawObservationId);
         Objects.requireNonNull(pollRunId);
+        Objects.requireNonNull(sourcePollCycleId);
         Objects.requireNonNull(referenceVersionId);
         Objects.requireNonNull(fetchedAt);
         Objects.requireNonNull(classification);
@@ -30,12 +33,19 @@ public record ArrivalSnapshot(
 
     public ArrivalSnapshot(UUID rawObservationId, UUID pollRunId, Optional<UUID> referenceVersionId,
                            Instant fetchedAt, List<Arrival> arrivals) {
-        this(rawObservationId, pollRunId, referenceVersionId, fetchedAt, arrivals, "OBSERVATION_ONLY", null);
+        this(rawObservationId, pollRunId, Optional.empty(), referenceVersionId, fetchedAt, arrivals,
+                "OBSERVATION_ONLY", null);
     }
 
     public ArrivalSnapshot(UUID rawObservationId, UUID pollRunId, UUID referenceVersionId,
                            Instant fetchedAt, List<Arrival> arrivals) {
         this(rawObservationId, pollRunId, Optional.of(referenceVersionId), fetchedAt, arrivals);
+    }
+
+    public ArrivalSnapshot(UUID rawObservationId, UUID pollRunId, Optional<UUID> referenceVersionId,
+                           Instant fetchedAt, List<Arrival> arrivals, String classification, UUID demoRunId) {
+        this(rawObservationId, pollRunId, Optional.empty(), referenceVersionId, fetchedAt, arrivals,
+                classification, demoRunId);
     }
 
     /** visitOrder identifies an arrival slot in this snapshot, not a vehicle. */
@@ -45,7 +55,14 @@ public record ArrivalSnapshot(
             String stopCode,
             Optional<Integer> directionId,
             int visitOrder,
-            Optional<Instant> estimatedArrivalAt) {
+            Optional<Instant> estimatedArrivalAt,
+            String operator,
+            Integer visitNumber,
+            String originCode,
+            String destinationCode,
+            BigDecimal latitude,
+            BigDecimal longitude,
+            Integer routeStopSequence) {
 
         public Arrival {
             Objects.requireNonNull(observationId);
@@ -62,6 +79,18 @@ public record ArrivalSnapshot(
             if (directionId.isPresent() && directionId.get() <= 0) {
                 throw new IllegalArgumentException("Mapped direction must be positive");
             }
+            if (visitNumber != null && visitNumber <= 0) {
+                throw new IllegalArgumentException("Visit number must be positive when present");
+            }
+            if (routeStopSequence != null && routeStopSequence <= 0) {
+                throw new IllegalArgumentException("Route stop sequence must be positive when present");
+            }
+        }
+
+        public Arrival(UUID observationId, String serviceId, String stopCode, Optional<Integer> directionId,
+                       int visitOrder, Optional<Instant> estimatedArrivalAt) {
+            this(observationId, serviceId, stopCode, directionId, visitOrder, estimatedArrivalAt,
+                    null, null, null, null, null, null, null);
         }
     }
 }

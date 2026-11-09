@@ -52,10 +52,12 @@ public class BunchingSnapshotController {
 
     private BunchingSnapshotResponse response(BunchingFeedService.Snapshot value) {
         return new BunchingSnapshotResponse(value.sequence(), value.rawObservationId(), value.pollRunId(),
-                value.sourceKey(), value.fetchedAt(), value.normalizationState(), value.arrivals().stream()
+                value.sourcePollCycleId(), value.sourceKey(), value.fetchedAt(), value.normalizationState(),
+                value.arrivals().stream()
                 .map(arrival -> new BunchingArrivalResponse(arrival.observationId(), arrival.referenceVersionId(),
-                        arrival.stopCode(), arrival.serviceId(), arrival.directionId(), arrival.visitOrder(),
-                        arrival.estimatedArrivalAt(), arrival.originCode(), arrival.destinationCode(), arrival.latitude(),
-                        arrival.longitude())).toList());
+                        arrival.stopCode(), arrival.serviceId(), arrival.operator(), arrival.directionId(),
+                        arrival.visitOrder(), arrival.visitNumber(), arrival.estimatedArrivalAt(), arrival.originCode(),
+                        arrival.destinationCode(), arrival.latitude(), arrival.longitude(),
+                        arrival.routeStopSequence())).toList());
     }
 }

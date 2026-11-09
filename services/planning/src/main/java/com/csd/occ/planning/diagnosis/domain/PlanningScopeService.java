@@ -52,6 +52,8 @@ public class PlanningScopeService {
                     diagnosis == null ? null : diagnosis.id(), event == null ? scope.classification() : event.classification(),
                     event == null ? scope.demoRunId() : event.demoRunId(), event == null ? null : event.serviceId(),
                     event == null ? null : Integer.valueOf(event.directionId()), event == null ? null : event.monitoredStopCode(),
+                    event == null ? List.of() : java.util.stream.Stream.of(event.leadingObservationId(), event.followingObservationId())
+                            .filter(java.util.Objects::nonNull).map(UUID::toString).distinct().toList(),
                     request.status(), summary == null ? null : summary.likelyCause(),
                     diagnosis == null ? null : diagnosis.confidence(), diagnosis == null ? List.of()
                             : decodeLimitations(diagnosis.limitationsJson()),

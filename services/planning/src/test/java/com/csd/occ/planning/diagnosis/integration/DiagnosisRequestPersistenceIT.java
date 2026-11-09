@@ -76,8 +76,8 @@ class DiagnosisRequestPersistenceIT {
 
     @BeforeEach
     void clearDiagnosisTables() {
-        jdbc.execute("TRUNCATE planning.model_invocation_record, planning.recommendation_job, "
-                + "planning.diagnosis_result, planning.planning_request");
+        jdbc.execute("TRUNCATE planning.early_bunching_controller_suggestion, planning.model_invocation_record, "
+                + "planning.recommendation_job, planning.diagnosis_result, planning.planning_request");
     }
 
     @Test
@@ -504,6 +504,15 @@ class DiagnosisRequestPersistenceIT {
                 .containsEntry("generated_response", "{invalid-json")
                 .containsEntry("evidence_snapshot_hash", null);
         assertThat(diagnoses.findByRequestId(requestId)).isEmpty();
+    }
+
+    @Test
+    void claimDueRequestsWhenIncludeBunchingIsFalseSkipsBunchingRequests() {
+        requests.enqueue(EventType.BUS_BUNCHING, PRODUCER, UUID.randomUUID(), UUID.randomUUID());
+        var claimed = requests.claimDueRequests(10, Duration.ofMinutes(1), false);
+        assertThat(claimed).isEmpty();
+        var claimedWithBunching = requests.claimDueRequests(10, Duration.ofMinutes(1), true);
+        assertThat(claimedWithBunching).hasSize(1);
     }
 
     private ModelInvocationDetails invocation(String model) {

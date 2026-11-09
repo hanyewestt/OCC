@@ -67,6 +67,50 @@ class InstructionServiceTest {
     }
 
     @Test
+    void captainReadsOnlyCurrentInstructionsAddressedToThemOnTheirAssignedBus() {
+        var mine = issued(UUID.randomUUID(), bus, caution, NOW);
+        // Issued before the bus was reassigned to this captain; still addressed to the previous captain.
+        var previousCaptains = issued(UUID.randomUUID(), withCaptain(UUID.randomUUID()), caution, NOW);
+        when(instructions.findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(runId, bus.busId(),
+                List.of("ISSUED", "ACKNOWLEDGED"))).thenReturn(List.of(previousCaptains, mine));
+
+        assertThat(service.captain(captain.toString())).containsExactly(mine);
+    }
+
+    @Test
+    void captainWithoutACurrentAssignmentReadsNothing() {
+        assertThat(service.captain(UUID.randomUUID().toString())).isEmpty();
+        assertThat(service.captain("not-a-captain-subject")).isEmpty();
+
+        when(context.fleet(runId)).thenReturn(new AdvisoryContextPort.Fleet(runId, "CLOSED", List.of(bus), 1));
+        assertThat(service.captain(captain.toString())).isEmpty();
+
+        when(scopes.current()).thenReturn(new PlanningScope("LIVE", null));
+        assertThat(service.captain(captain.toString())).isEmpty();
+        verify(instructions, never()).findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(any(), any(), anyList());
+    }
+
+    @Test
+    void reassignedBusLeavesNeitherCaptainAbleToActOnTheOthersInstruction() {
+        var issued = issued(UUID.randomUUID(), bus, caution, NOW);
+        when(instructions.findForUpdate(issued.id())).thenReturn(Optional.of(issued));
+        UUID replacement = UUID.randomUUID();
+        when(context.fleet(runId)).thenReturn(new AdvisoryContextPort.Fleet(runId, "RUNNING", List.of(withCaptain(replacement)), 1));
+
+        assertThatThrownBy(() -> service.acknowledge(issued.id(), captain.toString()))
+                .isInstanceOf(AdvisoryNotFoundException.class);
+        assertThatThrownBy(() -> service.acknowledge(issued.id(), replacement.toString()))
+                .isInstanceOf(AdvisoryNotFoundException.class);
+        assertThat(issued.acknowledgedAt()).isNull();
+    }
+
+    @Test
+    void unknownInstructionIsNotFound() {
+        assertThatThrownBy(() -> service.acknowledge(UUID.randomUUID(), captain.toString()))
+                .isInstanceOf(AdvisoryNotFoundException.class);
+    }
+
+    @Test
     void proposalOutsideTheCurrentRunCannotIssue() {
         when(scopes.current()).thenReturn(new PlanningScope("DEMO", UUID.randomUUID()));
         assertThatThrownBy(() -> service.decide(proposal.id(), null, null, "controller", null))
@@ -194,6 +238,11 @@ class InstructionServiceTest {
         assertThat(previous.status()).isEqualTo("CANCELLED");
         assertThat(replacement.status()).isEqualTo("ISSUED");
         assertThat(replacement.id()).isEqualTo(proposal.id());
+    }
+
+    private AdvisoryContextPort.Bus withCaptain(UUID captainUserId) {
+        return new AdvisoryContextPort.Bus(bus.busId(), bus.tripId(), bus.registrationNumber(), bus.serviceId(),
+                bus.directionId(), captainUserId, "ASSIGNED", bus.progress());
     }
 
     private AdvisoryCandidate speed() {

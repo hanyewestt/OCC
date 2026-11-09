@@ -6,17 +6,26 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * The signed-in captain's assigned simulation bus, its ordered route and where it is along it.
- * Every value is simulation-derived; live Bus Arrival data has no vehicle identity.
+ * The signed-in captain's assigned simulation bus, its ordered route, where it is along it and its
+ * latest pacing. Every value is simulation-derived; live Bus Arrival data has no vehicle identity.
  */
 public record CaptainRoute(String busId, String registrationNumber, String serviceId, int directionId,
-                           List<Stop> stops, Position position) {
+                           List<Stop> stops, Position position, Optional<Pacing> pacing) {
     public CaptainRoute {
         Objects.requireNonNull(busId);
         Objects.requireNonNull(registrationNumber);
         Objects.requireNonNull(serviceId);
         Objects.requireNonNull(position);
+        Objects.requireNonNull(pacing);
         stops = List.copyOf(stops);
+    }
+
+    /** This bus's gaps from the latest pacing cycle (WQAP-68). */
+    public record Pacing(PacingMetric metric, Instant calculatedAt) {
+        public Pacing {
+            Objects.requireNonNull(metric);
+            Objects.requireNonNull(calculatedAt);
+        }
     }
 
     /** How a stop time was obtained. */

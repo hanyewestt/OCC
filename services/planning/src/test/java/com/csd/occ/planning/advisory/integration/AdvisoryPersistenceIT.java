@@ -284,6 +284,81 @@ class AdvisoryPersistenceIT {
                 .andExpect(status().isForbidden());
     }
 
+    @Test
+    void groupSendDeliversEachRecipientCaptainOnlyTheirOwnInstruction() throws Exception {
+        var fleet = groupedFleet();
+        var recipients = fleet.subList(0, 3);
+        var outsideGroup = fleet.subList(3, 5);
+        var ids = recipients.stream().map(value -> proposalFor(value, InstructionType.BE_CAUTIOUS).id()).toList();
+        var body = "{\"proposalIds\":[" + ids.stream().map(id -> "\"" + id + "\"").collect(java.util.stream.Collectors.joining(",")) + "]}";
+        mvc.perform(post("/api/v1/planning/advisory-groups/decisions").with(controller())
+                .contentType("application/json").content(body)).andExpect(status().isOk());
+
+        for (var recipient : recipients) {
+            var delivered = issued.findAll().stream().filter(value -> value.busId().equals(recipient.busId())).toList();
+            assertThat(delivered).singleElement().satisfies(value -> assertThat(value.captainUserId()).isEqualTo(recipient.captainUserId()));
+            readsOnly(recipient.captainUserId(), delivered.getFirst());
+        }
+        for (var other : outsideGroup) readsNothing(other.captainUserId());
+
+        // Each delivery is acknowledged independently and only by its own captain.
+        var first = issued.findAll().stream().filter(value -> value.busId().equals(recipients.get(0).busId())).findFirst().orElseThrow();
+        acknowledge(first.id(), recipients.get(1).captainUserId()).andExpect(status().isNotFound());
+        acknowledge(first.id(), recipients.get(0).captainUserId()).andExpect(status().isOk())
+                .andExpect(jsonPath("status").value("ACKNOWLEDGED"));
+        assertThat(issued.findAll()).filteredOn(value -> value.acknowledgedAt() != null)
+                .extracting(IssuedInstruction::id).containsExactly(first.id());
+    }
+
+    @Test
+    void individualDecisionDeliversOnlyToTheTargetBusCaptain() throws Exception {
+        var fleet = groupedFleet();
+        var proposal = proposalFor(bus, InstructionType.BE_CAUTIOUS);
+        mvc.perform(post("/api/v1/planning/advisories/" + proposal.id() + "/decisions").with(controller())
+                .contentType("application/json").content("{}")).andExpect(status().isOk());
+
+        var delivered = issued.findById(proposal.id()).orElseThrow();
+        assertThat(delivered.busId()).isEqualTo(bus.busId());
+        assertThat(delivered.captainUserId()).isEqualTo(captain);
+        readsOnly(captain, delivered);
+        for (var other : fleet.subList(1, fleet.size())) readsNothing(other.captainUserId());
+    }
+
+    @Test
+    void approvedBunchingControlDeliversOnlyToTheTargetBusCaptain() throws Exception {
+        var fleet = groupedFleet();
+        var recommendation = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
+        mvc.perform(post("/api/v1/planning/recommendations/" + recommendation + "/obu-decisions").with(controller()))
+                .andExpect(status().isOk()).andExpect(jsonPath("busId").value(bus.busId()));
+
+        readsOnly(captain, issued.findById(recommendation).orElseThrow());
+        for (var other : fleet.subList(1, fleet.size())) readsNothing(other.captainUserId());
+    }
+
+    private static org.springframework.test.web.servlet.request.RequestPostProcessor controller() {
+        return jwt().jwt(token -> token.subject("controller")).authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"));
+    }
+
+    private static org.springframework.test.web.servlet.request.RequestPostProcessor captainToken(UUID subject) {
+        return jwt().jwt(token -> token.subject(subject.toString())).authorities(new SimpleGrantedAuthority("ROLE_CAPTAIN"));
+    }
+
+    private void readsOnly(UUID captainUserId, IssuedInstruction expected) throws Exception {
+        mvc.perform(get("/api/v1/planning/captain/instructions").with(captainToken(captainUserId)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(expected.id().toString()))
+                .andExpect(jsonPath("$.items[0].busId").value(expected.busId()));
+    }
+
+    private void readsNothing(UUID captainUserId) throws Exception {
+        mvc.perform(get("/api/v1/planning/captain/instructions").with(captainToken(captainUserId)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(0));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions acknowledge(UUID id, UUID captainUserId) throws Exception {
+        return mvc.perform(post("/api/v1/planning/captain/instructions/" + id + "/acknowledgements").with(captainToken(captainUserId)));
+    }
+
     private List<AdvisoryContextPort.Bus> groupedFleet() {
         var fleet = List.of(bus,
                 new AdvisoryContextPort.Bus("demo-190-c", "trip-c", "BUS-C", "190", 1, UUID.randomUUID(), "ASSIGNED", bus.progress()),
@@ -349,9 +424,9 @@ class AdvisoryPersistenceIT {
                         .value("#/components/schemas/InstructionPageResponse"))
                 .andExpect(jsonPath("$.paths['/api/v1/planning/captain/instructions'].get.responses['200'].content['*/*'].schema.$ref")
                         .value("#/components/schemas/InstructionPageResponse"))
-                .andExpect(jsonPath("$.paths['/api/v1/planning/notices'].get.responses['200'].content['*/*'].schema.$ref")
+                .andExpect(jsonPath("$.paths['/api/v1/planning/notices'].get.responses['200'].content['application/json'].schema.$ref")
                         .value("#/components/schemas/ManagedNoticePageResponse"))
-                .andExpect(jsonPath("$.paths['/api/v1/planning/public/notices'].get.responses['200'].content['*/*'].schema.$ref")
+                .andExpect(jsonPath("$.paths['/api/v1/planning/public/notices'].get.responses['200'].content['application/json'].schema.$ref")
                         .value("#/components/schemas/PublishedNoticePageResponse"))
                 .andExpect(jsonPath("$.components.schemas.AdvisoryPageResponse.properties.items.items.$ref")
                         .value("#/components/schemas/AdvisoryResponse"))
@@ -376,6 +451,24 @@ class AdvisoryPersistenceIT {
                 .andExpect(jsonPath("$.status").value(404))
                 .andExpect(jsonPath("$.detail").isNotEmpty())
                 .andExpect(jsonPath("$.instance").isNotEmpty());
+    }
+
+    @Test
+    void noticeContractDocumentsAnonymousReadsAndSuccessfulProtectedMutations() throws Exception {
+        for (String path : List.of("/v3/api-docs", "/v3/api-docs/planning")) {
+            String document = mvc.perform(get(path).with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"))))
+                    .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+            var contract = tools.jackson.databind.json.JsonMapper.builder().build().readTree(document);
+            var publicOperation = contract.path("paths").path("/api/v1/planning/public/notices").path("get");
+            assertThat(publicOperation.has("security") ? publicOperation.path("security").size() : contract.path("security").size()).isZero();
+            for (String mutation : List.of("publications", "withdrawals", "replacements")) {
+                var operation = contract.path("paths").path("/api/v1/planning/notices/{id}/" + mutation).path("post");
+                assertThat(operation.path("security").get(0).has("SupabaseJWT")).isTrue();
+                assertThat(operation.path("responses").path("200").path("content").path("application/json")
+                        .path("schema").path("$ref").asText()).isEqualTo("#/components/schemas/NoticeResponse");
+                for (String code : List.of("400", "401", "403", "404")) assertThat(operation.path("responses").has(code)).isTrue();
+            }
+        }
     }
 
     @Test
@@ -460,6 +553,200 @@ class AdvisoryPersistenceIT {
     }
 
     @Test
+    void correctedNoticeReplacesPublicContentAndWithdrawalReplaysDoNotResurrectIt() {
+        var live = source(false);
+        var original = draft(live, UUID.randomUUID(), MESSAGE);
+        notices.publish(original.id(), "controller");
+        UUID nextId = UUID.randomUUID();
+        var corrected = replaceNotice(original.id(), nextId, live.disruptionId());
+        assertThat(corrected.publishedAt()).isEqualTo(NOW);
+        var previous = publications.findById(original.id()).orElseThrow();
+        assertThat(previous.status()).isEqualTo("WITHDRAWN");
+        assertThat(previous.replacementId()).isEqualTo(nextId);
+        assertThat(previous.withdrawnAt()).isEqualTo(corrected.publishedAt());
+        assertThat(previous.message()).isEqualTo(MESSAGE);
+        assertThat(notices.current("OBSERVATION_ONLY", null, 0, 20).getContent())
+                .extracting(PublicNotice::id).containsExactly(nextId);
+        assertThat(jdbc.queryForObject("SELECT published_by FROM planning.public_notice WHERE id=?", String.class, nextId))
+                .isEqualTo("correcting-controller");
+
+        notices.withdraw(nextId);
+        notices.withdraw(nextId);
+        var replay = replaceNotice(original.id(), nextId, live.disruptionId());
+        assertThat(replay.status()).isEqualTo("WITHDRAWN");
+        assertThat(replay.publishedAt()).isEqualTo(NOW);
+        assertThat(replay.withdrawnAt()).isEqualTo(NOW);
+        assertThat(publications.count()).isEqualTo(2);
+        assertThat(notices.current("OBSERVATION_ONLY", null, 0, 20)).isEmpty();
+        assertThatThrownBy(() -> notices.publish(nextId, "controller")).isInstanceOf(AdvisoryConflictException.class);
+    }
+
+    @Test
+    void failedCorrectionRollsBackBothInsertionAndWithdrawal() {
+        var original = draft(hazard, UUID.randomUUID(), MESSAGE);
+        notices.publish(original.id(), "controller");
+        for (boolean rejectWithdrawal : List.of(true, false)) {
+            UUID nextId = UUID.randomUUID();
+            String rejected = rejectWithdrawal ? "id <> '" + original.id() + "' OR status <> 'WITHDRAWN'"
+                    : "id <> '" + nextId + "' OR status <> 'PUBLISHED'";
+            jdbc.execute("ALTER TABLE planning.public_notice ADD CONSTRAINT test_reject_correction CHECK (" + rejected + ") NOT VALID");
+            try {
+                assertThatThrownBy(() -> replaceNotice(original.id(), nextId, hazard.disruptionId()))
+                        .isInstanceOf(DataIntegrityViolationException.class);
+            } finally {
+                jdbc.execute("ALTER TABLE planning.public_notice DROP CONSTRAINT test_reject_correction");
+            }
+            assertThat(publications.count()).isEqualTo(1);
+            var stored = publications.findById(original.id()).orElseThrow();
+            assertThat(stored.status()).isEqualTo("PUBLISHED");
+            assertThat(stored.replacementId()).isNull();
+        }
+    }
+
+    @Test
+    void identicalConcurrentCorrectionsReturnOnePublishedRecord() throws Exception {
+        var original = draft(hazard, UUID.randomUUID(), MESSAGE);
+        notices.publish(original.id(), "controller");
+        UUID nextId = UUID.randomUUID();
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = executor.submit(() -> { start.await(); return replaceNotice(original.id(), nextId, hazard.disruptionId()).id(); });
+            var b = executor.submit(() -> { start.await(); return replaceNotice(original.id(), nextId, hazard.disruptionId()).id(); });
+            start.countDown();
+            assertThat(a.get(20, TimeUnit.SECONDS)).isEqualTo(nextId);
+            assertThat(b.get(20, TimeUnit.SECONDS)).isEqualTo(nextId);
+        }
+        assertThat(publications.count()).isEqualTo(2);
+        assertThat(publications.findById(original.id()).orElseThrow().replacementId()).isEqualTo(nextId);
+        Long version = jdbc.queryForObject("SELECT version FROM planning.public_notice WHERE id=?", Long.class, nextId);
+        replaceNotice(original.id(), nextId, hazard.disruptionId());
+        assertThat(jdbc.queryForObject("SELECT version FROM planning.public_notice WHERE id=?", Long.class, nextId)).isEqualTo(version);
+    }
+
+    @Test
+    void competingCorrectionsLeaveOneWinnerAndNoOrphanDraft() throws Exception {
+        var original = draft(hazard, UUID.randomUUID(), MESSAGE);
+        notices.publish(original.id(), "controller");
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = executor.submit(() -> correctAfter(start, original.id(), UUID.randomUUID()));
+            var b = executor.submit(() -> correctAfter(start, original.id(), UUID.randomUUID()));
+            start.countDown();
+            assertThat(List.of(a.get(20, TimeUnit.SECONDS), b.get(20, TimeUnit.SECONDS))).containsExactlyInAnyOrder(true, false);
+        }
+        assertThat(publications.count()).isEqualTo(2);
+        UUID winner = publications.findById(original.id()).orElseThrow().replacementId();
+        assertThat(publications.findById(winner).orElseThrow().status()).isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    void withdrawalRacingCorrectionKeepsOneConsistentOutcome() throws Exception {
+        var original = draft(hazard, UUID.randomUUID(), MESSAGE);
+        notices.publish(original.id(), "controller");
+        UUID nextId = UUID.randomUUID();
+        CountDownLatch start = new CountDownLatch(1);
+        boolean corrected;
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = executor.submit(() -> correctAfter(start, original.id(), nextId));
+            var b = executor.submit(() -> { start.await(); return notices.withdraw(original.id()).status(); });
+            start.countDown();
+            corrected = a.get(20, TimeUnit.SECONDS);
+            assertThat(b.get(20, TimeUnit.SECONDS)).isEqualTo("WITHDRAWN");
+        }
+        var stored = publications.findById(original.id()).orElseThrow();
+        assertThat(stored.status()).isEqualTo("WITHDRAWN");
+        assertThat(publications.count()).isEqualTo(corrected ? 2 : 1);
+        assertThat(stored.replacementId()).isEqualTo(corrected ? nextId : null);
+    }
+
+    @Test
+    void publicationRacingWithdrawalCannotRepublishTheWithdrawnNotice() throws Exception {
+        var original = draft(hazard, UUID.randomUUID(), MESSAGE);
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = executor.submit(() -> {
+                start.await();
+                try { notices.publish(original.id(), "controller"); }
+                catch (AdvisoryConflictException expected) { /* Withdrawal won the row lock. */ }
+                return true;
+            });
+            var b = executor.submit(() -> { start.await(); return notices.withdraw(original.id()).status(); });
+            start.countDown();
+            assertThat(a.get(20, TimeUnit.SECONDS)).isTrue();
+            assertThat(b.get(20, TimeUnit.SECONDS)).isEqualTo("WITHDRAWN");
+        }
+        assertThat(publications.findById(original.id()).orElseThrow().status()).isEqualTo("WITHDRAWN");
+        assertThatThrownBy(() -> notices.publish(original.id(), "controller")).isInstanceOf(AdvisoryConflictException.class);
+    }
+
+    private PublicNotice replaceNotice(UUID previous, UUID next, UUID source) {
+        return notices.replace(previous, next, source, "Corrected notice", "Reviewed correction.", List.of("190"), List.of("School"),
+                NOW.minusSeconds(1), NOW.plusSeconds(300), "correcting-controller");
+    }
+
+    private boolean correctAfter(CountDownLatch start, UUID previous, UUID next) throws InterruptedException {
+        start.await();
+        try { replaceNotice(previous, next, hazard.disruptionId()); return true; }
+        catch (AdvisoryConflictException conflict) { return false; }
+    }
+
+    @Test
+    void closedRunPreviewsStayIsolatedFromLiveAndOtherRunsUntilExpiryOrWithdrawal() {
+        var first = draft(hazard, UUID.randomUUID(), "Run A demonstration");
+        notices.publish(first.id(), "controller");
+        var liveSource = source(false);
+        var live = draft(liveSource, UUID.randomUUID(), "Live passenger notice");
+        notices.publish(live.id(), "controller");
+        var another = source(true);
+        UUID otherRun = UUID.randomUUID();
+        var otherSource = new AdvisoryContextPort.Hazard(another.disruptionId(), another.kind(), another.status(), null,
+                "SIMULATION", otherRun, another.sourceObservationId(), NOW, another.facts(), another.exposures(), another.limitations());
+        sources.put(otherSource.disruptionId(), otherSource);
+        var second = draft(otherSource, UUID.randomUUID(), "Run B demonstration");
+        notices.publish(second.id(), "controller");
+
+        reconciliation.runClosed(run);
+        assertThat(notices.current("OBSERVATION_ONLY", null, 0, 20).getContent())
+                .extracting(PublicNotice::id).containsExactly(live.id());
+        assertThat(notices.current("SIMULATION", run, 0, 20).getContent())
+                .extracting(PublicNotice::id).containsExactly(first.id());
+        assertThat(notices.current("SIMULATION", otherRun, 0, 20).getContent())
+                .extracting(PublicNotice::id).containsExactly(second.id());
+        notices.withdraw(first.id());
+        assertThat(notices.current("SIMULATION", run, 0, 20)).isEmpty();
+        assertThat(notices.current("SIMULATION", otherRun, 0, 20).getContent())
+                .extracting(PublicNotice::id).containsExactly(second.id());
+    }
+
+    @Test
+    void anonymousScopeErrorsNeverFallBackToAnotherNoticeScope() throws Exception {
+        for (String query : List.of("classification=LIVE", "classification=SIMULATION", "classification=SIMULATION&demoRunId=bad-id",
+                "classification=OBSERVATION_ONLY&demoRunId=" + run)) {
+            mvc.perform(get("/api/v1/planning/public/notices?" + query))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(content().contentTypeCompatibleWith("application/problem+json"));
+        }
+    }
+
+    @Test
+    void anonymousPublicResponseContainsPassengerContentWithoutManagementMetadata() throws Exception {
+        var live = source(false);
+        var visible = draft(live, UUID.randomUUID(), MESSAGE);
+        notices.publish(visible.id(), "private-controller-subject");
+        draft(live, UUID.randomUUID(), "Private draft message");
+        var response = mvc.perform(get("/api/v1/planning/public/notices"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalItems").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(visible.id().toString()))
+                .andExpect(jsonPath("$.items[0].message").value(MESSAGE))
+                .andExpect(jsonPath("$.items[0].services[0]").value("190"))
+                .andExpect(jsonPath("$.items[0].locations[0]").value("School"))
+                .andExpect(jsonPath("$.items[0].publishedAt").value(NOW.toString()));
+        for (String field : List.of("disruptionId", "demoRunId", "createdBy", "publishedBy", "sourceEvidence", "replacementId", "status", "version"))
+            response.andExpect(jsonPath("$.items[0]." + field).doesNotExist());
+    }
+
+    @Test
     void publicReadsExcludeDraftsWithdrawalsExpiredAndSyntheticNotices() {
         var live = source(false);
         var visible = draft(live, UUID.randomUUID(), MESSAGE); notices.publish(visible.id(), "controller");
@@ -470,6 +757,9 @@ class AdvisoryPersistenceIT {
                 NOW.minusSeconds(120), NOW, "controller", NOW.minusSeconds(120));
         expired.publish("controller", NOW.minusSeconds(60)); publications.saveAndFlush(expired);
         var simulated = draft(hazard, UUID.randomUUID(), "Simulation notice"); notices.publish(simulated.id(), "controller");
+        var scheduled = notices.draft(UUID.randomUUID(), live.disruptionId(), "Scheduled notice", "Future notice", List.of(), List.of(),
+                NOW.plusSeconds(1), NOW.plusSeconds(600), "controller");
+        notices.publish(scheduled.id(), "controller");
         assertThat(notices.current("OBSERVATION_ONLY", null, 0, 20).getContent())
                 .extracting(PublicNotice::id).containsExactly(visible.id());
         assertThat(notices.current("SIMULATION", run, 0, 20).getContent())

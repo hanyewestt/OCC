@@ -5,6 +5,8 @@ import com.csd.occ.disruption.bunching.domain.AlertEventRepository;
 import com.csd.occ.disruption.bunching.domain.AlertProcessingState;
 import com.csd.occ.disruption.bunching.domain.AlertProcessingStateRepository;
 import com.csd.occ.disruption.bunching.domain.ConsumerSelectionService;
+import com.csd.occ.disruption.bunching.domain.BunchingDiagnosisCorrelationPolicy;
+import com.csd.occ.disruption.bunching.domain.BunchingDiagnosisLinkPort;
 import com.csd.occ.disruption.bunching.domain.DiagnosisOutbox;
 import com.csd.occ.disruption.bunching.domain.DiagnosisOutboxRepository;
 import com.csd.occ.disruption.bunching.domain.PlanningEventSubmissionPort;
@@ -32,15 +34,18 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
     private final Clock clock;
     private final ConsumerSelectionService selection;
     private final DiagnosisOutboxRepository diagnosisOutbox;
+    private final BunchingDiagnosisLinkPort diagnosisLinks;
     private final PlanningEventSubmissionPort planningSubmissions;
     private final DisruptionRepository disruptions;
     private final BunchingConfirmationProperties confirmation;
     private final com.csd.occ.disruption.bunching.infrastructure.config.BunchingProperties properties;
     private final BunchingAlertPolicy policy = new BunchingAlertPolicy();
+    private final BunchingDiagnosisCorrelationPolicy diagnosisCorrelation = new BunchingDiagnosisCorrelationPolicy();
 
     public JpaBunchingAlertAdapter(AlertProcessingStateRepository states, AlertEventRepository events,
                                    BunchingEvidencePort evidence, Clock clock, ConsumerSelectionService selection,
                                    DiagnosisOutboxRepository diagnosisOutbox,
+                                   BunchingDiagnosisLinkPort diagnosisLinks,
                                    PlanningEventSubmissionPort planningSubmissions,
                                    BunchingConfirmationProperties confirmation, DisruptionRepository disruptions,
                                    com.csd.occ.disruption.bunching.infrastructure.config.BunchingProperties properties) {
@@ -50,6 +55,7 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
         this.clock = clock;
         this.selection = selection;
         this.diagnosisOutbox = diagnosisOutbox;
+        this.diagnosisLinks = diagnosisLinks;
         this.planningSubmissions = planningSubmissions;
         this.confirmation = confirmation; this.properties = properties;
         this.disruptions = disruptions;
@@ -157,9 +163,13 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
                     previous.pendingLeadingObservationId(), previous.pendingFollowingObservationId(),
                     current.leadingObservationId(), current.followingObservationId(), "bunching-gap-v1"));
             events.notifyListeners(event.id().toString());
-            var submission = planningSubmissions.encode(event);
-            diagnosisOutbox.save(new DiagnosisOutbox(UUID.randomUUID(), event.id(), submission.payloadJson(),
-                    submission.payloadFingerprint(), submission.schemaVersion(), confirmedAt));
+            var registration = diagnosisLinks.register(event.id(),
+                    diagnosisCorrelation.correlationFor(evaluation.snapshot(), result.group(), current), confirmedAt);
+            if (registration.isRepresentative()) {
+                var submission = planningSubmissions.encode(event);
+                diagnosisOutbox.save(new DiagnosisOutbox(UUID.randomUUID(), event.id(), submission.payloadJson(),
+                        submission.payloadFingerprint(), submission.schemaVersion(), confirmedAt));
+            }
             previous.update(fetchedAt, episode, current.leadingObservationId(), current.followingObservationId());
             previous.clearCandidate();
             return;
@@ -185,6 +195,6 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
         disruptions.recordBunchingTransition(event.alertId(), "SIMULATION".equals(event.classification())
                         ? "SIMULATION" : "OBSERVATION_ONLY", event.demoRunId(), cleared ? "CLEARED" : "ACTIVE",
                 event.triggeredAt(), event.triggeredAt(), cleared ? event.triggeredAt() : null);
-        return events.save(event);
+        return events.saveAndFlush(event);
     }
 }

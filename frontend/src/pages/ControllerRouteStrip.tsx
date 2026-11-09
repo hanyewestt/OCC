@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import type { Arrival, BunchingAlert, DemoRun, PageResult, RouteDirection, RoutePositionDirection, RoutePositions } from '@/lib/api'
 import { formatSgtTime } from '@/lib/time'
@@ -81,6 +82,7 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
   lastUpdated: string
   fetchStopArrivals: Props['fetchStopArrivals']
 }) {
+  const navigate = useNavigate()
   const [selectedStopCode, setSelectedStopCode] = useState<string | null>(null)
   const [selectedArrivals, setSelectedArrivals] = useState<Arrival[]>([])
   const [selectedStopLoading, setSelectedStopLoading] = useState(false)
@@ -258,7 +260,7 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
           const selected = selectedStopCode === stop.stopCode
           return <g key={`${stop.stopCode}:${stop.stopSequence}`} role="button" tabIndex={0}
             aria-label={`${stop.description || `Stop ${stop.stopCode}`}, stop ${stop.stopCode}. Select to compare same-sweep arrival evidence.`}
-            aria-pressed={selected} className="cursor-pointer outline-none focus-visible:stroke-sky-700"
+            aria-pressed={selected} className="cursor-pointer outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-700"
             onClick={() => toggleStopSelection(stop.stopCode)}
             onKeyDown={event => {
               if (event.key === 'Enter' || event.key === ' ') {
@@ -292,8 +294,27 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
             headway.source === 'estimate' ? 'Approximate time from position gap divided by estimated speed.' :
               headway.source === 'same-stop-eta' ? `Arrival-time difference at stop ${headway.etaStopCode}; both readings came from the same poll snapshot.` :
                 'Position separation unavailable.'
-          const description = `Estimated buses ${headway.frontOrder} and ${headway.followingOrder}: ${label}. ${sourceLabel}${linked.length ? ` Linked to ${linked.length} incident${linked.length === 1 ? '' : 's'}.` : ''}`
-          return <g key={pairKey(headway.frontOrder, headway.followingOrder)} role="img" aria-label={description}>
+          const hasLinkedIncidents = linked.length > 0
+          const description = `Estimated buses ${headway.frontOrder} and ${headway.followingOrder}: ${label}. ${sourceLabel}${hasLinkedIncidents ? ` Linked to ${linked.length} incident${linked.length === 1 ? '' : 's'}. Click to view disruption details and map.` : ''}`
+
+          const onHeadwayClick = hasLinkedIncidents ? () => {
+            navigate(`/controller/disruptions?service=${encodeURIComponent(route.serviceId)}&direction=${route.directionId}&incident=${encodeURIComponent(linked[0].id)}`)
+          } : undefined
+
+          return <g
+            key={pairKey(headway.frontOrder, headway.followingOrder)}
+            role={hasLinkedIncidents ? "button" : "img"}
+            tabIndex={hasLinkedIncidents ? 0 : undefined}
+            aria-label={description}
+            className={hasLinkedIncidents ? "cursor-pointer outline-none transition-transform hover:scale-105" : undefined}
+            onClick={onHeadwayClick}
+            onKeyDown={hasLinkedIncidents ? e => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                onHeadwayClick?.()
+              }
+            } : undefined}
+          >
             <title>{description}</title>
             <path d={`M${Math.min(firstX, secondX)} ${y - 5}V${y}H${Math.max(firstX, secondX)}V${y - 5}`}
               fill="none" stroke={style ? `currentColor` : 'var(--muted-foreground)'} strokeWidth="2"
@@ -303,7 +324,7 @@ function RouteRow({ route, destination, snapshot, arrivals, routes, incidents, s
               className={style?.markerClassName ?? 'text-muted-foreground'} />
             <text x={center} y={y + 16} textAnchor="middle" fontSize="9" fontWeight="600" fill="currentColor"
               className={style?.markerClassName ?? 'text-muted-foreground'}>{label}</text>
-            {linked.length > 0 && <circle cx={center + labelWidth / 2 - 1} cy={y + 4} r="4" fill="var(--destructive)" />}
+            {hasLinkedIncidents && <circle cx={center + labelWidth / 2 - 1} cy={y + 4} r="4" fill="var(--destructive)" />}
           </g>
         })}
         {buses.map((bus, index) => {
@@ -466,9 +487,9 @@ export function ControllerRouteStrip({ alerts, run, stops, positions, arrivals, 
 
   return <section aria-labelledby="route-strip-title" className="space-y-4">
     <div>
-      <h2 id="route-strip-title" className="font-medium">Approximate Live Route Strip</h2>
-      <p className="mt-1 text-xs text-muted-foreground">Stops are evenly spaced for readability; bus positions are approximate along the ordered route. Numbers are order estimates, not vehicle identities.</p>
-      {simulationRun && <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">Simulation alerts · route positions remain live.</p>}
+      <h2 id="route-strip-title" className="font-medium">{simulationRun ? 'Simulation Route Strip' : 'Approximate Live Route Strip'}</h2>
+      <p className="mt-1 text-xs text-muted-foreground">Stops are evenly spaced for readability; bus positions are approximate along the ordered route. Numbers are display order, not vehicle identities.</p>
+      {simulationRun && <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">Simulation fleet · Service {simulationRun.serviceId} · {simulationRun.scenario === 'NORMAL' ? 'Normal operation' : 'Bunching'}.</p>}
       <p className="mt-1 text-xs text-muted-foreground">Gaps use same-poll arrival times when available; otherwise time is estimated from position and speed, or shown as distance only.</p>
       {positions.error && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">Estimated positions could not be refreshed; showing available estimates.</p>}
       {arrivals.error && <p role="status" className="mt-1 text-xs text-amber-700 dark:text-amber-400">Route arrivals are incomplete; destinations and same-stop gaps may be unavailable.</p>}

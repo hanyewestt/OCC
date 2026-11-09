@@ -45,7 +45,7 @@ unresolved. Each imported station retains the source document checksum.
 ### Demo identity
 
 Set `OCC_DEMO_CAPTAIN_USER_ID` to the stable Supabase UUID of `captain1@occ.com`
-to bind `demo-190-b` to that account when preparing a new run. Blank leaves buses
+to bind the first generated bus (`demo-<service>-1`) to that account when preparing a run. Blank leaves buses
 unassigned and does not prevent replay. Assignments are immutable for a run;
 configuration changes apply to the next run. Scenario bus IDs equal the existing
 stable trip IDs; always pair them with the run ID. Email and captain codes never
@@ -62,6 +62,9 @@ approached). The approached stop carries the simulation's `PREDICTED` arrival;
 later stops get `ESTIMATED` arrivals from route distance at the same synthetic
 speed. Progress fetched `OCC_INGESTION_STALE_AFTER_SECONDS` or longer ago gives
 the route without a position. A captain with no current assignment gets `204`.
+`pacing` carries that bus's gap ahead and behind from the latest pacing cycle,
+matched on its registration; it is `null` before the first cycle or when the bus
+is not in fresh pacing predictions.
 
 The React frontend currently provides login and role-access checks only. Replay remains available through the protected APIs below for ADMIN and CONTROLLER accounts. Its persisted runtime state starts disabled, so the replay scheduler does no work and bunching remains live until a run starts. The mode can be toggled while ingestion is running; no restart is needed:
 
@@ -75,11 +78,15 @@ Content-Type: application/json
 
 Setting `enabled` to `true` starts a replay if none is active, or resumes the currently active run. Setting it to `false` first switches bunching to the live feed, then closes the active run. The persisted setting is initialized to `false` by Flyway and survives an ingestion restart. The start/close run endpoints provide equivalent control with explicit run IDs.
 
-Replay uses a fictional, deterministic multi-route scenario. Each run produces one
-two-bus bunching event for service 190 and one three-bus bunching event for service
-972, with stable vehicle registrations shared by the Planning fixtures. The replay
-produces simulation-only bunching alerts and recommendations. The bunching consumer runs independently, so
-results can arrive after replay completes. Replay support requires
+Replay uses one fictional, deterministic bunching injection on a selected service,
+direction and stop. `POST /api/v1/demo-runs` accepts two or three buses, a chosen
+stop on that route direction, individual bus-pair gaps (or one default gap, 15–900
+seconds), and either `NORMAL` or `BUNCHING` scenario. Normal operation keeps the
+chosen gaps above the configured bunching threshold; Bunching starts with the chosen
+gap then reduces it on later replay steps. Each run creates stable fictional bus
+identities and sends repeated snapshots for that same localised event. The replay
+produces simulation-only bunching alerts and one grouped recommendation. The
+bunching consumer runs independently, so results can arrive after replay completes. Replay support requires
 `OCC_DISRUPTION_INTERNAL_URL` and `OCC_PLANNING_INTERNAL_URL`; live DataMall polling remains enabled.
 `GET /api/v1/live-bunching-alerts` retrieves the immutable opening `alert_event`
 for each active live episode through ingestion's proxy to disruption.
@@ -218,6 +225,14 @@ by any one stop snapshot, so repeated or co-located buses are not collapsed.
 identifier. This short-range linkage is limited to the replay-validated route
 lines 190 direction 1 and 190 direction 2.
 
+When a later stop snapshot contains one compatible row after an earlier
+snapshot established multiple buses, that row is treated as a merged
+measurement. The predictive association shares the measurement across the
+existing hypotheses rather than assigning it only to `visitOrder` 1; this
+preserves multiplicity through a bunching interval and avoids fragmenting the
+unobserved track. Identity remains unresolved until later observations provide
+an unambiguous separation.
+
 Some provider coordinates can change while the stops in one service poll cycle
 are still being queried. For 190 direction 1, coordinated refresh-boundary
 reconciliation requires an unambiguous coordinated set of matches within 250 m
@@ -258,6 +273,14 @@ duplicate it. Source fields are `null` when the newest completed cycle contains
 no usable readings. The current estimator does not extrapolate buses between
 polls.
 
+The internal bunching snapshot feed also carries the coordinated
+`sourcePollCycleId`, provider operator and visit number. It supplies a
+`routeStopSequence` only when the active reference topology resolves that stop to
+exactly one occurrence for the service, operator and direction. Repeated circular
+occurrences therefore remain `null`. Disruption uses these fields only to suppress
+an exact same-pair, same-sweep duplicate Planning diagnosis; they are not exposed as
+stable vehicle identities, and missing or ambiguous evidence is never deduplicated.
+
 The machine-readable OpenAPI document is at `/v3/api-docs`.
 
 Current arrivals can be filtered by a trimmed, case-insensitive literal substring
@@ -273,7 +296,9 @@ tie-breakers. Page size remains bounded to 200.
 Ingestion recalculates each bus's gap to the bus ahead and behind every
 `OCC_INGESTION_PACING_INTERVAL` (default `10s`) on a dedicated thread, so slow
 DataMall polls cannot delay it, and pushes the snapshot to every subscriber.
-Unlike the other APIs, these two are readable by ADMIN, CONTROLLER and CAPTAIN:
+These fleet-wide endpoints are readable by ADMIN and CONTROLLER only. A
+CAPTAIN reads just their assigned bus's latest pacing through
+`GET /api/v1/captain-routes/current`, resolved from the verified token subject:
 
 | Endpoint | Purpose |
 | --- | --- |
