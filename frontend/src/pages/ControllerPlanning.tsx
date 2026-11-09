@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -10,6 +10,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
 import { ApiError, apiRequest, triggerDiagnosis, type BunchingAlert, type ControllerBusInstruction, type Decision, type DiagnosisEvidenceDetail, type EarlyControllerSuggestion, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage } from '@/lib/api'
 import { signOut } from '@/lib/auth'
+import { bunchingArrivals } from '@/lib/bunching'
 import type { Planning } from './ControllerPage'
 import type { PagedCollection } from '@/lib/paged-collection'
 import { DataMessage, timestamp } from './ControllerViews'
@@ -65,7 +66,18 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
   onPendingChange: (pending: boolean) => void
 }) {
   const [searchParams, setSearchParams] = useSearchParams()
-  const [filter, setFilter] = useState('')
+  const requestedId = searchParams.get('recommendation')
+  const requestedRequestId = searchParams.get('request')
+  const requestedEventId = searchParams.get('event')
+  const requestedStop = searchParams.get('stop')
+  const requestedService = searchParams.get('service')
+  const requestedIncident = searchParams.get('incident')
+  const statusParam = searchParams.get('status')
+  const statusFilter: 'active' | 'all' = statusParam === 'all' ? 'all' : 'active'
+
+  const [filterInput, setFilterInput] = useState<string | null>(null)
+  const filter = filterInput ?? searchParams.get('service') ?? ''
+
   const [message, setMessage] = useState('')
   const [editingRecommendation, setEditingRecommendation] = useState<EditingRecommendation | null>(null)
   const [triggeringRequestId, setTriggeringRequestId] = useState<string | null>(null)
@@ -78,22 +90,64 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
   const recommendationError = modeError ? 'Simulation state is unavailable.' : recommendations.error !== null && !recommendations.items.length
     ? 'Unable to load recommendations.' : recommendationPage && !recommendationScopeMatches && !loading
       ? 'Data selection changed. Refresh before making a decision.' : ''
-  const recommendationItems = !recommendationError && recommendationScopeMatches ? recommendations.items : []
+  const recommendationItems = useMemo(
+    () => (!recommendationError && recommendationScopeMatches ? recommendations.items : []),
+    [recommendationError, recommendationScopeMatches, recommendations.items]
+  )
   const diagnosisPage = diagnosisRequests.latestPage
   const diagnosisScopeMatches = !modeError && diagnosisPage?.mode === mode &&
     (diagnosisPage.demoRunId ?? null) === demoRunId
   const diagnosisError = modeError ? 'Simulation state is unavailable.' : diagnosisRequests.error !== null && !diagnosisRequests.items.length
     ? 'Unable to load bunching requests.' : diagnosisPage && !diagnosisScopeMatches && !loading
       ? 'Data selection changed. Refresh before generating a diagnosis.' : ''
+
+  const incidentEventIds = useMemo(() => {
+    const ids = new Set<string>()
+    if (requestedEventId) ids.add(requestedEventId)
+    if (requestedIncident) requestedIncident.split(':').filter(Boolean).forEach(id => ids.add(id))
+    return ids
+  }, [requestedEventId, requestedIncident])
+
+  const matchedRequest = useMemo(() => {
+    if (diagnosisError || !diagnosisScopeMatches) return null
+    if (requestedRequestId) {
+      return diagnosisRequests.items.find(item => item.requestId === requestedRequestId) ?? null
+    }
+    if (incidentEventIds.size > 0) {
+      return diagnosisRequests.items.find(item => incidentEventIds.has(item.eventId)) ?? null
+    }
+    if (requestedService && requestedStop) {
+      return diagnosisRequests.items.find(item => item.serviceId === requestedService && item.stopCode === requestedStop) ?? null
+    }
+    return null
+  }, [diagnosisError, diagnosisScopeMatches, requestedRequestId, incidentEventIds, requestedService, requestedStop, diagnosisRequests.items])
+
+  const retainedRequest = matchedRequest
+
   const queuedRequests = !diagnosisError && diagnosisScopeMatches
-    ? diagnosisRequests.items.filter(item => item.status !== 'COMPLETED') : []
-  const requestedId = searchParams.get('recommendation')
-  const requestedRequestId = searchParams.get('request')
-  const retainedRequest = !diagnosisError && diagnosisScopeMatches
-    ? diagnosisRequests.items.find(item => item.requestId === requestedRequestId) ?? null : null
+    ? (statusFilter === 'all'
+        ? diagnosisRequests.items
+        : diagnosisRequests.items.filter(item => item.status !== 'COMPLETED'))
+    : []
+
   const visibleRequests = queuedRequests.filter(item => item.serviceId?.includes(filter.trim()))
   const visibleRequestsWithRetained = retainedRequest && !visibleRequests.some(item => item.requestId === retainedRequest.requestId)
     ? [retainedRequest, ...visibleRequests] : visibleRequests
+
+  const matchedRecommendation = useMemo(() => {
+    if (recommendationError || !recommendationScopeMatches) return null
+    if (requestedId) {
+      return recommendationItems.find(item => item.recommendationId === requestedId) ?? null
+    }
+    if (incidentEventIds.size > 0) {
+      return recommendationItems.find(item => incidentEventIds.has(item.recommendationId)) ?? null
+    }
+    if (requestedService && requestedStop) {
+      return recommendationItems.find(item => item.serviceId === requestedService && item.monitoredStopCode === requestedStop) ?? null
+    }
+    return null
+  }, [recommendationError, recommendationScopeMatches, requestedId, incidentEventIds, requestedService, requestedStop, recommendationItems])
+
   const visible = recommendationItems.filter(item => item.serviceId.includes(filter.trim()))
   const scopeIdentity = `${mode}:${demoRunId ?? 'none'}`
   const { error: recommendationLoadError, hasMore: recommendationHasMore, isLoading: recommendationIsLoading,
@@ -103,10 +157,19 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
   const editingItemIsLoaded = !!editingItem
   const editNeedsRevalidation = !!editingInScope && !editingItem && (!!modeError || recommendations.isLoading || recommendations.isLoadingMore ||
     recommendationHasMore || recommendationLoadError !== null)
+
+  const isRequestSelection = Boolean(
+    requestedRequestId ||
+    (!requestedId && matchedRequest) ||
+    (!requestedId && !matchedRecommendation && visibleRequestsWithRetained.length > 0)
+  )
+
   const selected = editingInScope && !editingItem && (editNeedsRevalidation || editingRecommendation?.pending) ? editingInScope.recommendation
-    : recommendationItems.find(item => item.recommendationId === requestedId) ?? visible[0] ?? recommendationItems[0]
+    : (isRequestSelection ? null : (matchedRecommendation ?? visible[0] ?? recommendationItems[0] ?? null))
   const selectedIdentity = selected ? `${scopeIdentity}:${selected.recommendationId}` : null
-  const selectedRequest = retainedRequest ?? visibleRequestsWithRetained[0] ?? null
+  const selectedRequest = isRequestSelection
+    ? (retainedRequest ?? visibleRequestsWithRetained[0] ?? null)
+    : null
   const editorUnavailable = !!editingInScope && (!!modeError || recommendationLoadError !== null)
   const editorStale = editingRecommendation !== null && (editingRecommendation.scopeIdentity !== scopeIdentity ||
     !editNeedsRevalidation && selectedIdentity !== editingRecommendation.identity)
@@ -123,17 +186,54 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
     recommendationIsLoadingMore, recommendationLoadError])
 
   useEffect(() => {
-    if (!requestedRequestId && selected && selected.recommendationId !== requestedId) {
-      setSearchParams({ recommendation: selected.recommendationId }, { replace: true })
+    if (isRequestSelection) {
+      if (selectedRequest && selectedRequest.requestId !== requestedRequestId && !requestedEventId && !requestedIncident) {
+        setSearchParams(prev => {
+          const next = new URLSearchParams(prev)
+          next.set('request', selectedRequest.requestId)
+          next.delete('recommendation')
+          return next
+        }, { replace: true })
+      }
+    } else if (selected && selected.recommendationId !== requestedId && !requestedEventId && !requestedIncident) {
+      setSearchParams(prev => {
+        const next = new URLSearchParams(prev)
+        next.set('recommendation', selected.recommendationId)
+        next.delete('request')
+        return next
+      }, { replace: true })
     }
-  }, [requestedId, requestedRequestId, selected, setSearchParams])
+  }, [isRequestSelection, requestedId, requestedRequestId, requestedEventId, requestedIncident, selected, selectedRequest, setSearchParams])
 
   function select(recommendationId: string) {
-    setSearchParams({ recommendation: recommendationId })
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.set('recommendation', recommendationId)
+      next.delete('request')
+      next.delete('event')
+      next.delete('incident')
+      return next
+    })
   }
 
   function selectRequest(requestId: string) {
-    setSearchParams({ request: requestId })
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.set('request', requestId)
+      next.delete('recommendation')
+      next.delete('event')
+      next.delete('incident')
+      return next
+    })
+  }
+
+  function handleStatusFilter(newStatus: 'active' | 'all') {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (newStatus === 'all') next.set('status', 'all')
+      else next.delete('status')
+      return next
+    })
   }
 
   async function generateDiagnosis(request: PlanningDiagnosisRequest) {
@@ -169,9 +269,36 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
     <div className="grid items-start gap-4 lg:grid-cols-[minmax(16rem,0.36fr)_minmax(0,1fr)]">
       <Card className="gap-0 py-0">
         <div className="space-y-3 border-b p-4">
-          <div className="flex items-center justify-between gap-3"><h2 className="text-sm font-medium">Awaiting decision</h2><span className="text-xs text-muted-foreground">Oldest first</span></div>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-medium">Awaiting decision</h2>
+            <div className="flex items-center gap-1 rounded-md border p-0.5 text-xs">
+              <Button
+                type="button"
+                variant={statusFilter === 'active' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={() => handleStatusFilter('active')}
+              >
+                Active
+              </Button>
+              <Button
+                type="button"
+                variant={statusFilter === 'all' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={() => handleStatusFilter('all')}
+              >
+                All
+              </Button>
+            </div>
+          </div>
           <Label htmlFor="service-filter" className="sr-only">Filter by bus service number</Label>
-          <Input id="service-filter" inputMode="numeric" placeholder="Filter bus no. e.g. 190" value={filter} onChange={event => setFilter(event.target.value)} />
+          <Input id="service-filter" inputMode="numeric" placeholder="Filter bus no. e.g. 190" value={filter} onChange={event => setFilterInput(event.target.value)} />
+          {(requestedIncident || requestedEventId) && (
+            <p className="text-xs text-muted-foreground">
+              Linked from corridor incident in Disruptions
+            </p>
+          )}
         </div>
         <ScrollArea role="listbox" aria-label="Recommendations awaiting a decision" tabIndex={0} className="max-h-[28rem]"
           viewportProps={{ onScroll: event => { recommendations.onScroll(event); diagnosisRequests.onScroll(event) } }}><div className="divide-y">
@@ -216,13 +343,26 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
 }
 
 function detectedBusReferences(request: PlanningDiagnosisRequest, alerts: BunchingAlert[]) {
-  const alert = alerts.find(item => item.eventId === request.eventId)
+  const alert = alerts.find(item => item.eventId === request.eventId ||
+    (item.serviceId === request.serviceId && item.stopCode === request.stopCode))
   const simulationReferences = [alert?.leadingVehicle, alert?.followingVehicle].flatMap(vehicle => {
     const reference = vehicle?.registrationNumber || vehicle?.busId
     return reference ? [reference] : []
   })
-  const references = simulationReferences.length ? simulationReferences : request.affectedBusReferences
-  return references.filter((reference, index, values) => values.indexOf(reference) === index)
+  if (simulationReferences.length) {
+    return simulationReferences.filter((reference, index, values) => values.indexOf(reference) === index)
+  }
+  if (request.affectedBusReferences.length) {
+    return request.affectedBusReferences.filter((reference, index, values) => values.indexOf(reference) === index)
+  }
+  if (alert) {
+    const arrivals = bunchingArrivals(alert)
+    const slots: string[] = []
+    if (arrivals[0] && arrivals[0] !== 'Unavailable' && arrivals[0] !== 'No prediction') slots.push('Bus 1 (Leading)')
+    if (arrivals[1] && arrivals[1] !== 'Unavailable' && arrivals[1] !== 'No prediction') slots.push('Bus 2 (Following)')
+    if (slots.length) return slots
+  }
+  return []
 }
 
 function DiagnosisRequestDetail({ request, detectedBusReferences, generating, suggesting, token, onSuggestionPending, onSaved, onGenerate }: {
