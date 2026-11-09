@@ -1,4 +1,5 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test'
+import { auditFocus, auditPage } from './accessibility'
 import { clockText, deltaText, gapSummary } from '../../src/lib/obu-pacing'
 import { bunchingArrivals } from '../../src/lib/bunching'
 import { compactStops, distanceText, routeProgress, stopName } from '../../src/lib/captain-route'
@@ -2674,4 +2675,61 @@ test('captain acknowledgement timing follows the server clock when the device cl
   await expect(page.getByRole('status').filter({ hasText: /sec remaining · advisory window/ })).toBeVisible()
   await expect(page.getByRole('status').filter({ hasText: /301 sec remaining/ })).toHaveCount(0)
 })
+
+// Contrast, keyboard access, visible focus, keyboard scrolling and no sideways scroll at practical screen sizes.
+async function expectAccessible(page: Page) {
+  await page.waitForLoadState('networkidle')
+  expect([...await auditPage(page), ...await auditFocus(page)]).toEqual([])
+}
+
+for (const size of [{ width: 1280, height: 720 }, { width: 1920, height: 1080 }]) {
+  test(`controller pages are accessible at ${size.width}x${size.height}`, async ({ page, context }) => {
+    test.setTimeout(120_000)
+    await page.setViewportSize(size)
+    await mockDashboard(context)
+    await login(page)
+    await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible()
+    for (const path of ['/controller', '/controller/disruptions', '/controller/planning', '/controller/notices', '/controller/audit']) {
+      await test.step(path, async () => {
+        await page.goto(path)
+        await expectAccessible(page)
+      })
+    }
+  })
+}
+
+for (const size of [{ width: 1024, height: 600 }, { width: 800, height: 480 }]) {
+  for (const theme of ['night', 'day'] as const) {
+    test(`captain display is accessible in ${theme} mode at ${size.width}x${size.height}`, async ({ page, context }) => {
+      await page.setViewportSize(size)
+      await mockAuth(context, 'CAPTAIN')
+      const now = new Date()
+      await context.route('**/api/v1/planning/captain/instructions?*', route => route.fulfill({
+        json: { items: [syntheticInstruction(now)], page: 0, totalItems: 1, totalPages: 1, serverTime: now.toISOString() } }))
+      await page.addInitScript(value => { localStorage.setItem('occ-obu-theme', value) }, theme)
+      await login(page)
+      await expect(page.getByRole('heading', { name: 'Captain', exact: true })).toBeVisible()
+      await expect(page.locator('#pacing-heading')).toBeVisible()
+      await expectAccessible(page)
+    })
+  }
+}
+
+for (const size of [{ width: 1280, height: 720 }, { width: 800, height: 480 }]) {
+  test(`public and error pages are accessible at ${size.width}x${size.height}`, async ({ page, context }) => {
+    test.setTimeout(120_000)
+    await page.setViewportSize(size)
+    await mockAuth(context, 'CONTROLLER')
+    await context.route('**/api/v1/planning/public/notices?*', route => route.fulfill({ json: { items: [{ id: 'n1',
+      classification: 'OBSERVATION_ONLY', title: 'Delays near Example Stop', message: 'Service 190 may be delayed.',
+      services: ['190'], locations: ['Example Stop'], effectiveFrom: '2026-10-25T00:00:00Z',
+      effectiveUntil: '2026-11-25T12:00:00Z', publishedAt: '2026-10-25T00:00:00Z' }], page: 0, totalItems: 1, totalPages: 1 } }))
+    for (const path of ['/login', '/notices', '/401', '/403', '/404']) {
+      await test.step(path, async () => {
+        await page.goto(path)
+        await expectAccessible(page)
+      })
+    }
+  })
+}
 
