@@ -2,9 +2,10 @@ package com.csd.occ.ingestion.domain;
 
 import java.time.Instant;
 import java.util.UUID;
+import java.util.List;
 
 /** Vehicle enrichment may be absent; never suppresses a detection event from the demo list. */
 public record DemoAlertDetails(UUID eventId, UUID bunchingEventId, String action, String classification, String serviceId, String stopCode,
                                String stopName, String stopRoadName, int directionId, Instant detectedAt,
                                Long headwaySeconds, DemoVehicleDetails leadingVehicle,
-                               DemoVehicleDetails followingVehicle, String evidence) {}
+                               DemoVehicleDetails followingVehicle, List<DemoVehicleDetails> affectedVehicles, String evidence) {}

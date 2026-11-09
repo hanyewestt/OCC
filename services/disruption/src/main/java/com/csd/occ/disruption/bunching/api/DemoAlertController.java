@@ -30,7 +30,7 @@ public class DemoAlertController {
                 demoRunId, "SIMULATION", "BUNCHING").stream()
                 .map(event -> new AlertResponse(event.id(), event.alertId(), event.action(), event.serviceId(), event.stopCode(), event.directionId(),
                         event.triggeredAt(), event.evidence(), event.classification(),
-                        event.leadingObservationId(), event.followingObservationId())).toList());
+                        event.leadingObservationId(), event.followingObservationId(), event.affectedObservationIds())).toList());
     }
 
     @Schema(description = "Simulation alert events belonging only to the requested demo run")
@@ -41,5 +41,5 @@ public class DemoAlertController {
     @Schema(description = "One bunching transition with IDs linking its fictional leading and following buses")
     public record AlertResponse(UUID eventId, UUID bunchingEventId, String action, String serviceId, String stopCode, int directionId, Instant detectedAt,
                                 String evidence, String classification, UUID leadingObservationId,
-                                UUID followingObservationId) {}
+                                UUID followingObservationId, List<UUID> affectedObservationIds) {}
 }

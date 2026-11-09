@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils'
 import type { Decision } from '@/lib/api'
 import type { PagedCollection } from '@/lib/paged-collection'
 import type { Resource } from './ControllerPage'
-import { groupRouteIncidents, type RouteIncident, formatGap, gapSeverity, routeStopDistances, linkIncidentToPosition, routeKey, type IncidentStripLink } from '@/lib/route-strip'
+import { bunchedArrivalGaps, groupRouteIncidents, type RouteIncident, formatGap, gapSeverity, routeStopDistances, linkIncidentToPosition, routeKey, type IncidentStripLink } from '@/lib/route-strip'
 import {
   type LatLng,
   computeBusLatLngAlongPolyline,
@@ -1433,6 +1433,7 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
     const isSelected = selectedIncident?.id === incident.id
     const severity = gapSeverity(incident.gapSeconds)
     const gapText = incident.gapSeconds !== null ? formatGap(incident.gapSeconds) : 'Unknown gap'
+    const bunchedPairs = bunchedArrivalGaps(incident.alerts.at(-1)!)
     
     return (
       <div
@@ -1479,11 +1480,16 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
               <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                 {incident.stopCodes.length} {incident.stopCodes.length === 1 ? 'stop' : 'stops'} affected
               </span>
+              {bunchedPairs.map(pair => (
+                <span key={`${pair.leadingOrder}-${pair.followingOrder}`} className="rounded-md bg-sky-500/10 text-sky-700 dark:text-sky-300 px-2 py-0.5 text-xs font-medium">
+                  Buses #{pair.leadingOrder} & #{pair.followingOrder} · {formatGap(pair.seconds)}
+                </span>
+              ))}
               {incident.historical ? (
                 <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground font-medium">
                   Resolved · Buses departed
                 </span>
-              ) : incident.stripLink ? (
+              ) : bunchedPairs.length ? null : incident.stripLink ? (
                 <span className="rounded-md bg-sky-500/10 text-sky-700 dark:text-sky-300 px-2 py-0.5 text-xs font-medium">
                   Buses #{incident.stripLink.frontOrder} & #{incident.stripLink.followingOrder}
                 </span>
