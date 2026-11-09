@@ -458,7 +458,9 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           routes={routeStops.data ?? []} positions={routePositions.data ?? []} pollIntervalSeconds={pollIntervalSeconds} />}
         {pathname.endsWith('/planning') && <ControllerPlanning recommendations={recommendationCollection} diagnosisRequests={diagnosisCollection}
           loading={loading} modeError={run.error} mode={modeValue} demoRunId={simulation?.id ?? null} token={token}
-          detectedAlerts={simulation?.alerts ?? []}
+          detectedAlerts={simulation ? simulation.alerts : alertCollection.items}
+          routes={routeStops.data ?? []} pollIntervalSeconds={pollIntervalSeconds}
+          nowMs={Date.parse(alertCollection.lastSuccessAt ?? '') || 0}
           onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { void requestRefresh('mutation') }} />}
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} suggestions={suggestionCollection} loading={loading} />}
         {pathname !== '/controller' && !pathname.endsWith('/planning') && loaded === requestKey && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
