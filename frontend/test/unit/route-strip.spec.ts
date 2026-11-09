@@ -218,6 +218,66 @@ test('05039 replay retains all three close buses and shows the 94 second same-st
   })
 })
 
+test('bridges a 1-stop gap and absorbs 20-30s headway variations into a unified corridor', () => {
+  const route = makeRoute(1, ['A01', 'B01', 'C01', 'D01'])
+  const alertA = makeAlert({ eventId: 'alert-A', stopCode: 'A01', detectedAt: '2026-10-23T04:00:00Z', evidence: JSON.stringify({
+    snapshot: { classification: 'OBSERVATION_ONLY', arrivals: [
+      { serviceId: '190', stopCode: 'A01', directionId: 1, visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:05:00Z' },
+      { serviceId: '190', stopCode: 'A01', directionId: 1, visitOrder: 2, estimatedArrivalAt: '2026-10-23T04:06:06Z' },
+    ] },
+  }) })
+  // Stop B01 is skipped (distance = 2 to Stop C01)
+  const alertC = makeAlert({ eventId: 'alert-C', stopCode: 'C01', detectedAt: '2026-10-23T04:00:05Z', evidence: JSON.stringify({
+    snapshot: { classification: 'OBSERVATION_ONLY', arrivals: [
+      { serviceId: '190', stopCode: 'C01', directionId: 1, visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:08:00Z' },
+      { serviceId: '190', stopCode: 'C01', directionId: 1, visitOrder: 2, estimatedArrivalAt: '2026-10-23T04:09:06Z' },
+    ] },
+  }) })
+  // Stop D01 has a 45s gap (21s difference from 66s)
+  const alertD = makeAlert({ eventId: 'alert-D', stopCode: 'D01', detectedAt: '2026-10-23T04:00:10Z', evidence: JSON.stringify({
+    snapshot: { classification: 'OBSERVATION_ONLY', arrivals: [
+      { serviceId: '190', stopCode: 'D01', directionId: 1, visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:10:00Z' },
+      { serviceId: '190', stopCode: 'D01', directionId: 1, visitOrder: 2, estimatedArrivalAt: '2026-10-23T04:10:45Z' },
+    ] },
+  }) })
+
+  const incidents = groupRouteIncidents([alertA, alertC, alertD], [route], now, 60, 30)
+  expect(incidents).toHaveLength(1)
+  expect(incidents[0].stopCodes).toEqual(['A01', 'C01', 'D01'])
+})
+
+test('links bunched bus pair by preferring physically adjacent buses over skipped orders', () => {
+  const route = makeRoute(1, ['A01', 'B01'])
+  const alertA = makeAlert({ stopCode: 'A01', detectedAt: '2026-10-23T04:00:10Z', evidence: JSON.stringify({
+    snapshot: { fetchedAt: '2026-10-23T04:00:10Z', arrivals: [
+      { serviceId: '190', stopCode: 'A01', directionId: 1, visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:05:00Z' },
+      { serviceId: '190', stopCode: 'A01', directionId: 1, visitOrder: 2, estimatedArrivalAt: '2026-10-23T04:06:00Z' },
+    ] },
+    groups: [{ headways: [{ leadingObservationId: 'obs-1', followingObservationId: 'obs-3', isBunched: true }] }],
+  }) })
+  const alertB = makeAlert({ stopCode: 'B01', detectedAt: '2026-10-23T04:00:15Z', evidence: JSON.stringify({
+    snapshot: { fetchedAt: '2026-10-23T04:00:10Z', arrivals: [
+      { serviceId: '190', stopCode: 'B01', directionId: 1, visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:07:00Z' },
+      { serviceId: '190', stopCode: 'B01', directionId: 1, visitOrder: 2, estimatedArrivalAt: '2026-10-23T04:08:00Z' },
+    ] },
+    groups: [{ headways: [{ leadingObservationId: 'obs-2', followingObservationId: 'obs-3', isBunched: true }] }],
+  }) })
+  const incident = groupRouteIncidents([alertA, alertB], [route], now, 60, 30)[0]
+  const position: RoutePositionDirection = {
+    operator: 'SMRT', directionId: 1, routeLengthM: 2_224,
+    buses: [
+      { order: 1, distanceAlongRouteM: 1_800, uncertaintyM: 50, speedMps: 5, evidenceObservationIds: ['obs-1'] },
+      { order: 2, distanceAlongRouteM: 1_400, uncertaintyM: 50, speedMps: 5, evidenceObservationIds: ['obs-2'] },
+      { order: 3, distanceAlongRouteM: 1_350, uncertaintyM: 50, speedMps: 5, evidenceObservationIds: ['obs-3'] },
+    ],
+  }
+
+  // Bus 2 & Bus 3 are adjacent (|2 - 3| = 1), whereas Bus 1 & Bus 3 skip Bus 2 (|1 - 3| = 2)
+  expect(linkIncidentToPosition(incident, route, position, '2026-10-23T04:00:20Z', 120)).toEqual({
+    frontOrder: 2, followingOrder: 3, stopCode: 'B01', match: 'evidence',
+  })
+})
+
 test('adjacent alerts with a matching time and gap are grouped, but separated alerts are not', () => {
   const route = makeRoute()
   const adjacent = makeAlert({ eventId: 'adjacent', stopCode: 'B01', detectedAt: '2026-10-23T04:00:10Z' })

@@ -190,7 +190,7 @@ function similarGaps(first: number | null, second: number | null, toleranceSecon
 }
 
 export function groupRouteIncidents(alerts: BunchingAlert[], routes: RouteDirection[], nowMs: number,
-  pollIntervalSeconds: number, gapToleranceSeconds: number): RouteIncident[] {
+  pollIntervalSeconds: number, gapToleranceSeconds: number = 30): RouteIncident[] {
   const resolved: ResolvedAlert[] = alerts.map(alert => ({
     alert,
     ...alertRoute(alert, routes),
@@ -211,7 +211,7 @@ export function groupRouteIncidents(alerts: BunchingAlert[], routes: RouteDirect
       if (!right.route || right.stopIndex === null || right.directionId === null ||
         !Number.isFinite(rightDetectedAt) ||
         left.alert.serviceId !== right.alert.serviceId || left.directionId !== right.directionId ||
-        routeKey(left.route) !== routeKey(right.route) || Math.abs(left.stopIndex - right.stopIndex) > 1 ||
+        routeKey(left.route) !== routeKey(right.route) || Math.abs(left.stopIndex - right.stopIndex) > 2 ||
         Math.abs(leftDetectedAt - rightDetectedAt) > windowMs ||
         !similarGaps(left.gapSeconds, right.gapSeconds, gapToleranceSeconds)) continue
       unite(first, second)
@@ -505,6 +505,7 @@ export function linkIncidentToPosition(incident: RouteIncident, route: RouteDire
   // Prefer a direct link: bunching evidence and a route marker share the same
   // normalized arrival observation IDs. This is stronger than matching by
   // proximity, while still describing observations rather than physical buses.
+  const evidenceCandidates: { frontOrder: number; followingOrder: number; score: number }[] = []
   for (const alert of incident.alerts) {
     const evidence = alertEvidence(alert)
     if (!evidence || Math.abs(computedAt - evidence.fetchedAt) > maxSourceAgeSeconds * 1_000) continue
@@ -515,9 +516,20 @@ export function linkIncidentToPosition(incident: RouteIncident, route: RouteDire
       // They establish the observation link even when the predicted arrival is
       // still some distance away from the stop.
       if (front && following && front.order !== following.order) {
-        return { frontOrder: front.order, followingOrder: following.order, stopCode: stop.stopCode, match: 'evidence' }
+        const isAdjacent = Math.abs(front.order - following.order) === 1
+        const existing = evidenceCandidates.find(c => c.frontOrder === front.order && c.followingOrder === following.order)
+        if (existing) {
+          existing.score += isAdjacent ? 10 : 1
+        } else {
+          evidenceCandidates.push({ frontOrder: front.order, followingOrder: following.order, score: isAdjacent ? 10 : 1 })
+        }
       }
     }
+  }
+  if (evidenceCandidates.length > 0) {
+    evidenceCandidates.sort((a, b) => b.score - a.score)
+    const best = evidenceCandidates[0]
+    return { frontOrder: best.frontOrder, followingOrder: best.followingOrder, stopCode: stop.stopCode, match: 'evidence' }
   }
 
   const latestAlert = incident.alerts.at(-1)
