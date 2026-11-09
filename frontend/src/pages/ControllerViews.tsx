@@ -202,6 +202,89 @@ export function computeBusLatLng(
 
 export type PositionedIncident = RouteIncident & { stripLink: IncidentStripLink | null }
 
+export type ProjectedBus = {
+  serviceId: string
+  directionId: number
+  order: number
+  x: number
+  y: number
+  label: string
+  latitude: number
+  longitude: number
+}
+
+export type BusCluster = {
+  key: string
+  serviceId: string
+  directionId: number
+  buses: ProjectedBus[]
+  x: number
+  y: number
+  isSelected: boolean
+  hasIncident: boolean
+  label: string
+  text: string
+}
+
+export function clusterProjectedBuses(
+  buses: ProjectedBus[],
+  selectedBuses: Set<string>,
+  incidents: PositionedIncident[],
+  thresholdPx = 28
+): BusCluster[] {
+  const visited = new Set<number>()
+  const clusters: BusCluster[] = []
+
+  for (let i = 0; i < buses.length; i++) {
+    if (visited.has(i)) continue
+    const b1 = buses[i]
+    const group = [b1]
+    visited.add(i)
+
+    for (let j = i + 1; j < buses.length; j++) {
+      if (visited.has(j)) continue
+      const b2 = buses[j]
+      if (b1.serviceId !== b2.serviceId) continue
+      const dist = Math.hypot(b1.x - b2.x, b1.y - b2.y)
+      if (dist <= thresholdPx) {
+        visited.add(j)
+        group.push(b2)
+      }
+    }
+
+    group.sort((a, b) => a.order - b.order)
+    const avgX = group.reduce((sum, b) => sum + b.x, 0) / group.length
+    const avgY = group.reduce((sum, b) => sum + b.y, 0) / group.length
+    const isSelected = group.some(b => selectedBuses.has(`${b.serviceId}-${b.order}`))
+    const hasIncident = group.some(b =>
+      incidents.some(inc =>
+        inc.stripLink &&
+        (inc.stripLink.frontOrder === b.order || inc.stripLink.followingOrder === b.order) &&
+        inc.serviceId === b.serviceId
+      )
+    )
+    const text = group.map(b => b.order).join(' · ')
+    const label = group.length === 1
+      ? group[0].label
+      : `Buses #${group.map(b => b.order).join(' & #')} on service ${b1.serviceId}`
+
+    clusters.push({
+      key: `cluster-${b1.serviceId}-${group.map(b => b.order).join('-')}-${i}`,
+      serviceId: b1.serviceId,
+      directionId: b1.directionId,
+      buses: group,
+      x: avgX,
+      y: avgY,
+      isSelected,
+      hasIncident,
+      label,
+      text,
+    })
+  }
+
+  return clusters
+}
+
 export interface BunchingMapProps {
   routes: RouteDirection[]
   affectedStopCodes: Set<string>
@@ -563,6 +646,8 @@ export function BunchingMap({
     ...project(bus.latitude, bus.longitude),
   }))
 
+  const busClusters = clusterProjectedBuses(projectedBuses, selectedBuses, incidents, 28)
+
   return (
     <div className="overflow-hidden rounded-lg border bg-muted/10">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
@@ -605,9 +690,22 @@ export function BunchingMap({
               Fit corridor
             </Button>
           )}
-          <span><span className="mr-1 inline-block size-2 rounded-full bg-destructive" />Affected stop</span>
-          <span><span className="mr-1 inline-block size-2 rounded-full bg-primary" />Estimated bus</span>
-          {selectedIncident && <span><span className="mr-1 inline-block size-2 rounded-full bg-amber-500" />Bunched bus</span>}
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block size-2.5 rounded-full border border-white bg-slate-600 shadow-xs" />
+            Bus stop
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block size-2.5 rounded-full border-2 border-red-500 bg-destructive shadow-xs" />
+            Affected stop
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-flex items-center justify-center size-3.5 rounded-full bg-sky-600 text-[9px] font-bold text-white shadow-xs">#</span>
+            Estimated bus
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-flex items-center justify-center min-w-5 h-3.5 px-1 rounded-full bg-amber-600 text-[9px] font-bold text-white shadow-xs">2 · 3</span>
+            Bunched cluster
+          </span>
         </div>
       </div>
       <div
@@ -731,66 +829,130 @@ export function BunchingMap({
               </g>
             )
           })}
-          {projectedBuses.map((bus, index) => {
-            const busKey = `${bus.serviceId}-${bus.order}`
-            const isSelectedBus = selectedBuses.has(busKey)
-            const isDimmed = selectedIncident && !isSelectedBus
-            const hasIncident = incidents.some(i =>
-              i.stripLink && (i.stripLink.frontOrder === bus.order || i.stripLink.followingOrder === bus.order) && i.serviceId === bus.serviceId
-            )
+          {busClusters.map(cluster => {
+            const isDimmed = selectedIncident && !cluster.isSelected
+            const isMulti = cluster.buses.length > 1
+            const pillW = isMulti ? Math.max(38, cluster.text.length * 8 + 16) : 26
+            const pillH = isMulti ? 22 : 26
+            const pillX = cluster.x - pillW / 2
+            const pillY = cluster.y - pillH / 2
+
+            const handleClick = () => {
+              if (!onSelectIncident) return
+              for (const b of cluster.buses) {
+                const matching = incidents.find(i =>
+                  i.stripLink && (i.stripLink.frontOrder === b.order || i.stripLink.followingOrder === b.order) && i.serviceId === b.serviceId
+                )
+                if (matching) {
+                  onSelectIncident(selectedIncident?.id === matching.id ? null : matching.id)
+                  document.getElementById(`incident-${matching.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+                  return
+                }
+              }
+              onBusClick(cluster.serviceId, cluster.buses[0].order)
+            }
 
             return (
               <g
-                key={`bus-${bus.serviceId}-${bus.order}-${index}`}
-                role={hasIncident && onSelectIncident ? "button" : undefined}
-                tabIndex={hasIncident && onSelectIncident ? 0 : undefined}
-                aria-label={`${bus.label}${isSelectedBus ? ' - Bunched pair for selected incident' : ''}`}
+                key={cluster.key}
+                role={cluster.hasIncident && onSelectIncident ? "button" : undefined}
+                tabIndex={cluster.hasIncident && onSelectIncident ? 0 : undefined}
+                aria-label={`${cluster.label}${cluster.isSelected ? ' - Bunched pair for selected incident' : ''}`}
                 className={cn(
                   "pointer-events-auto transition-opacity duration-300",
-                  hasIncident && onSelectIncident ? "cursor-pointer outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-700" : "cursor-default"
+                  cluster.hasIncident && onSelectIncident ? "cursor-pointer outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-700" : "cursor-default"
                 )}
                 opacity={isDimmed ? 0.35 : 1}
-                onClick={() => onBusClick(bus.serviceId, bus.order)}
+                onClick={handleClick}
                 onPointerDown={e => e.stopPropagation()}
                 onKeyDown={e => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
-                    onBusClick(bus.serviceId, bus.order)
+                    handleClick()
                   }
                 }}
               >
-                <title>{`${bus.label}${isSelectedBus ? ' [Bunched pair for selected incident]' : ''}${hasIncident && onSelectIncident ? ' - Click to view incident' : ''}`}</title>
-                {isSelectedBus && (
-                  <circle
-                    cx={bus.x}
-                    cy={bus.y}
-                    r="18"
-                    fill="none"
-                    stroke="#f59e0b"
-                    strokeWidth="2.5"
-                    className="animate-pulse"
-                  />
+                <title>{`${cluster.label}${cluster.isSelected ? ' [Bunched pair for selected incident]' : ''}${cluster.hasIncident && onSelectIncident ? ' - Click to view incident' : ''}`}</title>
+                {cluster.isSelected && (
+                  isMulti ? (
+                    <rect
+                      x={pillX - 4}
+                      y={pillY - 4}
+                      width={pillW + 8}
+                      height={pillH + 8}
+                      rx="15"
+                      ry="15"
+                      fill="none"
+                      stroke="#f59e0b"
+                      strokeWidth="2.5"
+                      className="animate-pulse"
+                    />
+                  ) : (
+                    <circle
+                      cx={cluster.x}
+                      cy={cluster.y}
+                      r="18"
+                      fill="none"
+                      stroke="#f59e0b"
+                      strokeWidth="2.5"
+                      className="animate-pulse"
+                    />
+                  )
                 )}
-                <circle cx={bus.x} cy={bus.y} r={isSelectedBus ? "14" : "13"} fill="white" className="drop-shadow" />
-                <circle
-                  cx={bus.x}
-                  cy={bus.y}
-                  r={isSelectedBus ? "11" : "10"}
-                  fill={isSelectedBus ? "#ea580c" : "#0284c7"}
-                  stroke="#0c1a2b"
-                  strokeWidth={isSelectedBus ? 2 : 1.5}
-                />
+                {isMulti ? (
+                  <>
+                    <rect
+                      x={pillX - 2}
+                      y={pillY - 2}
+                      width={pillW + 4}
+                      height={pillH + 4}
+                      rx="13"
+                      ry="13"
+                      fill="white"
+                      className="drop-shadow"
+                    />
+                    <rect
+                      x={pillX}
+                      y={pillY}
+                      width={pillW}
+                      height={pillH}
+                      rx="11"
+                      ry="11"
+                      fill={cluster.isSelected || cluster.hasIncident ? "#ea580c" : "#0284c7"}
+                      stroke="#0c1a2b"
+                      strokeWidth={cluster.isSelected ? 2 : 1.5}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <circle
+                      cx={cluster.x}
+                      cy={cluster.y}
+                      r={cluster.isSelected ? "14" : "13"}
+                      fill="white"
+                      className="drop-shadow"
+                    />
+                    <circle
+                      cx={cluster.x}
+                      cy={cluster.y}
+                      r={cluster.isSelected ? "11" : "10"}
+                      fill={cluster.isSelected || cluster.hasIncident ? "#ea580c" : "#0284c7"}
+                      stroke="#0c1a2b"
+                      strokeWidth={cluster.isSelected ? 2 : 1.5}
+                    />
+                  </>
+                )}
                 <text
-                  x={bus.x}
-                  y={bus.y}
+                  x={cluster.x}
+                  y={cluster.y}
                   textAnchor="middle"
                   dominantBaseline="central"
                   fill="white"
-                  fontSize={isSelectedBus ? "11" : "10"}
+                  fontSize={isMulti ? "11" : cluster.isSelected ? "11" : "10"}
                   fontWeight="bold"
                   className="select-none pointer-events-none"
                 >
-                  {bus.order}
+                  {cluster.text}
                 </text>
               </g>
             )
