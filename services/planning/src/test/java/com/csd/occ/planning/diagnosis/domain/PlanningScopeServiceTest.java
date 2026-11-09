@@ -144,6 +144,7 @@ class PlanningScopeServiceTest {
         assertThat(page.items().getFirst().likelyCause()).contains("Vehicle Breakdown", "Teck Whye Avenue");
         assertThat(page.items().getFirst().evidenceDetails()).hasSize(1);
         assertThat(page.items().getFirst().serviceId()).isEqualTo("190");
+        assertThat(page.items().getFirst().affectedBusReferences()).isEmpty();
         assertThat(page.items().getLast().likelyCause()).contains("Details are unavailable");
         assertThat(page.items().getLast().serviceId()).isNull();
         assertThat(page.items().getLast().directionId()).isNull();
