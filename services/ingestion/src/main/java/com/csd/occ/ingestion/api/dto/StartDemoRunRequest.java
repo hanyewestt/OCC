@@ -10,6 +10,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.util.List;
+import java.util.UUID;
 
 @Schema(description = "Configuration for one fictional single-route simulation run")
 public record StartDemoRunRequest(
@@ -19,12 +20,14 @@ public record StartDemoRunRequest(
         @Min(15) @Max(900) @Schema(description = "Seconds between successive simulated dispatches", example = "90") Integer dispatchGapSeconds,
         @Schema(description = "Optional gap in seconds after each bus. Supply one value for each adjacent bus pair; omitted values use dispatchGapSeconds.", example = "[120, 90]") List<@Min(15) @Max(900) Integer> busGapsSeconds,
         @NotBlank @Size(max = 20) @Schema(description = "The single route stop at which this bunching injection is created", example = "44251") String monitoredStopCode,
-        @NotNull @Schema(example = "BUNCHING") DemoScenario scenario) {
+        @NotNull @Schema(example = "BUNCHING") DemoScenario scenario,
+        @Schema(description = "One distinct Supabase captain user ID per bus. Omit to use legacy demo assignment settings.") List<UUID> captainUserIds) {
 
     @JsonIgnore
     public boolean isEmpty() {
         return (serviceId == null || serviceId.isBlank()) && directionId == null && busCount == null && dispatchGapSeconds == null
-                && (busGapsSeconds == null || busGapsSeconds.isEmpty()) && (monitoredStopCode == null || monitoredStopCode.isBlank()) && scenario == null;
+                && (busGapsSeconds == null || busGapsSeconds.isEmpty()) && (monitoredStopCode == null || monitoredStopCode.isBlank())
+                && scenario == null && (captainUserIds == null || captainUserIds.isEmpty());
     }
 
     public DemoRunConfiguration configuration() {
@@ -35,6 +38,7 @@ public record StartDemoRunRequest(
                 busGapsSeconds == null ? java.util.stream.IntStream.range(1, count).mapToObj(ignored -> dispatchGap).toList()
                         : busGapsSeconds.stream().map(java.time.Duration::ofSeconds).toList(),
                 monitoredStopCode != null ? monitoredStopCode : "44251",
-                scenario != null ? scenario : DemoScenario.BUNCHING);
+                scenario != null ? scenario : DemoScenario.BUNCHING,
+                captainUserIds == null ? List.of() : captainUserIds);
     }
 }

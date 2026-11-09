@@ -48,6 +48,15 @@ class BunchingPolicyTest {
     }
 
     @Test
+    void triggeringPairIsTheTightestBunchedGapRatherThanTheFirstPair() {
+        var group = policy.evaluate(snapshot(NOW, arrival(1, 300), arrival(2, 400), arrival(3, 440)),
+                NOW, Duration.ofSeconds(120), FRESHNESS).groups().getFirst();
+
+        assertEquals(new Headway(id(2), id(3), Duration.ofSeconds(40), true),
+                group.triggeringHeadway().orElseThrow());
+    }
+
+    @Test
     void neverPairsDifferentServicesDirectionsOrStops() {
         var arrivals = List.of(arrival(1, 300),
                 new ArrivalSnapshot.Arrival(id(2), "972", "44009", Optional.of(1), 1, Optional.of(NOW.plusSeconds(301))),
