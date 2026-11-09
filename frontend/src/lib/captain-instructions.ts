@@ -35,7 +35,11 @@ export function instructionHeadline(type: InstructionType, parameters: Instructi
 /** Whether the captain still has to act, judged against server time when it is known. */
 export function instructionState(item: CaptainInstruction, serverNow: number | null): InstructionState {
   if (item.status === 'CANCELLED') return 'cancelled'
-  if (item.acknowledgedAt) return 'acknowledged'
+  if (item.acknowledgedAt) {
+    const end = instructionEndTime(item)
+    if (end !== null && serverNow !== null && serverNow >= end) return 'closed'
+    return 'acknowledged'
+  }
   if (item.status === 'EXPIRED' || (serverNow !== null && serverNow >= Date.parse(item.acknowledgementDeadline))) return 'closed'
   return 'action'
 }
@@ -45,4 +49,18 @@ export function acknowledgementTimeLeft(deadline: string, serverNow: number | nu
   if (serverNow === null) return null
   const seconds = Math.max(0, Math.floor((Date.parse(deadline) - serverNow) / 1000))
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+}
+
+/** Remaining acknowledged instruction time as m:ss, or null without a reliable server clock. */
+export function instructionTimeLeft(item: CaptainInstruction, serverNow: number | null): string | null {
+  const end = instructionEndTime(item)
+  if (end === null || serverNow === null) return null
+  return acknowledgementTimeLeft(new Date(end).toISOString(), serverNow)
+}
+
+function instructionEndTime(item: CaptainInstruction): number | null {
+  if (!item.acknowledgedAt) return null
+  if (item.applicableUntil) return Date.parse(item.applicableUntil)
+  if (item.parameters.durationSeconds !== null) return Date.parse(item.acknowledgedAt) + item.parameters.durationSeconds * 1000
+  return null
 }
