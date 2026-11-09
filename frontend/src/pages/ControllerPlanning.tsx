@@ -65,7 +65,7 @@ function hasAdvisoryOnlyDiagnosis(request: PlanningDiagnosisRequest) {
   return request.policyOutcome === 'LIVE_DIAGNOSIS_NO_VALIDATED_OPERATIONAL_CONTEXT'
 }
 
-type ControllerReplacement = { action: 'HOLD' | 'DWELL_ADJUSTMENT'; adjustmentSeconds: number }
+type ControllerReplacement = { action: 'HOLD' | 'DWELL_ADJUSTMENT' | 'NONE'; adjustmentSeconds: number }
 type BusReplacement = ControllerReplacement & { busReference: string }
 
 function initialInstruction(recommendation: PendingRecommendation): ControllerReplacement {
@@ -374,7 +374,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
   const submitting = useRef(false)
   const mutationRef = useRef<AbortController | null>(null)
   const firstAction = useRef<HTMLSelectElement>(null)
-  const dirty = openingDraft !== null && (rationale !== openingDraft.rationale || JSON.stringify(instructions) !== JSON.stringify(openingDraft.instructions))
+  const dirty = openingDraft !== null && JSON.stringify(instructions) !== JSON.stringify(openingDraft.instructions)
 
   useEffect(() => () => mutationRef.current?.abort(), [])
 
@@ -418,9 +418,10 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
 
   async function decide(action: Decision['action']) {
     if (submitting.current || !isCurrent) return
-    if (action === 'REJECTED' && (!rationale.trim() || !instructions.length || instructions.some(item =>
+    const activeInstructions = instructions.filter(item => item.action !== 'NONE')
+    if (action === 'REJECTED' && (!activeInstructions.length || activeInstructions.some(item =>
         !Number.isInteger(item.adjustmentSeconds) || item.adjustmentSeconds < 1 || item.adjustmentSeconds > 120))) {
-      setMessage('Enter a 1–120 second HOLD or DWELL action for every affected bus and a controller rationale.')
+      setMessage('Enter at least one 1–120 second HOLD or DWELL action.')
       return
     }
     submitting.current = true; setPending(true); setMessage('')
@@ -434,7 +435,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
           action,
           replacementAction: null,
           adjustmentSeconds: null,
-          replacementInstructions: action === 'REJECTED' ? instructions.map(item => ({
+          replacementInstructions: action === 'REJECTED' ? activeInstructions.map(item => ({
             busReference: item.busReference, action: item.action, adjustmentSeconds: item.adjustmentSeconds,
           })) : null,
           controllerRationale: action === 'REJECTED' ? rationale.trim() : null,
@@ -480,7 +481,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
               onInteractOutside={event => { event.preventDefault(); requestClose() }}>
               <DialogHeader>
                 <DialogTitle>Enter controller recommendation</DialogTitle>
-                <DialogDescription>Replace the AI recommendation with one HOLD or DWELL action for each affected bus. Each action can be adjusted by up to 120 seconds.</DialogDescription>
+                <DialogDescription>Choose HOLD, DWELL, or no instruction for each affected bus. Actions can be adjusted by up to 120 seconds.</DialogDescription>
               </DialogHeader>
               {!isCurrent && <div role="alert" className="rounded-lg border p-3 text-sm">
                 <p>{validationFailed ? 'Unable to confirm this recommendation is current. Your draft is preserved; decisions are paused.'
@@ -490,10 +491,9 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
               {message && <p role="alert" className="rounded-lg border p-3 text-sm">{message}</p>}
               <form className="space-y-4" noValidate onSubmit={event => { event.preventDefault(); void decide('REJECTED') }}>
                 {instructions.map((item, index) => <div key={item.busReference} className="grid gap-3 rounded-lg border p-4 sm:grid-cols-[1fr_8rem]">
-                  <div className="space-y-2"><Label htmlFor={`bus-action-${index}`}>Action for {item.busReference}</Label><select ref={index === 0 ? firstAction : undefined} id={`bus-action-${index}`} value={item.action} onChange={event => updateInstruction(index, { action: event.target.value as ControllerReplacement['action'] })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"><option value="HOLD">Hold at next stop</option><option value="DWELL_ADJUSTMENT">Extend dwell at stop {selected.controlStopCode}</option></select></div>
-                  <div className="space-y-2"><Label htmlFor={`bus-adjustment-${index}`}>Seconds</Label><Input id={`bus-adjustment-${index}`} type="number" min="1" max="120" step="1" value={item.adjustmentSeconds} onChange={event => updateInstruction(index, { adjustmentSeconds: Number(event.target.value) })} required /></div>
+                  <div className="space-y-2"><Label htmlFor={`bus-action-${index}`}>Action for {item.busReference}</Label><select ref={index === 0 ? firstAction : undefined} id={`bus-action-${index}`} value={item.action} onChange={event => updateInstruction(index, { action: event.target.value as ControllerReplacement['action'] })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"><option value="HOLD">Hold at next stop</option><option value="DWELL_ADJUSTMENT">Extend dwell at stop {selected.controlStopCode}</option><option value="NONE">No instruction</option></select></div>
+                  <div className="space-y-2"><Label htmlFor={`bus-adjustment-${index}`}>Seconds</Label><Input id={`bus-adjustment-${index}`} type="number" min="1" max="120" step="1" value={item.adjustmentSeconds} onChange={event => updateInstruction(index, { adjustmentSeconds: Number(event.target.value) })} required={item.action !== 'NONE'} disabled={item.action === 'NONE'} /></div>
                 </div>)}
-                <div className="space-y-2"><Label htmlFor="controller-rationale">Controller rationale</Label><textarea id="controller-rationale" maxLength={1000} rows={3} value={rationale} onChange={event => { setRationale(event.target.value); setMessage('') }} required className="w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring" /></div>
                 <DialogFooter>
                   <DialogClose asChild><Button type="button" variant="outline" disabled={pending}>Close</Button></DialogClose>
                   <Button type="button" variant="outline" disabled={pending} onClick={requestClose}>Cancel</Button>
