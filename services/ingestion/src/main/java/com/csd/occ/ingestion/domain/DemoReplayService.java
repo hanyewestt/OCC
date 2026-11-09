@@ -57,7 +57,7 @@ public class DemoReplayService {
         DemoRun run = runs.save(new DemoRun(UUID.randomUUID(), clock.instant(), settings.scenario(), settings.seed(), configuration));
         String seed = Long.toString(settings.seed());
         assignments.saveAll(java.util.stream.IntStream.rangeClosed(1, configuration.busCount())
-                .mapToObj(number -> assignment(run.id(), configuration.serviceId(), configuration.directionId(), seed, number)).toList());
+                .mapToObj(number -> assignment(run.id(), configuration, seed, number)).toList());
         return run;
     }
 
@@ -108,12 +108,16 @@ public class DemoReplayService {
         run.advance(); if (run.currentStep() >= DemoReplayScenario.STEP_COUNT) run.complete(now);
     }
 
-    private DemoVehicleAssignment assignment(UUID runId, String serviceId, int directionId, String seed, int number) {
+    private DemoVehicleAssignment assignment(UUID runId, DemoRunConfiguration configuration, String seed, int number) {
+        String serviceId = configuration.serviceId();
         String tripId = tripId(serviceId, number);
-        return new DemoVehicleAssignment(new DemoVehicleAssignmentId(runId, tripId), serviceId, directionId,
+        UUID captainUserId = configuration.captainUserIds().isEmpty()
+                ? number == 1 ? settings.captainUserId().orElse(null) : null
+                : configuration.captainUserIds().get(number - 1);
+        return new DemoVehicleAssignment(new DemoVehicleAssignmentId(runId, tripId), serviceId, configuration.directionId(),
                 "DEMO-" + serviceId + "-" + String.format("%02d", number), "DEMO-OPERATOR", "DD",
                 "DEMO-CAPTAIN-" + seed + "-" + String.format("%02d", number),
-                number == 1 ? settings.captainUserId().orElse(null) : null);
+                captainUserId);
     }
 
     private BusArrivalObservation arrival(UUID rawId, UUID pollId, UUID reference, UUID runId,
