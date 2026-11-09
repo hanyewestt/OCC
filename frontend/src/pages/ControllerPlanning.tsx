@@ -36,6 +36,52 @@ function hasAdvisoryOnlyDiagnosis(request: PlanningDiagnosisRequest) {
   return request.policyOutcome === 'LIVE_DIAGNOSIS_NO_VALIDATED_OPERATIONAL_CONTEXT'
 }
 
+function isRecent(isoString: string, maxAgeHours = 2): boolean {
+  const timestamp = Date.parse(isoString)
+  if (!Number.isFinite(timestamp)) return false
+  return Date.now() - timestamp <= maxAgeHours * 60 * 60 * 1000
+}
+
+function isSgtToday(isoString: string): boolean {
+  const timestamp = Date.parse(isoString)
+  if (!Number.isFinite(timestamp)) return false
+  const date = new Date(timestamp)
+  const now = new Date()
+  const sgtDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Singapore' }).format(date)
+  const sgtNowStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Singapore' }).format(now)
+  return sgtDateStr === sgtNowStr
+}
+
+function isRequestActiveOrRecent(
+  item: PlanningDiagnosisRequest,
+  timeFilter: 'recent' | 'today' | 'all',
+  alerts: BunchingAlert[]
+): boolean {
+  if (timeFilter === 'all') return true
+  const isLiveAlert = alerts.some(alert =>
+    alert.eventId === item.eventId || (alert.serviceId === item.serviceId && alert.stopCode === item.stopCode)
+  )
+  if (isLiveAlert) return true
+  if (timeFilter === 'recent') return isRecent(item.createdAt, 2)
+  if (timeFilter === 'today') return isSgtToday(item.createdAt)
+  return true
+}
+
+function isRecommendationActiveOrRecent(
+  item: PendingRecommendation,
+  timeFilter: 'recent' | 'today' | 'all',
+  alerts: BunchingAlert[]
+): boolean {
+  if (timeFilter === 'all') return true
+  const isLiveAlert = alerts.some(alert =>
+    alert.serviceId === item.serviceId && alert.stopCode === item.monitoredStopCode
+  )
+  if (isLiveAlert) return true
+  if (timeFilter === 'recent') return isRecent(item.detectedAt, 2)
+  if (timeFilter === 'today') return isSgtToday(item.detectedAt)
+  return true
+}
+
 function initialInstructions(recommendation: PendingRecommendation): ControllerBusInstruction[] {
   return affectedBuses(recommendation).slice(0, 3).map((busReference, index) => ({
     busReference,
@@ -74,6 +120,8 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
   const requestedIncident = searchParams.get('incident')
   const statusParam = searchParams.get('status')
   const statusFilter: 'active' | 'all' = statusParam === 'all' ? 'all' : 'active'
+  const timeParam = searchParams.get('time')
+  const timeFilter: 'recent' | 'today' | 'all' = timeParam === 'all' || timeParam === 'today' ? timeParam : 'recent'
 
   const [filterInput, setFilterInput] = useState<string | null>(null)
   const filter = filterInput ?? searchParams.get('service') ?? ''
@@ -124,11 +172,21 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
 
   const retainedRequest = matchedRequest
 
-  const queuedRequests = !diagnosisError && diagnosisScopeMatches
-    ? (statusFilter === 'all'
-        ? diagnosisRequests.items
-        : diagnosisRequests.items.filter(item => item.status !== 'COMPLETED'))
-    : []
+  const queuedRequests = useMemo(() => {
+    if (diagnosisError || !diagnosisScopeMatches) return []
+    return diagnosisRequests.items.filter(item => {
+      if (statusFilter === 'active' && item.status === 'COMPLETED') return false
+      return isRequestActiveOrRecent(item, timeFilter, detectedAlerts)
+    })
+  }, [diagnosisError, diagnosisScopeMatches, diagnosisRequests.items, statusFilter, timeFilter, detectedAlerts])
+
+  const outdatedCount = useMemo(() => {
+    if (diagnosisError || !diagnosisScopeMatches) return 0
+    const candidateItems = statusFilter === 'active'
+      ? diagnosisRequests.items.filter(item => item.status !== 'COMPLETED')
+      : diagnosisRequests.items
+    return candidateItems.filter(item => !isRequestActiveOrRecent(item, timeFilter, detectedAlerts)).length
+  }, [diagnosisError, diagnosisScopeMatches, diagnosisRequests.items, statusFilter, timeFilter, detectedAlerts])
 
   const visibleRequests = queuedRequests.filter(item => item.serviceId?.includes(filter.trim()))
   const visibleRequestsWithRetained = retainedRequest && !visibleRequests.some(item => item.requestId === retainedRequest.requestId)
@@ -148,7 +206,14 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
     return null
   }, [recommendationError, recommendationScopeMatches, requestedId, incidentEventIds, requestedService, requestedStop, recommendationItems])
 
-  const visible = recommendationItems.filter(item => item.serviceId.includes(filter.trim()))
+  const visibleRecommendations = useMemo(() => {
+    if (recommendationError || !recommendationScopeMatches) return []
+    return recommendationItems.filter(item => isRecommendationActiveOrRecent(item, timeFilter, detectedAlerts))
+  }, [recommendationError, recommendationScopeMatches, recommendationItems, timeFilter, detectedAlerts])
+
+  const visible = visibleRecommendations.filter(item => item.serviceId.includes(filter.trim()))
+  const visibleWithRetained = matchedRecommendation && !visible.some(item => item.recommendationId === matchedRecommendation.recommendationId)
+    ? [matchedRecommendation, ...visible] : visible
   const scopeIdentity = `${mode}:${demoRunId ?? 'none'}`
   const { error: recommendationLoadError, hasMore: recommendationHasMore, isLoading: recommendationIsLoading,
     isLoadingMore: recommendationIsLoadingMore, loadNext: loadNextRecommendation } = recommendations
@@ -165,7 +230,7 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
   )
 
   const selected = editingInScope && !editingItem && (editNeedsRevalidation || editingRecommendation?.pending) ? editingInScope.recommendation
-    : (isRequestSelection ? null : (matchedRecommendation ?? visible[0] ?? recommendationItems[0] ?? null))
+    : (isRequestSelection ? null : (matchedRecommendation ?? visibleWithRetained[0] ?? recommendationItems[0] ?? null))
   const selectedIdentity = selected ? `${scopeIdentity}:${selected.recommendationId}` : null
   const selectedRequest = isRequestSelection
     ? (retainedRequest ?? visibleRequestsWithRetained[0] ?? null)
@@ -236,6 +301,15 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
     })
   }
 
+  function handleTimeFilter(newTime: 'recent' | 'today' | 'all') {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (newTime === 'recent') next.delete('time')
+      else next.set('time', newTime)
+      return next
+    })
+  }
+
   async function generateDiagnosis(request: PlanningDiagnosisRequest) {
     if (triggeringRequestId) return
     setTriggeringRequestId(request.requestId)
@@ -294,6 +368,42 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
           </div>
           <Label htmlFor="service-filter" className="sr-only">Filter by bus service number</Label>
           <Input id="service-filter" inputMode="numeric" placeholder="Filter bus no. e.g. 190" value={filter} onChange={event => setFilterInput(event.target.value)} />
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-1 rounded-md border p-0.5 text-xs">
+              <Button
+                type="button"
+                variant={timeFilter === 'recent' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={() => handleTimeFilter('recent')}
+              >
+                &lt; 2h
+              </Button>
+              <Button
+                type="button"
+                variant={timeFilter === 'today' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={() => handleTimeFilter('today')}
+              >
+                Today
+              </Button>
+              <Button
+                type="button"
+                variant={timeFilter === 'all' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={() => handleTimeFilter('all')}
+              >
+                All time
+              </Button>
+            </div>
+            {outdatedCount > 0 && timeFilter !== 'all' ? (
+              <span className="text-[11px] text-muted-foreground shrink-0">
+                {outdatedCount} outdated hidden
+              </span>
+            ) : null}
+          </div>
           {(requestedIncident || requestedEventId) && (
             <p className="text-xs text-muted-foreground">
               Linked from corridor incident in Disruptions
@@ -321,7 +431,16 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
             <p className="text-xs text-muted-foreground">Affected buses · {affectedBuses(item).join(', ')}</p>
             <p className="text-xs text-muted-foreground">{item.mitigationType.replaceAll('_', ' ')} · Target: {item.targetBusReference}</p>
           </button>)}
-          {!visible.length && !visibleRequestsWithRetained.length && <p className="p-6 text-center text-sm text-muted-foreground">{filter.trim() ? 'No matching bus service.' : 'No requests are awaiting a decision yet.'}</p>}
+          {!visibleWithRetained.length && !visibleRequestsWithRetained.length && (
+            <div className="space-y-2 p-6 text-center text-sm text-muted-foreground">
+              <p>{filter.trim() ? 'No matching bus service.' : 'No active bunching requests in this time window.'}</p>
+              {outdatedCount > 0 && timeFilter !== 'all' && (
+                <Button variant="outline" size="sm" onClick={() => handleTimeFilter('all')}>
+                  View {outdatedCount} outdated / past request{outdatedCount === 1 ? '' : 's'}
+                </Button>
+              )}
+            </div>
+          )}
         </div></ScrollArea>
         <div className="space-y-2 p-3"><PagedCollectionControls label="bunching requests" hasItems={!!diagnosisRequests.items.length} hasMore={diagnosisRequests.hasMore}
           isLoadingMore={diagnosisRequests.isLoadingMore} error={diagnosisRequests.error} refreshError={diagnosisRequests.refreshError} reload={diagnosisRequests.reload} loadNext={diagnosisRequests.loadNext} />
