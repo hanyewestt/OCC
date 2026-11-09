@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import type { RouteDirection } from '../../src/lib/api'
 import {
+  clusterProjectedBuses,
   computeBusLatLng,
   computeCorridorFit,
   DEFAULT_CENTER,
@@ -155,4 +156,38 @@ test('computeBusLatLng returns null when route lacks valid coordinates', () => {
     ],
   }
   expect(computeBusLatLng(route, 500, 1000)).toBeNull()
+})
+
+test('clusterProjectedBuses combines overlapping buses on the same service into a cluster pill', () => {
+  const buses = [
+    { serviceId: '972', directionId: 1, order: 2, x: 100, y: 100, label: 'Bus 2', latitude: 1.38, longitude: 103.76 },
+    { serviceId: '972', directionId: 1, order: 3, x: 110, y: 105, label: 'Bus 3', latitude: 1.381, longitude: 103.761 },
+    { serviceId: '972', directionId: 1, order: 1, x: 300, y: 300, label: 'Bus 1', latitude: 1.37, longitude: 103.75 },
+  ]
+  const selectedBuses = new Set(['972-2', '972-3'])
+  const clusters = clusterProjectedBuses(buses, selectedBuses, [], 28)
+
+  expect(clusters).toHaveLength(2)
+  const bunched = clusters.find(c => c.buses.length === 2)
+  expect(bunched).toBeDefined()
+  expect(bunched?.text).toBe('2 · 3')
+  expect(bunched?.isSelected).toBe(true)
+  expect(bunched?.x).toBeCloseTo(105, 1)
+  expect(bunched?.y).toBeCloseTo(102.5, 1)
+
+  const single = clusters.find(c => c.buses.length === 1)
+  expect(single).toBeDefined()
+  expect(single?.text).toBe('1')
+  expect(single?.isSelected).toBe(false)
+})
+
+test('clusterProjectedBuses does not group buses from different services', () => {
+  const buses = [
+    { serviceId: '972', directionId: 1, order: 1, x: 100, y: 100, label: '972 Bus 1', latitude: 1.38, longitude: 103.76 },
+    { serviceId: '190', directionId: 1, order: 1, x: 105, y: 105, label: '190 Bus 1', latitude: 1.38, longitude: 103.76 },
+  ]
+  const clusters = clusterProjectedBuses(buses, new Set(), [], 28)
+
+  expect(clusters).toHaveLength(2)
+  expect(clusters.map(c => c.serviceId)).toEqual(['972', '190'])
 })
