@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import type { Arrival, BunchingAlert, RouteDirection, RoutePositionDirection, RoutePositions, RouteStop } from '../../src/lib/api'
 import {
-  alignArrivalsToPositionEvidence, arrivalDirectionMatches, arrivalGaps, estimateRouteHeadways, etaFallbacksForRoute, formatGap, gapSeverity,
+  alignArrivalsToPositionEvidence, arrivalDirectionMatches, arrivalGaps, bunchedArrivalGaps, estimateRouteHeadways, etaFallbacksForRoute, formatGap, gapSeverity,
   groupRouteIncidents, linkIncidentToPosition, oldestStopDataAgeSeconds, placeArrivalAtPositionEvidence,
   positionSourceFreshness, positionSourceIsStale, projectCoordinateToRoute, routePositionEvidenceDescription,
   routeDestination, routePositionSnapshotIsDisplayed, routeStopDistances, tightestArrivalGap,
@@ -106,6 +106,19 @@ test('gap helper calculates saved prediction gaps and severity boundaries', () =
   expect(gapSeverity(181)).toBe('spaced')
   expect(gapSeverity(null)).toBeNull()
   expect(formatGap(125)).toBe('2m 5s')
+})
+
+test('reports only the bus pairs marked as bunched with each saved gap', () => {
+  const arrivals = [
+    { observationId: 'bus-1', visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:00:00Z' },
+    { observationId: 'bus-2', visitOrder: 2, estimatedArrivalAt: '2026-10-23T04:01:40Z' },
+    { observationId: 'bus-3', visitOrder: 3, estimatedArrivalAt: '2026-10-23T04:02:20Z' },
+  ]
+  const alert = makeAlert({ evidence: JSON.stringify({ snapshot: { arrivals }, groups: [{ headways: [
+    { leadingObservationId: 'bus-1', followingObservationId: 'bus-2', isBunched: false },
+    { leadingObservationId: 'bus-2', followingObservationId: 'bus-3', isBunched: true },
+  ] }] }) })
+  expect(bunchedArrivalGaps(alert)).toEqual([{ leadingOrder: 2, followingOrder: 3, seconds: 40 }])
 })
 
 test('uses same-snapshot ETA first and estimates time from distance and speed otherwise', () => {

@@ -13,6 +13,7 @@ import { signOut } from '@/lib/auth'
 import type { Planning } from './ControllerPage'
 import type { PagedCollection } from '@/lib/paged-collection'
 import { DataMessage, timestamp } from './ControllerViews'
+import { adjacentBunchingGaps, bunchedArrivalGaps, formatGap } from '@/lib/route-strip'
 
 function seconds(value: number) {
   const minutes = Math.floor(value / 60)
@@ -29,6 +30,35 @@ function suggestedInstruction(recommendation: PendingRecommendation) {
 function affectedBuses(recommendation: PendingRecommendation) {
   return recommendation.affectedBusReferences.length
     ? recommendation.affectedBusReferences : [recommendation.targetBusReference]
+}
+
+function BunchedPairs({ alert }: { alert: BunchingAlert | undefined }) {
+  const pairs = alert ? bunchedArrivalGaps(alert) : []
+  return pairs.length ? <p className="text-xs text-muted-foreground">{pairs.map(pair =>
+    `Buses #${pair.leadingOrder} & #${pair.followingOrder} · ${formatGap(pair.seconds)}`).join(' · ')}</p> : null
+}
+
+function recommendationAlert(recommendation: PendingRecommendation, alerts: BunchingAlert[]) {
+  const byEventId = recommendation.bunchingEventId && alerts.find(alert =>
+    (alert.bunchingEventId ?? alert.alertId) === recommendation.bunchingEventId)
+  return byEventId ?? alerts.find(alert => alert.serviceId === recommendation.serviceId &&
+    alert.directionId === recommendation.directionId && alert.stopCode === recommendation.monitoredStopCode &&
+    alert.detectedAt === recommendation.detectedAt)
+}
+
+function RecommendationBunchingGaps({ recommendation, alerts }: { recommendation: PendingRecommendation; alerts: BunchingAlert[] }) {
+  const alert = recommendationAlert(recommendation, alerts)
+  const detectedPairs = alert ? adjacentBunchingGaps(alert) : []
+  const buses = affectedBuses(recommendation)
+  const pairs = Array.from({ length: Math.max(1, buses.length - 1) }, (_, index) => {
+    const leadingOrder = index + 1
+    const followingOrder = index + 2
+    const detected = detectedPairs.find(pair => pair.leadingOrder === leadingOrder && pair.followingOrder === followingOrder)
+    return { leadingOrder, followingOrder, seconds: detected?.isBunched ? detected.seconds : null }
+  })
+  return <div><p className="text-xs text-muted-foreground">Observed bunching gaps</p>
+    <ul className="mt-1 space-y-1 font-medium tabular-nums">{pairs.map(pair => <li key={`${pair.leadingOrder}-${pair.followingOrder}`}>Buses #{pair.leadingOrder}–{pair.followingOrder}: {pair.seconds === null ? 'NA' : seconds(pair.seconds)}</li>)}</ul>
+  </div>
 }
 
 function hasAdvisoryOnlyDiagnosis(request: PlanningDiagnosisRequest) {
@@ -187,6 +217,7 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
             className="min-h-28 w-full space-y-2 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring aria-selected:bg-muted">
             <div className="flex items-start justify-between gap-3"><span className="font-medium">Service {item.serviceId ?? 'unknown'} · Direction {item.directionId ?? 'unknown'}</span><span className="shrink-0 text-xs text-muted-foreground">{timestamp(item.createdAt)}</span></div>
             <p className="text-xs text-muted-foreground">Stop {item.stopCode ?? 'unknown'} · Bunching detected</p>
+            <BunchedPairs alert={detectedAlerts.find(alert => alert.eventId === item.eventId)} />
             <p className="text-sm">{item.status === 'COMPLETED'
               ? hasAdvisoryOnlyDiagnosis(item)
                 ? 'Diagnosis generated from live observations; AI mitigation is unavailable.'
@@ -200,6 +231,8 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
             <p className="text-xs text-muted-foreground">Stop {item.monitoredStopCode}</p>
             <p className="text-sm">{item.explanation.likelyCause}</p>
             <p className="text-xs text-muted-foreground">Affected buses · {affectedBuses(item).join(', ')}</p>
+            <BunchedPairs alert={detectedAlerts.find(alert => alert.serviceId === item.serviceId && alert.directionId === item.directionId &&
+              alert.stopCode === item.monitoredStopCode && alert.detectedAt === item.detectedAt)} />
             <p className="text-xs text-muted-foreground">{item.mitigationType.replaceAll('_', ' ')} · Target: {item.targetBusReference}</p>
           </button>)}
           {!visible.length && !visibleRequestsWithRetained.length && <p className="p-6 text-center text-sm text-muted-foreground">{filter.trim() ? 'No matching bus service.' : 'No requests are awaiting a decision yet.'}</p>}
@@ -211,7 +244,7 @@ export function ControllerPlanning({ recommendations, diagnosisRequests, loading
       </Card>
 
       {!selectedRequest && detailRecommendation && detailIdentity && <RecommendationDetail key={detailIdentity} selected={detailRecommendation} identity={detailIdentity}
-        scopeIdentity={scopeIdentity} token={token} isCurrent={selectionIsCurrent} validationFailed={editorUnavailable}
+        scopeIdentity={scopeIdentity} token={token} detectedAlerts={detectedAlerts} isCurrent={selectionIsCurrent} validationFailed={editorUnavailable}
         retryCurrentCheck={modeError ? onRefresh : recommendations.reload}
         onSaved={onSaved} onMessage={setMessage} onEditorChange={setEditingRecommendation} />}
       {selectedRequest && <DiagnosisRequestDetail request={selectedRequest}
@@ -325,8 +358,9 @@ function DiagnosisRequestDetail({ request, detectedBusReferences, generating, su
   </CardContent></Card>
 }
 
-function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurrent, validationFailed, retryCurrentCheck, onSaved, onMessage, onEditorChange }: {
+function RecommendationDetail({ selected, identity, scopeIdentity, token, detectedAlerts, isCurrent, validationFailed, retryCurrentCheck, onSaved, onMessage, onEditorChange }: {
   selected: PendingRecommendation; identity: string; scopeIdentity: string; token: string
+  detectedAlerts: BunchingAlert[]
   isCurrent: boolean; validationFailed: boolean; retryCurrentCheck: () => void
   onSaved: () => void; onMessage: (message: string) => void; onEditorChange: Dispatch<SetStateAction<EditingRecommendation | null>>
 }) {
@@ -486,7 +520,10 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, isCurr
 
         <div className="grid gap-4 rounded-lg bg-muted/50 p-4 sm:grid-cols-[1fr_auto]">
           <div><p className="text-xs text-muted-foreground">Diagnosis</p><p className="mt-1 font-medium">{selected.explanation.likelyCause}</p></div>
-          <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-1"><div><dt className="text-xs text-muted-foreground">Observed gap</dt><dd className="mt-1 font-medium tabular-nums">{seconds(selected.observedHeadwaySeconds)}</dd></div><div><dt className="text-xs text-muted-foreground">Target gap</dt><dd className="mt-1 font-medium tabular-nums">{seconds(selected.expectedHeadwaySeconds)}</dd></div></dl>
+          <div className="grid gap-4 text-sm sm:min-w-40">
+            <RecommendationBunchingGaps recommendation={selected} alerts={detectedAlerts} />
+            <div><p className="text-xs text-muted-foreground">Target gap</p><p className="mt-1 font-medium tabular-nums">{seconds(selected.expectedHeadwaySeconds)}</p></div>
+          </div>
         </div>
 
         <section aria-labelledby="affected-buses" className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 id="affected-buses" className="text-sm font-medium">Buses bunching</h3><span className="text-xs text-muted-foreground">Expected gap {seconds(selected.expectedImpact.headwayAfterSeconds)}</span></div>

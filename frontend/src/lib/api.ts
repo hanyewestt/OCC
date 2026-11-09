@@ -77,7 +77,7 @@ export type RoutePositions = {
   sourcePollCycleId?: string | null; sourceObservedAt?: string | null
 }
 export type BunchingAlert = {
-  eventId: string; action: string; classification: string; serviceId: string
+  eventId: string; alertId?: string | null; bunchingEventId?: string | null; action: string; classification: string; serviceId: string
   stopCode: string; detectedAt: string; directionId?: number | null
   fetchedAt?: string; rawObservationId?: string; pollRunId?: string
   stopName?: string | null; stopRoadName?: string | null; evidence?: string | null
@@ -110,7 +110,7 @@ export type RecommendationImpact = {
   passengerMinutesBefore: number; passengerMinutesAfter: number
 }
 export type PendingRecommendation = {
-  recommendationId: string; classification: string; status: string
+  recommendationId: string; bunchingEventId?: string; classification: string; status: string
   serviceId: string; directionId: number; monitoredStopCode: string
   detectedAt: string; createdAt: string
   expectedHeadwaySeconds: number; observedHeadwaySeconds: number

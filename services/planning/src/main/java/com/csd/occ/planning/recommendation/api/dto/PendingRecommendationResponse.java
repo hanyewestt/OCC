@@ -10,6 +10,7 @@ import java.util.UUID;
 @Schema(description = "Actionable recommendation awaiting a controller decision")
 public record PendingRecommendationResponse(
         UUID recommendationId,
+        UUID bunchingEventId,
         String classification,
         String status,
         String serviceId,
@@ -38,6 +39,7 @@ public record PendingRecommendationResponse(
         List<Integer> observed = event.observedHeadwaySeconds();
         return new PendingRecommendationResponse(
                 recommendation.recommendationId(),
+                event.bunchingEventId(),
                 record.classification().name(),
                 recommendation.status().name(),
                 event.serviceId(),
