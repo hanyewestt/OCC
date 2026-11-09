@@ -1072,9 +1072,60 @@ export function BunchingMap({
   )
 }
 
-function simulationBusLabel(bus: BunchingAlert['leadingVehicle']) {
-  if (!bus) return 'Unavailable'
-  return bus.registrationNumber === bus.busId ? bus.busId : `${bus.registrationNumber} (${bus.busId})`
+function alertBunchedVisitOrders(alert: BunchingAlert): { leadingVisitOrder: number | null; followingVisitOrder: number | null } {
+  if (!alert.evidence) return { leadingVisitOrder: null, followingVisitOrder: null }
+  try {
+    const data = JSON.parse(alert.evidence)
+    const arrivals = data?.snapshot?.arrivals as Array<{ visitOrder?: number; observationId?: string }> | undefined
+    const headways = data?.groups?.[0]?.headways as Array<{ leadingObservationId?: string; followingObservationId?: string; isBunched?: boolean }> | undefined
+    const bunched = headways?.find(h => h.isBunched)
+    if (!bunched || !arrivals) return { leadingVisitOrder: null, followingVisitOrder: null }
+    const lead = arrivals.find(a => a.observationId === bunched.leadingObservationId)
+    const follow = arrivals.find(a => a.observationId === bunched.followingObservationId)
+    return {
+      leadingVisitOrder: lead?.visitOrder ?? null,
+      followingVisitOrder: follow?.visitOrder ?? null,
+    }
+  } catch {
+    return { leadingVisitOrder: null, followingVisitOrder: null }
+  }
+}
+
+function formatVehicleCell(
+  vehicle: BunchingAlert['leadingVehicle'],
+  order: number | null | undefined,
+  fallbackVisitOrder?: number | null
+) {
+  if (vehicle) {
+    const reg = vehicle.registrationNumber === vehicle.busId ? vehicle.busId : `${vehicle.registrationNumber} (${vehicle.busId})`
+    return (
+      <div>
+        <p className="font-medium text-foreground">{reg}</p>
+        {vehicle.captainCode && <p className="text-[10px] text-muted-foreground">Capt: {vehicle.captainCode}</p>}
+      </div>
+    )
+  }
+  if (order !== null && order !== undefined) {
+    return (
+      <div>
+        <span className="inline-flex items-center rounded-md bg-sky-500/10 px-1.5 py-0.5 text-xs font-semibold text-sky-700 dark:text-sky-300">
+          Bus #{order}
+        </span>
+        <span className="block text-[10px] text-muted-foreground mt-0.5">Estimated order</span>
+      </div>
+    )
+  }
+  if (fallbackVisitOrder !== null && fallbackVisitOrder !== undefined) {
+    return (
+      <div>
+        <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+          NextBus {fallbackVisitOrder}
+        </span>
+        <span className="block text-[10px] text-muted-foreground mt-0.5">Arrival forecast</span>
+      </div>
+    )
+  }
+  return <span className="text-muted-foreground">Unavailable</span>
 }
 
 export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], positions = [], pollIntervalSeconds = 60, gapToleranceSeconds = 30 }: {
@@ -1261,28 +1312,34 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
     })
   }
 
-  const renderAlertRow = (alert: BunchingAlert) => (
-    <TableRow key={alert.eventId}>
-      <TableCell className="font-medium">{alert.serviceId}</TableCell>
-      <TableCell>
-        <p className="font-medium">{alert.stopName || 'Stop name unavailable'}</p>
-        <p className="mt-1 text-xs text-muted-foreground">{alert.stopRoadName ? `${alert.stopRoadName} · ` : ''}{alert.stopCode}</p>
-      </TableCell>
-      <TableCell>{alert.directionId ? `Direction ${alert.directionId}` : 'Unavailable'}</TableCell>
-      <TableCell>{simulationBusLabel(alert.leadingVehicle)}</TableCell>
-      <TableCell>{simulationBusLabel(alert.followingVehicle)}</TableCell>
-      {bunchingArrivals(alert).map((value, index) => (
-        <TableCell key={index}>
-          {value === 'No prediction' || value === 'Unavailable' ? (
-            <span className="text-muted-foreground">{value}</span>
-          ) : timestamp(value)}
+  const renderAlertRow = (alert: BunchingAlert, parentIncident?: PositionedIncident | null) => {
+    const visitOrders = alertBunchedVisitOrders(alert)
+    const frontOrder = parentIncident?.stripLink?.frontOrder
+    const followingOrder = parentIncident?.stripLink?.followingOrder
+
+    return (
+      <TableRow key={alert.eventId}>
+        <TableCell className="font-medium">{alert.serviceId}</TableCell>
+        <TableCell>
+          <p className="font-medium">{alert.stopName || 'Stop name unavailable'}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{alert.stopRoadName ? `${alert.stopRoadName} · ` : ''}{alert.stopCode}</p>
         </TableCell>
-      ))}
-      <TableCell>{alert.action}</TableCell>
-      <TableCell>{timestamp(alert.detectedAt)}</TableCell>
-      <TableCell>{dataClassificationLabel(alert.classification)}</TableCell>
-    </TableRow>
-  )
+        <TableCell>{alert.directionId ? `Direction ${alert.directionId}` : 'Unavailable'}</TableCell>
+        <TableCell>{formatVehicleCell(alert.leadingVehicle, frontOrder, visitOrders.leadingVisitOrder)}</TableCell>
+        <TableCell>{formatVehicleCell(alert.followingVehicle, followingOrder, visitOrders.followingVisitOrder)}</TableCell>
+        {bunchingArrivals(alert).map((value, index) => (
+          <TableCell key={index}>
+            {value === 'No prediction' || value === 'Unavailable' ? (
+              <span className="text-muted-foreground">{value}</span>
+            ) : timestamp(value)}
+          </TableCell>
+        ))}
+        <TableCell>{alert.action}</TableCell>
+        <TableCell>{timestamp(alert.detectedAt)}</TableCell>
+        <TableCell>{dataClassificationLabel(alert.classification)}</TableCell>
+      </TableRow>
+    )
+  }
 
   const renderIncidentCard = (incident: PositionedIncident) => {
     const isExpanded = expandedIncidents.has(incident.id) || simulation !== null
@@ -1443,7 +1500,7 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {incident.alerts.map(alert => renderAlertRow(alert))}
+                {incident.alerts.map(alert => renderAlertRow(alert, incident))}
               </TableBody>
             </Table>
           </div>
@@ -1627,7 +1684,10 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
             </TableRow>
           </TableHeader>
           <TableBody>
-            {flatItems.map(alert => renderAlertRow(alert))}
+            {flatItems.map(alert => {
+              const matchingIncident = positionedIncidents.find(inc => inc.alerts.some(a => a.eventId === alert.eventId))
+              return renderAlertRow(alert, matchingIncident)
+            })}
           </TableBody>
         </Table>
       )}
