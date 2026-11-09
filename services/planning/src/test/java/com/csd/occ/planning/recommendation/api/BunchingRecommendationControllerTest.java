@@ -10,6 +10,7 @@ import com.csd.occ.planning.recommendation.domain.RecommendationDecisionAction;
 import com.csd.occ.planning.recommendation.domain.ControllerBusInstruction;
 import com.csd.occ.planning.advisory.domain.AdvisoryProposalRepository;
 import com.csd.occ.planning.advisory.domain.IssuedInstructionRepository;
+import com.csd.occ.planning.advisory.domain.BunchingInstructionService;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.math.BigDecimal;
@@ -63,6 +64,7 @@ class BunchingRecommendationControllerTest {
 
     @MockitoBean private AdvisoryProposalRepository proposals;
     @MockitoBean private IssuedInstructionRepository instructions;
+    @MockitoBean private BunchingInstructionService bunchingInstructions;
 
     @TestConfiguration(proxyBeanMethods = false)
     static class MeterConfiguration {
@@ -202,7 +204,7 @@ class BunchingRecommendationControllerTest {
         var response = mvc.post()
                 .uri("/api/v1/planning/recommendations/{id}/decision", RECOMMENDATION_ID)
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .content("{\"action\":\"APPROVED\",\"overrideInstructions\":[]}")
+                .content("{\"action\":\"APPROVED\"}")
                 .with(jwt().jwt(token -> token.subject("controller-subject"))
                         .authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
                 .exchange();
@@ -214,35 +216,29 @@ class BunchingRecommendationControllerTest {
     }
 
     @Test
-    void recordsControllerReplacementInstructionsAndRationale() {
+    void dispatchesOneTypedControllerReplacementAndReturnsItsAuditDecision() {
         Instant decidedAt = Instant.parse("2026-10-21T10:00:00Z");
-        var instructions = java.util.List.of(
-                new ControllerBusInstruction("SBS5898U", "Proceed without holding."),
-                new ControllerBusInstruction("SBS6123A", "Hold 120 seconds at stop 44241."));
-        org.mockito.Mockito.when(decisions.decide(RECOMMENDATION_ID,
-                RecommendationDecisionAction.REJECTED, "controller-subject", instructions,
-                "Widen the gap across both buses."))
-                .thenReturn(new RecommendationDecision(RECOMMENDATION_ID,
-                        RecommendationDecisionAction.REJECTED, "controller-subject",
-                        instructions, "Widen the gap across both buses.", decidedAt));
+        var auditInstruction = java.util.List.of(new ControllerBusInstruction("SBS5898U", "HOLD FOR 60s at next stop"));
+        org.mockito.Mockito.when(decisions.findDecision(RECOMMENDATION_ID)).thenReturn(Optional.of(new RecommendationDecision(
+                RECOMMENDATION_ID, RecommendationDecisionAction.REJECTED, "controller-subject",
+                auditInstruction, "Widen the gap for the target bus.", decidedAt)));
 
         var response = mvc.post()
                 .uri("/api/v1/planning/recommendations/{id}/decision", RECOMMENDATION_ID)
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .content("""
-                        {"action":"REJECTED","overrideInstructions":[
-                          {"busReference":"SBS5898U","instruction":"Proceed without holding."},
-                          {"busReference":"SBS6123A","instruction":"Hold 120 seconds at stop 44241."}
-                        ],"controllerRationale":"Widen the gap across both buses."}
+                        {"action":"REJECTED","replacementAction":"HOLD","adjustmentSeconds":60,
+                         "controllerRationale":"Widen the gap for the target bus."}
                         """)
                 .with(jwt().jwt(token -> token.subject("controller-subject"))
                         .authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
                 .exchange();
 
         assertThat(response).hasStatus(200)
-                .bodyJson().extractingPath("overrideInstructions[1].busReference").isEqualTo("SBS6123A");
-        verify(decisions).decide(RECOMMENDATION_ID, RecommendationDecisionAction.REJECTED,
-                "controller-subject", instructions, "Widen the gap across both buses.");
+                .bodyJson().extractingPath("overrideInstructions[0].instruction").isEqualTo("HOLD FOR 60s at next stop");
+        verify(bunchingInstructions).rejectAndIssue(RECOMMENDATION_ID, "controller-subject",
+                com.csd.occ.planning.recommendation.domain.MitigationType.HOLD, 60,
+                "Widen the gap for the target bus.");
     }
 
     @Test
@@ -251,9 +247,7 @@ class BunchingRecommendationControllerTest {
                 .uri("/api/v1/planning/recommendations/{id}/decision", RECOMMENDATION_ID)
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .content("""
-                        {"action":"REJECTED","overrideInstructions":[
-                          {"busReference":"SBS5898U","instruction":"Proceed without holding."}
-                        ]}
+                        {"action":"REJECTED","replacementAction":"HOLD","adjustmentSeconds":60}
                         """)
                 .with(jwt().jwt(token -> token.subject("controller-subject"))
                         .authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))

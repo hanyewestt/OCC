@@ -27,19 +27,35 @@ public class BunchingInstructionService {
     public IssuedInstruction approveAndIssue(UUID id, String actor) { return approveAndIssue(id, actor, null); }
     @Transactional
     public IssuedInstruction approveAndIssue(UUID id, String actor, UUID replaceInstructionId) {
+        return issue(id, actor, RecommendationDecisionAction.APPROVED, null, 0, null, replaceInstructionId);
+    }
+    @Transactional
+    public IssuedInstruction rejectAndIssue(UUID id, String actor, MitigationType type, int seconds, String rationale) {
+        return issue(id, actor, RecommendationDecisionAction.REJECTED, type, seconds, rationale, null);
+    }
+    private IssuedInstruction issue(UUID id, String actor, RecommendationDecisionAction decisionAction,
+            MitigationType requestedType, int requestedSeconds, String rationale, UUID replaceInstructionId) {
         var record = recommendations.findByIdempotencyKey(id).orElseThrow(AdvisoryNotFoundException::new);
         var recommendation = record.recommendation();
         if (record.classification() != SourceClassification.SIMULATION || recommendation.status() != RecommendationStatus.RECOMMENDED
                 || !List.of(MitigationType.HOLD, MitigationType.DWELL_ADJUSTMENT).contains(recommendation.mitigationType()))
             throw new AdvisoryConflictException("Only validated synthetic HOLD/DWELL recommendations can be issued");
-        var candidate = new MitigationCandidate(CandidateMitigationType.valueOf(recommendation.mitigationType().name()),
-                recommendation.targetBusReference(), recommendation.controlStopCode(), recommendation.adjustmentSeconds(), "Controller approved validated recommendation");
+        var type = requestedType == null ? recommendation.mitigationType() : requestedType;
+        var seconds = requestedType == null ? recommendation.adjustmentSeconds() : requestedSeconds;
+        var candidate = new MitigationCandidate(CandidateMitigationType.valueOf(type.name()),
+                recommendation.targetBusReference(), recommendation.controlStopCode(), seconds,
+                rationale == null ? "Controller approved validated recommendation" : rationale);
         var validation = new BunchingMitigationCandidateValidator().validate(new MitigationCandidateRequest(record.classification(),
                 record.bunchingEvent(), record.diagnosis(), record.mitigationContext()), candidate);
         if (!(validation instanceof MitigationCandidateValidationResult.Accepted))
             throw new AdvisoryConflictException("Stored recommendation no longer satisfies HOLD/DWELL safety rules");
         // Include the predecessor in the idempotent decision payload so a replay cannot silently change it.
-        decisions.decide(id, RecommendationDecisionAction.APPROVED, actor, List.of(), null);
+        var auditInstruction = type == MitigationType.HOLD ? "HOLD FOR " + seconds + "s at next stop"
+                : "EXTEND DWELL BY " + seconds + "s at stop " + recommendation.controlStopCode();
+        decisions.decide(id, decisionAction, actor,
+                decisionAction == RecommendationDecisionAction.APPROVED ? List.of()
+                        : List.of(new ControllerBusInstruction(recommendation.targetBusReference(), auditInstruction)),
+                rationale);
         var existing = instructions.findForUpdate(id);
         if (existing.isPresent()) {
             if (!java.util.Objects.equals(existing.get().replacedInstructionId(), replaceInstructionId))
@@ -84,11 +100,11 @@ public class BunchingInstructionService {
             if (active.type() != InstructionType.BE_CAUTIOUS && !active.id().equals(replaceInstructionId))
                 throw new AdvisoryConflictException("Active movement instruction " + active.id() + " must be explicitly replaced");
         }
-        var type = InstructionType.valueOf(recommendation.mitigationType().name());
-        var parameters = new InstructionParameters(stop.stopCode(), stop.description(), stop.stopSequence(), null, null, recommendation.adjustmentSeconds());
-        String message = type == InstructionType.HOLD ? "Hold at " + stop.description() + " for " + recommendation.adjustmentSeconds() + " sec."
-                : "Extend dwell at " + stop.description() + " by " + recommendation.adjustmentSeconds() + " sec.";
+        var instructionType = InstructionType.valueOf(type.name());
+        var parameters = new InstructionParameters(stop.stopCode(), stop.description(), stop.stopSequence(), null, null, seconds);
+        String message = instructionType == InstructionType.HOLD ? "Hold at " + stop.description() + " for " + seconds + " sec."
+                : "Extend dwell at " + stop.description() + " by " + seconds + " sec.";
         return instructions.saveAndFlush(new IssuedInstruction(id, replaceInstructionId, hazard.disruptionId(), run, bus,
-                new AdvisoryCandidate(type, parameters, candidate.rationale()), message, "SIMULATION", actor, clock.instant(), context.limits().acknowledgementWindow()));
+                new AdvisoryCandidate(instructionType, parameters, candidate.rationale()), message, "SIMULATION", actor, clock.instant(), context.limits().acknowledgementWindow()));
     }
 }

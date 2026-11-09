@@ -17,7 +17,7 @@ export function instructionHeadline(type: InstructionType, parameters: Instructi
   const at = parameters.stopName ?? parameters.stopCode
   switch (type) {
     case 'HOLD':
-      return ['Hold', duration, at && `at ${at}`].filter(Boolean).join(' ')
+      return parameters.durationSeconds === null ? 'HOLD at next stop' : `HOLD FOR ${parameters.durationSeconds}s at next stop`
     case 'DWELL_ADJUSTMENT':
       return ['Stay', duration ?? 'longer', duration && 'longer', at && `at ${at}`].filter(Boolean).join(' ')
     case 'REDUCE_SPEED':
