@@ -7,7 +7,7 @@ import { ApiError, apiRequest, type CaptainInstruction, type InstructionType, ty
 import { signOut } from '@/lib/auth'
 import { dataClassificationLabel } from '@/lib/presentation'
 import { formatSgtDateTime } from '@/lib/time'
-import { acknowledgementTimeLeft, instructionHeadline, instructionState } from '@/lib/captain-instructions'
+import { acknowledgementTimeLeft, instructionHeadline, instructionState, instructionTimeLeft } from '@/lib/captain-instructions'
 import { cn } from '@/lib/utils'
 import { Ban, CircleCheck, Clock, Gauge, Hand, TrendingDown, TriangleAlert, type LucideIcon } from 'lucide-react'
 import { usePagedCollection } from '@/lib/paged-collection'
@@ -84,23 +84,30 @@ export function CaptainInstructions({ token, registerRefresh, onPendingChange, o
         const state = instructionState(item, serverNow)
         const Icon = instructionIcons[item.type]
         const timeLeft = state === 'action' ? acknowledgementTimeLeft(item.acknowledgementDeadline, serverNow) : null
-        return <Card key={item.id} data-state={state} className={cn('min-h-28 shadow-none',
+        const advisoryTimeLeft = state === 'acknowledged' ? instructionTimeLeft(item, serverNow) : null
+        const hasInstructionTimer = item.parameters.durationSeconds !== null || item.applicableUntil !== null
+        return <Card key={item.id} data-state={state} className={cn(state === 'acknowledged' && item.type === 'HOLD' ? 'shadow-none' : 'min-h-28 shadow-none',
           state === 'action' ? 'border-4 border-amber-700 bg-amber-50 dark:border-amber-400 dark:bg-amber-950/40'
             : 'border-2 opacity-90')}><CardContent className="space-y-4">
           <p className="text-xs font-medium text-muted-foreground">Simulation · {item.busId} · Hazard: {dataClassificationLabel(item.hazardClassification)}</p>
           <div className="flex items-start gap-3">
             <Icon aria-hidden="true" className={cn('mt-1 shrink-0', state === 'action' ? 'size-9 text-amber-800 dark:text-amber-300' : 'size-6 text-muted-foreground')} />
             <div className="min-w-0 space-y-1">
-              <p className={cn('font-black uppercase leading-tight', state === 'action' ? 'text-[clamp(1.75rem,5vw,2.75rem)]' : 'text-xl')}>
+              <p className={cn('font-black uppercase leading-tight', state === 'action' && !hasInstructionTimer
+                ? 'text-[clamp(1.75rem,5vw,2.75rem)]' : hasInstructionTimer ? 'text-lg' : 'text-xl')}>
                 {instructionHeadline(item.type, item.parameters)}</p>
-              <p className={cn('leading-snug', state === 'action' ? 'text-xl font-semibold' : 'text-base text-muted-foreground')}>{item.message}</p>
+              <p className={cn('leading-snug', state === 'action' && !hasInstructionTimer
+                ? 'text-xl font-semibold' : hasInstructionTimer ? 'text-sm text-muted-foreground' : 'text-base text-muted-foreground')}>{item.message}</p>
             </div>
           </div>
           {state === 'acknowledged' && <div role="status" className="space-y-1">
             <p className="flex items-center gap-2 text-lg font-bold text-green-800 dark:text-green-300">
               <CircleCheck aria-hidden="true" className="size-6 shrink-0" /><span>Acknowledged {formatSgtDateTime(item.acknowledgedAt)}</span></p>
-            {item.applicableUntil && <p className="text-sm">{serverNow === null ? 'OCC checks the advisory window.'
-              : `${Math.max(0, Math.floor((Date.parse(item.applicableUntil) - serverNow) / 1000))} sec remaining · advisory window`}</p>}
+            {(item.parameters.durationSeconds !== null || item.applicableUntil) && <p role="timer" aria-label="Instruction time remaining"
+              className="rounded-lg border-2 border-green-800 bg-green-50 px-4 py-4 text-center text-5xl font-black tabular-nums text-green-900 dark:border-green-300 dark:bg-green-950 dark:text-green-100">
+              {advisoryTimeLeft === null ? 'Timer syncing…' : advisoryTimeLeft}
+              <span className="mt-1 block text-sm font-semibold uppercase tracking-wide">time remaining</span>
+            </p>}
           </div>}
           {state === 'action' && <div className="space-y-2">
             <Button size="lg" className="h-16 w-full text-xl font-bold" disabled={pending !== null}
@@ -108,7 +115,8 @@ export function CaptainInstructions({ token, registerRefresh, onPendingChange, o
             {timeLeft && <p className="text-center text-sm font-medium tabular-nums">Acknowledge within {timeLeft}</p>}
           </div>}
           {state === 'closed' && <p className="flex items-center gap-2 font-semibold text-muted-foreground">
-            <Clock aria-hidden="true" className="size-5 shrink-0" />Acknowledgement window closed. Contact the controller if you still need this instruction.</p>}
+            <Clock aria-hidden="true" className="size-5 shrink-0" />{item.acknowledgedAt
+              ? 'Instruction duration complete.' : 'Acknowledgement window closed. Contact the controller if you still need this instruction.'}</p>}
           {state === 'cancelled' && <p className="flex items-center gap-2 font-semibold text-muted-foreground">
             <Ban aria-hidden="true" className="size-5 shrink-0" />Cancelled by the controller{item.inactiveReason ? ` · ${item.inactiveReason.replaceAll('_', ' ').toLowerCase()}` : ''}.</p>}
         </CardContent></Card>

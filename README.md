@@ -38,7 +38,9 @@ built-in sample data.
 | Unknown website URL | Page not found with a return-home action | HTTP 404 |
 
 The captain's bus comes from the current simulation run's assignment to that
-account (`OCC_DEMO_CAPTAIN_USER_ID`); without one, the page says no bus is assigned.
+account. The simulation configurator accepts one Supabase user ID per bus; the
+legacy `OCC_DEMO_CAPTAIN_USER_ID` setting can still assign the first bus when
+the configurator leaves all captain IDs blank.
 
 ## App components
 

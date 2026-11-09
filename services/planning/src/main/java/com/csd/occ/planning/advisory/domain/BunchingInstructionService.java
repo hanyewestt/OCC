@@ -24,27 +24,75 @@ public class BunchingInstructionService {
         this.recommendations = recommendations; this.decisions = decisions; this.instructions = instructions;
         this.currentInstructions = currentInstructions; this.context = context; this.scopes = scopes; this.clock = clock;
     }
+    @Transactional
     public IssuedInstruction approveAndIssue(UUID id, String actor) { return approveAndIssue(id, actor, null); }
     @Transactional
     public IssuedInstruction approveAndIssue(UUID id, String actor, UUID replaceInstructionId) {
+        return issue(id, actor, RecommendationDecisionAction.APPROVED, null, 0, null, replaceInstructionId);
+    }
+    @Transactional
+    public IssuedInstruction rejectAndIssue(UUID id, String actor, MitigationType type, int seconds, String rationale) {
+        var record = recommendations.findByIdempotencyKey(id).orElseThrow(AdvisoryNotFoundException::new);
+        var target = record.recommendation().targetBusReference();
+        return rejectAndIssue(id, actor, List.of(new ReplacementBusInstruction(target, type, seconds)), rationale).getFirst();
+    }
+    @Transactional
+    public List<IssuedInstruction> rejectAndIssue(UUID id, String actor, List<ReplacementBusInstruction> requested, String rationale) {
+        var record = recommendations.findByIdempotencyKey(id).orElseThrow(AdvisoryNotFoundException::new);
+        var normalized = requested.stream().map(item -> item.busReference() == null || item.busReference().isBlank()
+                ? new ReplacementBusInstruction(record.recommendation().targetBusReference(), item.type(), item.seconds()) : item).toList();
+        return issue(id, actor, RecommendationDecisionAction.REJECTED, normalized, rationale, null);
+    }
+    private IssuedInstruction issue(UUID id, String actor, RecommendationDecisionAction decisionAction,
+            MitigationType requestedType, int requestedSeconds, String rationale, UUID replaceInstructionId) {
+        List<ReplacementBusInstruction> requested = requestedType == null ? List.of()
+                : List.of(new ReplacementBusInstruction("", requestedType, requestedSeconds));
+        return issue(id, actor, decisionAction, requested, rationale, replaceInstructionId).getFirst();
+    }
+    private List<IssuedInstruction> issue(UUID id, String actor, RecommendationDecisionAction decisionAction,
+            List<ReplacementBusInstruction> requested, String rationale, UUID replaceInstructionId) {
         var record = recommendations.findByIdempotencyKey(id).orElseThrow(AdvisoryNotFoundException::new);
         var recommendation = record.recommendation();
         if (record.classification() != SourceClassification.SIMULATION || recommendation.status() != RecommendationStatus.RECOMMENDED
                 || !List.of(MitigationType.HOLD, MitigationType.DWELL_ADJUSTMENT).contains(recommendation.mitigationType()))
             throw new AdvisoryConflictException("Only validated synthetic HOLD/DWELL recommendations can be issued");
-        var candidate = new MitigationCandidate(CandidateMitigationType.valueOf(recommendation.mitigationType().name()),
-                recommendation.targetBusReference(), recommendation.controlStopCode(), recommendation.adjustmentSeconds(), "Controller approved validated recommendation");
-        var validation = new BunchingMitigationCandidateValidator().validate(new MitigationCandidateRequest(record.classification(),
-                record.bunchingEvent(), record.diagnosis(), record.mitigationContext()), candidate);
-        if (!(validation instanceof MitigationCandidateValidationResult.Accepted))
+        var target = recommendation.targetBusReference();
+        var actions = decisionAction == RecommendationDecisionAction.APPROVED
+                ? List.of(new ReplacementBusInstruction(target, recommendation.mitigationType(), recommendation.adjustmentSeconds()))
+                : requested;
+        actions = actions.stream().sorted(java.util.Comparator.comparing(action -> !action.busReference().equals(target))).toList();
+        if (actions.isEmpty() || actions.size() > 3 || actions.stream().map(ReplacementBusInstruction::busReference).distinct().count() != actions.size())
+            throw new AdvisoryConflictException("One unique instruction per affected bus is required");
+        var allowedReferences = record.mitigationContext().affectedBusReferences();
+        if (!actions.stream().map(ReplacementBusInstruction::busReference).allMatch(allowedReferences::contains)
+                || actions.stream().noneMatch(action -> action.busReference().equals(target)))
+            throw new AdvisoryConflictException("Instructions must include the approved target and only affected buses");
+        var permittedType = record.mitigationContext().followingBusState() == FollowingBusState.READY_TO_DEPART
+                ? MitigationType.HOLD : MitigationType.DWELL_ADJUSTMENT;
+        int maxSeconds = Math.min(record.bunchingEvent().expectedHeadwaySeconds()
+                - record.bunchingEvent().observedHeadwaySeconds().getLast(),
+                permittedType == MitigationType.HOLD ? record.mitigationContext().maximumHoldSeconds()
+                        : record.mitigationContext().maximumDwellAdjustmentSeconds());
+        final int allowedSeconds = Math.min(maxSeconds, 120);
+        if (actions.stream().anyMatch(action -> action.type() != permittedType || action.seconds() < 1 || action.seconds() > allowedSeconds))
+            throw new AdvisoryConflictException("A bus instruction exceeds the validated action or duration limits");
+        var primary = actions.stream().filter(action -> action.busReference().equals(target)).findFirst().orElseThrow();
+        var candidate = new MitigationCandidate(CandidateMitigationType.valueOf(primary.type().name()), target,
+                recommendation.controlStopCode(), primary.seconds(), rationale == null ? "Controller approved validated recommendation" : rationale);
+        if (!(new BunchingMitigationCandidateValidator().validate(new MitigationCandidateRequest(record.classification(),
+                record.bunchingEvent(), record.diagnosis(), record.mitigationContext()), candidate)
+                instanceof MitigationCandidateValidationResult.Accepted))
             throw new AdvisoryConflictException("Stored recommendation no longer satisfies HOLD/DWELL safety rules");
-        // Include the predecessor in the idempotent decision payload so a replay cannot silently change it.
-        decisions.decide(id, RecommendationDecisionAction.APPROVED, actor, List.of(), null);
-        var existing = instructions.findForUpdate(id);
-        if (existing.isPresent()) {
-            if (!java.util.Objects.equals(existing.get().replacedInstructionId(), replaceInstructionId))
-                throw new AdvisoryConflictException("Bunching recommendation was already issued with a different predecessor");
-            return existing.get();
+        var auditInstructions = actions.stream().map(action -> new ControllerBusInstruction(action.busReference(),
+                action.type() == MitigationType.HOLD ? "HOLD FOR " + action.seconds() + "s at next stop"
+                        : "EXTEND DWELL BY " + action.seconds() + "s at stop " + recommendation.controlStopCode())).toList();
+        decisions.decide(id, decisionAction, actor,
+                decisionAction == RecommendationDecisionAction.APPROVED ? List.of() : auditInstructions, rationale);
+        var existing = instructions.findByProposalIdForUpdate(id);
+        if (!existing.isEmpty()) {
+            if (existing.size() != actions.size() || existing.stream().anyMatch(item -> !java.util.Objects.equals(item.replacedInstructionId(), replaceInstructionId)))
+                throw new AdvisoryConflictException("Bunching recommendation was already issued with a different instruction set");
+            return existing;
         }
         var run = scopes.current().demoRunId();
         if (run == null) throw new AdvisoryConflictException("No active synthetic run");
@@ -53,42 +101,36 @@ public class BunchingInstructionService {
             throw new AdvisoryConflictException("Bunching episode is no longer active in this run");
         var fleet = context.fleet(run);
         if (!List.of("RUNNING", "REPLAY_COMPLETE").contains(fleet.status())) throw new AdvisoryConflictException("Run is closed");
-        var buses = fleet.items().stream().filter(b -> b.serviceId().equals(record.bunchingEvent().serviceId())
-                && b.directionId() == record.bunchingEvent().directionId()
-                && (b.busId().equals(recommendation.targetBusReference()) || b.registrationNumber().equals(recommendation.targetBusReference())))
-                .toList();
-        if (buses.size() != 1 || buses.getFirst().captainUserId() == null || buses.getFirst().progress() == null)
-            throw new AdvisoryConflictException("Unique current captain assignment and progress required");
-        var bus = buses.getFirst();
-        var stops = context.route(bus.serviceId()).operators().stream().flatMap(o -> o.directions().stream())
-                .filter(d -> d.directionId() == bus.directionId()).flatMap(d -> d.stops().stream())
-                .filter(s -> s.stopCode().equals(recommendation.controlStopCode()) && s.stopSequence() >= bus.progress().stopSequence()).toList();
-        if (stops.size() != 1) throw new AdvisoryConflictException("Control stop occurrence is unavailable, ambiguous or already passed");
-        var stop = stops.getFirst();
-        // Lock and cancel the named predecessor before issuing its replacement. Both writes roll back together.
-        if (replaceInstructionId != null) {
-            var predecessor = instructions.findForUpdate(replaceInstructionId).orElseThrow(AdvisoryNotFoundException::new);
-            if (!predecessor.demoRunId().equals(run) || !predecessor.busId().equals(bus.busId()))
-                throw new AdvisoryConflictException("Replacement instruction belongs to another bus or run");
-            if (predecessor.type() == InstructionType.BE_CAUTIOUS || !predecessor.isCurrent(clock.instant())) {
-                var winner = instructions.findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(run, bus.busId(), List.of("ISSUED", "ACKNOWLEDGED"))
-                        .stream().filter(i -> i.type() != InstructionType.BE_CAUTIOUS && !i.id().equals(replaceInstructionId))
-                        .findFirst();
-                if (winner.isPresent()) throw new AdvisoryConflictException("Active movement instruction " + winner.get().id() + " won the replacement");
-                throw new AdvisoryConflictException("Replacement instruction is not an active movement instruction");
-            }
-            predecessor.cancel("CONTROLLER_REPLACED");
+        var issued = new java.util.ArrayList<IssuedInstruction>();
+        for (int index = 0; index < actions.size(); index++) {
+            var action = actions.get(index);
+            var buses = fleet.items().stream().filter(b -> b.serviceId().equals(record.bunchingEvent().serviceId())
+                    && b.directionId() == record.bunchingEvent().directionId()
+                    && (b.busId().equals(action.busReference()) || b.registrationNumber().equals(action.busReference())))
+                    .toList();
+            if (buses.size() != 1 || buses.getFirst().captainUserId() == null || buses.getFirst().progress() == null)
+                throw new AdvisoryConflictException("Unique current captain assignment and progress required for " + action.busReference());
+            var bus = buses.getFirst();
+            var stops = context.route(bus.serviceId()).operators().stream().flatMap(o -> o.directions().stream())
+                    .filter(d -> d.directionId() == bus.directionId()).flatMap(d -> d.stops().stream())
+                    .filter(s -> s.stopCode().equals(recommendation.controlStopCode()) && s.stopSequence() >= bus.progress().stopSequence())
+                    .toList();
+            if (stops.size() != 1) throw new AdvisoryConflictException("Upcoming control stop unavailable or ambiguous for " + action.busReference());
+            var stop = stops.getFirst();
+            for (var active : currentInstructions.captain(bus.captainUserId().toString()))
+                if (active.type() != InstructionType.BE_CAUTIOUS)
+                    throw new AdvisoryConflictException("Active movement instruction " + active.id() + " must be replaced first");
+            var instructionType = InstructionType.valueOf(action.type().name());
+            var parameters = new InstructionParameters(stop.stopCode(), stop.description(), stop.stopSequence(), null, null, action.seconds());
+            String message = instructionType == InstructionType.HOLD ? "Hold at " + stop.description() + " for " + action.seconds() + " sec."
+                    : "Extend dwell at " + stop.description() + " by " + action.seconds() + " sec.";
+            var instructionId = index == 0 ? id : UUID.randomUUID();
+            issued.add(instructions.saveAndFlush(new IssuedInstruction(instructionId, id, replaceInstructionId,
+                    hazard.disruptionId(), run, bus, new AdvisoryCandidate(instructionType, parameters, candidate.rationale()),
+                    message, "SIMULATION", actor, clock.instant(), context.limits().acknowledgementWindow())));
         }
-        // Refresh the same recipient's existing records before checking the shared movement constraint.
-        for (var active : currentInstructions.captain(bus.captainUserId().toString())) {
-            if (active.type() != InstructionType.BE_CAUTIOUS && !active.id().equals(replaceInstructionId))
-                throw new AdvisoryConflictException("Active movement instruction " + active.id() + " must be explicitly replaced");
-        }
-        var type = InstructionType.valueOf(recommendation.mitigationType().name());
-        var parameters = new InstructionParameters(stop.stopCode(), stop.description(), stop.stopSequence(), null, null, recommendation.adjustmentSeconds());
-        String message = type == InstructionType.HOLD ? "Hold at " + stop.description() + " for " + recommendation.adjustmentSeconds() + " sec."
-                : "Extend dwell at " + stop.description() + " by " + recommendation.adjustmentSeconds() + " sec.";
-        return instructions.saveAndFlush(new IssuedInstruction(id, replaceInstructionId, hazard.disruptionId(), run, bus,
-                new AdvisoryCandidate(type, parameters, candidate.rationale()), message, "SIMULATION", actor, clock.instant(), context.limits().acknowledgementWindow()));
+        return List.copyOf(issued);
     }
+
+    public record ReplacementBusInstruction(String busReference, MitigationType type, int seconds) {}
 }
