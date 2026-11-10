@@ -61,8 +61,8 @@ jobs:
           for name in occ-jar-ingestion occ-jar-disruption occ-jar-planning \
                       occ-web-dist occ-image-ingestion occ-image-disruption \
                       occ-image-planning occ-image-db-setup occ-image-web; do
-            gh run download "${{ github.event.workflow_run.id }}" --name "$name" \
-              --dir "$RUNNER_TEMP/artifacts/$name"
+            gh run download "${{ github.event.workflow_run.id }}" --repo "$GITHUB_REPOSITORY" \
+              --name "$name" --dir "$RUNNER_TEMP/artifacts/$name"
             cp -n "$RUNNER_TEMP/artifacts/$name"/* "$RUNNER_TEMP/bundle/"
           done
           for component in ingestion disruption planning db-setup web; do
