@@ -54,7 +54,7 @@ public class IngestionSecurityConfig {
                         // token subject. Fleet-wide pacing snapshots stay controller-only with every other API.
                         .requestMatchers(HttpMethod.GET, "/api/v1/captain-routes/current").hasRole("CAPTAIN")
                         .requestMatchers("/api/v1/**").hasAnyRole("ADMIN", "CONTROLLER")
-                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")
+                        .requestMatchers("/v3/**", "/swagger-ui/**", "/swagger-ui.html", "/webjars/**")
                         .hasAnyRole("ADMIN", "CONTROLLER")
                         .anyRequest().denyAll())
                 .oauth2ResourceServer(server -> server.jwt(jwt -> jwt.decoder(jwtDecoder)

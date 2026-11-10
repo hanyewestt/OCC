@@ -125,9 +125,7 @@ occ:
       request-timeout: ${OCC_PLANNING_GEMINI_REQUEST_TIMEOUT:30s}
       retry-attempts: ${OCC_PLANNING_GEMINI_RETRY_ATTEMPTS:2}
 
+# Read by the test-scope spec generator during contract export; the runtime has no springdoc.
 springdoc:
   api-docs:
     version: OPENAPI_3_1
-  swagger-ui:
-    persist-authorization: false
-    enabled: ${OCC_PLANNING_SWAGGER_ENABLED:true}

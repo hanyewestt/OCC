@@ -218,11 +218,11 @@ OpenAPI describes the HTTP contract; Swagger UI renders it and lets developers s
 
 **Tooling and ownership**
 
-- For Spring MVC services, use `org.springdoc:springdoc-openapi-starter-webmvc-ui`, pinned to the project's springdoc version. Spring Boot 4 uses springdoc 3.x; check compatibility before upgrades. Do not introduce Springfox or legacy Swagger 2 annotations.
-- Generate the contract from controllers and DTOs. Update annotations with the implementation in the same PR; do not maintain a separate hand-edited copy of the generated specification.
-- Put `OpenApiConfig.java` in `infrastructure/config/` for service metadata, security schemes and documentation groups. Keep operation annotations in `api/` and schema annotations in `api/dto/`; do not annotate domain entities for documentation.
-- Use OpenAPI 3.1 output (`springdoc.api-docs.version=OPENAPI_3_1`). This specification version is separate from our `/api/v1` URL version and the service version in `info.version`.
-- Default documentation locations are `/v3/api-docs`, `/v3/api-docs.yaml` and `/swagger-ui.html`, relative to the service context path. Use path-based groups for public `/api/v1/**` and internal `/internal/v1/**` contracts when both exist. Grouping is not access control. [springdoc documentation](https://springdoc.org/)
+- springdoc is a test-only dependency: keep `org.springdoc:springdoc-openapi-starter-webmvc-ui` at `test` scope, pinned to the project's springdoc version. Spring Boot 4 uses springdoc 3.x; check compatibility before upgrades. Do not introduce Springfox or legacy Swagger 2 annotations, and do not put a spec generator back on the runtime classpath.
+- The committed contract under `services/<service>/openapi/<service>.json` is the source of truth. Regenerate it with `./mvnw -pl services/<service> verify -Docc.exportOpenapi=true` and commit the result; never hand-edit it. The build packages it as a static resource, and the export test fails when the packaged copy drifts.
+- `io.swagger.v3.oas.annotations` stays at compile scope; the annotations are inert without a generator. Keep `OpenApiConfig`/`PlanningOpenApiConfig` beans in `src/test/java` under `infrastructure/config/` for service metadata, security schemes and documentation groups; only the export tests consume them. Keep operation annotations in `api/` and schema annotations in `api/dto/`; do not annotate domain entities for documentation.
+- Use OpenAPI 3.1 output (`springdoc.api-docs.version=OPENAPI_3_1` in `application.yml`, read by the export test). This specification version is separate from our `/api/v1` URL version and the service version in `info.version`.
+- Serve the contract at `/v3/<artifactId>.json` and Swagger UI at `/swagger-ui/index.html`, built from the shared `infra/swagger-ui/index.html` template plus the `org.webjars:swagger-ui` assets under `/webjars/**`, relative to the service context path. All three paths require ADMIN or CONTROLLER and return `404` at the Nginx edge. Use path-based groups for public `/api/v1/**` and internal `/internal/v1/**` contracts when both exist. Grouping is not access control. [springdoc documentation](https://springdoc.org/)
 
 **What each endpoint documents**
 
