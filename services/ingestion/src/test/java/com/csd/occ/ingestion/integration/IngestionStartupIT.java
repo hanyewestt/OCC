@@ -391,6 +391,25 @@ class IngestionStartupIT {
     }
 
     @Test
+    void packagesTheCommittedContractAndSwaggerUiAsStaticResources() throws Exception {
+        // springdoc stays on the test classpath and owns /swagger-ui/index.html inside this
+        // context, so assert the packaged bytes: the runtime image serves exactly these.
+        var ui = getClass().getResourceAsStream("/static/swagger-ui/index.html");
+        assertThat(ui).as("packaged Swagger UI").isNotNull();
+        var html = new String(ui.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(html).doesNotContain("${").doesNotContain("@project.artifactId@")
+                .contains("/v3/ingestion.json");
+        var bundle = java.util.regex.Pattern.compile("src=\"(/webjars/swagger-ui/[^\"]+/swagger-ui-bundle\\.js)\"")
+                .matcher(html);
+        assertThat(bundle.find()).as("Swagger UI bundle path").isTrue();
+        mvc.perform(get(bundle.group(1)).with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isOk());
+        mvc.perform(get("/v3/ingestion.json").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.info.title").value("OCC Ingestion API"));
+    }
+
+    @Test
     @org.junit.jupiter.api.condition.EnabledIfSystemProperty(named = "occ.exportOpenapi", matches = "true")
     void exportsGeneratedIngestionContract() throws Exception {
         // The absolute URL reproduces the committed server URL that the runtime contract check expects.
