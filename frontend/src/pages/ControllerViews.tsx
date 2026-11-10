@@ -17,6 +17,7 @@ import { bunchedArrivalGaps, groupRouteIncidents, type RouteIncident, formatGap,
 import {
   type LatLng,
   computeBusLatLngAlongPolyline,
+  computePolylineDirectionArrows,
   getBundledRouteGeometry,
   loadRouteGeometry,
 } from '@/lib/route-geometry'
@@ -757,6 +758,12 @@ export function BunchingMap({
     }
   }
 
+  const selectedRoute = selectedIncident
+    ? routes.find(r => r.serviceId === selectedIncident.serviceId && (selectedIncident.directionId === null || r.directionId === selectedIncident.directionId))
+    : null
+  const terminusStop = selectedRoute?.stops[selectedRoute.stops.length - 1]
+  const destinationName = terminusStop?.description || (terminusStop?.stopCode ? `Stop ${terminusStop.stopCode}` : null)
+
   const activeRoutes = filterMapRoutes(routes, isAllCorridors, disruptedRouteKeys)
 
   const routePolylines = activeRoutes.map(route => {
@@ -767,10 +774,15 @@ export function BunchingMap({
       : route.stops
           .filter(stop => validCoord(stop.latitude, stop.longitude))
           .map(stop => project(stop.latitude!, stop.longitude!))
+    const arrows = computePolylineDirectionArrows(pts, {
+      spacingPx: 75,
+      viewport: { width, height },
+    })
     return {
       key,
       points: pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' '),
       count: pts.length,
+      arrows,
     }
   }).filter(line => line.count > 1)
 
@@ -801,6 +813,7 @@ export function BunchingMap({
               )}>
                 Service {selectedIncident.serviceId}
                 {selectedIncident.directionId !== null && ` · Dir ${selectedIncident.directionId}`}
+                {destinationName && ` → ${destinationName}`}
                 {selectedIncident.gapSeconds !== null && ` (${formatGap(selectedIncident.gapSeconds)})`}
                 {selectedIncident.historical && ' · Resolved'}
               </span>
@@ -847,6 +860,12 @@ export function BunchingMap({
           <span className="inline-flex items-center gap-1.5">
             <span className="inline-flex items-center justify-center min-w-5 h-3.5 px-1 rounded-full bg-amber-700 text-[9px] font-bold text-white shadow-xs">2 · 3</span>
             Bunched cluster
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-flex items-center justify-center size-3.5 rounded bg-blue-600 text-[10px] font-black text-white shadow-xs leading-none">
+              ›
+            </span>
+            Travel direction
           </span>
         </div>
       </div>
@@ -913,6 +932,31 @@ export function BunchingMap({
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
+                {line.arrows.map((arrow, idx) => (
+                  <g
+                    key={idx}
+                    transform={`translate(${arrow.x}, ${arrow.y}) rotate(${arrow.angle})`}
+                    className="pointer-events-none select-none"
+                  >
+                    <path
+                      d="M -3.5 -3.5 L 1.5 0 L -3.5 3.5"
+                      fill="none"
+                      stroke="#0f172a"
+                      strokeWidth={isSelectedRoute ? 3.5 : 3}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      opacity={0.4}
+                    />
+                    <path
+                      d="M -3.5 -3.5 L 1.5 0 L -3.5 3.5"
+                      fill="none"
+                      stroke="white"
+                      strokeWidth={isSelectedRoute ? 2 : 1.75}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </g>
+                ))}
               </g>
             )
           })}
