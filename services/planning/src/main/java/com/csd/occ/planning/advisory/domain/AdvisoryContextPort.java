@@ -17,6 +17,11 @@ public interface AdvisoryContextPort {
     record CurrentBunchingGroup(UUID demoRunId, UUID bunchingEventId, String serviceId, String stopCode, int directionId,
                                 UUID rawObservationId, Instant fetchedAt, Instant validUntil, List<String> affectedBusReferences,
                                 List<Long> adjacentGapSeconds) {
+        public boolean isFreshAt(Instant now) {
+            return rawObservationId != null && fetchedAt != null && validUntil != null
+                    && !fetchedAt.isAfter(now) && now.isBefore(validUntil);
+        }
+
         public CurrentBunchingGroup(UUID demoRunId, UUID bunchingEventId, String serviceId, String stopCode, int directionId,
                 UUID rawObservationId, Instant fetchedAt, Instant validUntil, List<String> affectedBusReferences) {
             this(demoRunId, bunchingEventId, serviceId, stopCode, directionId, rawObservationId, fetchedAt, validUntil,
@@ -53,7 +58,14 @@ public interface AdvisoryContextPort {
                UUID captainUserId, String assignmentStatus, Progress progress) {}
     record Progress(String stopCode, int stopSequence, Instant observedAt, int assumedSpeedKmh,
                     List<Integer> allowedSpeedReductionsKmh, List<Integer> allowedDurationsSeconds,
-                    Instant estimatedArrivalAt, Instant freshUntil) {
+                    Instant estimatedArrivalAt, Instant freshUntil, Instant boardingUntil) {
+        public Progress(String stopCode, int stopSequence, Instant observedAt, int assumedSpeedKmh,
+                List<Integer> allowedSpeedReductionsKmh, List<Integer> allowedDurationsSeconds,
+                Instant estimatedArrivalAt, Instant freshUntil) {
+            this(stopCode, stopSequence, observedAt, assumedSpeedKmh, allowedSpeedReductionsKmh,
+                    allowedDurationsSeconds, estimatedArrivalAt, freshUntil, null);
+        }
+
         public Progress(String stopCode, int stopSequence, Instant observedAt, int assumedSpeedKmh,
                 List<Integer> allowedSpeedReductionsKmh, List<Integer> allowedDurationsSeconds) {
             this(stopCode, stopSequence, observedAt, assumedSpeedKmh, allowedSpeedReductionsKmh,

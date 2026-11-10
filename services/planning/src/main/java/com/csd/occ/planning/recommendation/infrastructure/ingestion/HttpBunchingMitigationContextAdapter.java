@@ -5,6 +5,7 @@ import com.csd.occ.planning.diagnosis.domain.PlanningScopePort;
 import com.csd.occ.planning.recommendation.domain.BunchingMitigationContextPort;
 import com.csd.occ.planning.recommendation.domain.BunchingMitigationInputs;
 import com.csd.occ.planning.recommendation.domain.ConfirmedBunchingEvent;
+import com.csd.occ.planning.recommendation.domain.BunchingRecommendationPolicy;
 import com.csd.occ.planning.recommendation.domain.CrowdSafetyStatus;
 import com.csd.occ.planning.recommendation.domain.FollowingBusState;
 import com.csd.occ.planning.recommendation.domain.MitigationValidationStatus;
@@ -22,9 +23,6 @@ import org.springframework.stereotype.Component;
 @Component
 @Primary
 public class HttpBunchingMitigationContextAdapter implements BunchingMitigationContextPort {
-    private static final int MAXIMUM_HOLD_SECONDS = 120;
-    private static final int MAXIMUM_DWELL_ADJUSTMENT_SECONDS = 75;
-
     private final PlanningScopePort scopes;
     private final AdvisoryContextPort context;
     private final ClasspathBunchingMitigationContextAdapter fallback;
@@ -55,7 +53,8 @@ public class HttpBunchingMitigationContextAdapter implements BunchingMitigationC
                         && busIds.contains(group.followingBusReference())) {
                     var mitigation = new ValidatedMitigationContext(
                             group.followingBusReference(), busIds, event.monitoredStopCode(), FollowingBusState.READY_TO_DEPART,
-                            MAXIMUM_HOLD_SECONDS, MAXIMUM_DWELL_ADJUSTMENT_SECONDS, CrowdSafetyStatus.PASSED,
+                            BunchingRecommendationPolicy.SIMULATION_MAXIMUM_HOLD_SECONDS,
+                            BunchingRecommendationPolicy.SIMULATION_MAXIMUM_DWELL_SECONDS, CrowdSafetyStatus.PASSED,
                             MitigationValidationStatus.VALIDATED, event.evidenceIds());
                     int observedHeadway = event.observedHeadwaySeconds().getLast();
                     var impact = new SimulatedImpactEstimate(observedHeadway, event.expectedHeadwaySeconds(), 0, 0,

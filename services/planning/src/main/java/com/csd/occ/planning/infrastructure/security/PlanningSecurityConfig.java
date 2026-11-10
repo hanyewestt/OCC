@@ -46,6 +46,7 @@ public class PlanningSecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/v1/planning/captain/instructions").hasRole("CAPTAIN")
                         .requestMatchers(HttpMethod.POST, "/api/v1/planning/captain/instructions/*/acknowledgements").hasRole("CAPTAIN")
                         .requestMatchers("/api/v1/planning/captain/**").denyAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/planning/recommendations/*/refresh").hasRole("CONTROLLER")
                         .requestMatchers("/api/v1/**").hasAnyRole("ADMIN", "CONTROLLER")
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")
                         .hasAnyRole("ADMIN", "CONTROLLER")

@@ -71,34 +71,31 @@ public class BunchingInstructionService {
         if (!new java.util.HashSet<>(actions.stream().map(ReplacementBusInstruction::busReference).toList())
                 .equals(new java.util.HashSet<>(allowedReferences)))
             throw new AdvisoryConflictException("An outcome is required for every affected bus");
-        var permittedType = record.mitigationContext().followingBusState() == FollowingBusState.READY_TO_DEPART
-                ? MitigationType.HOLD : MitigationType.DWELL_ADJUSTMENT;
-        int maxSeconds = Math.min(record.bunchingEvent().expectedHeadwaySeconds()
-                - record.bunchingEvent().observedHeadwaySeconds().getLast(),
-                permittedType == MitigationType.HOLD ? record.mitigationContext().maximumHoldSeconds()
-                        : record.mitigationContext().maximumDwellAdjustmentSeconds());
-        final int allowedSeconds = Math.min(maxSeconds, 120);
+        boolean refreshed = record.revisionRawObservationId() != null;
+        boolean grouped = allowedReferences.size() > 1;
         if (actions.stream().anyMatch(action -> action.type() == null
                 ? action.seconds() != 0 || action.noInstructionReason() == null || action.noInstructionReason().isBlank()
                     || action.noInstructionReason().strip().length() > 480
                 : action.type() == MitigationType.SKIP_STOP ? action.seconds() != 0 || action.noInstructionReason() != null
-                : action.type() != permittedType || action.seconds() < 1 || action.seconds() > allowedSeconds
-                    || action.noInstructionReason() != null))
+                : !List.of(MitigationType.HOLD, MitigationType.DWELL_ADJUSTMENT).contains(action.type())
+                    || action.seconds() < 1 || action.seconds() > 120 || action.noInstructionReason() != null))
             throw new AdvisoryConflictException("A bus instruction exceeds the validated action or duration limits");
-        var primary = actions.stream().filter(action -> action.busReference().equals(target)).findFirst().orElseThrow();
-        var primaryType = primary.type() == null || primary.type() == MitigationType.SKIP_STOP ? recommendation.mitigationType() : primary.type();
-        var primarySeconds = primary.type() == null || primary.type() == MitigationType.SKIP_STOP ? recommendation.adjustmentSeconds() : primary.seconds();
-        var candidate = new MitigationCandidate(CandidateMitigationType.valueOf(primaryType.name()), target,
-                recommendation.controlStopCode(), primarySeconds, rationale == null ? "Controller approved validated recommendation" : rationale);
-        if (!(new BunchingMitigationCandidateValidator().validate(new MitigationCandidateRequest(record.classification(),
-                record.bunchingEvent(), record.diagnosis(), record.mitigationContext()), candidate)
-                instanceof MitigationCandidateValidationResult.Accepted))
-            throw new AdvisoryConflictException("Stored recommendation no longer satisfies HOLD/DWELL safety rules");
+        var primary = actions.getFirst();
+        String instructionRationale = rationale == null ? "Controller approved validated recommendation" : rationale;
+        if (!grouped && primary.type() != null && primary.type() != MitigationType.SKIP_STOP) {
+            var candidate = new MitigationCandidate(CandidateMitigationType.valueOf(primary.type().name()), target,
+                    recommendation.controlStopCode(), primary.seconds(), instructionRationale);
+            if (!(new BunchingMitigationCandidateValidator().validate(new MitigationCandidateRequest(record.classification(),
+                    record.bunchingEvent(), record.diagnosis(), record.mitigationContext()), candidate)
+                    instanceof MitigationCandidateValidationResult.Accepted))
+                throw new AdvisoryConflictException("Stored recommendation no longer satisfies HOLD/DWELL safety rules");
+        }
         var auditInstructions = actions.stream().map(action -> new ControllerBusInstruction(action.busReference(),
                 action.type() == null ? "NO INSTRUCTION: " + action.noInstructionReason().strip()
                         : action.type() == MitigationType.SKIP_STOP ? "SKIP STOP " + recommendation.controlStopCode()
                         : action.type() == MitigationType.HOLD ? "HOLD FOR " + action.seconds() + "s at next stop"
                         : "EXTEND DWELL BY " + action.seconds() + "s at stop " + recommendation.controlStopCode())).toList();
+        boolean reviewed = decisions.findDecision(id).isPresent();
         decisions.decide(id, decisionAction, actor,
                 decisionAction == RecommendationDecisionAction.APPROVED ? List.of() : auditInstructions, rationale);
         var existing = instructions.findByProposalIdForUpdate(id);
@@ -108,12 +105,13 @@ public class BunchingInstructionService {
                 throw new AdvisoryConflictException("Bunching recommendation was already issued with a different instruction set");
             return existing;
         }
+        if (reviewed && actions.stream().allMatch(action -> action.type() == null)) return List.of();
         var run = scopes.current().demoRunId();
         if (run == null) throw new AdvisoryConflictException("No active synthetic run");
         var hazard = context.hazard(record.bunchingEvent().bunchingEventId());
         if (!"ACTIVE".equals(hazard.status()) || !run.equals(hazard.demoRunId()))
             throw new AdvisoryConflictException("Bunching episode is no longer active in this run");
-        if (allowedReferences.size() > 1) {
+        if (allowedReferences.size() > 1 && !refreshed) {
             AdvisoryContextPort.BunchingGroup group;
             try { group = context.bunchingGroup(run, record.bunchingEvent().bunchingEventId()); }
             catch (RuntimeException unavailable) { throw new AdvisoryConflictException("Cannot revalidate the affected bus group"); }
@@ -133,8 +131,8 @@ public class BunchingInstructionService {
                         && b.directionId() == record.bunchingEvent().directionId()
                         && (java.util.Objects.equals(b.busId(), reference) || java.util.Objects.equals(b.registrationNumber(), reference))).count() != 1))
             throw new AdvisoryConflictException("An affected bus is unavailable or ambiguous in the current fleet");
+        AdvisoryContextPort.CurrentBunchingGroup currentGroup;
         {
-            AdvisoryContextPort.CurrentBunchingGroup currentGroup;
             try { currentGroup = context.currentBunchingGroup(run, record.bunchingEvent().bunchingEventId()); }
             catch (RuntimeException unavailable) { throw new AdvisoryConflictException("Current bunching evidence unavailable; review again when it is available"); }
             var now = clock.instant();
@@ -143,10 +141,12 @@ public class BunchingInstructionService {
                     || !record.bunchingEvent().serviceId().equals(currentGroup.serviceId())
                     || record.bunchingEvent().directionId() != currentGroup.directionId()
                     || !record.bunchingEvent().monitoredStopCode().equals(currentGroup.stopCode())
-                    || currentGroup.rawObservationId() == null || currentGroup.fetchedAt() == null
-                    || currentGroup.validUntil() == null || currentGroup.fetchedAt().isAfter(now)
-                    || !now.isBefore(currentGroup.validUntil()) || currentGroup.affectedBusReferences() == null)
+                    || !currentGroup.isFreshAt(now) || currentGroup.affectedBusReferences() == null)
                 throw new AdvisoryConflictException("Current bunching evidence unavailable or expired; review again");
+            if (refreshed
+                    && (!record.revisionRawObservationId().equals(currentGroup.rawObservationId())
+                        || !record.mitigationContext().currentPredictionGaps().equals(currentGroup.adjacentGapSeconds())))
+                throw new AdvisoryConflictException("The reviewed prediction snapshot changed; refresh the recommendation");
             var currentReferences = currentGroup.affectedBusReferences();
             if (currentReferences.size() != allowedReferences.size()
                     || currentReferences.stream().anyMatch(reference -> reference == null || reference.isBlank()
@@ -191,21 +191,47 @@ public class BunchingInstructionService {
                     && b.directionId() == record.bunchingEvent().directionId()
                     && (java.util.Objects.equals(b.busId(), action.busReference()) || java.util.Objects.equals(b.registrationNumber(), action.busReference())))
                     .toList();
-            if (buses.size() != 1 || buses.getFirst().captainUserId() == null || buses.getFirst().progress() == null)
-                throw new AdvisoryConflictException("Unique current captain assignment and progress required for " + action.busReference());
+            if (buses.size() != 1 || buses.getFirst().captainUserId() == null)
+                throw new AdvisoryConflictException("Current captain assignment is unavailable for " + action.busReference());
             var bus = buses.getFirst();
+            if (bus.progress() == null)
+                throw new AdvisoryConflictException("Current bus progress is unavailable for " + action.busReference());
             var stops = context.route(bus.serviceId()).operators().stream().flatMap(o -> o.directions().stream())
                     .filter(d -> d.directionId() == bus.directionId()).flatMap(d -> d.stops().stream())
                     .filter(s -> s.stopCode().equals(recommendation.controlStopCode()) && s.stopSequence() >= bus.progress().stopSequence())
                     .toList();
             if (stops.size() != 1) throw new AdvisoryConflictException("Upcoming control stop unavailable or ambiguous for " + action.busReference());
             var stop = stops.getFirst();
-            if (action.type() == MitigationType.SKIP_STOP && (bus.progress().estimatedArrivalAt() == null
+            if (((grouped && action.type() == MitigationType.HOLD) || action.type() == MitigationType.SKIP_STOP) && (bus.progress().estimatedArrivalAt() == null
                     || bus.progress().freshUntil() == null || bus.progress().observedAt() == null
                     || bus.progress().observedAt().isAfter(clock.instant())
                     || !clock.instant().isBefore(bus.progress().freshUntil())
                     || !clock.instant().isBefore(bus.progress().estimatedArrivalAt())))
-                throw new AdvisoryConflictException("Skip stop requires a fresh prediction for an upcoming stop for " + action.busReference());
+                throw new AdvisoryConflictException((action.type() == MitigationType.SKIP_STOP
+                        ? "Skip stop requires a fresh prediction for an upcoming stop for "
+                        : "Hold requires a fresh prediction for an upcoming stop for ") + action.busReference());
+            if (grouped && action.type() == MitigationType.DWELL_ADJUSTMENT) {
+                var progress = bus.progress();
+                var now = clock.instant();
+                if (!stop.stopCode().equals(progress.stopCode()) || stop.stopSequence() != progress.stopSequence()
+                        || !currentGroup.fetchedAt().equals(progress.observedAt())
+                        || progress.estimatedArrivalAt() == null || now.isBefore(progress.estimatedArrivalAt())
+                        || progress.boardingUntil() == null || !now.isBefore(progress.boardingUntil())
+                        || progress.freshUntil() == null || !now.isBefore(progress.freshUntil())
+                        || !currentGroup.isFreshAt(now))
+                    throw new AdvisoryConflictException("Dwell adjustment requires current boarding evidence for " + action.busReference());
+            }
+            if (grouped && action.type() != MitigationType.SKIP_STOP) {
+                int position = allowedReferences.indexOf(action.busReference());
+                var gaps = currentGroup.adjacentGapSeconds();
+                if (position == 0 || gaps == null || gaps.size() != allowedReferences.size() - 1
+                        || gaps.get(position - 1) == null || gaps.get(position - 1) < 0
+                        || action.seconds() > record.bunchingEvent().expectedHeadwaySeconds() - gaps.get(position - 1))
+                    throw new AdvisoryConflictException("Instruction exceeds the current prediction gap limit for " + action.busReference());
+                if (action.type() == MitigationType.DWELL_ADJUSTMENT
+                        && action.seconds() > BunchingRecommendationPolicy.SIMULATION_MAXIMUM_DWELL_SECONDS)
+                    throw new AdvisoryConflictException("Dwell adjustment exceeds the simulation limit for " + action.busReference());
+            }
             for (var active : currentInstructions.captain(bus.captainUserId().toString()))
                 if (active.type() != InstructionType.BE_CAUTIOUS && !active.id().equals(replaceInstructionId))
                     throw new AdvisoryConflictException("Active movement instruction " + active.id() + " must be replaced first");
@@ -216,11 +242,22 @@ public class BunchingInstructionService {
                     : instructionType == InstructionType.HOLD ? "Hold at " + stop.description() + " for " + action.seconds() + " sec."
                     : "Extend dwell at " + stop.description() + " by " + action.seconds() + " sec.";
             var instructionId = index == 0 ? id : UUID.randomUUID();
-            issued.add(instructions.saveAndFlush(new IssuedInstruction(instructionId, id, replaceInstructionId,
-                    hazard.disruptionId(), run, bus, new AdvisoryCandidate(instructionType, parameters, candidate.rationale()),
-                    message, "SIMULATION", actor, clock.instant(), context.limits().acknowledgementWindow())));
+            var instruction = new IssuedInstruction(instructionId, id, replaceInstructionId,
+                    hazard.disruptionId(), run, bus, new AdvisoryCandidate(instructionType, parameters, instructionRationale),
+                    message, "SIMULATION", actor, clock.instant(), context.limits().acknowledgementWindow());
+            try {
+                issued.add(instructions.saveAndFlush(instruction));
+            } catch (RuntimeException failure) {
+                throw new DeliveryException(action.busReference(), failure);
+            }
         }
         return List.copyOf(issued);
+    }
+
+    public static class DeliveryException extends RuntimeException {
+        public DeliveryException(String busReference, Throwable cause) {
+            super("Instruction delivery failed for " + busReference + ". No bus outcomes were saved.", cause);
+        }
     }
 
     public record ReplacementBusInstruction(String busReference, MitigationType type, int seconds, String noInstructionReason) {

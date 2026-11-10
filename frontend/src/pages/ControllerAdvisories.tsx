@@ -349,7 +349,9 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       {!instructions.isLoading && instructions.error === null && instructions.latestPage && !instructions.items.length && <p className="text-sm text-muted-foreground">No issued instructions in this run.</p>}
       {!!instructions.items.length && <ScrollArea role="region" aria-label="Issued instructions" tabIndex={0} className="max-h-[28rem]"
         viewportProps={{ onScroll: instructions.onScroll }}><div className="space-y-3 p-1 pr-3.5">{instructions.items.map(i => <Card key={i.id} className="min-h-28"><CardContent className="flex flex-wrap items-center justify-between gap-4">
-          <div className="space-y-1"><p className="font-medium">{i.message}</p><p className="text-xs text-muted-foreground">{i.busId} · {i.status}{i.acknowledgedAt ? ` · Acknowledged ${formatSgtDateTime(i.acknowledgedAt)}` : ''}</p></div>
+          <div className="space-y-1"><p className="font-medium">{i.message}</p><p className="text-xs text-muted-foreground">{i.busId} · {i.status}{i.acknowledgedAt ? ` · Acknowledged ${formatSgtDateTime(i.acknowledgedAt)}`
+            : i.status === 'ISSUED' ? ` · Awaiting acknowledgement by ${formatSgtDateTime(i.acknowledgementDeadline)}`
+            : i.status === 'EXPIRED' && i.inactiveReason === 'VALIDITY_EXPIRED' ? ' · Acknowledgement deadline missed' : ''}</p></div>
           {['ISSUED', 'ACKNOWLEDGED'].includes(i.status) && <Button variant="outline" disabled={pending} onClick={() => void submit(`/api/v1/planning/instructions/${i.id}/cancellations`)}>Cancel instruction</Button>}
         </CardContent></Card>)}</div></ScrollArea>}
       <PagedCollectionControls label="instructions" hasItems={!!instructions.items.length} hasMore={instructions.hasMore}
