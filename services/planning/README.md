@@ -219,7 +219,7 @@ published by that request. AI receives no bus, captain, account, or run IDs,
 must preserve a source restriction, and can select only supplied services and
 locations. Cleared sources are rejected.
 
-JWT settings are shared with Gateway: `SUPABASE_PROJECT_URL`,
+JWT settings are shared across the three backend services: `SUPABASE_PROJECT_URL`,
 `SUPABASE_JWKS_URL`, `SUPABASE_JWT_AUDIENCE`, `SUPABASE_JWT_CLOCK_SKEW`, and
 `SUPABASE_JWT_ALLOWED_ALGORITHMS`. The issuer is derived from the project URL;
 the role converter trusts only the top-level `occ_role` claim.

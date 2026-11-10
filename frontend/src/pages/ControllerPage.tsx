@@ -491,9 +491,9 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           nowMs={Date.parse(alertCollection.lastSuccessAt ?? '') || 0}
           onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { void requestRefresh('mutation') }} />}
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} suggestions={suggestionCollection} aiAudits={aiAuditCollection} loading={loading} />}
-        {pathname !== '/controller' && !pathname.endsWith('/planning') && loaded === requestKey && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
+        {pathname !== '/controller' && loaded === requestKey && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
           registerRefresh={registerAdvisoryRefresh} onRefresh={() => { void requestRefresh('mutation') }} onPendingChange={setAdvisoryPending} onRefreshTimeChange={reportAdvisoryRefresh}
-          view={pathname.endsWith('/disruptions') ? 'hazards' : pathname.endsWith('/notices') ? 'notices' : 'audit'} />}
+          view={pathname.endsWith('/disruptions') ? 'hazards' : pathname.endsWith('/planning') ? 'planning' : pathname.endsWith('/notices') ? 'notices' : 'audit'} />}
       </div>
     </div>
   </div>

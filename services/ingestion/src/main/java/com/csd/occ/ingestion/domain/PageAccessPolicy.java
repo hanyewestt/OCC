@@ -1,4 +1,4 @@
-package com.csd.occ.gateway.domain;
+package com.csd.occ.ingestion.domain;
 
 import java.util.Set;
 

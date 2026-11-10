@@ -1,6 +1,6 @@
-package com.csd.occ.gateway.api;
+package com.csd.occ.ingestion.api;
 
-import com.csd.occ.gateway.domain.FrontendConfig;
+import com.csd.occ.ingestion.domain.FrontendConfig;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;

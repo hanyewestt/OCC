@@ -1,6 +1,6 @@
 # Authentication
 
-The React app is served by Nginx; Gateway and Java services host APIs only.
+The React app is served by Nginx; the Java services host APIs only.
 Open `/login` using the configured Nginx host/port. Sign in with an existing
 Supabase email/password account. Registration and password reset are outside
 this starter app.
@@ -12,23 +12,23 @@ this starter app.
 - `ADMIN`, `UNASSIGNED` and unsupported claims receive an access message and
   sign-out; ADMIN does not override these page permissions.
 
-React waits for Gateway verification before rendering role content. Static
-HTML/JavaScript are public assets; route guards are not backend access control.
-Gateway independently verifies token signature, issuer, audience, expiry and
-subject and normalizes the trusted top-level `occ_role` claim.
+React waits for Ingestion's session verification before rendering role content.
+Static HTML/JavaScript are public assets; route guards are not backend access
+control. Each backend independently verifies token signature, issuer, audience,
+expiry and subject and normalizes the trusted top-level `occ_role` claim.
 
 `GET /api/v1/auth/session` returns `{subject, role}` for an authenticated token;
 missing/unrecognized roles normalize to `UNASSIGNED`. The controller/captain
 page check `GET /api/v1/auth/access/{page}` returns the same identity only for
 the matching role. Wrong roles receive 403, unsupported page names 404, and
-missing/invalid/expired tokens 401. These Gateway-owned routes are excluded
-from its Ingestion catch-all proxy. Existing business APIs still permit only
+missing/invalid/expired tokens 401. Ingestion owns these routes and Nginx
+routes them directly. Existing business APIs still permit only
 ADMIN/CONTROLLER; CAPTAIN receives no new business API permissions.
 
 ## Persistent browser sessions
 
 The Supabase SDK handles email/password sign-in, browser-storage persistence
-and token refresh. Reloading/restoring the app requires Gateway verification
+and token refresh. Reloading/restoring the app requires session verification
 before role content appears. A failed verification grants no access and offers
 retry/sign-out. Session changes clear prior verified content and pending results.
 
@@ -42,7 +42,7 @@ MFA, registration, password recovery or administrator dashboard are added.
 
 ## Configuration
 
-Use root `.env.example` as the single inventory. Gateway publishes only
+Use root `.env.example` as the single inventory. Ingestion publishes only
 `SUPABASE_PROJECT_URL` and the public `SUPABASE_SB_PUBLISHABLE` key through
 `GET /frontend-config`. Private/service-role keys must never reach the browser.
 JWT validation uses the separate JWKS URL, allowed algorithms and audience.
@@ -55,18 +55,19 @@ backend APIs independently enforce ADMIN/CONTROLLER access. The retired
 
 ## Verification
 
-Gateway tests cover the role matrix and JWT rejection. Browser tests mock
-Supabase/Gateway responses and cover UI navigation and session lifecycle.
+Ingestion tests cover the role matrix and JWT rejection. Browser tests mock
+Supabase/API responses and cover UI navigation and session lifecycle.
 For an opt-in live check using configured test accounts:
 
 ```shell
 node --env-file=.env tests/system/supabase_live_auth_smoke.mjs
 ```
 
-This contacts real Supabase, validates JWTs, checks Gateway permissions,
+This contacts real Supabase, validates JWTs, checks edge and service permissions,
 refreshes and signs out the test accounts locally. It does not run by default
-and does not print tokens/passwords. See the [Gateway README](../services/gateway/README.md)
-for its environment settings. Never use production operator accounts for automated tests.
+and does not print tokens/passwords. Point `OCC_SUPABASE_TEST_EDGE_URL` at the
+Nginx edge (the legacy `OCC_SUPABASE_TEST_GATEWAY_URL` name is still read).
+Never use production operator accounts for automated tests.
 
 Live checks use only `OCC_SUPABASE_TEST_CAPTAIN_EMAIL` and
 `OCC_SUPABASE_TEST_CAPTAIN_PASSWORD`. Use the `CAPTAIN` account label when

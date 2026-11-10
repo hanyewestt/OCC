@@ -79,7 +79,7 @@ def main() -> int:
                      and item.get("incidentType") == "Road Works"
                      and item.get("message") == EXPECTED_MESSAGE), None)
 
-    incident = wait_for(active_incident, "live-provider observation is active through Gateway", args.timeout)
+    incident = wait_for(active_incident, "live-provider observation is active through the edge", args.timeout)
     if incident.get("demoRunId") is not None:
         raise AssertionError("provider observation was incorrectly associated with a demo run")
 

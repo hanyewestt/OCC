@@ -188,7 +188,7 @@ def main() -> int:
     if status != 201 or not isinstance(run, dict) or not run.get("id"):
         raise AssertionError(f"start demo run: expected HTTP 201 and run id, got {status}: {run}")
     run_id = run["id"]
-    print("PASS Gateway starts a deterministic simulation run")
+    print("PASS the edge starts a deterministic simulation run")
 
     run_path = f"/api/v1/demo-runs/{run_id}"
     completed = wait_until(
@@ -281,7 +281,7 @@ def main() -> int:
     if recommendation.get("status") not in {"RECOMMENDED", "NO_ACTIONABLE_RECOMMENDATION"}:
         raise AssertionError(f"unexpected recovered recommendation status: {recommendation.get('status')!r}")
     recommendation_id = recommendation["recommendationId"]
-    print("PASS recovered recommendation is queryable through the existing Gateway workflow")
+    print("PASS recovered recommendation is queryable through the existing edge workflow")
 
     compose(args.compose_project, "restart", "planning", "disruption", timeout=45)
     wait_healthy(args.compose_project, "planning")

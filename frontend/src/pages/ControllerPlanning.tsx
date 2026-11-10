@@ -146,6 +146,10 @@ function buildCorridorGroups(
 
     matchingRequests.forEach(r => matchedRequestIds.add(r.requestId))
 
+    // A detection without a durable Planning request has no actionable identity.
+    // Keep it on Disruptions rather than selecting an empty planning detail.
+    if (!matchingRequests.length) continue
+
     const isCompleted = matchingRequests.length > 0 && matchingRequests.every(r => r.status === 'COMPLETED')
     const isProcessing = matchingRequests.some(r => r.status === 'PROCESSING')
     const isFailed = matchingRequests.some(r => r.status.startsWith('FAILED'))
@@ -353,10 +357,13 @@ export function ControllerPlanning({
 
   const scopeFilter: 'active' | 'today' | 'all' = useMemo(() => {
     if (explicitScope) return explicitScope
+    // Simulation requests already belong to the selected run. Keep unfinished
+    // work visible even when its replay timestamps predate today.
+    if (mode === 'DEMO') return 'all'
     // Smart default on deep link: if user linked to an incident that has already cleared on road, default to 'today'
     if (matchedCorridor && !matchedCorridor.isLive) return 'today'
     return 'active'
-  }, [explicitScope, matchedCorridor])
+  }, [explicitScope, matchedCorridor, mode])
 
   // Filter corridors by scope
   const filteredCorridors = useMemo(() => {
@@ -650,7 +657,7 @@ export function ControllerPlanning({
               <div className="flex items-center gap-2">
                 <span className="font-medium">Service {group.serviceId} · Direction {group.directionId ?? 1}</span>
                 {group.isLive ? (
-                  <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                  <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-800 dark:text-emerald-400">
                     Live on route
                   </span>
                 ) : (
@@ -722,7 +729,7 @@ export function ControllerPlanning({
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-semibold">Service {selectedCorridor.serviceId} · Direction {selectedCorridor.directionId ?? 1}</h2>
             {selectedCorridor.isLive ? (
-              <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+              <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-800 dark:text-emerald-400">
                 Live on route
               </span>
             ) : (
@@ -819,7 +826,7 @@ function DiagnosisRequestDetail({ request, corridor, detectedBusReferences, gene
         <div className="flex items-center gap-2">
           <h2 className="text-lg font-semibold">Service {request.serviceId ?? 'unknown'} · Direction {request.directionId ?? 'unknown'}</h2>
           {corridor?.isLive ? (
-            <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+            <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-800 dark:text-emerald-400">
               Live on route
             </span>
           ) : (

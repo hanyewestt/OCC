@@ -6,7 +6,8 @@ ARG OCC_SERVICE
 ARG OCC_SERVICE_INTERNAL_PORT
 
 WORKDIR /workspace
-RUN apt-get update \
+RUN sed -i 's#http://archive.ubuntu.com#https://archive.ubuntu.com#g; s#http://security.ubuntu.com#https://security.ubuntu.com#g' /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update \
     && apt-get install --no-install-recommends -y unzip \
     && rm -rf /var/lib/apt/lists/*
 COPY .mvn/ .mvn/
@@ -14,8 +15,8 @@ COPY mvnw mvnw.cmd pom.xml ./
 COPY services/ services/
 
 RUN --mount=type=cache,id=occ-maven-${OCC_SERVICE},target=/root/.m2 \
-    case "${OCC_SERVICE}" in ingestion|disruption|planning|gateway) ;; \
-      *) echo "OCC_SERVICE must name one of the four phase-one applications" >&2; exit 1 ;; \
+    case "${OCC_SERVICE}" in ingestion|disruption|planning) ;; \
+      *) echo "OCC_SERVICE must name one of the three application services" >&2; exit 1 ;; \
     esac \
     && test -n "${OCC_SERVICE_INTERNAL_PORT}" \
     && chmod +x mvnw \
@@ -26,7 +27,8 @@ FROM ${RUNTIME_IMAGE} AS runtime
 ARG OCC_SERVICE
 ARG OCC_SERVICE_INTERNAL_PORT
 
-RUN apt-get update \
+RUN sed -i 's#http://archive.ubuntu.com#https://archive.ubuntu.com#g; s#http://security.ubuntu.com#https://security.ubuntu.com#g' /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update \
     && apt-get upgrade -y \
     && apt-get install --no-install-recommends -y curl libbrotli1 \
     && rm -rf /var/lib/apt/lists/*
