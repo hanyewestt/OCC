@@ -211,7 +211,7 @@ does not disable or remove targets previously created for a service that is late
 removed from the setting. Disable or remove those `ingestion.poll_target` rows
 through an explicit operational change when reducing coverage.
 
-With the service running in Compose, browse the interactive API at `http://localhost:<OCC_INGESTION_PORT>/swagger-ui.html` (default host port `6767`). These read-only endpoints return paginated envelopes except feed status and reference topology:
+With the service running in Compose, browse the interactive API at `http://localhost:<OCC_INGESTION_PORT>/swagger-ui/index.html` (default host port `6767`). These read-only endpoints return paginated envelopes except feed status and reference topology:
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -302,7 +302,7 @@ occurrences therefore remain `null`. Disruption uses these fields only to suppre
 an exact same-pair, same-sweep duplicate Planning diagnosis; they are not exposed as
 stable vehicle identities, and missing or ambiguous evidence is never deduplicated.
 
-The machine-readable OpenAPI document is at `/v3/api-docs`.
+The machine-readable OpenAPI document is served statically at `/v3/ingestion.json`.
 
 Current arrivals can be filtered by a trimmed, case-insensitive literal substring
 of the version-matched stop name through `stopName`. It is combined with the exact
@@ -353,34 +353,24 @@ explicit `missingFields` list. It never returns `OBSERVATION_ONLY` records to a
 simulation diagnosis. Incident `observedAt` is retained when supplied; the fictional
 replay uses its actual simulation timestamp rather than leaving the field absent.
 
-To export the runtime-generated contract, start the local Compose stack and set a
-short-lived ADMIN or CONTROLLER access token in the current shell only. Do not put
-the token in `.env`, a command history, or a committed file. Then run from the repo
-root:
+The running service serves the committed contract at `/v3/ingestion.json` and the
+Swagger UI at `/swagger-ui/index.html`. springdoc is a test-only dependency, so the
+application itself generates neither. Both require an ADMIN or CONTROLLER bearer
+token, so a plain browser tab gets `401`; use a token-aware proxy or an extension
+that adds the `Authorization` header.
 
-```powershell
-$env:OCC_OPENAPI_EXPORT_TOKEN = '<short-lived access token>'
-.\mvnw.cmd -pl services/ingestion -Popenapi org.springdoc:springdoc-openapi-maven-plugin:1.5:generate "-Dopenapi.apiDocsUrl=http://localhost:6767/v3/api-docs"
-Remove-Item Env:OCC_OPENAPI_EXPORT_TOKEN
-```
-
-```bash
-export OCC_OPENAPI_EXPORT_TOKEN='<short-lived access token>'
-./mvnw -pl services/ingestion -Popenapi org.springdoc:springdoc-openapi-maven-plugin:1.5:generate -Dopenapi.apiDocsUrl=http://localhost:6767/v3/api-docs
-unset OCC_OPENAPI_EXPORT_TOKEN
-```
-
-This writes `services/ingestion/openapi/ingestion.json`. The export uses the same
-running application endpoint as Swagger UI, so it includes the actual controllers,
-DTOs, annotations and active Spring configuration.
-
-Alternatively, without a live token, run the opt-in export test, which starts the
-application against a disposable PostgreSQL container (Docker required) and writes
-the same file using a synthetic ADMIN test token:
+To refresh the checked-in OpenAPI contract, run the opt-in export test from the
+repository root (Docker provides the disposable PostgreSQL container). It writes
+`services/ingestion/openapi/ingestion.json` using a synthetic ADMIN test token, so
+no live credential is needed:
 
 ```shell
 ./mvnw -pl services/ingestion verify "-Docc.exportOpenapi=true"
 ```
+
+Commit the regenerated file. The build packages it as the served contract, and the
+export test fails when the packaged copy differs from the generated one. The
+`-Popenapi` profile still works against any process that serves `/v3/api-docs`.
 
 A missing or invalid DataMall key can produce request errors even if the application starts. Stop the app with Ctrl+C.
 

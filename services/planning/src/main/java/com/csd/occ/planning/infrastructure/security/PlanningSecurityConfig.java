@@ -47,7 +47,7 @@ public class PlanningSecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/v1/planning/captain/instructions/*/acknowledgements").hasRole("CAPTAIN")
                         .requestMatchers("/api/v1/planning/captain/**").denyAll()
                         .requestMatchers("/api/v1/**").hasAnyRole("ADMIN", "CONTROLLER")
-                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")
+                        .requestMatchers("/v3/**", "/swagger-ui/**", "/swagger-ui.html", "/webjars/**")
                         .hasAnyRole("ADMIN", "CONTROLLER")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(resourceServer -> resourceServer

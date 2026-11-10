@@ -26,8 +26,10 @@ is required even when Java services are built entirely in Docker.
 Compose budgets Ingestion at 640 MiB and Disruption/Planning at 512 MiB, each
 with a 192 MiB maximum Java heap. Heaps start at 32 MiB. These
 small-service defaults use Serial GC and expose two CPUs to JVM ergonomics;
-`ActiveProcessorCount` does not impose a Docker CPU quota. Database pools allow
-four connections per business service and keep one idle connection.
+`ActiveProcessorCount` does not impose a Docker CPU quota. They compile with C1
+only (`TieredStopAtLevel=1`) to bound code-cache growth, and `MALLOC_ARENA_MAX=2`
+bounds glibc allocator arenas. Database pools allow four connections per business
+service and keep one idle connection.
 
 Override `OCC_<SERVICE>_MEMORY_LIMIT` and `OCC_<SERVICE>_JAVA_TOOL_OPTIONS` in the
 root `.env` when sizing a deployment. The latter replaces the complete JVM
@@ -38,13 +40,21 @@ Spring's normal `SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE` and
 adding arbitrary variables to `.env` alone does not inject them into containers.
 Recreate affected containers after changing their environment or memory budget.
 
-Native Memory Tracking (NMT) summary is enabled in the default JVM options.
-It reports JVM allocations, not total resident RAM or all third-party native
-allocations. `reserved` is address space; `committed` is backed allocation and
-must not be confused with Docker's working-set measurement. NMT has overhead;
-remove `-XX:NativeMemoryTracking=summary` from the full option override to disable
-it, or use `detail` when allocation-site diagnostics are needed. Changing the
-tracking mode requires a restart.
+Builds copy the shared Swagger UI template from
+`${maven.multiModuleProjectDirectory}/infra/swagger-ui`. The Maven wrapper and the
+Maven CLI set that property from the directory containing `.mvn/`, so build with
+`./mvnw` at the repository root (also inside `infra/java.Dockerfile`). An embedded
+Maven runner that leaves the property unset produces a jar without the template;
+the static-asset integration test catches that.
+
+Native Memory Tracking (NMT) is not enabled by the default JVM options. Add
+`-XX:NativeMemoryTracking=summary` to the full option override when diagnosing,
+then remove it again. It reports JVM allocations, not total resident RAM or all
+third-party native allocations. `reserved` is address space; `committed` is backed
+allocation and must not be confused with Docker's working-set measurement. NMT has
+overhead, and its tracking structures inflate allocator bookkeeping. Use `detail`
+when allocation-site diagnostics are needed. Changing the tracking mode requires a
+restart.
 
 Runtime images contain a JRE rather than `jcmd`. On a local Docker engine, use
 the pinned matching JDK as an ephemeral helper sharing only the target PID
@@ -393,8 +403,10 @@ ADMIN token:
 | --- | --- | --- |
 | `/internal` and `/internal/**` | `404` in local and production | Private service-to-service APIs; no public edge route |
 | `/actuator` and `/actuator/**` | `404` in local and production | Health and management access is separate from the public app |
-| `/v3/api-docs` and `/v3/api-docs/**` | `404` in local and production | OpenAPI documents are restricted to direct development service access |
-| `/swagger-ui.html` and `/swagger-ui/**` | `404` in local and production | Swagger is a developer interface, not a public app page |
+| `/v3/` and `/v3/**` | `404` in local and production | OpenAPI contracts are restricted to direct development service access |
+| `/swagger-ui/` and `/swagger-ui/**` | `404` in local and production | Swagger is a developer interface, not a public app page |
+| `/swagger-ui.html` | `404` in local and production | Legacy developer path; the service redirects it only for direct access |
+| `/webjars/` and `/webjars/**` | `404` in local and production | Swagger UI assets back the developer interface only |
 | `/auth-test` and `/auth-test/**` | `404` in local and production | Retired temporary authentication page |
 
 Direct backend, PostgreSQL and pgAdmin ports are not published by the

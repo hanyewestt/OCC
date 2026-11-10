@@ -391,6 +391,26 @@ class IngestionStartupIT {
     }
 
     @Test
+    void servesTheStaticContractAndSwaggerUi() throws Exception {
+        var admin = jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN"));
+        var ui = mvc.perform(get("/swagger-ui/index.html").with(admin))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(ui).doesNotContain("${").doesNotContain("@project.artifactId@")
+                .contains("/v3/ingestion.json");
+        var bundle = java.util.regex.Pattern.compile("src=\"(/webjars/swagger-ui/[^\"]+/swagger-ui-bundle\\.js)\"")
+                .matcher(ui);
+        assertThat(bundle.find()).as("Swagger UI bundle path").isTrue();
+        mvc.perform(get(bundle.group(1)).with(admin)).andExpect(status().isOk());
+        mvc.perform(get("/v3/ingestion.json").with(admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.info.title").value("OCC Ingestion API"));
+        mvc.perform(get("/swagger-ui.html").with(admin))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .redirectedUrl("/swagger-ui/index.html"));
+    }
+
+    @Test
     @org.junit.jupiter.api.condition.EnabledIfSystemProperty(named = "occ.exportOpenapi", matches = "true")
     void exportsGeneratedIngestionContract() throws Exception {
         // The absolute URL reproduces the committed server URL that the runtime contract check expects.
@@ -400,6 +420,11 @@ class IngestionStartupIT {
         java.nio.file.Path output = java.nio.file.Path.of("openapi", "ingestion.json");
         java.nio.file.Files.createDirectories(output.getParent());
         java.nio.file.Files.writeString(output, contract);
+        var packaged = getClass().getResourceAsStream("/static/v3/ingestion.json");
+        assertThat(packaged).as("packaged OpenAPI contract").isNotNull();
+        assertThat(new String(packaged.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)).isEqualTo(contract);
+        mvc.perform(get("/v3/ingestion.json").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isOk()).andExpect(content().string(contract));
     }
 
     @Test void topologyPruningPreservesOldActiveAndBoundaryRetiredVersions() {
