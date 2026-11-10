@@ -56,6 +56,9 @@ public class LiveBunchingAlertController {
                 alert.demoRunId() == null ? java.util.List.of() : alert.affectedObservationIds().stream()
                         .map(id -> arrivals.findSimulationArrivalDetails(alert.demoRunId(), id))
                         .flatMap(java.util.Optional::stream).map(value -> new DemoVehicleResponse(value.registrationNumber(),
-                                value.operator(), value.vehicleType(), value.captainCode(), value.busId())).toList());
+                                value.operator(), value.vehicleType(), value.captainCode(), value.busId()))
+                        .collect(java.util.stream.Collectors.toMap(DemoVehicleResponse::busId,
+                                java.util.function.Function.identity(), (first, duplicate) -> first,
+                                java.util.LinkedHashMap::new)).values().stream().toList());
     }
 }
