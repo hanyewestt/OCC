@@ -38,7 +38,9 @@ Anonymous memory per JVM fell from 486/418/383 MB to 327/305/296 MB. The
 runtime options that changed with it: `-XX:NativeMemoryTracking=summary`
 removed, `-XX:TieredStopAtLevel=1` added, `MALLOC_ARENA_MAX=2` added, and
 PostgreSQL `shared_buffers` reduced from the image default 128 MB to 64 MB
-(`OCC_POSTGRES_SHARED_BUFFERS`).
+(`OCC_POSTGRES_SHARED_BUFFERS`). The PostgreSQL figure is the least durable:
+it reached 276 MB after a migration run and autovacuum, so treat 146 MB as a
+cold-start sample and 276 MB as the settled upper bound.
 
 Limits of that measurement: it is idle, not under load, and it aggregates four
 independent changes, so it does not attribute the saving to springdoc alone.
