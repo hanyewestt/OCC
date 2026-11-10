@@ -21,6 +21,8 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <springdoc.version>3.1.1</springdoc.version>
         <springdoc-maven-plugin.version>1.5</springdoc-maven-plugin.version>
+        <swagger-annotations.version>2.2.55</swagger-annotations.version>
+        <swagger-ui.version>5.32.14</swagger-ui.version>
         <openapi.apiDocsUrl>http://localhost:8080/v3/api-docs</openapi.apiDocsUrl>
         <spring-ai.version>2.0.1</spring-ai.version>
         <tomcat.version>11.0.27</tomcat.version>
@@ -42,6 +44,22 @@
     </modules>
 
     <build>
+        <!-- The committed contract and the shared Swagger UI ship as static
+             resources, so the runtime needs no spec generator. -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <directory>${project.basedir}/openapi</directory>
+                <targetPath>static/v3</targetPath>
+            </resource>
+            <resource>
+                <directory>${maven.multiModuleProjectDirectory}/infra/swagger-ui</directory>
+                <targetPath>static/swagger-ui</targetPath>
+                <filtering>true</filtering>
+            </resource>
+        </resources>
         <pluginManagement>
             <plugins>
                 <plugin>
