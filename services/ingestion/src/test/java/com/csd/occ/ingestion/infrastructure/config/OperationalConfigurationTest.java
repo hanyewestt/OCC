@@ -40,6 +40,29 @@ class OperationalConfigurationTest {
     }
 
     @Test
+    void relocatedFrontendConfigurationKeepsItsDefaults() {
+        Binder binder = configuration(Map.of());
+        assertThat(binder.bind("occ.frontend.controller-refresh-interval", Duration.class).get())
+                .isEqualTo(Duration.ofSeconds(30));
+        assertThat(binder.bind("occ.frontend.ingestion-poll-interval", Duration.class).get())
+                .isEqualTo(Duration.ofSeconds(60));
+        assertThat(binder.bind("occ.frontend.captain-refresh-interval", Duration.class).get())
+                .isEqualTo(Duration.ofSeconds(5));
+        assertThat(binder.bind("occ.frontend.public-notice-refresh-interval", Duration.class).get())
+                .isEqualTo(Duration.ofSeconds(30));
+    }
+
+    @Test
+    void relocatedFrontendConfigurationKeepsItsAliases() {
+        Binder binder = configuration(Map.of("OCC_CONTROLLER_DATA_REFRESH_INTERVAL", "45s",
+                "OCC_ROUTE_INCIDENT_GAP_TOLERANCE", "25s"));
+        assertThat(binder.bind("occ.frontend.controller-refresh-interval", Duration.class).get())
+                .isEqualTo(Duration.ofSeconds(45));
+        assertThat(binder.bind("occ.frontend.route-incident-gap-tolerance", Duration.class).get())
+                .isEqualTo(Duration.ofSeconds(25));
+    }
+
+    @Test
     void existingAliasesRemainSupported() {
         Binder binder = configuration(Map.of("OCC_INGESTION_BUS_ARRIVAL_ENABLED", "false",
                 "OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL", "90s",

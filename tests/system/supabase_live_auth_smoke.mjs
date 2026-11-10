@@ -15,13 +15,16 @@ if (unknownAccounts.length) {
   process.exit(2);
 }
 const accountNamesToCheck = requestedAccounts.length ? requestedAccounts : Object.keys(accountSettings);
+// OCC_SUPABASE_TEST_GATEWAY_URL remains a supported alias for existing tooling;
+// the canonical setting now names the Nginx edge.
+const edgeUrlSetting = process.env.OCC_SUPABASE_TEST_EDGE_URL ?? process.env.OCC_SUPABASE_TEST_GATEWAY_URL;
 const required = [
   'SUPABASE_PROJECT_URL',
   'SUPABASE_JWKS_URL',
   'SUPABASE_SB_PUBLISHABLE',
   ...accountNamesToCheck.flatMap((name) => accountSettings[name]),
 ];
-if (!supabaseOnly) required.push('OCC_SUPABASE_TEST_GATEWAY_URL');
+if (!supabaseOnly && !edgeUrlSetting) required.push('OCC_SUPABASE_TEST_EDGE_URL (or legacy OCC_SUPABASE_TEST_GATEWAY_URL)');
 const missing = required.filter((name) => !process.env[name]?.trim());
 if (missing.length) {
   console.error(`Missing live-auth settings: ${missing.join(', ')}`);
@@ -35,13 +38,13 @@ if (projectUrl.protocol !== 'https:' || projectUrl.pathname !== '/' || projectUr
 const projectBase = projectUrl.origin;
 const issuer = `${projectBase}/auth/v1`;
 const jwksUrl = new URL(process.env.SUPABASE_JWKS_URL);
-const gatewayUrl = supabaseOnly ? undefined : new URL(process.env.OCC_SUPABASE_TEST_GATEWAY_URL);
+const edgeUrl = supabaseOnly ? undefined : new URL(edgeUrlSetting);
 if (jwksUrl.protocol !== 'https:' || jwksUrl.username || jwksUrl.password || jwksUrl.hash) {
   throw new Error('JWKS URL must be a valid HTTPS endpoint without embedded credentials.');
 }
-if (gatewayUrl && ((gatewayUrl.protocol !== 'http:' && gatewayUrl.protocol !== 'https:')
-    || gatewayUrl.username || gatewayUrl.password || gatewayUrl.search || gatewayUrl.hash)) {
-  throw new Error('Gateway URL must be a valid HTTP(S) endpoint without embedded credentials.');
+if (edgeUrl && ((edgeUrl.protocol !== 'http:' && edgeUrl.protocol !== 'https:')
+    || edgeUrl.username || edgeUrl.password || edgeUrl.search || edgeUrl.hash)) {
+  throw new Error('Edge URL must be a valid HTTP(S) endpoint without embedded credentials.');
 }
 
 const timeoutMs = Number(process.env.OCC_SUPABASE_TEST_TIMEOUT_MS || 20000);
@@ -120,26 +123,26 @@ async function authPost(path, body, accessToken) {
 
 async function checkRolePages(accessToken, account) {
   const headers = { authorization: `Bearer ${accessToken}` };
-  const response = await request(new URL('/api/v1/auth/session', gatewayUrl), { headers });
-  if (!response.ok) throw new Error('Gateway status mismatch.');
+  const response = await request(new URL('/api/v1/auth/session', edgeUrl), { headers });
+  if (!response.ok) throw new Error('Edge status mismatch.');
   const identity = await response.json();
-  if (identity.role !== (account.role ?? 'UNASSIGNED')) throw new Error('Gateway status mismatch.');
+  if (identity.role !== (account.role ?? 'UNASSIGNED')) throw new Error('Edge status mismatch.');
   for (const [page, permitted] of [['controller', 'CONTROLLER'], ['captain', 'CAPTAIN']]) {
-    const result = await request(new URL(`/api/v1/auth/access/${page}`, gatewayUrl), { headers });
+    const result = await request(new URL(`/api/v1/auth/access/${page}`, edgeUrl), { headers });
     await result.arrayBuffer();
     if (result.status !== (account.role === permitted ? 200 : 403)) {
-      throw new Error('Gateway status mismatch.');
+      throw new Error('Edge status mismatch.');
     }
   }
 }
 
 async function checkProtectedRead(accessToken, expectedStatus) {
-  const response = await request(new URL(protectedPath, gatewayUrl), {
+  const response = await request(new URL(protectedPath, edgeUrl), {
     headers: accessToken ? { authorization: `Bearer ${accessToken}` } : {},
   });
   await response.arrayBuffer();
   if (response.status !== expectedStatus) {
-    throw Object.assign(new Error('Gateway status mismatch.'), { observedStatus: response.status });
+    throw Object.assign(new Error('Edge status mismatch.'), { observedStatus: response.status });
   }
 }
 
@@ -156,7 +159,7 @@ if (jwks && !supabaseOnly) {
     console.log('PASS missing bearer token is denied with HTTP 401.');
   } catch {
     failures += 1;
-    console.error('FAIL missing-token Gateway check (details withheld).');
+    console.error('FAIL missing-token edge check (details withheld).');
   }
 }
 
@@ -182,13 +185,13 @@ for (const account of accountsToTest) {
     stage = 'token validation';
     await validateToken(accessToken, account.role);
     if (!supabaseOnly) {
-      stage = 'Gateway authorization';
+      stage = 'edge authorization';
       await checkProtectedRead(accessToken, account.status);
       await checkRolePages(accessToken, account);
     }
     console.log(supabaseOnly
       ? `PASS ${account.name} sign-in and Supabase token validation.`
-      : `PASS ${account.name} sign-in token validated; Gateway returned HTTP ${account.status}.`);
+      : `PASS ${account.name} sign-in token validated; edge returned HTTP ${account.status}.`);
 
     stage = 'refresh';
     const refreshedResponse = await authPost('token?grant_type=refresh_token', { refresh_token: refreshToken });
@@ -204,13 +207,13 @@ for (const account of accountsToTest) {
     stage = 'refreshed-token validation';
     await validateToken(accessToken, account.role);
     if (!supabaseOnly) {
-      stage = 'refreshed Gateway authorization';
+      stage = 'refreshed edge authorization';
       await checkProtectedRead(accessToken, account.status);
       await checkRolePages(accessToken, account);
     }
     console.log(supabaseOnly
       ? `PASS ${account.name} refreshed Supabase token validation.`
-      : `PASS ${account.name} refreshed token validated; Gateway returned HTTP ${account.status}.`);
+      : `PASS ${account.name} refreshed token validated; edge returned HTTP ${account.status}.`);
   } catch (error) {
     failures += 1;
     const observedStatus = failureStatus ?? error?.observedStatus;
@@ -221,7 +224,7 @@ for (const account of accountsToTest) {
       ['JWT signature is invalid.', 'signature validation failed'],
       ['JWT issuer, audience, subject, or time claims are invalid.', 'issuer/audience/time validation failed'],
       ['JWT OCC role claim does not match.', 'OCC role claim mismatch'],
-      ['Gateway status mismatch.', 'Gateway authorization outcome mismatch'],
+      ['Edge status mismatch.', 'edge authorization outcome mismatch'],
     ]).get(error?.message);
     const reason = safeReason ? ` (${safeReason})` : '';
     console.error(`FAIL ${account.name} ${stage} check${status}${reason} (response details withheld).`);

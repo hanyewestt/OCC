@@ -1,4 +1,4 @@
-package com.csd.occ.gateway.infrastructure.config;
+package com.csd.occ.ingestion.infrastructure.config;
 
 import java.net.URI;
 import java.time.Duration;

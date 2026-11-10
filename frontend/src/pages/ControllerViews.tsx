@@ -841,11 +841,11 @@ export function BunchingMap({
             Affected stop
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="inline-flex items-center justify-center size-3.5 rounded-full bg-sky-600 text-[9px] font-bold text-white shadow-xs">#</span>
+            <span className="inline-flex items-center justify-center size-3.5 rounded-full bg-sky-700 text-[9px] font-bold text-white shadow-xs">#</span>
             Estimated bus
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="inline-flex items-center justify-center min-w-5 h-3.5 px-1 rounded-full bg-amber-600 text-[9px] font-bold text-white shadow-xs">2 · 3</span>
+            <span className="inline-flex items-center justify-center min-w-5 h-3.5 px-1 rounded-full bg-amber-700 text-[9px] font-bold text-white shadow-xs">2 · 3</span>
             Bunched cluster
           </span>
         </div>

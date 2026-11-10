@@ -1,11 +1,11 @@
-package com.csd.occ.gateway.api;
+package com.csd.occ.ingestion.api;
 
-import com.csd.occ.gateway.api.dto.SessionResponse;
-import com.csd.occ.gateway.domain.PageAccessPolicy;
+import com.csd.occ.ingestion.api.dto.SessionResponse;
+import com.csd.occ.ingestion.domain.PageAccessPolicy;
 import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import java.util.stream.Collectors;
 import org.springframework.http.CacheControl;

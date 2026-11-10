@@ -13,10 +13,6 @@ services:
     image: ${OCC_PLANNING_IMAGE:?set OCC_PLANNING_IMAGE to an immutable registry digest}
     pull_policy: always
 
-  gateway:
-    image: ${OCC_GATEWAY_IMAGE:?set OCC_GATEWAY_IMAGE to an immutable registry digest}
-    pull_policy: always
-
   db-setup:
     image: ${OCC_DB_SETUP_IMAGE:?set OCC_DB_SETUP_IMAGE to an immutable registry digest}
     pull_policy: always

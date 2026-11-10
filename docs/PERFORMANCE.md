@@ -5,6 +5,14 @@ from **1,984 MiB to 1,484 MiB (25.2%)**. Including PostgreSQL, the measured tota
 fell from **2,188 MiB to 1,614 MiB (26.2%)**. Nginx, provider stubs, the load
 generator and unrelated projects are excluded from those totals.
 
+> Post-migration note: the Gateway JVM described below has since been removed.
+> The current deployment has three application JVMs, and Nginx routes directly to
+> Ingestion, Disruption and Planning. The figures below are the earlier
+> four-container measurement and are retained as history. A matched whole-stack
+> before/after measurement (including swap and Nginx) is still required to state
+> this migration's actual saving; do not treat Gateway's earlier 248 MiB median
+> as a direct subtraction.
+
 ## Measurements
 
 Docker working-set memory during the 120-second load run; MiB, rounded. Totals
