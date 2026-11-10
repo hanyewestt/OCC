@@ -2,6 +2,7 @@ package com.csd.occ.ingestion.api;
 
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -36,9 +37,13 @@ class ArrivalControllerTest {
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 50), 0));
 
         mvc.perform(get("/api/v1/arrivals").param("sortBy", "database-column"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType("application/problem+json"))
+                .andExpect(jsonPath("$.detail").value("sortBy must be arrival or stopName"));
         mvc.perform(get("/api/v1/arrivals").param("sortDirection", "sideways"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType("application/problem+json"))
+                .andExpect(jsonPath("$.detail").value("sortDirection must be asc or desc"));
     }
 
     @Test

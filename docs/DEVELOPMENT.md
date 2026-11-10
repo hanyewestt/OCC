@@ -24,7 +24,7 @@ is required even when Java services are built entirely in Docker.
 ## Service memory and native diagnostics
 
 Compose budgets Ingestion at 640 MiB and Disruption/Planning at 512 MiB, each
-with a 192 MiB maximum Java heap. Gateway has 384 MiB with a 128 MiB heap. Heaps start at 32 MiB. These
+with a 192 MiB maximum Java heap. Heaps start at 32 MiB. These
 small-service defaults use Serial GC and expose two CPUs to JVM ergonomics;
 `ActiveProcessorCount` does not impose a Docker CPU quota. Database pools allow
 four connections per business service and keep one idle connection.
@@ -157,7 +157,7 @@ The launcher starts PostgreSQL and waits for health, then runs
 roles and applies each service's Flyway migrations with its own credentials.
 Applications start only after setup succeeds. The setup container is removed on
 success or failure; failure output remains in the invoking terminal. Expect
-PostgreSQL, Ingestion, Disruption, Planning, Gateway and Nginx to be healthy.
+PostgreSQL, Ingestion, Disruption, Planning and Nginx to be healthy.
 `up` also removes obsolete bootstrap/migration containers without deleting data.
 `start` only resumes existing application containers and does not rerun setup.
 
@@ -187,8 +187,8 @@ session. The standalone demo and its separate sign-in helper have been removed.
 
 ### Edit with automatic updates
 
-Keep the app containers running for Gateway, authentication configuration and
-API requests. In a second terminal, from the repository root:
+Keep the app containers running for the backend services, authentication
+configuration and API requests. In a second terminal, from the repository root:
 
 ```shell
 cd frontend
@@ -229,7 +229,7 @@ artifact; see [deployment](DEPLOYMENT.md) for the production Compose setup.
 
 ### Routes and error handling
 
-React renders the login, controller and captain screens. Gateway verifies the
+React renders the login, controller and captain screens. Ingestion verifies the
 session and page permission before role content appears. Captain uses the
 `CAPTAIN` claim. Persistent sessions and local-scope sign-out are
 described in [authentication](AUTHENTICATION.md).
@@ -263,10 +263,11 @@ collection to its first page. Authentication and configuration retain their own
 existing lifecycles.
 
 After Java, dependency, Dockerfile or migration changes, run the up action
-again to rebuild changed images. To rebuild only Gateway, use Compose directly:
+again to rebuild changed images. To rebuild only one service, use Compose
+directly (for example, Ingestion):
 
 ```shell
-docker compose --env-file .env up -d --build gateway
+docker compose --env-file .env up -d --build ingestion
 ```
 
 The React build under `frontend/dist/` is mounted read-only into Nginx.
@@ -280,7 +281,7 @@ to recreate affected containers.
 ```shell
 docker compose --env-file .env restart nginx
 docker compose --env-file .env ps -a
-docker compose --env-file .env logs --tail 100 nginx gateway ingestion disruption planning
+docker compose --env-file .env logs --tail 100 nginx ingestion disruption planning
 ```
 
 If startup fails, inspect `ps -a` and the failed application's logs. Setup
@@ -300,14 +301,14 @@ separately from the normal app and remove their containers afterward.
 Open [the login page](http://localhost/login) using an existing Supabase account.
 CONTROLLER opens `/controller`; CAPTAIN opens `/captain`. Other roles receive
 an access message. Sessions persist across reloads using the Supabase SDK;
-Gateway verifies session and role before protected content appears. Set
+Ingestion verifies session and role before protected content appears. Set
 `OCC_NGINX_PORT` if port 80 is unavailable. Retired `/demo.html`, `/auth.js`,
 `/auth-test` and `/obu-pacing.html` routes return 404.
 
 The controller dashboard has four routes: `/controller` (overview),
 `/controller/disruptions`, `/controller/planning`, and `/controller/audit`.
 Nginx explicitly allows each route; unknown controller paths still return 404.
-All four share Gateway's controller access verification. API permissions remain
+All four share the controller access verification. API permissions remain
 enforced by the backend.
 
 Dashboard data loads on entry and manual Refresh. Its **Approximate Live Route
@@ -376,27 +377,27 @@ These are the default local addresses; use the configured ports if changed in `.
 | Ingestion | [http://localhost:6767](http://localhost:6767) | Direct arrival, reference-data and demo API access | Local loopback only; not published in production; operational APIs require ADMIN/CONTROLLER |
 | Disruption | [http://localhost:6768](http://localhost:6768) | Direct bunching and traffic-disruption API access | Local loopback only; not published in production; operational APIs require ADMIN/CONTROLLER |
 | Planning | [http://localhost:6769](http://localhost:6769) | Direct diagnosis and recommendation API access | Local loopback only; not published in production; operational APIs require ADMIN/CONTROLLER |
-| Gateway | [http://localhost:6770](http://localhost:6770) | Direct API routing and authentication debugging | Local loopback only; not published in production; operational APIs require ADMIN/CONTROLLER |
+| Legacy edge port | [http://localhost:6770](http://localhost:6770) | Temporary alias for tools that still call the former Gateway port; served by Nginx | Local loopback only; retired after migration |
 | pgAdmin | [http://localhost:6700](http://localhost:6700) | Inspect the local PostgreSQL database | Local `tools` profile only; not published in production; separate pgAdmin login |
 
 Backend base URLs are API origins, not landing pages; append a documented API
 path. Opening a protected API in the address bar does not attach a bearer token.
-Nginx is the main browser entry point. Gateway port `6770` is reachable only
-through the local development override; production does not publish it. Production
-clients access Gateway APIs through Nginx, not through a direct Gateway URL.
+Nginx is the main browser entry point. Port `6770` is a temporary local alias
+served by Nginx through the development override; production publishes only the
+Nginx edge and no direct backend ports.
 
 The following routes are intentionally inaccessible through Nginx, even with an
 ADMIN token:
 
 | Route / endpoint | Nginx response | Reason |
 | --- | --- | --- |
-| `/internal` and `/internal/**` | `404` in local and production | Private service-to-service APIs; no public Gateway route |
+| `/internal` and `/internal/**` | `404` in local and production | Private service-to-service APIs; no public edge route |
 | `/actuator` and `/actuator/**` | `404` in local and production | Health and management access is separate from the public app |
 | `/v3/api-docs` and `/v3/api-docs/**` | `404` in local and production | OpenAPI documents are restricted to direct development service access |
 | `/swagger-ui.html` and `/swagger-ui/**` | `404` in local and production | Swagger is a developer interface, not a public app page |
 | `/auth-test` and `/auth-test/**` | `404` in local and production | Retired temporary authentication page |
 
-Direct backend, Gateway, PostgreSQL and pgAdmin ports are not published by the
+Direct backend, PostgreSQL and pgAdmin ports are not published by the
 production configuration. Local development port access still follows each
 service's authentication rules. Readiness is anonymous on the direct service
 port. Only Actuator health endpoints are exposed; Prometheus export and custom
@@ -417,7 +418,7 @@ does not expose it. Nginx can start while the optional pgAdmin container is stop
 
 ## Run tests
 
-With Docker running, execute the four-service unit and database integration tests
+With Docker running, execute the three-service unit and database integration tests
 from the repository root. Host-native Maven tests require JDK 25.
 
 PowerShell:
@@ -444,7 +445,7 @@ npx playwright install chromium
 npm test
 ```
 
-The browser suite mocks Supabase/Gateway responses and starts Vite.
+The browser suite mocks Supabase/API responses and starts Vite.
 It proves frontend behavior, not provider behavior or backend authorization.
 To run it against the built app served by Nginx, set the test target first:
 

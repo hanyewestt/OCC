@@ -14,8 +14,8 @@ COPY mvnw mvnw.cmd pom.xml ./
 COPY services/ services/
 
 RUN --mount=type=cache,id=occ-maven-${OCC_SERVICE},target=/root/.m2 \
-    case "${OCC_SERVICE}" in ingestion|disruption|planning|gateway) ;; \
-      *) echo "OCC_SERVICE must name one of the four phase-one applications" >&2; exit 1 ;; \
+    case "${OCC_SERVICE}" in ingestion|disruption|planning) ;; \
+      *) echo "OCC_SERVICE must name one of the three application services" >&2; exit 1 ;; \
     esac \
     && test -n "${OCC_SERVICE_INTERNAL_PORT}" \
     && chmod +x mvnw \

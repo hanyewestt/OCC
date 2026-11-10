@@ -27,4 +27,7 @@ services:
       # Production keeps this opt-in so controllers can trigger diagnosis on demand.
       OCC_PLANNING_DIAGNOSIS_AUTO_PROCESS_BUNCHING: "true"
       OCC_PLANNING_DIAGNOSIS_WORKER_INTERVAL: 1s
+      # A restart can interrupt an in-flight delivery. Keep its lease inside the
+      # recovery smoke's 180s observation window (production defaults to 5m).
+      OCC_PLANNING_DIAGNOSIS_LEASE_DURATION: 30s
       OCC_PLANNING_DIAGNOSIS_MAX_ATTEMPTS: "1"

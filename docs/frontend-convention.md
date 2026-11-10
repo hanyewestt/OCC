@@ -8,7 +8,7 @@ the frontend and its Nginx hosting.
 
 - Vite runs the development server while we edit the app.
 - `npm run build` produces static HTML, JavaScript, CSS and assets in `dist/`.
-- Nginx serves `dist/` in production and proxies API requests to Gateway.
+- Nginx serves `dist/` in production and proxies API requests directly to Ingestion, Disruption and Planning.
   Production does not need Vite or a Node.js application server.
 - Commit `package-lock.json` and use `npm ci` for reproducible installs. Document
   the supported Node version and commands in `docs/DEVELOPMENT.md`.
@@ -156,7 +156,7 @@ in the same change. Keep one environment inventory and expose only safe values.
 `VITE_*` values are public and baked in at build time; container environment
 changes do not update the bundle. Never bundle private keys or service secrets.
 Follow [AUTHENTICATION.md](AUTHENTICATION.md): use Supabase SDK browser-session
-persistence and token refresh, with Gateway verification before protected pages
+persistence and token refresh, with Ingestion session verification before protected pages
 render. Clear verified content on session changes and use local-scope sign-out.
 Do not add a second token store or silently switch to cookie sessions.
 [Vite environment behavior](https://vite.dev/guide/env-and-mode).

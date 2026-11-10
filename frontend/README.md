@@ -2,8 +2,8 @@
 
 A minimal React/TypeScript app using Tailwind and shadcn/ui. It provides
 email/password sign-in, exclusive controller and captain pages, and shared
-401/403/404 error screens. Nginx serves the static build; Gateway verifies
-session and role access before protected content appears.
+401/403/404 error screens. Nginx serves the static build and routes directly to the three services;
+Ingestion verifies session and role access before protected content appears.
 
 The Captain page shows the signed-in captain's controller instructions, their
 assigned bus route and its pacing, with day/night mode. The backend resolves the
