@@ -262,7 +262,7 @@ class AdvisoryPersistenceIT {
     }
 
     @Test
-    void groupEndpointsAllowControllersAndAdminsAndDenyCaptains() throws Exception {
+    void groupEndpointsAllowAdminReadsAndControllerDecisionsAndDenyCaptains() throws Exception {
         var ids = groupedFleet().stream().limit(3).map(value -> proposalFor(value, InstructionType.BE_CAUTIOUS).id()).toList();
         for (String role : List.of("CONTROLLER", "ADMIN")) {
             mvc.perform(get("/api/v1/planning/advisory-groups").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_" + role))))
@@ -270,12 +270,14 @@ class AdvisoryPersistenceIT {
                     .andExpect(jsonPath("$.items[0].members.length()").value(3));
         }
         var body = "{\"proposalIds\":[" + ids.stream().map(id -> "\"" + id + "\"").collect(java.util.stream.Collectors.joining(",")) + "]}";
-        for (String role : List.of("CONTROLLER", "ADMIN")) {
-            mvc.perform(post("/api/v1/planning/advisory-groups/decisions")
-                    .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_" + role)))
-                    .contentType("application/json").content(body))
-                    .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(3));
-        }
+        mvc.perform(post("/api/v1/planning/advisory-groups/decisions")
+                .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                .contentType("application/json").content(body))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(3));
+        mvc.perform(post("/api/v1/planning/advisory-groups/decisions")
+                .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                .contentType("application/json").content(body))
+                .andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/planning/advisory-groups").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CAPTAIN"))))
                 .andExpect(status().isForbidden());
         mvc.perform(post("/api/v1/planning/advisory-groups/decisions")

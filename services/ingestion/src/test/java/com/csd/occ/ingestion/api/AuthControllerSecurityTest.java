@@ -46,7 +46,7 @@ class AuthControllerSecurityTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"CONTROLLER,controller", "CAPTAIN,captain"})
+    @CsvSource({"CONTROLLER,controller", "CAPTAIN,captain", "ADMIN,admin"})
     void successfulPageAccessIsNotCached(String role, String page) throws Exception {
         mvc.perform(get("/api/v1/auth/access/" + page)
                         .with(jwt().jwt(token -> token.subject("synthetic-user"))
@@ -78,7 +78,7 @@ class AuthControllerSecurityTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"CONTROLLER,controller,200", "CONTROLLER,captain,403",
+    @CsvSource({"ADMIN,admin,200", "CONTROLLER,admin,403", "CAPTAIN,admin,403", "UNASSIGNED,admin,403", "CONTROLLER,controller,200", "CONTROLLER,captain,403",
             "CAPTAIN,captain,200", "CAPTAIN,controller,403", "ADMIN,controller,403",
             "ADMIN,captain,403", "UNASSIGNED,controller,403", "UNASSIGNED,captain,403",
             "CAPTAIN,unknown,404", "DRIVER,captain,403", "DRIVER,controller,403"})

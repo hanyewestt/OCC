@@ -13,7 +13,7 @@ public class OpenApiConfig {
     @Bean
     OpenAPI ingestionOpenApi() {
         return new OpenAPI().info(new Info().title("OCC Ingestion API").version("v1")
-                        .description("DataMall ingestion APIs and runtime-toggleable simulation-only bunching demo APIs."))
+                        .description("DataMall ingestion APIs and runtime-toggleable simulation-only bunching demo APIs. Operational reads require ADMIN or CONTROLLER; operational writes require CONTROLLER. Admin namespaces require ADMIN. Captain endpoints retain owner-only CAPTAIN access."))
                 .components(new Components().addSecuritySchemes("bearerAuth", new SecurityScheme()
                         .type(SecurityScheme.Type.HTTP).scheme("bearer").bearerFormat("JWT")));
     }

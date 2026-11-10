@@ -69,6 +69,7 @@
     location = / { try_files /index.html =404; }
     location = /index.html { try_files $uri =404; }
     location = /login { try_files /index.html =404; }
+    location = /admin { try_files /index.html =404; }
     location = /controller { try_files /index.html =404; }
     location = /controller/disruptions { try_files /index.html =404; }
     location = /controller/planning { try_files /index.html =404; }
