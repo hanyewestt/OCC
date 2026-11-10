@@ -52,7 +52,8 @@ function RecommendationBunchingGaps({ recommendation, alerts }: { recommendation
   const alert = recommendationAlert(recommendation, alerts)
   const detectedPairs = alert ? adjacentBunchingGaps(alert) : []
   const buses = affectedBuses(recommendation)
-  const pairs = Array.from({ length: Math.max(1, buses.length - 1) }, (_, index) => {
+  const pairCount = Math.min(99, detectedPairs.reduce((count, pair) => Math.max(count, pair.followingOrder - 1), Math.max(1, buses.length - 1)))
+  const pairs = Array.from({ length: pairCount }, (_, index) => {
     const leadingOrder = index + 1
     const followingOrder = index + 2
     const detected = detectedPairs.find(pair => pair.leadingOrder === leadingOrder && pair.followingOrder === followingOrder)
