@@ -648,6 +648,25 @@ test('controller shows one simulated bus pair in its single awaiting decision', 
   await expect(page.getByRole('heading', { name: 'Affected buses', exact: true })).toBeVisible()
 })
 
+test('recommendation shows every observed gap for a four-bus detection', async ({ page, context }) => {
+  await mockDashboard(context)
+  const arrivals = [1, 2, 3, 4].map(visitOrder => ({ observationId: `obs-${visitOrder}`, visitOrder,
+    serviceId: '190', stopCode: 'B01', directionId: 1, estimatedArrivalAt: `2026-10-22T01:0${visitOrder}:00Z` }))
+  const headways = [1, 2, 3].map(index => ({ leadingObservationId: `obs-${index}`,
+    followingObservationId: `obs-${index + 1}`, isBunched: true }))
+  await context.route('**/api/v1/demo-runs/active', route => route.fulfill({ json: {
+    id: 'run-1', status: 'REPLAY_COMPLETE', alerts: [{ eventId: 'event-1', action: 'OPENED', classification: 'SIMULATION',
+      serviceId: '190', stopCode: 'B01', directionId: 1, detectedAt: '2026-10-22T01:00:00Z',
+      evidence: JSON.stringify({ snapshot: { classification: 'SIMULATION', arrivals }, groups: [{ headways }] }) }],
+  } }))
+
+  await login(page)
+  await page.getByRole('link', { name: /Awaiting decision/ }).click()
+  await expect(page.getByText('Buses #1–2: 1:00', { exact: true })).toBeVisible()
+  await expect(page.getByText('Buses #2–3: 1:00', { exact: true })).toBeVisible()
+  await expect(page.getByText('Buses #3–4: 1:00', { exact: true })).toBeVisible()
+})
+
 test('controller keeps the awaiting decision panel visible before a simulation recommendation arrives', async ({ page, context }) => {
   await mockDashboard(context)
   await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: {
@@ -721,7 +740,7 @@ test('early controller suggestions show identified bus registrations, not observ
 
 test('controller switches the shared backend mode from the dashboard without leaving the page', async ({ page, context }) => {
   await mockDashboard(context)
-  const simulation = { id: 'run-1', status: 'REPLAY_COMPLETE', serviceId: '190', directionId: 1, busCount: 3, dispatchGapSeconds: 90, busGapsSeconds: [90, 90], monitoredStopCode: '44251', scenario: 'BUNCHING', alerts: [{ eventId: 'event-1', action: 'OPENED', classification: 'SIMULATION', serviceId: '190', stopCode: 'B01', detectedAt: '2026-10-22T01:00:00Z' }] }
+  const simulation = { id: 'run-1', status: 'REPLAY_COMPLETE', serviceId: '190', directionId: 1, busCount: 4, dispatchGapSeconds: 90, busGapsSeconds: [90, 90, 90], monitoredStopCode: '44251', scenario: 'BUNCHING', alerts: [{ eventId: 'event-1', action: 'OPENED', classification: 'SIMULATION', serviceId: '190', stopCode: 'B01', detectedAt: '2026-10-22T01:00:00Z' }] }
   let active = false
   let starts = 0
   let closes = 0
@@ -729,7 +748,7 @@ test('controller switches the shared backend mode from the dashboard without lea
   await context.route('**/api/v1/demo-runs', route => {
     expect(route.request().method()).toBe('POST')
     expect(route.request().headers().authorization).toMatch(/^Bearer /)
-    expect(route.request().postDataJSON()).toEqual({ serviceId: '190', directionId: 1, busCount: 3, dispatchGapSeconds: 90, busGapsSeconds: [90, 90], monitoredStopCode: '44251', scenario: 'BUNCHING', captainUserIds: ['10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000003'] })
+    expect(route.request().postDataJSON()).toEqual({ serviceId: '190', directionId: 1, busCount: 4, dispatchGapSeconds: 90, busGapsSeconds: [90, 90, 90], monitoredStopCode: '44251', scenario: 'BUNCHING', captainUserIds: ['10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000003', '10000000-0000-4000-8000-000000000004'] })
     active = true; starts++
     return route.fulfill({ status: 201, json: simulation })
   })
@@ -746,7 +765,8 @@ test('controller switches the shared backend mode from the dashboard without lea
   } }))
   await login(page)
   await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
-  for (const [index, userId] of ['10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000003'].entries()) {
+  await page.getByLabel('Buses in this injection').fill('4')
+  for (const [index, userId] of ['10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000003', '10000000-0000-4000-8000-000000000004'].entries()) {
     await page.getByLabel(`Bus ${index + 1} captain user ID`).fill(userId)
   }
   await page.getByRole('dialog').getByRole('button', { name: 'Start simulation', exact: true }).click()
