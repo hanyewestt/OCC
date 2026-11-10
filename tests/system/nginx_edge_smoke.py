@@ -33,6 +33,12 @@ def request_status(base_url: str, path: str, headers: dict[str, str] | None = No
 ORIGIN_SECRET_HEADERS: dict[str, str] = {}
 
 
+def open_url(base_url: str, path: str):
+    """Open a path with the edge's origin secret when one is configured."""
+    request = urllib.request.Request(base_url + path, headers=ORIGIN_SECRET_HEADERS)
+    return urllib.request.urlopen(request, context=ssl._create_unverified_context(), timeout=10)
+
+
 def assert_status(base_url: str, label: str, path: str, expected: int,
                   headers: dict[str, str] | None = None, method: str = "GET") -> None:
     actual = request_status(base_url, path, headers, method)
@@ -114,7 +120,7 @@ def main() -> int:
     root = Path(__file__).resolve().parents[2]
     html = (root / "frontend/dist/index.html").read_bytes()
     try:
-        urllib.request.urlopen(base_url + "/not-a-page", context=ssl._create_unverified_context(), timeout=10)
+        open_url(base_url, "/not-a-page")
         raise AssertionError("Unknown website route did not return 404")
     except urllib.error.HTTPError as response:
         if response.code != 404 or response.read() != (root / "frontend/dist/404.html").read_bytes():
@@ -122,7 +128,7 @@ def main() -> int:
     print("PASS custom website error page retains HTTP 404")
     for route in ("/", "/login", "/notices", "/controller", "/controller/disruptions",
                   "/controller/planning", "/controller/notices", "/controller/audit", "/captain", "/401", "/403", "/404"):
-        with urllib.request.urlopen(base_url + route, context=ssl._create_unverified_context(), timeout=10) as response:
+        with open_url(base_url, route) as response:
             if response.read() != html or "text/html" not in response.headers.get("Content-Type", ""):
                 raise AssertionError(f"{route}: response differs from the React entry HTML")
             if response.headers.get("X-Content-Type-Options") != "nosniff":
@@ -131,7 +137,7 @@ def main() -> int:
     for asset in (root / "frontend/dist/assets").iterdir():
         if not asset.is_file():
             continue
-        with urllib.request.urlopen(base_url + "/assets/" + asset.name, context=ssl._create_unverified_context(), timeout=10) as response:
+        with open_url(base_url, "/assets/" + asset.name) as response:
             if response.read() != asset.read_bytes():
                 raise AssertionError("Built asset mismatch")
             mime = response.headers.get("Content-Type", "")
