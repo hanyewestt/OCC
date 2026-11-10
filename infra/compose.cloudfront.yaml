@@ -1,0 +1,17 @@
+# CloudFront-origin overlay. Layer as: compose.yaml + infra/compose.images.yaml
+# + infra/compose.cloudfront.yaml. Browser TLS terminates at the CloudFront
+# distribution with its AWS-provided certificate; the EC2 origin speaks plain
+# HTTP behind the CloudFront security-group prefix list and the secret origin
+# header. No TLS-file configuration is inherited here, so this overlay works
+# with an environment that has no TLS certificate variables at all.
+services:
+  nginx:
+    volumes:
+      - ./infra/nginx/cloudfront.conf.template:/etc/nginx/templates/cloudfront.conf.template:ro
+    environment:
+      NGINX_ENVSUBST_FILTER: '^(OCC_INGESTION_INTERNAL_URL|OCC_DISRUPTION_INTERNAL_URL|OCC_PLANNING_INTERNAL_URL|OCC_NGINX_HTTP_INTERNAL_PORT|OCC_ORIGIN_SECRET)$'
+      OCC_ORIGIN_SECRET: ${OCC_ORIGIN_SECRET:?set OCC_ORIGIN_SECRET from the rendered deployment secret}
+    # The single host port is the HTTP edge; the security group allows only
+    # CloudFront origin fetches to reach it.
+    ports:
+      - "${OCC_NGINX_ORIGIN_PORT:-8080}:8080"

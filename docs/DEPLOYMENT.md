@@ -31,3 +31,50 @@ configuration, migration and CD-script changes with no service edits — must
 run CI/CD. Only exclusively documentation, agent-prose or local-launcher
 commits carry `[skip ci]`; see [commit convention](commit-convention.md) for
 the full rule and for recovery when a skip marker is used by mistake.
+
+## Provisioning the EC2 CD deployment
+
+The deployment runs on one **t3.small (2 GiB)** in **us-east-1** behind a
+CloudFront distribution that serves browser HTTPS with the AWS-provided
+`*.cloudfront.net` certificate. Browser TLS terminates at the edge; the EC2
+origin speaks plain HTTP restricted by two independent controls: the
+security group only admits the AWS-managed
+`com.amazonaws.global.cloudfront.origin-facing` prefix list, and every origin
+request must carry the deployment's `X-OCC-Origin-Secret` header, checked at
+Nginx. The origin header value never reaches the applications or the browser,
+and viewer identity (client address, protocol) is taken only from
+CloudFront's unforgeable injected headers.
+
+`infra/aws/ec2-cd.yaml` provisions the VPC, host, encrypted root and retained
+data volumes (20 GiB each, standard T3 credits), Elastic IP, encrypted and
+versioned private S3 release bucket, five immutable ECR repositories,
+Secrets Manager deployment and origin secrets, repository-scoped OIDC roles,
+and the CloudFront distribution with caching and error caching fully
+disabled. `scripts/cd/bootstrap.ps1` drives it as a reviewed change set:
+it verifies AWS and GitHub identities first, resolves the existing OIDC
+provider and the CloudFront prefix list, imports the existing root `.env`
+through a temporary payload file (values are never printed, logged or
+committed; the local file stays unchanged), records the secret version, and
+configures the main-only GitHub `production` environment with the publish and
+deploy role ARNs without per-push reviewers.
+
+`scripts/cd/bootstrap-host.sh` prepares the host through SSM: Docker and
+Compose, the durable data volume mounted by validated UUID before Docker or
+PostgreSQL can start (a missing mount blocks startup — there is no root-disk
+fallback, and an existing retained volume is never reformatted), root-only
+secret files, and the ECR login.
+
+Deployment layers the Compose files as `compose.yaml` +
+`infra/compose.images.yaml` (immutable digest pins, no source/dist mounts)
+plus either `infra/compose.production.yaml` (direct TLS, unchanged behavior)
+or `infra/compose.cloudfront.yaml` (CloudFront origin). The CloudFront overlay
+requires no TLS-file configuration. All Nginx caching and error-caching TTLs
+start at zero, required verbs plus Authorization/cookies/query forwarding are
+preserved, and the pacing SSE streams stay unbuffered; the origin read
+timeout (120s) is set above the measured local heartbeat gap, and real
+CloudFront rollout evidence for long-lived streams remains a
+deployment-time check.
+
+Actual provisioning requires verified AWS permissions, current cost review
+and explicit authorization; nothing in this repository creates cloud
+resources on its own.
