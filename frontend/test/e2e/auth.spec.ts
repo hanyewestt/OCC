@@ -247,8 +247,8 @@ async function mockDashboard(context: BrowserContext, options: { arrivalFailure?
       }
       const replacements = body.replacementInstructions ?? [{ busReference: 'SAMPLE-BUS', action: body.replacementAction, adjustmentSeconds: body.adjustmentSeconds }]
       decision = { recommendationId: 'recommendation-1', action: body.action, actorSubject: userId,
-        overrideInstructions: body.action === 'REJECTED' ? replacements.map((item: { busReference: string; action: string; adjustmentSeconds: number }) => ({
-          busReference: item.busReference, instruction: item.action === 'HOLD'
+        overrideInstructions: body.action === 'REJECTED' ? replacements.map((item: { busReference: string; action: string; adjustmentSeconds: number; noInstructionReason?: string }) => ({
+          busReference: item.busReference, instruction: item.action === 'NO_INSTRUCTION' ? `NO INSTRUCTION: ${item.noInstructionReason}` : item.action === 'SKIP_STOP' ? 'SKIP STOP B01' : item.action === 'HOLD'
             ? `HOLD FOR ${item.adjustmentSeconds}s at next stop` : `EXTEND DWELL BY ${item.adjustmentSeconds}s at stop B01`,
         })) : [],
         controllerRationale: body.controllerRationale ?? null, decidedAt: '2026-10-22T01:10:00Z' }
@@ -850,7 +850,7 @@ for (const [action, button] of [['APPROVED', 'Approve recommendation'], ['REJECT
     expect(body.replacementInstructions).toEqual(action === 'REJECTED'
       ? [{ busReference: 'SAMPLE-BUS', action: 'HOLD', adjustmentSeconds: 120 }] : null)
     expect(body.controllerRationale).toBeNull()
-    await expect(page.getByText(action === 'APPROVED' ? 'Recommendation approved and instruction issued to the assigned captain.' : 'Replacement instructions issued to the affected captains.')).toBeVisible()
+    await expect(page.getByText(action === 'APPROVED' ? 'Recommendation approved and instruction issued to the assigned captain.' : 'Bus outcomes saved and selected instructions issued.')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toHaveCount(0)
     await page.getByRole('link', { name: 'Audit log', exact: true }).click()
     await expect(page.getByRole('cell', { name: action, exact: true })).toBeVisible()
@@ -871,24 +871,29 @@ for (const [action, button] of [['APPROVED', 'Approve recommendation'], ['REJECT
   })
 }
 
-test('controller replacement editor collects and submits one instruction for each of three buses', async ({ page, context }) => {
-  await mockDashboard(context, { affectedBusReferences: ['SAMPLE-BUS', 'BUS-2', 'BUS-3'] })
+test('controller reviews an outcome for every bus in a four-bus group', async ({ page, context }) => {
+  await mockDashboard(context, { affectedBusReferences: ['SAMPLE-BUS', 'BUS-2', 'BUS-3', 'BUS-4'] })
   await login(page)
   await page.getByRole('link', { name: /Awaiting decision/ }).click()
   await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
-  for (const bus of ['SAMPLE-BUS', 'BUS-2', 'BUS-3']) await expect(editor.getByLabel(`Action for ${bus}`)).toBeVisible()
+  for (const bus of ['SAMPLE-BUS', 'BUS-2', 'BUS-3', 'BUS-4']) await expect(editor.getByLabel(`Action for ${bus}`)).toBeVisible()
   await editor.getByLabel('Seconds').nth(0).fill('60')
-  await editor.getByLabel('Seconds').nth(1).fill('45')
-  await editor.getByLabel('Seconds').nth(2).fill('30')
+  await editor.getByLabel('Action for BUS-3').selectOption('SKIP_STOP')
+  await expect(editor.getByLabel('Seconds').nth(2)).toBeDisabled()
+  await editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true }).click()
+  await expect(editor.getByRole('alert')).toContainText('Enter a reason for each bus with no instruction')
+  await editor.getByLabel('Reason no instruction is needed').nth(0).fill('Already spaced')
+  await editor.getByLabel('Reason no instruction is needed').nth(1).fill('Continue normally')
 
   const posted = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/decision'))
   await editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true }).click()
   const body = (await posted).postDataJSON()
   expect(body.replacementInstructions).toEqual([
     { busReference: 'SAMPLE-BUS', action: 'HOLD', adjustmentSeconds: 60 },
-    { busReference: 'BUS-2', action: 'HOLD', adjustmentSeconds: 45 },
-    { busReference: 'BUS-3', action: 'HOLD', adjustmentSeconds: 30 },
+    { busReference: 'BUS-2', action: 'NO_INSTRUCTION', adjustmentSeconds: null, noInstructionReason: 'Already spaced' },
+    { busReference: 'BUS-3', action: 'SKIP_STOP', adjustmentSeconds: null },
+    { busReference: 'BUS-4', action: 'NO_INSTRUCTION', adjustmentSeconds: null, noInstructionReason: 'Continue normally' },
   ])
 })
 
@@ -1568,6 +1573,25 @@ test('captain retries failed acknowledgement and keeps the persisted receipt aft
   await expect(display.getByText(receipt, { exact: true })).toBeVisible()
   await expect(display.getByRole('button', { name: 'Acknowledge', exact: true })).toHaveCount(0)
   expect(acknowledgementCalls).toBe(2)
+})
+
+test('captain sees and acknowledges a skip-stop instruction', async ({ page, context }) => {
+  await mockAuth(context, 'CAPTAIN')
+  const now = new Date()
+  let instruction: CaptainInstruction = { ...syntheticInstruction(now), type: 'SKIP_STOP', message: 'Skip stop School.',
+    parameters: { ...syntheticInstruction(now).parameters, stopCode: '44251', stopName: 'School', stopSequence: 10, durationSeconds: null } }
+  await context.route('**/api/v1/planning/captain/instructions?*', route => route.fulfill({
+    json: { items: [instruction], page: 0, totalItems: 1, totalPages: 1, serverTime: now.toISOString() },
+  }))
+  await context.route(`**/api/v1/planning/captain/instructions/${instruction.id}/acknowledgements`, route => {
+    instruction = { ...instruction, status: 'ACKNOWLEDGED', acknowledgedAt: now.toISOString() }
+    return route.fulfill({ json: instruction })
+  })
+  await login(page)
+  const display = page.getByRole('region', { name: 'Controller instructions', exact: true })
+  await expect(display.getByText('Skip stop School', { exact: true })).toBeVisible()
+  await display.getByRole('button', { name: 'Acknowledge', exact: true }).click()
+  await expect(display.getByText(/^Acknowledged /)).toBeVisible()
 })
 
 test('captain instruction cards scroll and load later server pages without losing acknowledgement state', async ({ page, context }) => {
@@ -2622,6 +2646,7 @@ test('instruction headlines, states and pacing sentences read plainly', () => {
   expect(instructionHeadline('HOLD', { ...none, durationSeconds: 90, stopName: 'Bt Panjang Stn' })).toBe('HOLD FOR 90s at next stop')
   expect(instructionHeadline('DWELL_ADJUSTMENT', { ...none, durationSeconds: 45 })).toBe('Stay 45 s longer')
   expect(instructionHeadline('DWELL_ADJUSTMENT', none)).toBe('Stay longer')
+  expect(instructionHeadline('SKIP_STOP', { ...none, stopName: 'School' })).toBe('Skip stop School')
   expect(instructionHeadline('REDUCE_SPEED', { ...none, speedReductionKmh: 5, durationSeconds: 300 })).toBe('Reduce speed by 5 km/h for 5 min')
   expect(instructionHeadline('SLOW_DOWN_NEAR_STOPS', { ...none, subsequentStopCount: 1 })).toBe('Slow down near the next 1 stop')
   expect(instructionHeadline('BE_CAUTIOUS', none)).toBe('Be cautious')

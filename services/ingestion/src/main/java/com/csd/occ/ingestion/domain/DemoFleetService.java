@@ -13,10 +13,11 @@ public class DemoFleetService {
     private final DemoVehicleAssignmentRepository assignments;
     private final BusArrivalObservationRepository arrivals;
     private final ReferenceTopologyPort topology;
+    private final PollingConfigurationPort polling;
 
     public DemoFleetService(DemoRunRepository runs, DemoVehicleAssignmentRepository assignments,
-            BusArrivalObservationRepository arrivals, ReferenceTopologyPort topology) {
-        this.runs = runs; this.assignments = assignments; this.arrivals = arrivals; this.topology = topology;
+            BusArrivalObservationRepository arrivals, ReferenceTopologyPort topology, PollingConfigurationPort polling) {
+        this.runs = runs; this.assignments = assignments; this.arrivals = arrivals; this.topology = topology; this.polling = polling;
     }
 
     @Transactional(readOnly = true)
@@ -36,7 +37,7 @@ public class DemoFleetService {
         }).toList(), found.getTotalElements(), page, size);
     }
 
-    /** Latest synthetic route progress for one simulation bus; also used for the captain route view. */
+    /** Latest predicted stop for one simulation bus; also used for the captain route view. */
     public Optional<DemoFleetSnapshot.Progress> progress(DemoVehicleAssignment assignment) {
         return arrivals.findFirstByDemoRunIdAndTripIdAndClassificationOrderByFetchedAtDescIdDesc(
                 assignment.id().demoRunId(), assignment.id().tripId(), "SIMULATION").flatMap(arrival -> {
@@ -51,7 +52,8 @@ public class DemoFleetService {
                             : candidate.stopSequence() == arrival.getRouteStopSequence())
                     .findFirst()
                     .map(stop -> new DemoFleetSnapshot.Progress(stop.stopCode(), stop.stopSequence(),
-                            arrival.getFetchedAt(), 30, List.of(5), List.of(300)));
+                            arrival.getFetchedAt(), 30, List.of(5), List.of(300), arrival.getEstimatedArrivalAt(),
+                            arrival.getFetchedAt().plusSeconds(polling.staleAfterSeconds())));
         });
         // Speed values are labelled scenario assumptions, never measured vehicle telemetry.
     }

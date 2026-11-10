@@ -15,12 +15,14 @@ public record DemoFleetResponse(UUID demoRunId, String status, String classifica
                         bus.directionId(), bus.captainUserId().orElse(null), bus.assignmentStatus(),
                         bus.progress().map(progress -> new ProgressResponse(progress.stopCode(), progress.stopSequence(),
                                 progress.observedAt(), progress.assumedSpeedKmh(), progress.allowedSpeedReductionsKmh(),
-                                progress.allowedDurationsSeconds())).orElse(null))).toList(),
+                                progress.allowedDurationsSeconds(), progress.estimatedArrivalAt(), progress.freshUntil())).orElse(null))).toList(),
                 value.totalElements(), value.page(), value.size());
     }
     public record VehicleResponse(String busId, String tripId, String registrationNumber, String serviceId,
                                   int directionId, UUID captainUserId, String assignmentStatus, ProgressResponse progress) {}
     @Schema(description = "Synthetic progress and permitted demo speed advice; not live telemetry.")
     public record ProgressResponse(String stopCode, int stopSequence, Instant observedAt, int assumedSpeedKmh,
-                                   List<Integer> allowedSpeedReductionsKmh, List<Integer> allowedDurationsSeconds) {}
+                                   List<Integer> allowedSpeedReductionsKmh, List<Integer> allowedDurationsSeconds,
+                                   @Schema(nullable = true) Instant estimatedArrivalAt,
+                                   @Schema(nullable = true) Instant freshUntil) {}
 }
