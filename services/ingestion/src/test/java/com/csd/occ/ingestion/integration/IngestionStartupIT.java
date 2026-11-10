@@ -400,6 +400,11 @@ class IngestionStartupIT {
         java.nio.file.Path output = java.nio.file.Path.of("openapi", "ingestion.json");
         java.nio.file.Files.createDirectories(output.getParent());
         java.nio.file.Files.writeString(output, contract);
+        var packaged = getClass().getResourceAsStream("/static/v3/ingestion.json");
+        assertThat(packaged).as("packaged OpenAPI contract").isNotNull();
+        assertThat(new String(packaged.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)).isEqualTo(contract);
+        mvc.perform(get("/v3/ingestion.json").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isOk()).andExpect(content().string(contract));
     }
 
     @Test void topologyPruningPreservesOldActiveAndBoundaryRetiredVersions() {

@@ -211,7 +211,7 @@ does not disable or remove targets previously created for a service that is late
 removed from the setting. Disable or remove those `ingestion.poll_target` rows
 through an explicit operational change when reducing coverage.
 
-With the service running in Compose, browse the interactive API at `http://localhost:<OCC_INGESTION_PORT>/swagger-ui.html` (default host port `6767`). These read-only endpoints return paginated envelopes except feed status and reference topology:
+With the service running in Compose, browse the interactive API at `http://localhost:<OCC_INGESTION_PORT>/swagger-ui/index.html` (default host port `6767`). These read-only endpoints return paginated envelopes except feed status and reference topology:
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -302,7 +302,7 @@ occurrences therefore remain `null`. Disruption uses these fields only to suppre
 an exact same-pair, same-sweep duplicate Planning diagnosis; they are not exposed as
 stable vehicle identities, and missing or ambiguous evidence is never deduplicated.
 
-The machine-readable OpenAPI document is at `/v3/api-docs`.
+The machine-readable OpenAPI document is served statically at `/v3/ingestion.json`.
 
 Current arrivals can be filtered by a trimmed, case-insensitive literal substring
 of the version-matched stop name through `stopName`. It is combined with the exact
@@ -370,9 +370,10 @@ export OCC_OPENAPI_EXPORT_TOKEN='<short-lived access token>'
 unset OCC_OPENAPI_EXPORT_TOKEN
 ```
 
-This writes `services/ingestion/openapi/ingestion.json`. The export uses the same
-running application endpoint as Swagger UI, so it includes the actual controllers,
-DTOs, annotations and active Spring configuration.
+This writes `services/ingestion/openapi/ingestion.json`. The export uses the springdoc test-only
+dependency, so it includes the actual controllers, DTOs, annotations and active Spring configuration.
+Commit the regenerated file: the build packages it as `/v3/ingestion.json`, the contract the running
+service serves, and the export test fails when the packaged copy differs from the generated one.
 
 Alternatively, without a live token, run the opt-in export test, which starts the
 application against a disposable PostgreSQL container (Docker required) and writes
