@@ -13,7 +13,45 @@ generator and unrelated projects are excluded from those totals.
 > this migration's actual saving; do not treat Gateway's earlier 248 MiB median
 > as a direct subtraction.
 
-## Measurements
+## Static contract footprint - 10 November 2026
+
+The OpenAPI contract and Swagger UI moved out of the runtime: springdoc is a
+test-only dependency, the committed contract is packaged as
+`/v3/<service>.json`, and Swagger UI is static HTML plus the `swagger-ui`
+webjar. A `jattach` native-memory summary showed the runtime had been paying
+roughly 130 MB of class metadata and 39-74 MB of code cache per JVM against a
+192 MB heap.
+
+Idle `docker compose` stack, same machine, containers up 4-7 minutes; MiB,
+Docker working set:
+
+| Container | Before | After | Change |
+| --- | ---: | ---: | ---: |
+| Ingestion | 544 | 387 | -29% |
+| Disruption | 457 | 309 | -32% |
+| Planning | 445 | 353 | -21% |
+| PostgreSQL | 295 | 146 | -51% |
+| Nginx | 26 | 26 | 0% |
+| **Total** | **1,767** | **1,221** | **-31%** |
+
+Anonymous memory per JVM fell from 486/418/383 MB to 327/305/296 MB. The
+runtime options that changed with it: `-XX:NativeMemoryTracking=summary`
+removed, `-XX:TieredStopAtLevel=1` added, `MALLOC_ARENA_MAX=2` added, and
+PostgreSQL `shared_buffers` reduced from the image default 128 MB to 64 MB
+(`OCC_POSTGRES_SHARED_BUFFERS`).
+
+Limits of that measurement: it is idle, not under load, and it aggregates four
+independent changes, so it does not attribute the saving to springdoc alone.
+`-XX:TieredStopAtLevel=1` keeps compilation at C1, so peak throughput was not
+re-measured and the 120-second k6 profile above should be re-run before relying
+on C2-era latency figures. The earlier matched trial measured
+`MALLOC_ARENA_MAX=2` at 1,487 MiB against 1,484 MiB without it - no meaningful
+saving - so the cap is retained for allocator fragmentation headroom, not as a
+measured gain. `shared_buffers=64MB` is a heuristic: `effective_cache_size` and
+`work_mem` are unchanged, so planner estimates assume more cache than the server
+now keeps.
+
+## Measurement history
 
 Docker working-set memory during the 120-second load run; MiB, rounded. Totals
 are medians of simultaneous samples, rather than sums of service medians.

@@ -58,7 +58,9 @@ additional Compose file; placing them only in the root `.env` does not forward t
 
 The running service serves the committed contract at `/v3/disruption.json` and the
 Swagger UI at `/swagger-ui/index.html`. springdoc is a test-only dependency, so the
-application itself generates neither.
+application itself generates neither. Both require an ADMIN or CONTROLLER bearer
+token, so a plain browser tab gets `401`; use a token-aware proxy or an extension
+that adds the `Authorization` header.
 
 To refresh the checked-in OpenAPI contract, run the opt-in export test from the
 repository root (Docker provides the disposable PostgreSQL container):

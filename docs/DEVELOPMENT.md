@@ -398,6 +398,7 @@ ADMIN token:
 | `/actuator` and `/actuator/**` | `404` in local and production | Health and management access is separate from the public app |
 | `/v3/` and `/v3/**` | `404` in local and production | OpenAPI contracts are restricted to direct development service access |
 | `/swagger-ui/` and `/swagger-ui/**` | `404` in local and production | Swagger is a developer interface, not a public app page |
+| `/swagger-ui.html` | `404` in local and production | Legacy developer path; the service redirects it only for direct access |
 | `/webjars/` and `/webjars/**` | `404` in local and production | Swagger UI assets back the developer interface only |
 | `/auth-test` and `/auth-test/**` | `404` in local and production | Retired temporary authentication page |
 

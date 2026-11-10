@@ -28,3 +28,8 @@ spring:
   flyway:
     enabled: true
     create-schemas: true
+
+# The runtime has no springdoc; disable its UI so tests exercise the static wiring.
+springdoc:
+  swagger-ui:
+    enabled: false
