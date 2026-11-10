@@ -70,6 +70,13 @@ public class DemoRunService {
         return details(run);
     }
 
+    public Optional<DemoAlertDetails> bunchingGroup(UUID runId, UUID bunchingEventId) {
+        var matches = status(runId).alerts().stream()
+                .filter(alert -> "OPENED".equals(alert.action()) && bunchingEventId.equals(alert.bunchingEventId()))
+                .toList();
+        return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
+    }
+
     public DemoRunDetails close(UUID id) {
         DemoRun run = runs.findById(id).orElseThrow(() -> new DemoRunNotFoundException(id));
         if (!"CLOSED".equals(run.status())) {
