@@ -353,35 +353,22 @@ explicit `missingFields` list. It never returns `OBSERVATION_ONLY` records to a
 simulation diagnosis. Incident `observedAt` is retained when supplied; the fictional
 replay uses its actual simulation timestamp rather than leaving the field absent.
 
-To export the runtime-generated contract, start the local Compose stack and set a
-short-lived ADMIN or CONTROLLER access token in the current shell only. Do not put
-the token in `.env`, a command history, or a committed file. Then run from the repo
-root:
+The running service serves the committed contract at `/v3/ingestion.json` and the
+Swagger UI at `/swagger-ui/index.html`. springdoc is a test-only dependency, so the
+application itself generates neither.
 
-```powershell
-$env:OCC_OPENAPI_EXPORT_TOKEN = '<short-lived access token>'
-.\mvnw.cmd -pl services/ingestion -Popenapi org.springdoc:springdoc-openapi-maven-plugin:1.5:generate "-Dopenapi.apiDocsUrl=http://localhost:6767/v3/api-docs"
-Remove-Item Env:OCC_OPENAPI_EXPORT_TOKEN
-```
-
-```bash
-export OCC_OPENAPI_EXPORT_TOKEN='<short-lived access token>'
-./mvnw -pl services/ingestion -Popenapi org.springdoc:springdoc-openapi-maven-plugin:1.5:generate -Dopenapi.apiDocsUrl=http://localhost:6767/v3/api-docs
-unset OCC_OPENAPI_EXPORT_TOKEN
-```
-
-This writes `services/ingestion/openapi/ingestion.json`. The export uses the springdoc test-only
-dependency, so it includes the actual controllers, DTOs, annotations and active Spring configuration.
-Commit the regenerated file: the build packages it as `/v3/ingestion.json`, the contract the running
-service serves, and the export test fails when the packaged copy differs from the generated one.
-
-Alternatively, without a live token, run the opt-in export test, which starts the
-application against a disposable PostgreSQL container (Docker required) and writes
-the same file using a synthetic ADMIN test token:
+To refresh the checked-in OpenAPI contract, run the opt-in export test from the
+repository root (Docker provides the disposable PostgreSQL container). It writes
+`services/ingestion/openapi/ingestion.json` using a synthetic ADMIN test token, so
+no live credential is needed:
 
 ```shell
 ./mvnw -pl services/ingestion verify "-Docc.exportOpenapi=true"
 ```
+
+Commit the regenerated file. The build packages it as the served contract, and the
+export test fails when the packaged copy differs from the generated one. The
+`-Popenapi` profile still works against any process that serves `/v3/api-docs`.
 
 A missing or invalid DataMall key can produce request errors even if the application starts. Stop the app with Ctrl+C.
 

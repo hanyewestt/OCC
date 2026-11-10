@@ -115,8 +115,7 @@ repository root (Docker provides the disposable PostgreSQL container):
 Commit the regenerated `services/planning/openapi/planning.json`. The build packages
 it as the served contract, and the export test fails when the packaged copy differs
 from the generated one. The `-Popenapi` profile still works against any process that
-serves `/v3/api-docs`, such as `spring-boot:run` started with
-`-Dspring-boot.run.useTestClasspath=true`.
+serves `/v3/api-docs`.
 The OpenAPI security identifiers are `SupabaseJWT` and `DisruptionPeerToken`;
 these describe the existing bearer/peer-header authentication and do not change
 the API routes, role checks or header names.
