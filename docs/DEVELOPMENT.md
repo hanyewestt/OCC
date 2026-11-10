@@ -40,6 +40,13 @@ Spring's normal `SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE` and
 adding arbitrary variables to `.env` alone does not inject them into containers.
 Recreate affected containers after changing their environment or memory budget.
 
+Builds copy the shared Swagger UI template from
+`${maven.multiModuleProjectDirectory}/infra/swagger-ui`. The Maven wrapper and the
+Maven CLI set that property from the directory containing `.mvn/`, so build with
+`./mvnw` at the repository root (also inside `infra/java.Dockerfile`). An embedded
+Maven runner that leaves the property unset produces a jar without the template;
+the static-asset integration test catches that.
+
 Native Memory Tracking (NMT) is not enabled by the default JVM options. Add
 `-XX:NativeMemoryTracking=summary` to the full option override when diagnosing,
 then remove it again. It reports JVM allocations, not total resident RAM or all
