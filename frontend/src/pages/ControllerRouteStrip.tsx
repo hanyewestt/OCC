@@ -432,11 +432,11 @@ export function ControllerRouteStrip({ alerts, run, stops, positions, arrivals, 
     const snapshot = route ? positionByRoute.get(routeKey(route)) : undefined
     return {
       ...incident,
-      stripLink: !simulationRun && route && snapshot
+      stripLink: route && snapshot
         ? linkIncidentToPosition(incident, route, snapshot.position,
           snapshot.sourceObservedAt ?? snapshot.computedAt, snapshot.maxSourceAgeSeconds) : null,
     }
-  }), [incidents, routes, positionByRoute, simulationRun])
+  }), [incidents, routes, positionByRoute])
 
   const routeDestinations = useMemo(() => new Map(routes.map(route => [
     routeKey(route), arrivals.error ? { status: 'unavailable' } as const : routeDestination(route, routes, arrivals.data ?? []),
