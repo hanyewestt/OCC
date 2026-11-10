@@ -57,7 +57,7 @@ public class IngestionSecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/v1/admin/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PUT, "/api/v1/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/v1/admin/**").denyAll()
-                        .requestMatchers(HttpMethod.GET, "/api/v1/demo-mode",
+                        .requestMatchers(HttpMethod.GET, "/api/v1/captains", "/api/v1/demo-mode",
                                 "/api/v1/route-positions",
                                 "/api/v1/reference-topology",
                                 "/api/v1/poll-runs",

@@ -16,6 +16,26 @@ import org.springframework.web.server.ResponseStatusException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(com.csd.occ.ingestion.domain.DirectoryAccessDeniedException.class)
+    ProblemDetail directoryAccessDenied(com.csd.occ.ingestion.domain.DirectoryAccessDeniedException exception) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, exception.getMessage());
+    }
+
+    @ExceptionHandler(com.csd.occ.ingestion.domain.DirectoryUserNotFoundException.class)
+    ProblemDetail directoryUserNotFound(com.csd.occ.ingestion.domain.DirectoryUserNotFoundException exception) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, exception.getMessage());
+    }
+
+    @ExceptionHandler(com.csd.occ.ingestion.domain.IdentityProviderException.class)
+    ProblemDetail identityProvider(com.csd.occ.ingestion.domain.IdentityProviderException exception) {
+        HttpStatus status = switch (exception.reason()) {
+            case UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+            case DUPLICATE_EMAIL -> HttpStatus.CONFLICT;
+            case PASSWORD_POLICY -> HttpStatus.BAD_REQUEST;
+        };
+        return ProblemDetail.forStatusAndDetail(status, exception.getMessage());
+    }
+
     @ExceptionHandler(ResponseStatusException.class)
     ProblemDetail responseStatus(ResponseStatusException exception) {
         return ProblemDetail.forStatusAndDetail(exception.getStatusCode(), exception.getReason());

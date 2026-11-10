@@ -49,6 +49,12 @@ Use root `.env.example` as the single inventory. Ingestion publishes only
 `GET /frontend-config`. Private/service-role keys must never reach the browser.
 JWT validation uses the separate JWKS URL, allowed algorithms and audience.
 
+The optional backend identity directory reads a private key from an Ingestion-only
+mounted secret file. It remains disabled until the existing trusted roles have
+been migrated to server-managed `app_metadata.occ_role` and the provider hook has
+been verified. See [identity rollout](../infra/supabase/README.md) before enabling
+it. Directory snapshots never grant permissions or replace JWT validation.
+
 See [development guide](DEVELOPMENT.md) for builds, Vite proxy settings and
 browser tests. Nginx serves the React build. Simulation controls and
 recommendation decisions use the dashboard's verified persistent session;

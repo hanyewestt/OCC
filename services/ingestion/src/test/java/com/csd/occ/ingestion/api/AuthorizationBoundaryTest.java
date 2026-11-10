@@ -59,6 +59,12 @@ class AuthorizationBoundaryTest {
         perform(method, "/unknown", role, 403);
     }
 
+    @ParameterizedTest
+    @CsvSource({"ADMIN,200", "CONTROLLER,200", "CAPTAIN,403", "UNASSIGNED,403"})
+    void captainDirectoryRequiresAdminOrController(String role, int expected) throws Exception {
+        perform("GET", "/api/v1/captains", role, expected);
+    }
+
     private void perform(String method, String path, String role, int expected) throws Exception {
         mvc.perform(request(HttpMethod.valueOf(method), path)
                 .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_" + role))))
@@ -67,7 +73,7 @@ class AuthorizationBoundaryTest {
 
     @RestController
     static class Probe {
-        @RequestMapping({"/api/v1/demo-mode", "/api/v1/admin/probe"})
+        @RequestMapping({"/api/v1/demo-mode", "/api/v1/admin/probe", "/api/v1/captains"})
         String respond() { return "allowed"; }
     }
 }
