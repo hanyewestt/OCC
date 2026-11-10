@@ -44,7 +44,7 @@ public class DisruptionSecurityConfig {
                         .hasAuthority(PeerCapabilityAuthenticationFilter.PLANNING_AUTHORITY)
                         .requestMatchers("/internal/v1/**").denyAll()
                         .requestMatchers("/api/v1/**").hasAnyRole("ADMIN", "CONTROLLER")
-                        .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")
+                        .requestMatchers("/v3/**", "/swagger-ui/**", "/webjars/**")
                         .hasAnyRole("ADMIN", "CONTROLLER")
                         .anyRequest().denyAll())
                 .oauth2ResourceServer(server -> server.jwt(jwt -> jwt.decoder(jwtDecoder)
