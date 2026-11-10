@@ -16,6 +16,10 @@ import org.springframework.web.server.ResponseStatusException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(com.csd.occ.ingestion.domain.ProvisioningConflictException.class)
+    ProblemDetail provisioningConflict(com.csd.occ.ingestion.domain.ProvisioningConflictException exception) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT,exception.getMessage());
+    }
     @ExceptionHandler(com.csd.occ.ingestion.domain.DirectoryAccessDeniedException.class)
     ProblemDetail directoryAccessDenied(com.csd.occ.ingestion.domain.DirectoryAccessDeniedException exception) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, exception.getMessage());

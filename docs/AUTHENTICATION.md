@@ -2,8 +2,9 @@
 
 The React app is served by Nginx; the Java services host APIs only.
 Open `/login` using the configured Nginx host/port. Sign in with an existing
-Supabase email/password account. Registration and password reset are outside
-this starter app.
+Supabase email/password account. Public self-registration and password reset are outside
+this app. When the optional identity integration is enabled after its role migration,
+ADMIN can provision immediately usable CONTROLLER or CAPTAIN accounts through the backend.
 
 ## Role pages
 
@@ -26,6 +27,31 @@ missing/invalid/expired tokens 401. Ingestion owns these routes and Nginx
 routes them directly. Operational reads permit ADMIN and CONTROLLER. Operational writes require
 CONTROLLER; the explicit admin namespaces require ADMIN. CAPTAIN retains only
 the owner-scoped route, instruction and acknowledgement permissions.
+
+## Administrator provisioning
+
+`POST /api/v1/admin/users` accepts displayName, email, role and password with a
+required actor-scoped `Idempotency-Key` (1–200 characters). Name/email are trimmed,
+email is lowercased, and only CONTROLLER/CAPTAIN may be created. Name is limited
+to 200 characters and email to 254 after trimming. Password is preserved exactly
+and must contain 15–128 Unicode code points; no composition rules are added.
+Provider email confirmation makes a confirmed creation immediately usable.
+Passwords and password-derived values are never stored locally or audited.
+
+Confirmed creation returns 201 with the safe account and a directory Location.
+Uncertain creation returns 202 with an operation Location; any verified ADMIN
+can inspect `/api/v1/admin/provisioning-operations/{id}`. Responses are no-store.
+Reusing a completed key returns its original safe result and never changes the
+password, even if a different password is submitted on replay. Changed normalized
+name/email/role under the same key conflicts. An unrelated existing account is
+never adopted.
+
+Recovery scans match only server-managed operation IDs and never retry creation.
+A complete no-match scan yields PASSWORD_REQUIRED: submit a freshly entered
+password using a NEW key to create a new operation. A timed-out original creation
+may still win later; if its original operation then completes, use the original
+attempt password. The newer attempt cannot adopt that account or claim its new
+password applied. Keep the original operation reference until resolved.
 
 ## Persistent browser sessions
 
