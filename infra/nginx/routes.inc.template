@@ -45,15 +45,15 @@
         return 404;
     }
 
-    location ^~ /v3/api-docs {
-        return 404;
-    }
-
-    location = /swagger-ui.html {
+    location ^~ /v3/ {
         return 404;
     }
 
     location ^~ /swagger-ui/ {
+        return 404;
+    }
+
+    location ^~ /webjars/ {
         return 404;
     }
 
