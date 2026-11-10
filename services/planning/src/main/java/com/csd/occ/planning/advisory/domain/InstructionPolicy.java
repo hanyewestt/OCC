@@ -41,7 +41,7 @@ public final class InstructionPolicy {
                 yield "Slow down near " + p.stopName() + (p.subsequentStopCount() == 0 ? "."
                         : " and the next " + p.subsequentStopCount() + " stops.");
             }
-            case HOLD, DWELL_ADJUSTMENT -> throw new IllegalArgumentException("Use the validated bunching recommendation for HOLD/DWELL");
+            case HOLD, DWELL_ADJUSTMENT, SKIP_STOP -> throw new IllegalArgumentException("Use the validated bunching recommendation for movement instructions");
         };
         if (sourceInstruction != null && !sourceInstruction.isBlank()) {
             if (candidate.type() != InstructionType.BE_CAUTIOUS)

@@ -43,7 +43,7 @@ public final class BunchingMitigationCandidateValidator {
         }
 
         int headwayDeficitSeconds = event.expectedHeadwaySeconds()
-                - event.observedHeadwaySeconds().getLast();
+                - context.targetHeadwaySeconds(event);
         if (headwayDeficitSeconds < 1) {
             return rejected(candidate, MitigationCandidateRejectionReason.NO_POSITIVE_HEADWAY_DEFICIT);
         }

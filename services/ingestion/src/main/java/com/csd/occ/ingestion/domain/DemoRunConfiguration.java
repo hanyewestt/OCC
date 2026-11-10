@@ -17,7 +17,7 @@ public record DemoRunConfiguration(String serviceId, int directionId, int busCou
         captainUserIds = List.copyOf(Objects.requireNonNull(captainUserIds));
         if (serviceId.isBlank() || serviceId.length() > 20) throw new IllegalArgumentException("A bus service is required");
         if (directionId < 1) throw new IllegalArgumentException("Direction must be positive");
-        if (busCount < 2 || busCount > 3) throw new IllegalArgumentException("A simulation injection must contain 2 or 3 buses");
+        if (busCount < 2 || busCount > 20) throw new IllegalArgumentException("A simulation injection must contain 2 to 20 buses");
         if (monitoredStopCode.isBlank() || monitoredStopCode.length() > 20) throw new IllegalArgumentException("A bus stop is required");
         if (dispatchGap.compareTo(Duration.ofSeconds(15)) < 0 || dispatchGap.compareTo(Duration.ofMinutes(15)) > 0)
             throw new IllegalArgumentException("Dispatch gap must be between 15 seconds and 15 minutes");

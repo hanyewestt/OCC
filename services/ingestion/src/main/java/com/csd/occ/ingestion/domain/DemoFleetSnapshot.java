@@ -12,5 +12,11 @@ public record DemoFleetSnapshot(UUID demoRunId, String status, List<Vehicle> ite
                           Optional<Progress> progress) {}
     public record Progress(String stopCode, int stopSequence, Instant observedAt,
                            int assumedSpeedKmh, List<Integer> allowedSpeedReductionsKmh,
-                           List<Integer> allowedDurationsSeconds) {}
+                           List<Integer> allowedDurationsSeconds, Instant estimatedArrivalAt, Instant freshUntil, Instant boardingUntil) {
+        public Progress(String stopCode, int stopSequence, Instant observedAt, int assumedSpeedKmh,
+                List<Integer> allowedSpeedReductionsKmh, List<Integer> allowedDurationsSeconds) {
+            this(stopCode, stopSequence, observedAt, assumedSpeedKmh, allowedSpeedReductionsKmh,
+                    allowedDurationsSeconds, null, null, null);
+        }
+    }
 }

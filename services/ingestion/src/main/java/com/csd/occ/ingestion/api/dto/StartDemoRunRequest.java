@@ -16,7 +16,7 @@ import java.util.UUID;
 public record StartDemoRunRequest(
         @NotBlank @Size(max = 20) @Schema(example = "190") String serviceId,
         @Min(1) @Max(99) @Schema(example = "1") Integer directionId,
-        @Min(2) @Max(3) @Schema(description = "Number of buses injected into the one localised bunching event", example = "3") Integer busCount,
+        @Min(2) @Max(20) @Schema(description = "Number of buses injected into the one localised bunching event", example = "3") Integer busCount,
         @Min(15) @Max(900) @Schema(description = "Seconds between successive simulated dispatches", example = "90") Integer dispatchGapSeconds,
         @Schema(description = "Optional gap in seconds after each bus. Supply one value for each adjacent bus pair; omitted values use dispatchGapSeconds.", example = "[120, 90]") List<@Min(15) @Max(900) Integer> busGapsSeconds,
         @NotBlank @Size(max = 20) @Schema(description = "The single route stop at which this bunching injection is created", example = "44251") String monitoredStopCode,

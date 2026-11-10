@@ -286,7 +286,7 @@ class IngestionStartupIT {
     }
 
     @Test
-    void demoReplayRowsRemainRunScopedAndUnavailableFromLiveQueries() {
+    void demoReplayRowsRemainRunScopedAndUnavailableFromLiveQueries() throws Exception {
         topology.replaceIfChanged(new BusReferencePort.BusReferenceData(
                 List.of(new BusReferencePort.BusStopRecord("44251", "Demo Road", "Demo Stop",
                         new java.math.BigDecimal("1.377"), new java.math.BigDecimal("103.771"))),
@@ -295,7 +295,8 @@ class IngestionStartupIT {
                         java.math.BigDecimal.ZERO))), "d".repeat(64));
         when(bunching.alerts(any(UUID.class))).thenReturn(List.of());
 
-        DemoRunDetails started = demoRuns.start();
+        DemoRunDetails started = demoRuns.start(new com.csd.occ.ingestion.domain.DemoRunConfiguration(
+                "190", 1, 4, java.time.Duration.ofSeconds(90), com.csd.occ.ingestion.domain.DemoScenario.BUNCHING));
         for (int step = 0; step < DemoReplayScenario.STEP_COUNT; step++) replay.replayNext();
         DemoRunDetails completed = demoRuns.status(started.id());
         var simulationPage = bunchingFeed.demoPage(started.id(), 0, 100);
@@ -304,7 +305,78 @@ class IngestionStartupIT {
 
         assertThat(demoMode.enabled()).isTrue();
         assertThat(completed.status()).isEqualTo("REPLAY_COMPLETE");
+        mvc.perform(get("/internal/v1/ingestion/demo-fleet")
+                        .param("demoRunId", started.id().toString())
+                        .header("X-OCC-Peer-Token", "test-planning-to-ingestion-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].progress.estimatedArrivalAt").isNotEmpty())
+                .andExpect(jsonPath("$.items[0].progress.freshUntil").isNotEmpty());
         assertThat(simulationPage.items()).hasSize(DemoReplayScenario.STEP_COUNT);
+        assertThat(simulationPage.items()).allSatisfy(snapshot -> assertThat(snapshot.arrivals())
+                .extracting(BunchingFeedService.Arrival::visitOrder).containsExactly(1, 2, 3, 4));
+        var previous = simulationPage.items().get(1).arrivals();
+        var current = simulationPage.items().getLast().arrivals();
+        UUID bunchingEventId = UUID.randomUUID();
+        var affected = java.util.stream.Stream.concat(previous.stream(), current.stream())
+                .map(BunchingFeedService.Arrival::observationId).toList();
+        when(bunching.alerts(started.id())).thenReturn(List.of(new com.csd.occ.ingestion.domain.DemoBunchingAlert(
+                UUID.randomUUID(), bunchingEventId, "OPENED", "190", "44251", 1, Instant.now(), "SIMULATION",
+                current.get(1).observationId(), current.get(2).observationId(), affected, "{}")));
+        mvc.perform(get("/internal/v1/ingestion/demo-runs/{run}/bunching-groups/{event}", started.id(), bunchingEventId)
+                        .header("X-OCC-Peer-Token", "test-planning-to-ingestion-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.affectedBusReferences[0]").value("demo-190-1"))
+                .andExpect(jsonPath("$.affectedBusReferences[3]").value("demo-190-4"))
+                .andExpect(jsonPath("$.followingBusReference").value("demo-190-3"));
+        var latestSnapshot = simulationPage.items().getLast();
+        var currentIds = current.stream().map(BunchingFeedService.Arrival::observationId).toList();
+        var detectorEvidence = new BunchingControlPort.CurrentEvidence(started.id(), bunchingEventId, "190", "44251", 1,
+                "BUNCHING", latestSnapshot.rawObservationId(), latestSnapshot.fetchedAt(), Instant.now().plusSeconds(60), true, currentIds);
+        when(bunching.currentEvidence(started.id(), bunchingEventId)).thenReturn(java.util.Optional.of(detectorEvidence));
+        String currentPath = "/internal/v1/ingestion/demo-runs/" + started.id() + "/bunching-groups/" + bunchingEventId + "/current";
+        mvc.perform(get(currentPath).header("X-OCC-Peer-Token", "test-planning-to-ingestion-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.affectedBusReferences.length()").value(4))
+                .andExpect(jsonPath("$.affectedBusReferences[0]").value("demo-190-1"))
+                .andExpect(jsonPath("$.affectedBusReferences[3]").value("demo-190-4"))
+                .andExpect(jsonPath("$.consecutivePairs.length()").value(3))
+                .andExpect(jsonPath("$.consecutivePairs[0]").value(true))
+                .andExpect(jsonPath("$.consecutivePairs[1]").value(true))
+                .andExpect(jsonPath("$.consecutivePairs[2]").value(true))
+                .andExpect(jsonPath("$.adjacentGapSeconds.length()").value(3))
+                .andExpect(jsonPath("$.adjacentGapSeconds[0]").value(java.time.Duration.between(
+                        current.get(0).estimatedArrivalAt(), current.get(1).estimatedArrivalAt()).getSeconds()));
+        mvc.perform(get(currentPath).header("X-OCC-Peer-Token", "test-disruption-to-ingestion-token"))
+                .andExpect(status().isUnauthorized());
+        when(bunching.currentEvidence(started.id(), bunchingEventId)).thenReturn(java.util.Optional.of(
+                new BunchingControlPort.CurrentEvidence(started.id(), bunchingEventId, "190", "44251", 1, "BUNCHING",
+                        latestSnapshot.rawObservationId(), latestSnapshot.fetchedAt(), Instant.now().plusSeconds(60), true,
+                        List.of(currentIds.getFirst(), currentIds.get(2), currentIds.getLast()))));
+        mvc.perform(get(currentPath).header("X-OCC-Peer-Token", "test-planning-to-ingestion-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.consecutivePairs.length()").value(2))
+                .andExpect(jsonPath("$.consecutivePairs[0]").value(false))
+                .andExpect(jsonPath("$.consecutivePairs[1]").value(true));
+        var oldSnapshot = simulationPage.items().get(1);
+        when(bunching.currentEvidence(started.id(), bunchingEventId)).thenReturn(java.util.Optional.of(
+                new BunchingControlPort.CurrentEvidence(started.id(), bunchingEventId, "190", "44251", 1, "BUNCHING",
+                        oldSnapshot.rawObservationId(), oldSnapshot.fetchedAt(), Instant.now().plusSeconds(60), true,
+                        previous.stream().map(BunchingFeedService.Arrival::observationId).toList())));
+        mvc.perform(get(currentPath).header("X-OCC-Peer-Token", "test-planning-to-ingestion-token")).andExpect(status().isConflict());
+        when(bunching.currentEvidence(started.id(), bunchingEventId)).thenReturn(java.util.Optional.of(
+                new BunchingControlPort.CurrentEvidence(started.id(), bunchingEventId, "190", "44251", 1, "BUNCHING",
+                        latestSnapshot.rawObservationId(), latestSnapshot.fetchedAt(), Instant.now().minusSeconds(1), true, currentIds)));
+        mvc.perform(get(currentPath).header("X-OCC-Peer-Token", "test-planning-to-ingestion-token")).andExpect(status().isConflict());
+        when(bunching.currentEvidence(started.id(), bunchingEventId)).thenReturn(java.util.Optional.of(
+                new BunchingControlPort.CurrentEvidence(started.id(), bunchingEventId, "190", "44251", 1, "BUNCHING",
+                        latestSnapshot.rawObservationId(), latestSnapshot.fetchedAt(), Instant.now().plusSeconds(60), true,
+                        List.of(currentIds.getFirst(), UUID.randomUUID()))));
+        mvc.perform(get(currentPath).header("X-OCC-Peer-Token", "test-planning-to-ingestion-token")).andExpect(status().isConflict());
+        when(bunching.currentEvidence(started.id(), bunchingEventId)).thenReturn(java.util.Optional.of(
+                new BunchingControlPort.CurrentEvidence(started.id(), bunchingEventId, "190", "44251", 1, "BUNCHING",
+                        latestSnapshot.rawObservationId(), latestSnapshot.fetchedAt(), Instant.now().plusSeconds(60), true,
+                        List.of(currentIds.getFirst(), currentIds.getFirst()))));
+        mvc.perform(get(currentPath).header("X-OCC-Peer-Token", "test-planning-to-ingestion-token")).andExpect(status().isConflict());
         assertThat(bunchingFeed.page(0, 100).items())
                 .noneMatch(snapshot -> simulationIds.contains(snapshot.rawObservationId()));
         assertThat(arrivals.findCurrent("44251", "190", null, "arrival", "asc", PageRequest.of(0, 50))

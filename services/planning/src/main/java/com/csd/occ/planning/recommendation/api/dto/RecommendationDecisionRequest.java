@@ -9,18 +9,18 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;
 import java.util.List;
 
-@Schema(description = "Controller decision on a recommendation, with one replacement action per affected bus when rejected")
+@Schema(description = "Controller decision with one instruction or reasoned no-instruction outcome per affected bus")
 public record RecommendationDecisionRequest(
         @NotNull RecommendationDecisionAction action,
         CandidateMitigationType replacementAction,
         @Min(1) @Max(120) Integer adjustmentSeconds,
         @Size(max = 1000) String controllerRationale,
-        @Size(max = 3) List<@jakarta.validation.Valid ReplacementBusInstructionRequest> replacementInstructions) {
+        @Size(max = 100) List<@jakarta.validation.Valid ReplacementBusInstructionRequest> replacementInstructions) {
 
     public List<ReplacementBusInstructionRequest> normalizedReplacements() {
         if (replacementInstructions != null && !replacementInstructions.isEmpty()) return List.copyOf(replacementInstructions);
         if (replacementAction != null && adjustmentSeconds != null)
-            return List.of(new ReplacementBusInstructionRequest("", replacementAction, adjustmentSeconds));
+            return List.of(new ReplacementBusInstructionRequest("", ControllerReplacementAction.valueOf(replacementAction.name()), adjustmentSeconds, null));
         return List.of();
     }
 
