@@ -1785,7 +1785,10 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
                 >
                   <span>{label}</span>
                   {alertCount > 0 && (
-                    <span className="rounded-full bg-destructive px-1.5 py-0.2 text-[10px] font-bold text-white">
+                    <span className={cn(
+                      "rounded-full px-1.5 py-0.2 text-[10px] font-bold",
+                      activeCorridorIncidents.length > 0 ? "bg-destructive text-white" : "bg-muted-foreground/20 text-muted-foreground"
+                    )}>
                       {alertCount}
                     </span>
                   )}
