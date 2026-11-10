@@ -64,6 +64,45 @@ PostgreSQL can start (a missing mount blocks startup — there is no root-disk
 fallback, and an existing retained volume is never reformatted), root-only
 secret files, and the ECR login.
 
+## Lifecycle controls: pause, start/resume and status
+
+**Actions → Environment control → Run workflow** dispatches `start` (alias
+`resume`), `pause` or `status` against the production environment. Mutating
+controls share the `occ-production-mutation` concurrency group with the
+release/deploy workflow, reconcile outstanding remote operations before
+acting, and are never cancelled.
+
+`pause` records the paused intent in the bucket's `state/control.json`
+before touching anything, then closes traffic, stops Nginx, the three
+services and PostgreSQL gracefully through SSM, and finally stops the
+instance, waiting for `stopped`. An already stopped or stopping instance
+records the intent without any SSM round-trip. A failure anywhere retains
+the paused intent, reports the actual instance state and never force-stops
+or terminates; the retry simply runs `pause` again. While paused, pushes to
+main still verify, build, publish and advance the published pointer — the
+release pipeline reports deployment as deferred and never wakes the
+instance. Paused EBS, Elastic IP, ECR, S3, Secrets Manager and CloudFront
+charges continue; pausing is not a zero-cost state.
+
+`start`/`resume` starts the instance, waits for EC2 and SSM readiness and
+the durable data mount, keeps the origin gated, applies the latest eligible
+published release through the ordinary deploy path (no rebuild; an already
+applied setup/role fingerprint is skipped), and marks the environment
+running only after readiness and the public smoke pass. A newer main push
+whose verification failed does not block resume: the published pointer names
+the last eligible release and any unverified newer changes stay pending. A
+failed start retains the paused intent and the origin stays gated; uncertain
+database state requires gated recovery, never a false success. `status`
+reports the desired mode, actual instance state (flagging a stopped instance
+while the desired mode is running as unavailable), the published and
+deployed release ids, and any outstanding operation, without printing
+secret values.
+
+Actual lifecycle demonstration — two paused main updates publishing without
+an EC2 wake, start of the latest verified release without rebuild, repeated
+controls, a pause queued during a deploy and database continuity — is an
+authorized-rollout check; local tests use synthetic AWS responses only.
+
 Deployment layers the Compose files as `compose.yaml` +
 `infra/compose.images.yaml` (immutable digest pins, no source/dist mounts)
 plus either `infra/compose.production.yaml` (direct TLS, unchanged behavior)
