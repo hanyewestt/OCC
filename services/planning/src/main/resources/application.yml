@@ -128,6 +128,3 @@ occ:
 springdoc:
   api-docs:
     version: OPENAPI_3_1
-  swagger-ui:
-    persist-authorization: false
-    enabled: ${OCC_PLANNING_SWAGGER_ENABLED:true}
