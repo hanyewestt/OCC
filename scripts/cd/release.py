@@ -112,7 +112,8 @@ def ownership_for(path: str) -> frozenset:
             return WEB_ONLY
         return NO_RELEASE
     if path in ("compose.yaml", "infra/compose.production.yaml",
-                "infra/compose.images.yaml", "infra/compose.cloudfront.yaml"):
+                "infra/compose.images.yaml", "infra/compose.cloudfront.yaml",
+                "infra/compose.host-data.yaml"):
         return frozenset()  # release required, but no image contains these bytes
     if path.startswith("scripts/cd/") or path.startswith("infra/aws/"):
         return frozenset()
@@ -155,7 +156,8 @@ def classify_paths(paths) -> dict:
 def _is_release_only(path: str) -> bool:
     path = path.replace("\\", "/")
     if path in ("compose.yaml", "infra/compose.production.yaml",
-                "infra/compose.images.yaml", "infra/compose.cloudfront.yaml"):
+                "infra/compose.images.yaml", "infra/compose.cloudfront.yaml",
+                "infra/compose.host-data.yaml"):
         return True
     if path.startswith(("scripts/cd/", "infra/aws/", ".github/")):
         return True

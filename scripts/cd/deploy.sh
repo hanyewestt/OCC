@@ -19,9 +19,10 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 OCC_HOME="${OCC_HOME:-/opt/occ}"
 OCC_DATA_MOUNT="${OCC_DATA_MOUNT:-/var/lib/postgresql}"
+# Compose interpolates the retained-volume bind mount from the environment.
+export OCC_DATA_MOUNT
 OCC_MIN_FREE_MB="${OCC_MIN_FREE_MB:-2048}"
 OCC_PROJECT="${OCC_PROJECT:-occ-production}"
-OCC_PUBLIC_URL="${OCC_PUBLIC_URL:-http://127.0.0.1:8080}"
 OCC_READINESS_TIMEOUT="${OCC_READINESS_TIMEOUT:-300}"
 STATE="$OCC_HOME/state"
 JOURNAL="$STATE/journal"
@@ -134,11 +135,16 @@ set -a
 # shellcheck disable=SC1090
 . "${OCC_DEPLOYMENT_ENV:?set OCC_DEPLOYMENT_ENV to the deployment environment file}"
 set +a
+# Prefer the CloudFront hostname recorded by the bootstrap for the public
+# checks; fall back to the local origin listener.
+OCC_PUBLIC_URL="${OCC_PUBLIC_URL:-${OCC_ORIGIN_PUBLIC_URL:-http://127.0.0.1:8080}}"
 
 compose() {
-    docker compose -p "$OCC_PROJECT" --env-file "$COMPOSE_ENV" \
+    # Production enables the edge profile explicitly: local development resets
+    # the nginx profile, but the immutable CloudFront stack keeps it gated.
+    docker compose -p "$OCC_PROJECT" --env-file "$COMPOSE_ENV" --profile edge \
         -f "$BUNDLE/compose.yaml" -f "$BUNDLE/compose.images.yaml" \
-        -f "$BUNDLE/compose.cloudfront.yaml" "$@"
+        -f "$BUNDLE/compose.cloudfront.yaml" -f "$BUNDLE/compose.host-data.yaml" "$@"
 }
 
 manifest_value() {
@@ -162,10 +168,13 @@ SETUP_FINGERPRINT=$(printf '%s\n%s\n' "$DB_SETUP_INPUT_HASH" "$ROLE_IDENTITY" \
     | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')
 
 # Runtime environment: deployment settings plus this release's exact images.
+# The rendered deployment file uses `export KEY='value'` lines (safe to
+# source); Compose's --env-file wants bare KEY=value, so strip the prefix
+# before filtering. Single-quoted values stay literal to Compose.
 COMPOSE_ENV="$RUNTIME/env"
 {
-    grep -E '^(POSTGRES_|SUPABASE_|OCC_[A-Z_]+|DATAMALL_API_KEY)' \
-        "${OCC_DEPLOYMENT_ENV:?}" 2>/dev/null || true
+    sed -E 's/^export[[:space:]]+//' "${OCC_DEPLOYMENT_ENV:?}" 2>/dev/null \
+        | grep -E '^(POSTGRES_|SUPABASE_|OCC_[A-Z_]+|DATAMALL_API_KEY)' || true
     python3 - "$BUNDLE/manifest.json" <<'PY'
 import json
 import sys
@@ -211,6 +220,18 @@ PY
     ) || die "$TARGET_COMPAT"
     record_phase "rollback-authorized"
     log "rollback authorized: compatible app/web images only, database untouched"
+    # Pull before any mutation so a pull failure cannot leave the stack down.
+    for image in $(python3 - "$BUNDLE/manifest.json" <<'PY'
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+for reference in sorted(manifest["images"].values()):
+    print(reference)
+PY
+    ); do
+        docker pull "$image" >/dev/null
+    done
     compose stop nginx ingestion disruption planning >/dev/null 2>&1 || true
     compose up -d --no-build --wait
     record_phase "rollback-applied"
@@ -230,6 +251,18 @@ with open(path + ".new", "w", encoding="utf-8") as handle:
     json.dump(previous, handle)
 PY
     mv "$ACTIVE_RELEASE.new" "$ACTIVE_RELEASE"
+    # The deployed pointer must reflect the rollback, or status and the
+    # remote CAS would keep reporting the failed release as deployed.
+    DEPLOYED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    ROLLBACK_SHA=$(sha256sum "$BUNDLE/manifest.json" | awk '{print $1}')
+    printf '{"releaseId":"%s","revision":"%s","releaseKey":"releases/%s","version":"%s","checksum":"sha256:%s","deployedAt":"%s"}\n' \
+        "$RELEASE_ID" "$REVISION" "$RELEASE_ID" "$DEPLOYED_AT" "$ROLLBACK_SHA" \
+        "$DEPLOYED_AT" > "$STATE/last-deployed.json"
+    if [ -n "${OCC_RELEASE_BUCKET:-}" ]; then
+        aws s3 cp "$STATE/last-deployed.json" \
+            "s3://$OCC_RELEASE_BUCKET/state/last-deployed.json" \
+            || echo "deploy: warning: the remote deployed pointer could not be updated" >&2
+    fi
     record_phase "rollback-state-advanced"
     log "rollback complete; the failed deployment remains recorded as failed"
     exit 0
@@ -295,11 +328,13 @@ if [ "$NEED_SETUP" -eq 1 ]; then
     record_phase "gate-closed"
     compose stop nginx ingestion disruption planning >/dev/null 2>&1 || true
     record_phase "writers-stopped"
-    # PostgreSQL stays up; the setup requires it healthy.
+    # PostgreSQL stays up (and is started on first install); the aggregate
+    # setup requires it healthy before any schema work.
+    compose up -d --no-build --wait postgres
     compose exec -T postgres sh -c 'pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
         >/dev/null || die "PostgreSQL is not healthy; setup refused"
     log "running the combined db-setup once (ingestion -> disruption -> planning)"
-    if ! compose run --rm --no-deps db-setup; then
+    if ! compose --profile setup run --rm --no-deps db-setup; then
         record_phase "setup-failed"
         rm -f "$OUTSTANDING"
         die "aggregate setup failed; the gate stays closed and the schema state needs recovery"
@@ -316,13 +351,20 @@ log "applying the exact base/images/cloudfront files with --no-build"
 compose up -d --no-build --wait
 record_phase "stack-up"
 
-# Backend readiness first: nginx health alone proves nothing.
+# Backend readiness first: nginx health alone proves nothing. Each service's
+# internal port variable name matches its Compose environment entry, with the
+# documented per-service defaults as fallback.
 READY_DEADLINE=$(( $(date +%s) + OCC_READINESS_TIMEOUT ))
 for service in ingestion disruption planning; do
-    log "waiting for $service readiness"
+    case "$service" in
+        ingestion) port="${OCC_INGESTION_INTERNAL_PORT:-8001}" ;;
+        disruption) port="${OCC_DISRUPTION_INTERNAL_PORT:-8002}" ;;
+        planning) port="${OCC_PLANNING_INTERNAL_PORT:-8003}" ;;
+    esac
+    log "waiting for $service readiness on port $port"
     while :; do
         if compose exec -T "$service" sh -c \
-            'curl --fail --silent http://127.0.0.1:${OCC_SERVICE_INTERNAL_PORT:-8000}/actuator/health/readiness' \
+            "curl --fail --silent http://127.0.0.1:$port/actuator/health/readiness" \
             >/dev/null 2>&1; then
             break
         fi
@@ -338,8 +380,18 @@ record_phase "backends-ready"
 
 log "checking the restricted origin while the gate is closed"
 GATE_TOKEN=$(cat "$OCC_GATE_DIR/gate-token" 2>/dev/null || printf 'missing')
-ORIGIN_SECRET_HEADER=$(grep -E '^OCC_ORIGIN_SECRET=' "$COMPOSE_ENV" | head -1 | cut -d= -f2-)
-for check in "_occ_gate_readiness:204" "_occ_edge_health:503"; do
+# The deployment env is already sourced above; the shell strips the quoting
+# that the Compose env file keeps verbatim.
+ORIGIN_SECRET_HEADER="${OCC_ORIGIN_SECRET:-}"
+# Expect the closed-gate response only when the gate is actually closed; a
+# routine release with unchanged setup leaves it open.
+GATE_STATE=$(sed -n 's/^set [$]occ_traffic_gate "\(.*\)";/\1/p' \
+    "$OCC_GATE_DIR/traffic-gate.inc" 2>/dev/null || true)
+case "$GATE_STATE" in
+    open) edge_expect=204 ;;
+    *) edge_expect=503 ;;
+esac
+for check in "_occ_gate_readiness:204" "_occ_edge_health:$edge_expect"; do
     path=${check%%:*}
     expected=${check##*:}
     STATUS=$(curl --silent --output /dev/null --write-out '%{http_code}' \
@@ -353,13 +405,17 @@ for check in "_occ_gate_readiness:204" "_occ_edge_health:503"; do
 done
 record_phase "origin-checked"
 
-if [ "${GATE_WAS_CLOSED:-0}" = "1" ]; then
+# Open the gate only when it is closed: this completes a setup-gated deploy
+# and recovers a gate left closed by an earlier failure, without reloading
+# nginx on every routine release.
+if [ "$GATE_STATE" != "open" ]; then
     log "opening the traffic gate and validating the public URL"
     sh "$GATE_SCRIPT" open
 fi
 record_phase "gate-open"
 for path in "" "frontend-config" "login"; do
     STATUS=$(OCC_CURL_PHASE=public curl --silent --output /dev/null --write-out '%{http_code}' \
+        --header "X-OCC-Origin-Secret: $ORIGIN_SECRET_HEADER" \
         "$OCC_PUBLIC_URL/$path" || printf '000')
     [ "$STATUS" = "200" ] || {
         record_phase "public-smoke-failed"
@@ -390,9 +446,13 @@ PY
 mv "$ACTIVE_RELEASE.new" "$ACTIVE_RELEASE"
 
 DEPLOYED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-printf '{"releaseId":"%s","revision":"%s","deployedAt":"%s","checksums":"%s"}\n' \
-    "$RELEASE_ID" "$REVISION" "$DEPLOYED_AT" \
-    "$(sha256sum "$BUNDLE/manifest.json" | awk '{print $1}')" > "$STATE/last-deployed.json"
+MANIFEST_SHA=$(sha256sum "$BUNDLE/manifest.json" | awk '{print $1}')
+# The last-deployed pointer carries the same immutable fields the remote
+# CAS contract validates (releaseId, revision, releaseKey, version,
+# checksum) so the driver's compare-and-set reads it cleanly.
+printf '{"releaseId":"%s","revision":"%s","releaseKey":"releases/%s","version":"%s","checksum":"sha256:%s","deployedAt":"%s"}\n' \
+    "$RELEASE_ID" "$REVISION" "$RELEASE_ID" "$DEPLOYED_AT" "$MANIFEST_SHA" \
+    "$DEPLOYED_AT" > "$STATE/last-deployed.json"
 
 POINTER_FAILURE=""
 if [ -n "${OCC_RELEASE_BUCKET:-}" ]; then

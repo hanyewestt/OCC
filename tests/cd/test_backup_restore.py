@@ -89,10 +89,25 @@ case "$*" in
 esac
 exit 0
 ''')
+        self._stub("gunzip", f'''
+printf '%s\\n' "gunzip $*" >> {calls}
+for arg in "$@"; do last="$arg"; done
+# -c: copy the (fixture, non-gzip) file to stdout.
+cat "$last"
+''')
         self._stub("docker", f'''
 printf '%s\\n' "docker $*" >> {calls}
-case "$*" in
-  run\\ *|*" run "*)
+case " $* " in
+  *" exec "*"pg_dump"*)
+    if [ "${{OCC_FAKE_PGDUMP_FAILS:-}}" = "yes" ]; then exit 3; fi
+    printf 'dump content\\n'
+    exit 0 ;;
+  *" ps "*)
+    echo "postgres-container-id"
+    exit 0 ;;
+  *" exec "*"pg_isready"*) exit 0 ;;
+  *" exec "*"psql"*) exit 0 ;;
+  *" run "*)
     if [ "${{OCC_FAKE_RESTORE_FAILS:-}}" = "yes" ]; then exit 1; fi
     ;;
 esac
@@ -114,13 +129,28 @@ exit 0
                               capture_output=True, text=True, encoding="utf-8",
                               errors="replace", env=env)
 
+    @staticmethod
+    def _to_msys(entry: str) -> str:
+        import re
+        match = re.match(r"^([A-Za-z]):[/\\](.*)$", entry.strip())
+        if match:
+            return "/" + match.group(1).lower() + "/" + match.group(2).replace("\\", "/")
+        return entry.strip()
+
     def _env(self) -> dict:
         env = dict(os.environ)
+        # Git Bash prepends /usr/bin to any inherited PATH, so the real
+        # gunzip/gzip shadow the stubs; BASH_ENV re-exports the stub dir.
+        prepend = self.bin / "occ-path-prepend.sh"
+        prepend.write_text(
+            f'export PATH="{self._to_msys(self.bin.as_posix())}:$PATH"\n',
+            encoding="utf-8", newline="\n")
         env.update({
             "OCC_BACKUP_DIR": self.dumps.as_posix(),
             "OCC_RELEASE_BUCKET": "occ-test",
             "OCC_BACKUP_RETAIN": "3",
             "PATH": self.bin.as_posix() + os.pathsep + os.environ["PATH"],
+            "BASH_ENV": prepend.as_posix(),
             "OCC_AWS_LOG": self.calls.as_posix(),
             "POSTGRES_DB": "occ",
             "OCC_BACKUP_STAMP": "20261110T0000Z",
@@ -143,13 +173,14 @@ class BackupTests(unittest.TestCase):
         self.assertIn("s3 cp", joined)
         self.assertIn("backups/occ-20261110T0000Z", joined)
         dump_call = next(line for line in self.sandbox.aws_calls()
-                         if line.startswith("pg_dump"))
-        # Database-consistent dump: single transaction snapshot, plain SQL.
+                         if "pg_dump" in line)
+        # Database-consistent dump: single transaction snapshot, plain SQL,
+        # executed inside the running postgres container (no host client).
+        self.assertIn("docker exec", dump_call)
         self.assertIn("--single-transaction", dump_call)
 
     def test_backup_failure_is_visible_and_stops_the_upload(self):
-        self.sandbox._stub("pg_dump", "exit 3\n")
-        result = self.sandbox.run_backup()
+        result = self.sandbox.run_backup(extra_env={"OCC_FAKE_PGDUMP_FAILS": "yes"})
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("dump", result.stderr.lower())
         self.assertFalse(any("s3 cp" in line for line in self.sandbox.aws_calls()))
@@ -199,10 +230,19 @@ class RestoreTests(unittest.TestCase):
         docker_calls = [line for line in self.sandbox.aws_calls()
                         if line.startswith("docker")]
         self.assertTrue(docker_calls)
+        joined_docker = "\n".join(docker_calls)
         # The restore runs against a disposable PostGIS container with an
         # isolated name and never against the production compose project.
-        self.assertIn("occ-restore", docker_calls[0])
-        self.assertNotIn("-p occ-production", docker_calls[0])
+        self.assertIn("--name occ-restore", joined_docker)
+        self.assertNotIn("-p occ-production", joined_docker)
+        # The plain-SQL dump is decompressed and piped to psql with
+        # stop-on-error, not pg_restore (which expects the custom format).
+        self.assertTrue(any(line.startswith("gunzip") for line
+                            in self.sandbox.aws_calls()))
+        self.assertIn("psql", joined_docker)
+        self.assertNotIn("pg_restore", joined_docker)
+        self.assertIn("ON_ERROR_STOP=1", joined_docker)
+        self.assertIn("pg_isready", joined_docker)
 
     def test_restore_failure_is_visible(self):
         result = self.sandbox.run_restore(extra_env={"OCC_FAKE_RESTORE_FAILS": "yes"})
