@@ -43,6 +43,7 @@ public class IngestionSecurityConfig {
                         .hasAuthority(PeerCapabilityAuthenticationFilter.DISRUPTION_AUTHORITY)
                         .requestMatchers(HttpMethod.GET, "/internal/v1/ingestion/demo-runs/*/planning-context",
                                 "/internal/v1/ingestion/demo-runs/*/bunching-groups/*",
+                                "/internal/v1/ingestion/demo-runs/*/bunching-groups/*/current",
                                 "/internal/v1/ingestion/planning-context")
                         .hasAuthority(PeerCapabilityAuthenticationFilter.PLANNING_AUTHORITY)
                         .requestMatchers("/internal/v1/**").denyAll()

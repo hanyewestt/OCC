@@ -32,7 +32,9 @@ public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort
                    mitigation_context, response_payload, created_at
               FROM planning.recommendation
              WHERE bunching_event_id = ?
-             ORDER BY created_at DESC
+               AND NOT EXISTS (SELECT 1 FROM planning.recommendation revision
+                   WHERE revision.previous_recommendation_id = recommendation.recommendation_id)
+             ORDER BY created_at DESC, recommendation_id DESC
              LIMIT 1
             """;
 
@@ -46,6 +48,8 @@ public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort
              WHERE decision.recommendation_id IS NULL
                AND recommendation.request_payload ->> 'classification' = 'SIMULATION'
                AND recommendation.response_payload ->> 'status' = 'RECOMMENDED'
+               AND NOT EXISTS (SELECT 1 FROM planning.recommendation revision
+                   WHERE revision.previous_recommendation_id = recommendation.recommendation_id)
              ORDER BY recommendation.created_at, recommendation.recommendation_id
              OFFSET ? LIMIT ?
             """;
@@ -58,6 +62,8 @@ public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort
              WHERE decision.recommendation_id IS NULL
                AND recommendation.request_payload ->> 'classification' = 'SIMULATION'
                AND recommendation.response_payload ->> 'status' = 'RECOMMENDED'
+               AND NOT EXISTS (SELECT 1 FROM planning.recommendation revision
+                   WHERE revision.previous_recommendation_id = recommendation.recommendation_id)
             """;
 
     private static final String INSERT_IF_ABSENT = """
@@ -85,6 +91,43 @@ public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort
         return jdbc.query(FIND_BY_IDEMPOTENCY_KEY, this::mapRecord, idempotencyKey)
                 .stream()
                 .findFirst();
+    }
+
+    @Override
+    public Optional<RecommendationRecord> findByIdempotencyKeyForUpdate(UUID idempotencyKey) {
+        return jdbc.query(FIND_BY_IDEMPOTENCY_KEY + " FOR UPDATE", this::mapRecord, idempotencyKey).stream().findFirst();
+    }
+
+    @Override
+    public Optional<Revision> findRevision(UUID previousRecommendationId) {
+        return jdbc.query("SELECT recommendation_id, revision_raw_observation_id FROM planning.recommendation "
+                        + "WHERE previous_recommendation_id = ?",
+                (row, index) -> new Revision(row.getObject("recommendation_id", UUID.class),
+                        row.getObject("revision_raw_observation_id", UUID.class)), previousRecommendationId).stream().findFirst();
+    }
+
+    @Override
+    @org.springframework.transaction.annotation.Transactional
+    public boolean supersede(UUID previousRecommendationId, RecommendationRecord replacement, UUID rawObservationId) {
+        java.util.Objects.requireNonNull(replacement);
+        java.util.Objects.requireNonNull(rawObservationId);
+        var previous = findByIdempotencyKeyForUpdate(previousRecommendationId).orElseThrow();
+        if (previousRecommendationId.equals(replacement.idempotencyKey())
+                || !previous.requestId().equals(replacement.requestId())
+                || previous.classification() != replacement.classification()
+                || !previous.diagnosis().diagnosisId().equals(replacement.diagnosis().diagnosisId())
+                || !previous.bunchingEvent().bunchingEventId().equals(replacement.bunchingEvent().bunchingEventId())
+                || !previous.bunchingEvent().serviceId().equals(replacement.bunchingEvent().serviceId())
+                || previous.bunchingEvent().directionId() != replacement.bunchingEvent().directionId()
+                || !previous.bunchingEvent().monitoredStopCode().equals(replacement.bunchingEvent().monitoredStopCode()))
+            throw new IllegalArgumentException("A revision must belong to the same recommendation incident and diagnosis");
+        if (findRevision(previousRecommendationId).isPresent()
+                || Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS (SELECT 1 FROM planning.recommendation_decision WHERE recommendation_id = ?)",
+                        Boolean.class, previousRecommendationId))) return false;
+        if (!saveIfAbsent(replacement)) throw new IllegalStateException("Revision recommendation ID already exists");
+        jdbc.update("UPDATE planning.recommendation SET previous_recommendation_id=?, revision_raw_observation_id=? WHERE recommendation_id=?",
+                previousRecommendationId, rawObservationId, replacement.idempotencyKey());
+        return true;
     }
 
     @Override

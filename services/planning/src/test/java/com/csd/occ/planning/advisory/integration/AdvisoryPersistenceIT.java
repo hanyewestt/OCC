@@ -964,6 +964,129 @@ class AdvisoryPersistenceIT {
     }
 
     @Test
+    void latestGroupChangesOrUnavailableEvidenceRollBackTheWholeDecision() {
+        var references = List.of("SBS5898U", "bus-2");
+        var other = new AdvisoryContextPort.Bus("bus-2", "trip-2", "REG-2", "190", 1,
+                null, "UNASSIGNED", null);
+        when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING", List.of(bus, other), 2));
+        var id = bunchingRecommendation(FollowingBusState.READY_TO_DEPART, references);
+        when(context.bunchingGroup(run, id)).thenReturn(new AdvisoryContextPort.BunchingGroup(
+                run, id, "190", 1, "44251", references, "SBS5898U"));
+        var outcomes = List.of(new BunchingInstructionService.ReplacementBusInstruction("SBS5898U", MitigationType.HOLD, 30),
+                new BunchingInstructionService.ReplacementBusInstruction("bus-2", null, 0, "Continue"));
+        when(context.currentBunchingGroup(run, id)).thenReturn(new AdvisoryContextPort.CurrentBunchingGroup(
+                run, id, "190", "44251", 1, UUID.randomUUID(), NOW, NOW.plusSeconds(60), List.of("bus-2", "demo-190-b")));
+        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(id, "controller", outcomes, null))
+                .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("group changed");
+        when(context.currentBunchingGroup(run, id)).thenReturn(new AdvisoryContextPort.CurrentBunchingGroup(
+                run, id, "190", "44251", 1, UUID.randomUUID(), NOW.minusSeconds(60), NOW, List.of("demo-190-b", "bus-2")));
+        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(id, "controller", outcomes, null))
+                .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("expired");
+        when(context.currentBunchingGroup(run, id)).thenThrow(new IllegalStateException("synthetic unavailable"));
+        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(id, "controller", outcomes, null))
+                .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("unavailable");
+        assertThat(issued.count()).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from planning.recommendation_decision where recommendation_id = ?", Integer.class, id)).isZero();
+    }
+
+    @Test
+    void singleBusRecommendationCannotBypassTheCurrentMultiBusGroup() {
+        var other = new AdvisoryContextPort.Bus("bus-2", "trip-2", "REG-2", "190", 1,
+                null, "UNASSIGNED", null);
+        when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING", List.of(bus, other), 2));
+        var id = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
+        when(context.currentBunchingGroup(run, id)).thenReturn(new AdvisoryContextPort.CurrentBunchingGroup(
+                run, id, "190", "44251", 1, UUID.randomUUID(), NOW, NOW.plusSeconds(60), List.of("demo-190-b", "bus-2")));
+        assertThatThrownBy(() -> bunchingInstructions.approveAndIssue(id, "controller"))
+                .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("group changed");
+        assertThat(issued.count()).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from planning.recommendation_decision where recommendation_id = ?", Integer.class, id)).isZero();
+    }
+
+    @Test
+    void supersedingRecommendationRetainsHistoryAndPreventsDecisionsOnThePreviousVersion() {
+        var id = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
+        var original = records.findByIdempotencyKey(id).orElseThrow();
+        var nextId = UUID.randomUUID();
+        var replacement = revisionOf(original, nextId);
+        UUID snapshot = UUID.randomUUID();
+
+        assertThat(records.supersede(id, replacement, snapshot)).isTrue();
+        assertThat(records.findRevision(id)).contains(new RecommendationRecordPort.Revision(nextId, snapshot));
+        assertThat(records.findByIdempotencyKey(id)).isPresent();
+        assertThat(records.findByIdempotencyKey(nextId)).isPresent();
+        assertThat(records.findPending(0, 20)).extracting(RecommendationRecord::idempotencyKey).containsExactly(nextId);
+        assertThat(records.findByBunchingEventId(id)).get().extracting(RecommendationRecord::idempotencyKey).isEqualTo(nextId);
+        assertThat(records.supersede(id, replacement, snapshot)).isFalse();
+        assertThatThrownBy(() -> bunchingInstructions.approveAndIssue(id, "controller"))
+                .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("superseded");
+        assertThat(jdbc.queryForObject("select count(*) from planning.recommendation_decision where recommendation_id = ?", Integer.class, id)).isZero();
+        jdbc.update("DELETE FROM planning.recommendation WHERE recommendation_id = ?", id);
+        assertThat(records.findByIdempotencyKey(nextId)).isPresent();
+        assertThat(jdbc.queryForObject("SELECT revision_raw_observation_id FROM planning.recommendation WHERE recommendation_id = ?",
+                UUID.class, nextId)).isEqualTo(snapshot);
+    }
+
+    @Test
+    void concurrentRevisionsProduceOnlyOneSuccessor() throws Exception {
+        var id = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
+        var original = records.findByIdempotencyKey(id).orElseThrow();
+        var first = revisionOf(original, UUID.randomUUID());
+        var second = revisionOf(original, UUID.randomUUID());
+        var start = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = executor.submit(() -> { start.await(); return records.supersede(id, first, UUID.randomUUID()); });
+            var b = executor.submit(() -> { start.await(); return records.supersede(id, second, UUID.randomUUID()); });
+            start.countDown();
+            assertThat(List.of(a.get(10, TimeUnit.SECONDS), b.get(10, TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(true, false);
+        }
+        assertThat(records.findRevision(id)).isPresent();
+        assertThat(records.findPending(0, 20)).hasSize(1);
+        assertThat(jdbc.queryForObject("select count(*) from planning.recommendation", Integer.class)).isEqualTo(2);
+    }
+
+    @Test
+    void decidedRecommendationCannotBeSuperseded() {
+        var id = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
+        var original = records.findByIdempotencyKey(id).orElseThrow();
+        var replacement = revisionOf(original, UUID.randomUUID());
+        jdbc.update("INSERT INTO planning.recommendation_decision (recommendation_id, action, actor_subject, decided_at, override_instructions) VALUES (?, 'APPROVED', 'controller', ?, '[]'::jsonb)",
+                id, Timestamp.from(NOW));
+        assertThat(records.supersede(id, replacement, UUID.randomUUID())).isFalse();
+        assertThat(records.findByIdempotencyKey(replacement.idempotencyKey())).isEmpty();
+        assertThat(records.findRevision(id)).isEmpty();
+    }
+
+    @Test
+    void concurrentDecisionAndRevisionCannotBothWin() throws Exception {
+        var id = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
+        var replacement = revisionOf(records.findByIdempotencyKey(id).orElseThrow(), UUID.randomUUID());
+        var start = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var revision = executor.submit(() -> { start.await(); return records.supersede(id, replacement, UUID.randomUUID()); });
+            var decision = executor.submit(() -> {
+                start.await();
+                try { bunchingInstructions.approveAndIssue(id, "controller"); return true; }
+                catch (AdvisoryConflictException conflict) { return false; }
+            });
+            start.countDown();
+            assertThat(List.of(revision.get(10, TimeUnit.SECONDS), decision.get(10, TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(true, false);
+        }
+        assertThat(records.findRevision(id).isPresent())
+                .isNotEqualTo(jdbc.queryForObject("select count(*) from planning.recommendation_decision where recommendation_id = ?", Integer.class, id) == 1);
+    }
+
+    private RecommendationRecord revisionOf(RecommendationRecord original, UUID id) {
+        var updated = new BunchingRecommendationPolicy().evaluate(id, original.classification(),
+                original.bunchingEvent(), original.diagnosis(), original.mitigationContext(),
+                original.recommendation().expectedImpact()).orElseThrow();
+        return new RecommendationRecord(id, "b".repeat(64), original.requestId(), original.classification(),
+                original.bunchingEvent(), original.diagnosis(), original.mitigationContext(), updated, NOW.plusSeconds(1));
+    }
+
+    @Test
     void allBusesCanHaveNoInstructionAndTheDecisionCanBeReplayed() {
         var references = List.of("SBS5898U", "bus-2");
         var other = new AdvisoryContextPort.Bus("bus-2", "trip-2", "REG-2", "190", 1,
@@ -1100,6 +1223,8 @@ class AdvisoryPersistenceIT {
                 event, diagnosis, mitigation, recommendation, NOW));
         sources.put(id, new AdvisoryContextPort.Hazard(id, "BUNCHING", "ACTIVE", null, "SIMULATION", run,
                 null, NOW, null, List.of(), List.of()));
+        when(context.currentBunchingGroup(run, id)).thenReturn(new AdvisoryContextPort.CurrentBunchingGroup(
+                run, id, "190", "44251", 1, UUID.randomUUID(), NOW, NOW.plusSeconds(60), affectedBusReferences));
         when(context.route("190")).thenReturn(new AdvisoryContextPort.Route("190", List.of(
                 new AdvisoryContextPort.Operator("SBS Transit", "BUS", List.of(
                         new AdvisoryContextPort.Direction(1, List.of(new AdvisoryContextPort.Stop("44251", "School", 10))))))));
