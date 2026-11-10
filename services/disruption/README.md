@@ -70,8 +70,7 @@ repository root (Docker provides the disposable PostgreSQL container):
 Commit the regenerated `services/disruption/openapi/disruption.json`. The build
 packages it as the served contract, and the export test fails when the packaged copy
 differs from the generated one. The `-Popenapi` profile still works against any
-process that serves `/v3/api-docs`, such as `spring-boot:run` started with
-`-Dspring-boot.run.useTestClasspath=true`.
+process that serves `/v3/api-docs`.
 
 ### Shared Planning data scope
 
