@@ -46,11 +46,12 @@ and viewer identity (client address, protocol) is taken only from
 CloudFront's unforgeable injected headers.
 
 `infra/aws/ec2-cd.yaml` provisions the VPC, host, encrypted root and retained
-data volumes (20 GiB each, standard T3 credits), Elastic IP, encrypted and
-versioned private S3 release bucket, five immutable ECR repositories,
-Secrets Manager deployment and origin secrets, repository-scoped OIDC roles,
-and the CloudFront distribution with caching and error caching fully
-disabled. `scripts/cd/bootstrap.ps1` drives it as a reviewed change set:
+data volumes (20 GiB each, standard T3 credits), Elastic IP, a private S3
+release bucket encrypted with a rotated customer-managed KMS key, five
+immutable ECR repositories, Secrets Manager deployment and origin secrets,
+repository-scoped OIDC roles, and a CloudFront distribution fronted by an
+AWS WAF web ACL with the managed common rule set, with caching and error
+caching fully disabled. `scripts/cd/bootstrap.ps1` drives it as a reviewed change set:
 it verifies AWS and GitHub identities first, resolves the existing OIDC
 provider and the CloudFront prefix list, imports the existing root `.env`
 through a temporary payload file (values are never printed, logged or
@@ -63,6 +64,33 @@ Compose, the durable data volume mounted by validated UUID before Docker or
 PostgreSQL can start (a missing mount blocks startup — there is no root-disk
 fallback, and an existing retained volume is never reformatted), root-only
 secret files, and the ECR login.
+
+### Host egress allow-list
+
+The host has no unrestricted outbound rule. Its security group admits HTTPS
+(443) only to the customer-managed prefix list `occ-ec2-cd-egress`, plus DNS to
+the VPC resolver inside the VPC range. `bootstrap.ps1` refuses to create a
+change set unless that list exists, so the stack fails closed instead of
+falling back to open egress.
+
+Create the list once per account/region from the deployment's actual
+destinations, and refresh it before bootstrap when provider ranges change:
+
+- AWS service endpoints (ECR, S3, Secrets Manager, SSM): the `us-east-1` and
+  `GLOBAL` prefixes in `https://ip-ranges.amazonaws.com/ip-ranges.json`.
+- Supabase (`*.supabase.co`), LTA DataMall (`datamall2.mytransport.sg`), Gemini
+  and the image/package sources (Docker Hub, GitHub, AL2023 repositories): each
+  provider's published ranges, or the Cloudflare/AWS ranges that front them.
+
+```bash
+aws ec2 create-managed-prefix-list \
+  --prefix-list-name occ-ec2-cd-egress --address-family IPv4 --max-entries 1000 \
+  --entries Cidr=203.0.113.0/24,Description=example-provider \
+            Cidr=198.51.100.0/24,Description=example-provider
+```
+
+Verify and refresh entries with `describe-managed-prefix-lists` and
+`modify-managed-prefix-list`. Never add `0.0.0.0/0` or `::/0`.
 
 ## Lifecycle controls: pause, start/resume and status
 
@@ -130,10 +158,12 @@ references always come from the verified release manifest.
 dated us-east-1 price inputs and bounded planning allowances — the t3.small
 instance hours (730 typical, 744 longest-month sensitivity), the public IPv4
 address, both 20 GiB gp3 volumes, bounded ECR/S3/backup storage, two Secrets
-Manager secrets and a 50 GiB CloudFront HTTPS transfer allowance. With the
-2026-11-10 price inputs the total is **$28.42/month at 730h**, comfortably
-inside the $50/month planning target. The estimate uses no promotional
-credits; the longest month adds only the extra instance and IPv4 hours.
+Manager secrets, a 50 GiB CloudFront HTTPS transfer allowance, the WAF web ACL
+with its managed rule group and the release-bucket KMS key. With the 2026-11-10
+price inputs the total is **$49.42/month at 730h**, just inside the $50/month
+planning target; the longest month remains below it. The estimate uses no
+promotional credits; the longest month adds only the extra instance and IPv4
+hours.
 
 Excluded from the estimate: tax, paid providers (Supabase, Gemini, DataMall
 overages), data-transfer overages beyond the CloudFront allowance, and

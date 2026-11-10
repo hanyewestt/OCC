@@ -26,6 +26,9 @@ PRICES = {
     "s3_requests_per_thousand_puts": 0.005,
     "secret_month": 0.40,                 # Secrets Manager per secret
     "cloudfront_https_gb": 0.085,         # first 10 TB HTTPS North America+EU
+    "waf_acl_month": 5.00,                # AWS WAF web ACL
+    "waf_rule_month": 1.00,               # AWS WAF per rule
+    "kms_key_month": 1.00,                # customer-managed KMS key
 }
 
 # Planning allowances (bounded, from docs/DEPLOYMENT.md):
@@ -39,6 +42,7 @@ ALLOWANCES = {
     "monthly_backup_uploads": 60,         # ~2/day, thousand-put granularity
     "secrets": 2,                         # deployment settings + origin secret
     "cloudfront_transfer_gb": 50,
+    "waf_managed_rules": 15,              # AWSManagedRulesCommonRuleSet upper bound
 }
 
 
@@ -60,6 +64,10 @@ def estimate(hours: float) -> dict:
             PRICES["secret_month"] * ALLOWANCES["secrets"], 2),
         "CloudFront HTTPS transfer (50 GiB bound)": round(
             PRICES["cloudfront_https_gb"] * ALLOWANCES["cloudfront_transfer_gb"], 2),
+        "WAF web ACL + managed common rules": round(
+            PRICES["waf_acl_month"]
+            + PRICES["waf_rule_month"] * ALLOWANCES["waf_managed_rules"], 2),
+        "KMS customer-managed key (1)": round(PRICES["kms_key_month"], 2),
     }
     total = round(sum(lines.values()), 2)
     return {"hours": hours, "lines": lines, "total": total}
