@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import type { RouteDirection } from '../../src/lib/api'
+import type { BunchingAlert, RouteDirection } from '../../src/lib/api'
 import {
   areBusesConfirmedBunched,
   clusterProjectedBuses,
@@ -291,7 +291,7 @@ test('areBusesConfirmedBunched matches multi-bus bunching from alert gaps when s
         },
       ],
     }),
-  } as any
+  } as unknown as BunchingAlert
 
   const incident = {
     id: 'inc-sim-1',
