@@ -103,6 +103,51 @@ an EC2 wake, start of the latest verified release without rebuild, repeated
 controls, a pause queued during a deploy and database continuity — is an
 authorized-rollout check; local tests use synthetic AWS responses only.
 
+## Budget and cost model
+
+`scripts/cd/cost-estimate.py` computes the always-on monthly estimate from
+dated us-east-1 price inputs and bounded planning allowances — the t3.small
+instance hours (730 typical, 744 longest-month sensitivity), the public IPv4
+address, both 20 GiB gp3 volumes, bounded ECR/S3/backup storage, two Secrets
+Manager secrets and a 50 GiB CloudFront HTTPS transfer allowance. With the
+2026-11-10 price inputs the total is **$28.42/month at 730h**, comfortably
+inside the $50/month planning target. The estimate uses no promotional
+credits; the longest month adds only the extra instance and IPv4 hours.
+
+Excluded from the estimate: tax, paid providers (Supabase, Gemini, DataMall
+overages), data-transfer overages beyond the CloudFront allowance, and
+budget-alert notification costs. The $50/month target is not a hard cap; a
+budget alert requires a notification destination and does not stop charges.
+No NAT gateway, ALB or RDS is part of this architecture, and no silent
+instance resize is permitted — capacity problems are reported as tradeoffs
+before any scope or size change.
+
+Capacity qualification on the real 2 GiB host (cold/warm start with the
+retained tuning, full reference import/polling, setup with writers stopped,
+image pull/extract, backup/autovacuum/restart, representative authenticated
+and SSE load, MemAvailable, cgroup OOM counters, swap growth, standard-credit
+depletion) remains an authorized-rollout measurement; the historical idle
+sample in [PERFORMANCE.md](PERFORMANCE.md) is not capacity evidence.
+
+## Cleanup and security refresh
+
+Release cleanup retains the active, previous and any queued/paused release
+references and the newest database backups; disk or cleanup failures are
+reported and can never erase retained data. A security refresh (base image
+or dependency CVE fix) runs as a new release with a fresh `releaseId` —
+immutable SHA tags are never overwritten — and reuses unchanged components
+only after their digests pass the current vulnerability scans.
+
+## Skip-ci policy
+
+Commit classification follows [commit convention](commit-convention.md):
+deployment-affecting commits — workflows, Dockerfiles and build tooling,
+runtime Compose/Nginx/CloudFront configuration, database setup and
+migrations, and CD/lifecycle scripts — always run CI/CD even with no service
+or frontend edits; only exclusively documentation, agent-prose or
+local-launcher commits carry `[skip ci]`, with manual dispatch as the
+recovery when a marker is used by mistake.
+
 Deployment layers the Compose files as `compose.yaml` +
 `infra/compose.images.yaml` (immutable digest pins, no source/dist mounts)
 plus either `infra/compose.production.yaml` (direct TLS, unchanged behavior)

@@ -191,3 +191,18 @@ The JSON also records a normal-stack RAM snapshot. That snapshot has different
 data, startup ages and workload from the synthetic pair, so it is not another
 controlled before/after result. The isolated benchmark stack and its disposable
 database volume were removed; the normal development app remains running.
+
+## EC2 CD capacity qualification - pending
+
+The EC2 CD deployment targets a t3.small (2 GiB) host with the tuning above
+retained. The 1,221 MiB idle sample is a Docker working-set measurement on a
+3.822 GiB engine — it is **not** capacity evidence for the 2 GiB host:
+PostgreSQL settled at 276 MiB after a migration run and autovacuum, the sample
+excluded host overhead, and no loaded run has executed on the target size.
+The required measurement (cold/warm start, full enabled reference
+import/polling, setup with app writers stopped, image pull/extract,
+backup/autovacuum/restart, representative authenticated and SSE load,
+MemAvailable, cgroup memory.events/OOM, swap growth, restarts, latency and
+standard-credit depletion, zero OOM/unexpected restarts) is an authorized-rollout
+check recorded in the [EC2 CD verification record](superpowers/reviews/2026-11-10-ec2-cd-verification.md);
+no capacity claim is made until it runs.
