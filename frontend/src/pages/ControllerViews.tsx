@@ -1159,7 +1159,7 @@ export function BunchingMap({
   )
 }
 
-function alertBunchedVisitOrders(alert: BunchingAlert): { leadingVisitOrder: number | null; followingVisitOrder: number | null } {
+export function alertBunchedVisitOrders(alert: BunchingAlert): { leadingVisitOrder: number | null; followingVisitOrder: number | null } {
   if (!alert.evidence) return { leadingVisitOrder: null, followingVisitOrder: null }
   try {
     const data = JSON.parse(alert.evidence)
@@ -1176,6 +1176,38 @@ function alertBunchedVisitOrders(alert: BunchingAlert): { leadingVisitOrder: num
   } catch {
     return { leadingVisitOrder: null, followingVisitOrder: null }
   }
+}
+
+export function alertBunchedVisitOrderSet(alert: BunchingAlert): Set<number> {
+  const set = new Set<number>()
+  if (!alert.evidence) return set
+  try {
+    const data = JSON.parse(alert.evidence) as {
+      snapshot?: { arrivals?: Array<{ visitOrder?: number; observationId?: string }> }
+      groups?: Array<{ headways?: Array<{ leadingObservationId?: string; followingObservationId?: string; isBunched?: boolean }> }>
+    }
+    const arrivals = data?.snapshot?.arrivals
+    if (arrivals) {
+      const arrivalMap = new Map(arrivals.filter(a => a.observationId).map(a => [a.observationId!, a.visitOrder]))
+      const headways = (data?.groups ?? []).flatMap(g => g.headways ?? [])
+      for (const h of headways) {
+        if (h.isBunched && h.leadingObservationId && h.followingObservationId) {
+          const lead = arrivalMap.get(h.leadingObservationId)
+          const follow = arrivalMap.get(h.followingObservationId)
+          if (lead !== undefined) set.add(lead)
+          if (follow !== undefined) set.add(follow)
+        }
+      }
+    }
+  } catch {
+    return set
+  }
+  if (set.size === 0) {
+    const fallback = alertBunchedVisitOrders(alert)
+    if (fallback.leadingVisitOrder !== null) set.add(fallback.leadingVisitOrder)
+    if (fallback.followingVisitOrder !== null) set.add(fallback.followingVisitOrder)
+  }
+  return set
 }
 
 function formatVehicleCell(
@@ -1401,6 +1433,7 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
 
   const renderAlertRow = (alert: BunchingAlert, parentIncident?: PositionedIncident | null) => {
     const visitOrders = alertBunchedVisitOrders(alert)
+    const bunchedVisitOrderSet = alertBunchedVisitOrderSet(alert)
     const frontOrder = parentIncident?.stripLink?.frontOrder
     const followingOrder = parentIncident?.stripLink?.followingOrder
 
@@ -1414,13 +1447,22 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
         <TableCell>{alert.directionId ? `Direction ${alert.directionId}` : 'Unavailable'}</TableCell>
         <TableCell>{formatVehicleCell(alert.leadingVehicle, frontOrder, visitOrders.leadingVisitOrder)}</TableCell>
         <TableCell>{formatVehicleCell(alert.followingVehicle, followingOrder, visitOrders.followingVisitOrder)}</TableCell>
-        {bunchingArrivals(alert).map((value, index) => (
-          <TableCell key={index}>
-            {value === 'No prediction' || value === 'Unavailable' ? (
-              <span className="text-muted-foreground">{value}</span>
-            ) : timestamp(value)}
-          </TableCell>
-        ))}
+        {bunchingArrivals(alert).map((value, index) => {
+          const isBunchedArrival = bunchedVisitOrderSet.has(index + 1)
+          return (
+            <TableCell key={index}>
+              {value === 'No prediction' || value === 'Unavailable' ? (
+                <span className="text-muted-foreground">{value}</span>
+              ) : isBunchedArrival ? (
+                <span className="inline-block rounded px-1.5 py-0.5 font-semibold text-destructive bg-destructive/10 dark:text-red-400 dark:bg-destructive/20">
+                  {timestamp(value)}
+                </span>
+              ) : (
+                timestamp(value)
+              )}
+            </TableCell>
+          )
+        })}
         <TableCell>{alert.action}</TableCell>
         <TableCell>{timestamp(alert.detectedAt)}</TableCell>
         <TableCell>{dataClassificationLabel(alert.classification)}</TableCell>
@@ -1480,24 +1522,27 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
               <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                 {incident.stopCodes.length} {incident.stopCodes.length === 1 ? 'stop' : 'stops'} affected
               </span>
-              {bunchedPairs.map(pair => (
-                <span key={`${pair.leadingOrder}-${pair.followingOrder}`} className="rounded-md bg-sky-500/10 text-sky-700 dark:text-sky-300 px-2 py-0.5 text-xs font-medium">
-                  Buses #{pair.leadingOrder} & #{pair.followingOrder} · {formatGap(pair.seconds)}
+              {incident.stripLink ? (
+                <span className="rounded-md bg-sky-500/10 text-sky-700 dark:text-sky-300 px-2 py-0.5 text-xs font-medium">
+                  Buses #{incident.stripLink.frontOrder} & #{incident.stripLink.followingOrder}
+                  {bunchedPairs.length ? ` · ${formatGap(bunchedPairs[0].seconds)}` : ''}
                 </span>
-              ))}
+              ) : bunchedPairs.length ? (
+                bunchedPairs.map(pair => (
+                  <span key={`${pair.leadingOrder}-${pair.followingOrder}`} className="rounded-md bg-sky-500/10 text-sky-700 dark:text-sky-300 px-2 py-0.5 text-xs font-medium">
+                    NextBus {pair.leadingOrder} & {pair.followingOrder} · {formatGap(pair.seconds)}
+                  </span>
+                ))
+              ) : null}
               {incident.historical ? (
                 <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground font-medium">
                   Resolved · Buses departed
                 </span>
-              ) : bunchedPairs.length ? null : incident.stripLink ? (
-                <span className="rounded-md bg-sky-500/10 text-sky-700 dark:text-sky-300 px-2 py-0.5 text-xs font-medium">
-                  Buses #{incident.stripLink.frontOrder} & #{incident.stripLink.followingOrder}
-                </span>
-              ) : (
+              ) : !incident.stripLink && !bunchedPairs.length ? (
                 <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground font-medium">
                   Position unlinked
                 </span>
-              )}
+              ) : null}
             </div>
             <p className="text-sm text-muted-foreground">
               <span className="font-medium text-foreground">{incident.stopNames[0]}</span>

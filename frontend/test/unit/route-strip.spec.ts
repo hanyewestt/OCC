@@ -6,6 +6,7 @@ import {
   positionSourceFreshness, positionSourceIsStale, projectCoordinateToRoute, routePositionEvidenceDescription,
   routeDestination, routePositionSnapshotIsDisplayed, routeStopDistances, tightestArrivalGap,
 } from '../../src/lib/route-strip'
+import { alertBunchedVisitOrderSet } from '../../src/pages/ControllerViews'
 
 const now = Date.parse('2026-10-23T04:00:20Z')
 
@@ -119,6 +120,25 @@ test('reports only the bus pairs marked as bunched with each saved gap', () => {
     { leadingObservationId: 'bus-2', followingObservationId: 'bus-3', isBunched: true },
   ] }] }) })
   expect(bunchedArrivalGaps(alert)).toEqual([{ leadingOrder: 2, followingOrder: 3, seconds: 40 }])
+})
+
+test('alertBunchedVisitOrderSet extracts the bunched visit orders from alert evidence', () => {
+  const arrivals = [
+    { observationId: 'bus-1', visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:00:00Z' },
+    { observationId: 'bus-2', visitOrder: 2, estimatedArrivalAt: '2026-10-23T04:01:40Z' },
+    { observationId: 'bus-3', visitOrder: 3, estimatedArrivalAt: '2026-10-23T04:02:20Z' },
+  ]
+  const alert23 = makeAlert({ evidence: JSON.stringify({ snapshot: { arrivals }, groups: [{ headways: [
+    { leadingObservationId: 'bus-1', followingObservationId: 'bus-2', isBunched: false },
+    { leadingObservationId: 'bus-2', followingObservationId: 'bus-3', isBunched: true },
+  ] }] }) })
+  expect(alertBunchedVisitOrderSet(alert23)).toEqual(new Set([2, 3]))
+
+  const alert12 = makeAlert({ evidence: JSON.stringify({ snapshot: { arrivals }, groups: [{ headways: [
+    { leadingObservationId: 'bus-1', followingObservationId: 'bus-2', isBunched: true },
+    { leadingObservationId: 'bus-2', followingObservationId: 'bus-3', isBunched: false },
+  ] }] }) })
+  expect(alertBunchedVisitOrderSet(alert12)).toEqual(new Set([1, 2]))
 })
 
 test('uses same-snapshot ETA first and estimates time from distance and speed otherwise', () => {
