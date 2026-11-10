@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.csd.occ.planning.diagnosis.infrastructure.recommendation.PlanningRecommendationAdapter;
+import com.csd.occ.planning.diagnosis.domain.PlanningScopePort;
 import com.csd.occ.planning.recommendation.domain.CandidateMitigationType;
 import com.csd.occ.planning.recommendation.domain.ModelInvocationMetadata;
 import com.csd.occ.planning.recommendation.domain.ModelInvocationOutcome;
@@ -39,6 +40,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -81,6 +83,8 @@ class PlanningRecommendationPersistenceIT {
     @Autowired private JsonMapper json;
     @Autowired private PlatformTransactionManager transactionManager;
     @Autowired private ApplicationContext applicationContext;
+    // This persistence fixture has no active simulation run; it exercises the classpath context.
+    @MockitoBean private PlanningScopePort planningScope;
 
     @Test
     @org.junit.jupiter.api.condition.EnabledIfSystemProperty(named = "occ.exportOpenapi", matches = "true")

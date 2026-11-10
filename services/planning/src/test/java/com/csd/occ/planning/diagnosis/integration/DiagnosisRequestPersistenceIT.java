@@ -81,6 +81,22 @@ class DiagnosisRequestPersistenceIT {
     }
 
     @Test
+    void storesEarlySuggestionsForFourBuses() {
+        var request = requests.enqueue(EventType.BUS_BUNCHING, PRODUCER, UUID.randomUUID(), UUID.randomUUID());
+        var instructions = java.util.stream.IntStream.rangeClosed(1, 4)
+                .mapToObj(index -> new com.csd.occ.planning.recommendation.domain.ControllerBusInstruction(
+                        "bus-" + index, "Continue at the planned pace."))
+                .toList();
+        var suggestion = new com.csd.occ.planning.diagnosis.domain.EarlyBunchingControllerSuggestion(
+                request.id(), instructions, "Review spacing.", "controller", NOW);
+        var adapter = new com.csd.occ.planning.diagnosis.infrastructure.persistence.JdbcEarlyBunchingControllerSuggestionAdapter(
+                jdbc, JsonMapper.builder().build());
+
+        assertThat(adapter.recordIfAbsent(suggestion)).contains(suggestion);
+        assertThat(adapter.findByRequestId(request.id())).contains(suggestion);
+    }
+
+    @Test
     void scopedRequestsKeepLiveAndEachSimulationRunSeparate() {
         UUID run = UUID.randomUUID();
         for (String scope : List.of("", run.toString(), UUID.randomUUID().toString())) {

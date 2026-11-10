@@ -109,6 +109,17 @@ test('gap helper calculates saved prediction gaps and severity boundaries', () =
   expect(formatGap(125)).toBe('2m 5s')
 })
 
+test('gap calculation includes later prediction slots in a larger group', () => {
+  const arrivals = ['2026-10-23T04:01:00Z', '2026-10-23T04:03:00Z',
+    '2026-10-23T04:05:00Z', '2026-10-23T04:05:15Z'].map((estimatedArrivalAt, index) => ({
+    serviceId: '190', stopCode: 'A01', directionId: 1, visitOrder: index + 1, estimatedArrivalAt,
+  }))
+  const alert = makeAlert({ evidence: JSON.stringify({ snapshot: { classification: 'OBSERVATION_ONLY', arrivals } }) })
+  expect(arrivalGaps(alert)).toEqual([{ label: 'Bus 1–2', seconds: 120 },
+    { label: 'Bus 2–3', seconds: 120 }, { label: 'Bus 3–4', seconds: 15 }])
+  expect(tightestArrivalGap(alert)).toBe(15)
+})
+
 test('reports only the bus pairs marked as bunched with each saved gap', () => {
   const arrivals = [
     { observationId: 'bus-1', visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:00:00Z' },

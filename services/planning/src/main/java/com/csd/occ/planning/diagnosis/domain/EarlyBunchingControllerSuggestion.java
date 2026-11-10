@@ -11,8 +11,8 @@ public record EarlyBunchingControllerSuggestion(UUID requestId, List<ControllerB
     public EarlyBunchingControllerSuggestion {
         Objects.requireNonNull(requestId, "requestId is required");
         instructions = List.copyOf(instructions);
-        if (instructions.isEmpty() || instructions.size() > 3) {
-            throw new IllegalArgumentException("instructions must contain 1..3 buses");
+        if (instructions.isEmpty() || instructions.size() > 100) {
+            throw new IllegalArgumentException("instructions must contain 1..100 buses");
         }
         controllerRationale = required(controllerRationale, 1000, "controllerRationale");
         actorSubject = required(actorSubject, 255, "actorSubject");

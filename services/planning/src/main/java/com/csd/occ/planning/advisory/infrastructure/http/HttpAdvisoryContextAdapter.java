@@ -33,4 +33,13 @@ public class HttpAdvisoryContextAdapter implements AdvisoryContextPort {
     public Route route(String serviceId) {
         return Objects.requireNonNull(ingestion.get().uri("/internal/v1/ingestion/bus-routes/{id}", serviceId).retrieve().body(Route.class));
     }
+    public BunchingGroup bunchingGroup(UUID runId, UUID eventId) {
+        return Objects.requireNonNull(ingestion.get().uri("/internal/v1/ingestion/demo-runs/{runId}/bunching-groups/{eventId}",
+                runId, eventId).retrieve().body(BunchingGroup.class));
+    }
+    public CurrentBunchingGroup currentBunchingGroup(UUID runId, UUID eventId) {
+        return Objects.requireNonNull(ingestion.get().uri(
+                "/internal/v1/ingestion/demo-runs/{runId}/bunching-groups/{eventId}/current", runId, eventId)
+                .retrieve().body(CurrentBunchingGroup.class));
+    }
 }

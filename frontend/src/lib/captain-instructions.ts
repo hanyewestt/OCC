@@ -20,6 +20,8 @@ export function instructionHeadline(type: InstructionType, parameters: Instructi
       return parameters.durationSeconds === null ? 'HOLD at next stop' : `HOLD FOR ${parameters.durationSeconds}s at next stop`
     case 'DWELL_ADJUSTMENT':
       return ['Stay', duration ?? 'longer', duration && 'longer', at && `at ${at}`].filter(Boolean).join(' ')
+    case 'SKIP_STOP':
+      return at ? `Skip stop ${at}` : 'Skip the instructed stop'
     case 'REDUCE_SPEED':
       return ['Reduce speed', parameters.speedReductionKmh && `by ${parameters.speedReductionKmh} km/h`,
         duration && `for ${duration}`].filter(Boolean).join(' ')

@@ -1,6 +1,6 @@
 export type Identity = { subject: string; role: 'CONTROLLER' | 'CAPTAIN' | 'ADMIN' | 'UNASSIGNED' }
 
-export type InstructionType = 'BE_CAUTIOUS' | 'REDUCE_SPEED' | 'SLOW_DOWN_NEAR_STOPS' | 'HOLD' | 'DWELL_ADJUSTMENT'
+export type InstructionType = 'BE_CAUTIOUS' | 'REDUCE_SPEED' | 'SLOW_DOWN_NEAR_STOPS' | 'HOLD' | 'DWELL_ADJUSTMENT' | 'SKIP_STOP'
 export type InstructionParameters = { stopCode: string | null; stopName: string | null; stopSequence: number | null;
   subsequentStopCount: number | null; speedReductionKmh: number | null; durationSeconds: number | null }
 export type CaptainInstruction = { id: string; demoRunId: string; busId: string; type: InstructionType;
@@ -117,6 +117,9 @@ export type PendingRecommendation = {
   mitigationType: string; targetBusReference: string; affectedBusReferences: string[]
   controlStopCode: string; adjustmentSeconds: number
   explanation: RecommendationExplanation; expectedImpact: RecommendationImpact
+  revisionRawObservationId?: string | null; currentPredictionGaps?: number[]; confirmationGaps?: number[]
+  suggestedOutcomes?: { busReference: string; mitigationType: 'HOLD' | 'DWELL_ADJUSTMENT' | null;
+    adjustmentSeconds: number; reason: string | null }[]
 }
 export type ControllerBusInstruction = { busReference: string; instruction: string }
 export type EarlyControllerSuggestion = {

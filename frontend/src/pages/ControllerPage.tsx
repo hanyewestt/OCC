@@ -414,8 +414,8 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
               })} />
             </label>
             <label className="grid gap-1.5 text-sm font-medium">Buses in this injection
-              <Input type="number" min="2" max="3" value={simulationConfig.busCount} onChange={event => setSimulationConfig(value => {
-                const busCount = Math.max(2, Math.min(3, Number(event.target.value) || 2))
+              <Input type="number" min="2" max="20" value={simulationConfig.busCount} onChange={event => setSimulationConfig(value => {
+                const busCount = Math.max(2, Math.min(20, Number(event.target.value) || 2))
                 return { ...value, busCount, busGapsSeconds: Array.from({ length: busCount - 1 }, (_, index) => value.busGapsSeconds[index] ?? value.dispatchGapSeconds), captainUserIds: Array.from({ length: busCount }, (_, index) => value.captainUserIds[index] ?? '') }
               })} />
             </label>
