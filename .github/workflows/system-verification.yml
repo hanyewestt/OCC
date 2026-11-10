@@ -15,6 +15,9 @@ on:
 
 permissions:
   contents: read
+  # Candidate-image runs download artifacts from the producing run, which
+  # requires the Actions (read) permission on private repositories.
+  actions: read
 
 jobs:
   system:

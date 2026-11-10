@@ -22,8 +22,11 @@ import sys
 import time
 from pathlib import Path
 
-POLL_ATTEMPTS = 60
 POLL_INTERVAL_SECONDS = 5
+SSM_TIMEOUT_SECONDS = 1800
+# The poll ceiling must exceed the command's own timeout so a slow resume is
+# never declared failed while the remote deploy still runs.
+POLL_ATTEMPTS = (SSM_TIMEOUT_SECONDS // POLL_INTERVAL_SECONDS) + 60
 
 
 class ControlError(Exception):
@@ -83,6 +86,30 @@ def write_control(bucket: str, region: str, control: dict) -> None:
         Path(path).unlink(missing_ok=True)
 
 
+def persist_intent(bucket: str, region: str, operation_id: str,
+                   release_id: str, action: str) -> None:
+    import tempfile
+
+    intent = {"operationId": operation_id, "releaseId": release_id,
+              "action": action, "phase": "dispatched"}
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                     encoding="utf-8", newline="\n") as handle:
+        json.dump(intent, handle, sort_keys=True)
+        path = handle.name
+    # The intent is durable before SSM accepts the command, so runner loss
+    # always leaves a record that blocks further mutations until reconciled.
+    try:
+        aws(["s3", "cp", path,
+             f"s3://{bucket}/state/operations/{operation_id}.json"], region)
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
+def clear_intent(bucket: str, region: str, operation_id: str) -> None:
+    aws(["s3", "rm", f"s3://{bucket}/state/operations/{operation_id}.json"],
+        region, check=False)
+
+
 def instance_state(region: str, instance_id: str) -> str:
     result = aws(["ec2", "describe-instances", "--instance-ids", instance_id,
                   "--query", "Reservations[0].Instances[0].State.Name",
@@ -108,11 +135,14 @@ def dispatch_ssm(region: str, instance_id: str, commands: list[str],
     import json as json_module
 
     parameters = json_module.dumps({"commands": commands})
+    # The comment prefix is shared with deploy_remote's recover lookup so a
+    # lost resume can always be reconciled by operation id.
+    comment = f"occ-operation:{operation_id}"
     result = aws(["ssm", "send-command",
                   "--instance-ids", instance_id,
                   "--document-name", "AWS-RunShellScript",
-                  "--comment", f"occ-lifecycle:{operation_id}:{label}",
-                  "--timeout-seconds", "1800",
+                  "--comment", comment,
+                  "--timeout-seconds", str(SSM_TIMEOUT_SECONDS),
                   "--parameters", parameters], region, check=False)
     if result.returncode != 0:
         raise ControlError(f"SSM dispatch failed for {label}: {result.stderr.strip()}")
@@ -169,8 +199,32 @@ def do_pause(region: str, instance_id: str, bucket: str, operation_id: str) -> i
     try:
         dispatch_ssm(region, instance_id, [
             "set -eu",
-            'cd /opt/occ/releases/$(cat /opt/occ/state/active-release.name 2>/dev/null || echo .)',
-            "docker compose -p occ-production stop nginx ingestion disruption planning postgres",
+            "export OCC_HOME=/opt/occ OCC_DATA_MOUNT=/var/lib/postgresql"
+            " OCC_DEPLOYMENT_ENV=/opt/occ/env.rendered"
+            " OCC_GATE_DIR=/opt/occ/runtime/nginx-gate",
+            # Source the rendered deployment settings so Compose interpolation
+            # sees the shell values; the runtime env file pins the images.
+            "set -a",
+            ". /opt/occ/env.rendered",
+            "set +a",
+            # Stop through the deployed release's own Compose files so the
+            # project resolves its services; a bare `compose -p` without
+            # files is an error and would leave the stack running.
+            "if [ -f /opt/occ/state/active-release.json ]; then",
+            "  release_id=$(sed -n 's/.*\"releaseId\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p'"
+            " /opt/occ/state/active-release.json)",
+            '  cd "/opt/occ/releases/$release_id/bundle"',
+            "  if [ -f scripts/traffic-gate.sh ]; then",
+            '    OCC_GATE_TOKEN=$(cat "$OCC_GATE_DIR/gate-token")',
+            "    export OCC_GATE_TOKEN",
+            "    sh scripts/traffic-gate.sh close",
+            "  fi",
+            "  docker compose -p occ-production --env-file /opt/occ/runtime/env"
+            " --profile edge"
+            " -f compose.yaml -f compose.images.yaml"
+            " -f compose.cloudfront.yaml -f compose.host-data.yaml"
+            " stop nginx ingestion disruption planning postgres",
+            "fi",
         ], operation_id, "graceful-stack-stop")
         aws(["ec2", "stop-instances", "--instance-ids", instance_id], region)
         aws(["ec2", "wait", "instance-stopped", "--instance-ids", instance_id], region)
@@ -195,6 +249,12 @@ def do_start(region: str, instance_id: str, bucket: str, operation_id: str) -> i
             control.get("result") == "success" and current_state == "running":
         print("the environment is already running; nothing to do")
         return 0
+    # Reconcile outstanding remote work first: an accepted deploy/pause SSM
+    # command can still be mutating production after its runner vanished.
+    if has_outstanding_operations(bucket, region):
+        raise ControlError(
+            "outstanding remote operations exist; reconcile them before a "
+            "start or resume - ambiguous remote work blocks the mutation")
     control["desiredMode"] = "running"
     control["operationId"] = operation_id
     control["phase"] = "starting"
@@ -208,6 +268,7 @@ def do_start(region: str, instance_id: str, bucket: str, operation_id: str) -> i
             raise ControlError("no published release exists; run the release pipeline "
                                "or a refresh before starting")
         release_id = published["releaseId"]
+        persist_intent(bucket, region, operation_id, release_id, "resume-apply")
         dispatch_ssm(region, instance_id, [
             "set -eu",
             "export OCC_HOME=/opt/occ"
@@ -233,6 +294,7 @@ def do_start(region: str, instance_id: str, bucket: str, operation_id: str) -> i
     control["phase"] = "running"
     control["result"] = "success"
     write_control(bucket, region, control)
+    clear_intent(bucket, region, operation_id)
     print(f"environment running: release {release_id} applied with its normal "
           "readiness and public checks")
     return 0

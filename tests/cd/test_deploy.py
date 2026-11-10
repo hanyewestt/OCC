@@ -88,6 +88,12 @@ case " $* " in
         exit 0 ;;
     esac
     exit 0 ;;
+  *" ps "*)
+    # The gate locates the running nginx container by Compose labels.
+    echo "nginx-container-id"
+    exit 0 ;;
+  *" exec "*)
+    exit 0 ;;
 esac
 exit 0
 ''')
@@ -95,7 +101,13 @@ exit 0
 printf '%s\\n' "curl $*" >> {calls}
 case "$*" in
   *_occ_gate_readiness*) code="${{OCC_FAKE_GATE_READINESS_CODE:-204}}" ;;
-  *_occ_edge_health*) code="${{OCC_FAKE_EDGE_HEALTH_CODE:-503}}" ;;
+  *_occ_edge_health*)
+    # Model the rendered gate: open returns 204, closed returns 503.
+    if grep -q 'set [$]occ_traffic_gate "open"' "${{OCC_GATE_DIR:-}}/traffic-gate.inc" 2>/dev/null; then
+        code="${{OCC_FAKE_EDGE_HEALTH_OPEN_CODE:-204}}"
+    else
+        code="${{OCC_FAKE_EDGE_HEALTH_CODE:-503}}"
+    fi ;;
   *) code="${{OCC_FAKE_CURL_CODE:-200}}" ;;
 esac
 if [ "${{OCC_CURL_PHASE:-}}" = "public" ] && [ -n "${{OCC_FAKE_PUBLIC_SMOKE_CODE:-}}" ]; then
@@ -145,9 +157,11 @@ exit 0
         (directory / "bundle" / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
         (directory / "bundle" / "compose.images.yaml").write_text("services: {}\n", encoding="utf-8")
         (directory / "bundle" / "compose.cloudfront.yaml").write_text("services: {}\n", encoding="utf-8")
+        (directory / "bundle" / "compose.host-data.yaml").write_text("services: {}\n", encoding="utf-8")
         checksums = []
         import hashlib
-        for name in ("manifest.json", "compose.yaml", "compose.images.yaml", "compose.cloudfront.yaml"):
+        for name in ("manifest.json", "compose.yaml", "compose.images.yaml",
+                     "compose.cloudfront.yaml", "compose.host-data.yaml"):
             blob = (directory / "bundle" / name).read_bytes()
             checksums.append(f"{hashlib.sha256(blob).hexdigest()}  {name}")
         (directory / "bundle" / "checksums.txt").write_text(
@@ -159,7 +173,8 @@ exit 0
         import hashlib
         directory = release / "bundle"
         checksums = []
-        for name in ("manifest.json", "compose.yaml", "compose.images.yaml", "compose.cloudfront.yaml"):
+        for name in ("manifest.json", "compose.yaml", "compose.images.yaml",
+                     "compose.cloudfront.yaml", "compose.host-data.yaml"):
             blob = (directory / name).read_bytes()
             checksums.append(f"{hashlib.sha256(blob).hexdigest()}  {name}")
         (directory / "checksums.txt").write_text(
@@ -228,7 +243,9 @@ exit 0
         gate_dir.mkdir(parents=True, exist_ok=True)
         (gate_dir / "gate-token").write_text("synthetic-gate-token", encoding="utf-8")
         (self.runtime / "deployment.env").write_text(
-            "POSTGRES_PASSWORD=synthetic\nPOSTGRES_USER=occ_admin\nPOSTGRES_DB=occ\n",
+            "POSTGRES_PASSWORD=synthetic\nPOSTGRES_USER=occ_admin\nPOSTGRES_DB=occ\n"
+            "OCC_INGESTION_INTERNAL_PORT=8001\nOCC_DISRUPTION_INTERNAL_PORT=8002\n"
+            "OCC_PLANNING_INTERNAL_PORT=8003\n",
             encoding="utf-8")
 
 
@@ -292,6 +309,51 @@ class ApplyTests(DeployTestBase):
         self.assertIn("gate close", self.sandbox.gate_log())
         self.assertIn(" stop nginx ingestion disruption planning", joined)
         self.assertIn("run --rm --no-deps db-setup", joined)
+
+    def test_gate_reload_targets_the_running_nginx_container(self):
+        release = self.sandbox.write_release("rel-a-1", REVISION_A)
+        result = self.sandbox.deploy(release)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        joined = "\n".join(self.sandbox.docker_calls())
+        # The gate locates nginx by Compose labels rather than requiring a
+        # Compose file in the caller's working directory.
+        self.assertIn("docker ps --quiet", joined)
+        self.assertIn("nginx-container-id nginx -t", joined)
+        self.assertIn("nginx-container-id nginx -s reload", joined)
+
+    def test_production_compose_enables_edge_and_setup_profiles(self):
+        release = self.sandbox.write_release("rel-a-1", REVISION_A)
+        result = self.sandbox.deploy(release)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        joined = "\n".join(self.sandbox.docker_calls())
+        # nginx lives in the edge profile; the aggregate setup is a profiled
+        # one-off and must not be started by an ordinary `up`.
+        self.assertIn("--profile edge", joined)
+        self.assertIn("--profile setup run --rm --no-deps db-setup", joined)
+        self.assertIn("compose.host-data.yaml", joined)
+
+    def test_public_smoke_sends_the_origin_secret(self):
+        release = self.sandbox.write_release("rel-a-1", REVISION_A)
+        result = self.sandbox.deploy(release)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        public = [line for line in self.sandbox.read_calls()
+                  if line.startswith("curl ")
+                  and ("/frontend-config" in line or "/login" in line)]
+        self.assertTrue(public)
+        # The restricted CloudFront origin returns 403 without this header.
+        for line in public:
+            self.assertIn("X-OCC-Origin-Secret", line)
+
+    def test_first_install_starts_postgres_before_aggregate_setup(self):
+        release = self.sandbox.write_release("rel-a-1", REVISION_A)
+        result = self.sandbox.deploy(release)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.sandbox.docker_calls()
+        postgres_up = next(position for position, line in enumerate(calls)
+                           if " up -d --no-build --wait postgres" in line)
+        setup = next(position for position, line in enumerate(calls)
+                     if " run --rm --no-deps db-setup" in line)
+        self.assertLess(postgres_up, setup)
 
     def test_corrupt_bundle_is_refused_before_any_mutation(self):
         release = self.sandbox.write_release("rel-a-1", REVISION_A)
@@ -412,6 +474,56 @@ class ApplyTests(DeployTestBase):
             holder.kill()
 
 
+class ReadinessPointerTests(DeployTestBase):
+    def test_readiness_probe_uses_each_services_own_port(self):
+        release = self.sandbox.write_release("rel-a-1", REVISION_A)
+        result = self.sandbox.deploy(release)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        joined = "\n".join(self.sandbox.docker_calls())
+        # Each service is probed on its own internal port (8001/8002/8003);
+        # the stub exits 0 for any exec so we assert the port appears.
+        self.assertIn("8001", joined)
+        self.assertIn("8002", joined)
+        self.assertIn("8003", joined)
+        self.assertNotIn("8000/actuator", joined)
+
+    def test_pointer_schema_matches_the_cas_contract(self):
+        release = self.sandbox.write_release("rel-a-1", REVISION_A)
+        result = self.sandbox.deploy(release)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        pointer = json.loads(
+            (self.sandbox.state / "last-deployed.json").read_text(encoding="utf-8"))
+        # The immutable fields the remote CAS validation requires.
+        for field in ("releaseId", "revision", "releaseKey", "version", "checksum"):
+            self.assertTrue(pointer.get(field), f"pointer field {field} is empty")
+
+
+class RollbackPointerTests(DeployTestBase):
+    def test_rollback_advances_the_deployed_pointer(self):
+        release = self.sandbox.write_release("rel-a-1", REVISION_A)
+        result = self.sandbox.deploy(release)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        second = self.sandbox.write_release(
+            "rel-b-1", REVISION_B, compatibility="backward-compatible",
+            evidence={"rollbackReleaseId": "rel-a-1",
+                      "setupFingerprint": "hash-rel-b-1-db-setup",
+                      "migrations": []},
+            baseline=REVISION_A)
+        self.assertEqual(self.sandbox.deploy(second).returncode, 0)
+        applied = json.loads(
+            (self.sandbox.state / "applied-setup.json").read_text(encoding="utf-8"))
+        first = self.sandbox.write_release(
+            "rel-a-1", REVISION_A, compatibility="backward-compatible",
+            evidence={"rollbackReleaseId": "rel-b-1",
+                      "setupFingerprint": applied["fingerprint"],
+                      "migrations": []})
+        result = self.sandbox.deploy(first, action="rollback")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        pointer = json.loads(
+            (self.sandbox.state / "last-deployed.json").read_text(encoding="utf-8"))
+        self.assertEqual(pointer["releaseId"], "rel-a-1")
+
+
 class RollbackTests(DeployTestBase):
     def deploy_a(self) -> Path:
         release = self.sandbox.write_release("rel-a-1", REVISION_A)
@@ -438,7 +550,7 @@ class RollbackTests(DeployTestBase):
         result = self.sandbox.deploy(first, action="rollback")
         self.assertEqual(result.returncode, 0, result.stderr)
         new_calls = "\n".join(self.sandbox.read_calls()[calls_before:])
-        self.assertNotIn("db-setup", new_calls)
+        self.assertNotIn("run --rm --no-deps db-setup", new_calls)
         self.assertNotIn("down --volumes", new_calls)
         active = json.loads((self.sandbox.state / "active-release.json").read_text(encoding="utf-8"))
         self.assertEqual(active["releaseId"], "rel-a-1")

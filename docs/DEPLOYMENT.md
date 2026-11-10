@@ -103,6 +103,25 @@ an EC2 wake, start of the latest verified release without rebuild, repeated
 controls, a pause queued during a deploy and database continuity — is an
 authorized-rollout check; local tests use synthetic AWS responses only.
 
+## Failure recovery
+
+The deploy pipeline persists an operation intent before every SSM dispatch
+and clears it only after a verified terminal result. If an Actions runner is
+lost while a command is accepted, the intent remains and blocks further
+mutations. Recovery runs `scripts/cd/deploy_remote.py recover` with the same
+region, instance, bucket, operation id and sequence; it looks the accepted
+invocation up by its operation comment and reconciles it to a terminal
+state. Ambiguous outstanding commands (more than one) block new deploys and
+pauses until reconciled manually.
+
+The host deployment is CloudFront-mode only: `deploy.sh` layers the base,
+immutable-image and CloudFront overlays and requires `OCC_ORIGIN_SECRET`.
+Direct-TLS production remains runnable through Compose by hand, but the
+automated pipeline deploys only the CloudFront mode. Each release publishes
+all five images regardless of which changed — the release contract requires
+a complete manifest, and unchanged components reuse their verified input
+hashes so they are rebuilt only when their inputs actually changed.
+
 ## Budget and cost model
 
 `scripts/cd/cost-estimate.py` computes the always-on monthly estimate from
@@ -149,7 +168,8 @@ local-launcher commits carry `[skip ci]`, with manual dispatch as the
 recovery when a marker is used by mistake.
 
 Deployment layers the Compose files as `compose.yaml` +
-`infra/compose.images.yaml` (immutable digest pins, no source/dist mounts)
+`infra/compose.images.yaml` (immutable digest pins, no source/dist mounts) +
+`infra/compose.host-data.yaml` (PostgreSQL data on the retained EBS volume)
 plus either `infra/compose.production.yaml` (direct TLS, unchanged behavior)
 or `infra/compose.cloudfront.yaml` (CloudFront origin). The CloudFront overlay
 requires no TLS-file configuration. All Nginx caching and error-caching TTLs

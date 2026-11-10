@@ -177,6 +177,11 @@ Resources:
                 Resource: !Sub "${OccReleaseBucket.Arn}/state/*"
               - Effect: Allow
                 Action:
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub "${OccReleaseBucket.Arn}/backups/*"
+              - Effect: Allow
+                Action:
                   - secretsmanager:GetSecretValue
                 Resource:
                   - !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DeploymentSecretName}*
@@ -363,8 +368,14 @@ Resources:
                 Resource: "*"
               - Effect: Allow
                 Action:
+                  - s3:GetObject
+                Resource: !Sub "${OccReleaseBucket.Arn}/*"
+              - Effect: Allow
+                Action:
                   - s3:PutObject
-                Resource: !Sub "${OccReleaseBucket.Arn}/releases/*"
+                Resource:
+                  - !Sub "${OccReleaseBucket.Arn}/releases/*"
+                  - !Sub "${OccReleaseBucket.Arn}/state/*"
 
   OccDeployRole:
     Type: AWS::IAM::Role
@@ -410,6 +421,10 @@ Resources:
                   - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${OccHost.InstanceId}"
               - Effect: Allow
                 Action:
+                  - ssm:ListCommands
+                Resource: "*"
+              - Effect: Allow
+                Action:
                   - ec2:StartInstances
                   - ec2:StopInstances
                   - ec2:DescribeInstances
@@ -441,7 +456,9 @@ Resources:
           # No caching at all initially: never serve stale private responses
           # or stale content while the origin is paused.
           CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
-          OriginRequestPolicyId: 2166b48b-2846-4fa4-9e4b-7b89bf0b49ea
+          # AllViewer: forwards the viewer's headers including Authorization,
+          # cookies and query strings to the origin.
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
           Compress: false
         Origins:
           - Id: OccOrigin

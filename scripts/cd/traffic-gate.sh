@@ -44,12 +44,19 @@ case "$1" in
 esac
 
 # Validate and reload through the running container; never print rendered
-# configuration (nginx -T) and never echo the token.
-if docker compose -p "$OCC_PROJECT" exec -T nginx nginx -t >/dev/null 2>&1; then
-    docker compose -p "$OCC_PROJECT" exec -T nginx nginx -s reload >/dev/null 2>&1 || true
-else
+# configuration (nginx -T) and never echo the token. Locating the container
+# by Compose labels avoids needing a Compose file in the caller's directory.
+NGINX_CONTAINER=$(docker ps --quiet \
+    --filter "label=com.docker.compose.project=$OCC_PROJECT" \
+    --filter "label=com.docker.compose.service=nginx" | head -n 1)
+if [ -z "$NGINX_CONTAINER" ]; then
     # The stack may not be running yet (first install): the include takes
     # effect at the next start, which is still gated because it starts closed.
     echo "traffic-gate: nginx not running; gate takes effect on next start"
+elif docker exec "$NGINX_CONTAINER" nginx -t >/dev/null 2>&1; then
+    docker exec "$NGINX_CONTAINER" nginx -s reload >/dev/null 2>&1 || true
+else
+    echo "traffic-gate: nginx rejected the rendered gate configuration" >&2
+    exit 1
 fi
 printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "gate $1" >> "$OCC_GATE_LOG"

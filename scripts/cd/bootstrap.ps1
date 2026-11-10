@@ -208,7 +208,13 @@ if ($LASTEXITCODE -ne 0) {
 & gh secret set OCC_INSTANCE_ID --body $outputs["InstanceId"] --repo $Repository --env production
 foreach ($component in @("ingestion", "disruption", "planning", "db-setup", "web")) {
     $key = "OCC_" + ($component.ToUpper() -replace "-", "_") + "_REPOSITORY"
-    & gh secret set $key --body $outputs[$component[0].ToString().ToUpper() + $component.Substring(1) + "RepositoryUri"] --repo $Repository --env production
+    # CloudFormation outputs are PascalCase without the hyphen (DbSetupRepositoryUri).
+    $camel = ($component -split '-' | ForEach-Object { $_.Substring(0, 1).ToUpper() + $_.Substring(1) }) -join ''
+    $outputKey = $camel + "RepositoryUri"
+    if (-not $outputs.ContainsKey($outputKey)) {
+        throw "The stack has no $outputKey output; cannot configure $key."
+    }
+    & gh secret set $key --body $outputs[$outputKey] --repo $Repository --env production
 }
 & gh variable set OCC_GITHUB_REPOSITORY --body $Repository --repo $Repository --env production
 
