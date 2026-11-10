@@ -534,11 +534,9 @@
     "All browser API routes gain JWT/role enforcement; internal routes require a peer capability and are not edge-routable.",
     "The coordinated Disruption-to-Planning internal request now carries the producer-owned planning-event-v1 snapshot and X-OCC-Event-Fingerprint; this reviewed internal contract cutover has no compatibility alias.",
     "Planning diagnosis and recommendation collaborators use local domain calls; the former recommendation POST has no replacement HTTP route.",
-    "targetPath identifies the canonical Gateway-facing path; the ingestion Gateway route rewrites its prefix to the service-local path represented in the Ingestion OpenAPI snapshot.",
+    "targetPath identifies the canonical edge-facing path; Nginx rewrites the /api/v1/ingestion prefix to the service-local path represented in the Ingestion OpenAPI snapshot.",
     "The current read-only Ingestion live-bunching proxy remains only for the phase-one demo page; Disruption owns detection and its canonical public route. Retire the proxy when the demo client is replaced or explicitly migrated.",
     "Service OpenAPI snapshots are generated from running target code. Old source paths in this manifest refer to the recorded baseline revision, not compatibility routes that remain active by default."
   ],
-  "introducedContracts": [
-    "services/gateway/openapi/gateway.json"
-  ]
+  "introducedContracts": []
 }

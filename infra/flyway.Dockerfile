@@ -7,7 +7,8 @@ ARG GUAVA_SHA256=b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606
 # This stack migrates PostgreSQL only; omit unused vendor drivers and their
 # vulnerable transitive dependencies from the one-shot migration image. Flyway's
 # GCP driver keeps Guava, so replace it with the CVE-fixed release and verify it.
-RUN apt-get update \
+RUN sed -i 's#http://archive.ubuntu.com#https://archive.ubuntu.com#g; s#http://security.ubuntu.com#https://security.ubuntu.com#g' /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update \
     && apt-get upgrade -y \
     && apt-get install --no-install-recommends -y curl libbrotli1 postgresql-client \
     && curl --fail --silent --show-error --location --retry 5 --retry-delay 2 --retry-max-time 60 --retry-all-errors \

@@ -2,6 +2,25 @@
 
 Polls DataMall bus arrivals and traffic incidents and records observations for analytics. Requires Java 25, PostgreSQL with the `ingestion` schema and `occ_ingestion` account, and a valid DataMall key.
 
+## Browser configuration and identity
+
+Nginx routes public requests directly to the three backend services. Ingestion
+owns `GET /frontend-config`, `GET /api/v1/auth/session` and
+`GET /api/v1/auth/access/{page}`. These paths are unchanged from the retired
+Gateway. Frontend configuration is anonymous and contains only public settings;
+identity endpoints validate Supabase bearer JWTs. Successful responses use
+`Cache-Control: no-store`. Page access is exclusive: CONTROLLER may enter the
+controller page and CAPTAIN the captain page; ADMIN has no page override.
+
+The browser settings bind through `FrontendProperties` under `occ.frontend`.
+Existing `SUPABASE_SB_PUBLISHABLE`, `OCC_CONTROLLER_DATA_REFRESH_INTERVAL`,
+`OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL`, `OCC_ROUTE_INCIDENT_GAP_TOLERANCE`,
+`OCC_CAPTAIN_DATA_REFRESH_INTERVAL` and `OCC_PUBLIC_NOTICE_REFRESH_INTERVAL`
+aliases remain supported. The public project URL derives from the validated
+`occ.security.supabase.project-url`. Secret/legacy browser keys and refresh
+intervals below one second are rejected at startup. See the root `.env.example`
+and [authentication guide](../../docs/AUTHENTICATION.md).
+
 ## Demo replay
 
 ## Additional hazards

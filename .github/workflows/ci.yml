@@ -50,7 +50,7 @@ jobs:
             services/*/pom.xml
       - name: Require the container runtime for database integration tests
         run: docker info
-      - name: Run the required four-service reactor
+      - name: Run the required three-service reactor
         # Include the opt-in contract export test so the zero-skips gate passes.
         run: ./mvnw --batch-mode --no-transfer-progress clean verify -Docc.exportOpenapi=true
         env:
@@ -68,7 +68,6 @@ jobs:
               "ingestion": True,
               "disruption": True,
               "planning": True,
-              "gateway": False,
           }
           failed = False
           for module, integration_required in modules.items():
@@ -238,8 +237,29 @@ jobs:
             HEAD -- 'services/**/openapi/*.json' > "$RUNNER_TEMP/openapi-changes.zlist"
           while IFS= read -r -d '' spec; do
             if [[ ! -f "$spec" ]]; then
-              echo "An OpenAPI contract was removed or renamed without a replacement baseline: ${spec}" >&2
-              exit 1
+              python3 - "$spec" <<'PY'
+          import json
+          import pathlib
+          import subprocess
+          import sys
+
+          retired = sys.argv[1]
+          if (pathlib.Path(retired).parents[1] / "pom.xml").exists():
+              raise SystemExit(f"Contract removed from an active service: {retired}")
+          revision = subprocess.check_output(
+              ["git", "log", "-1", "--diff-filter=AM", "--format=%H", "HEAD", "--", retired], text=True).strip()
+          original = json.loads(subprocess.check_output(["git", "show", f"{revision}:{retired}"], text=True))
+          replacements = [json.loads(path.read_text()) for path in pathlib.Path("services").glob("*/openapi/*.json")]
+          for path, item in original["paths"].items():
+              for method, operation in item.items():
+                  if method.lower() not in {"get", "put", "post", "delete", "options", "head", "patch", "trace"}:
+                      continue
+                  migrated = [spec.get("paths", {}).get(path, {}).get(method) for spec in replacements]
+                  if not any(candidate and candidate.get("operationId") == operation.get("operationId") for candidate in migrated):
+                      raise SystemExit(f"Retired operation has no replacement: {method} {path}")
+          print(f"Verified retired contract operations retain their paths and operation IDs: {retired}")
+          PY
+              continue
             fi
             baseline="$RUNNER_TEMP/openapi-baseline.json"
             python3 - "$spec" "$baseline" <<'PY'
@@ -312,9 +332,6 @@ jobs:
           - service: planning
             port: 8003
             image: occ-planning:ci
-          - service: gateway
-            port: 8004
-            image: occ-gateway:ci
           - service: db-setup
             migration_source: all
             image: occ-db-setup:ci

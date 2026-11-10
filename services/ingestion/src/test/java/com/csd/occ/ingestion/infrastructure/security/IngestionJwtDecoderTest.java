@@ -1,9 +1,17 @@
-package com.csd.occ.gateway.infrastructure.security;
+package com.csd.occ.ingestion.infrastructure.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.csd.occ.gateway.infrastructure.config.SupabaseJwtProperties;
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.JWSHeader;
+import com.nimbusds.jose.crypto.ECDSASigner;
+import com.nimbusds.jose.crypto.MACSigner;
+import com.nimbusds.jose.jwk.Curve;
+import com.nimbusds.jose.jwk.ECKey;
+import com.nimbusds.jose.jwk.gen.ECKeyGenerator;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -18,18 +26,10 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtException;
-import com.nimbusds.jose.JWSAlgorithm;
-import com.nimbusds.jose.JWSHeader;
-import com.nimbusds.jose.crypto.ECDSASigner;
-import com.nimbusds.jose.crypto.MACSigner;
-import com.nimbusds.jose.jwk.Curve;
-import com.nimbusds.jose.jwk.ECKey;
-import com.nimbusds.jose.jwk.gen.ECKeyGenerator;
-import com.nimbusds.jwt.JWTClaimsSet;
-import com.nimbusds.jwt.SignedJWT;
 
-class SupabaseJwtDecoderTest {
+class IngestionJwtDecoderTest {
     private static final String ISSUER = "https://occ-test.supabase.co/auth/v1";
     private static final String AUDIENCE = "authenticated";
     private static ECKey signingKey;
@@ -39,7 +39,7 @@ class SupabaseJwtDecoderTest {
 
     @BeforeAll
     static void startLocalJwksServer() throws Exception {
-        signingKey = new ECKeyGenerator(Curve.P_256).keyID("gateway-test-key").generate();
+        signingKey = new ECKeyGenerator(Curve.P_256).keyID("ingestion-test-key").generate();
         currentJwks = new AtomicReference<>(jwksJson(signingKey));
         jwksServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         jwksServer.createContext("/jwks", exchange -> {
@@ -70,15 +70,15 @@ class SupabaseJwtDecoderTest {
 
     @Test
     void acceptsANewSigningKeyAfterTheIssuerPublishesAnOverlappingJwksSet() throws Exception {
-        org.springframework.security.oauth2.jwt.JwtDecoder decoder = decoder();
+        JwtDecoder decoder = decoder();
         decoder.decode(token(ISSUER, AUDIENCE, Instant.now().plusSeconds(60), JWSAlgorithm.ES256));
-        ECKey rotatedKey = new ECKeyGenerator(Curve.P_256).keyID("gateway-rotated-key").generate();
+        ECKey rotatedKey = new ECKeyGenerator(Curve.P_256).keyID("ingestion-rotated-key").generate();
         currentJwks.set(jwksJson(signingKey, rotatedKey));
 
         Jwt rotatedJwt = decoder.decode(token(rotatedKey, ISSUER, AUDIENCE,
                 Instant.now().plusSeconds(60), JWSAlgorithm.ES256));
 
-        assertThat(rotatedJwt.getHeaders().get("kid")).isEqualTo("gateway-rotated-key");
+        assertThat(rotatedJwt.getHeaders().get("kid")).isEqualTo("ingestion-rotated-key");
         assertThat(rotatedJwt.getSubject()).isEqualTo("synthetic-user");
     }
 
@@ -111,11 +111,11 @@ class SupabaseJwtDecoderTest {
         assertThatThrownBy(() -> decoder().decode(token)).isInstanceOf(JwtException.class);
     }
 
-    private static org.springframework.security.oauth2.jwt.JwtDecoder decoder() {
+    private static JwtDecoder decoder() {
         SupabaseJwtProperties properties = new SupabaseJwtProperties(
                 URI.create("https://occ-test.supabase.co"), jwksUri, AUDIENCE,
                 Duration.ofSeconds(1), List.of("ES256"));
-        return new GatewaySecurityConfig().jwtDecoder(properties);
+        return new IngestionSecurityConfig().ingestionJwtDecoder(properties);
     }
 
     private static String token(String issuer, String audience, Instant expiresAt,

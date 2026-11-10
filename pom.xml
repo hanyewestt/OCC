@@ -39,7 +39,6 @@
         <module>services/ingestion</module>
         <module>services/disruption</module>
         <module>services/planning</module>
-        <module>services/gateway</module>
     </modules>
 
     <build>

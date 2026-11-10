@@ -1,6 +1,6 @@
-package com.csd.occ.gateway.infrastructure.config;
+package com.csd.occ.ingestion.infrastructure.config;
 
-import com.csd.occ.gateway.domain.FrontendConfig;
+import com.csd.occ.ingestion.domain.FrontendConfig;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 

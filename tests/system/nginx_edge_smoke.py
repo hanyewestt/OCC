@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import http.client
 from pathlib import Path
+import socket
 import ssl
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import Counter
 
@@ -28,6 +31,39 @@ def assert_status(base_url: str, label: str, path: str, expected: int,
     if actual != expected:
         raise AssertionError(f"{label}: expected HTTP {expected}, got {actual}")
     print(f"PASS {label}: HTTP {actual}")
+
+
+def assert_pacing_event_stream(base_url: str, token: str,
+                              path: str = "/api/v1/pacing-snapshots/stream") -> None:
+    parts = urllib.parse.urlsplit(base_url)
+    context = ssl._create_unverified_context() if parts.scheme == "https" else None
+    connection = (
+        http.client.HTTPSConnection(parts.hostname, parts.port, timeout=20, context=context)
+        if context else http.client.HTTPConnection(parts.hostname, parts.port, timeout=20)
+    )
+    connection.request("GET", path,
+                       headers={"Authorization": f"Bearer {token}", "Accept": "text/event-stream"})
+    try:
+        response = connection.getresponse()
+        if response.status != 200:
+            raise AssertionError(f"pacing SSE: expected HTTP 200, got {response.status}")
+        if "text/event-stream" not in response.getheader("Content-Type", ""):
+            raise AssertionError("pacing SSE: response is not an event stream")
+        received = b""
+        while b"\n\n" not in received and len(received) < 4096:
+            # Read available bytes rather than waiting for a full 256-byte
+            # buffer: a valid filtered/empty SSE event may be smaller.
+            chunk = response.read1(4096)
+            if not chunk:
+                break
+            received += chunk
+        if b"data:" not in received and b"event:" not in received:
+            raise AssertionError("pacing SSE: no event was delivered before the idle timeout")
+        print("PASS pacing SSE stream is delivered without buffering")
+    except (TimeoutError, socket.timeout) as error:
+        raise AssertionError("pacing SSE: the stream did not deliver an event before the idle timeout") from error
+    finally:
+        connection.close()
 
 
 def main() -> int:
@@ -77,6 +113,12 @@ def main() -> int:
     cases = [
         ("edge health", "/_occ_edge_health", 204, None, "GET"),
         ("public frontend configuration", "/frontend-config", 200, None, "GET"),
+        ("verified session requires a token", "/api/v1/auth/session", 401, None, "GET"),
+        ("page access requires a token", "/api/v1/auth/access/controller", 401, None, "GET"),
+        ("ingestion namespace reaches Ingestion", "/api/v1/ingestion/arrivals?page=0&size=1", 401, None, "GET"),
+        ("ingestion auth alias is blocked", "/api/v1/ingestion/auth/session", 404, None, "GET"),
+        ("ingestion auth alias for page access is blocked", "/api/v1/ingestion/auth/access/controller", 404, None, "GET"),
+        ("disruption namespace reaches Disruption", "/api/v1/disruption/bunching-alerts?page=0&size=1", 401, None, "GET"),
         ("React login page", "/login", 200, None, "GET"),
         ("anonymous public notice read", "/api/v1/planning/public/notices?page=0&size=1", 200, None, "GET"),
         ("public notice management requires a token", "/api/v1/planning/notices?page=0&size=1", 401, None, "GET"),
@@ -103,9 +145,23 @@ def main() -> int:
         token_dir = args.token_dir
         for role in ("admin", "controller"):
             token = (token_dir / f"{role}.jwt").read_text(encoding="utf-8").strip()
-            assert_status(base_url, f"valid {role.upper()} JWT passes gateway and Ingestion",
+            assert_status(base_url, f"valid {role.upper()} JWT reaches Ingestion",
                           "/api/v1/arrivals?page=0&size=1", 200,
                           {"Authorization": f"Bearer {token}"})
+            assert_status(base_url, f"valid {role.upper()} JWT reaches Ingestion through its prefix",
+                          "/api/v1/ingestion/arrivals?page=0&size=1", 200,
+                          {"Authorization": f"Bearer {token}"})
+            assert_status(base_url, f"valid {role.upper()} JWT reaches Disruption",
+                          "/api/v1/disruption/bunching-alerts?page=0&size=1", 200,
+                          {"Authorization": f"Bearer {token}"})
+            assert_status(base_url, f"valid {role.upper()} JWT reaches Planning",
+                          "/api/v1/planning/public/notices?page=0&size=1", 200,
+                          {"Authorization": f"Bearer {token}"})
+        assert_pacing_event_stream(base_url,
+                                   (token_dir / "controller.jwt").read_text(encoding="utf-8").strip())
+        assert_pacing_event_stream(base_url,
+                                   (token_dir / "controller.jwt").read_text(encoding="utf-8").strip(),
+                                   "/api/v1/ingestion/pacing-snapshots/stream?serviceId=190")
         for role in ("captain", "unassigned"):
             token = (token_dir / f"{role}.jwt").read_text(encoding="utf-8").strip()
             assert_status(base_url, f"valid {role.upper()} JWT is forbidden from Ingestion API",

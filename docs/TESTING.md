@@ -12,11 +12,11 @@ second copy of the PR checks. Its independent jobs cover:
 | Job | Coverage |
 | --- | --- |
 | Launcher and setup checks | Bash and PowerShell startup, reset/clear, pgAdmin actions and failure handling on Windows and Linux, using fake Docker/npm commands. |
-| Reactor tests and migration checks | All four Java services, unit/slice tests, database integration tests and contract export; no skipped tests allowed. |
+| Reactor tests and migration checks | All three Java services, unit/slice tests, database integration tests and contract export; no skipped tests allowed. |
 | Frontend checks | Reproducible install, lint, TypeScript and production build. |
 | Configuration and API contract checks | Example Compose configurations, OpenAPI validation and API compatibility baselines. |
 | Live API contract comparison | Running service definitions match the committed OpenAPI files. |
-| Nginx and authentication smoke | HTTP/HTTPS routes, assets, 401/403 role rules, hidden endpoints, rate limits and static hosting with Gateway stopped. |
+| Nginx and authentication smoke | HTTP/HTTPS routes to all three services, assets, 401/403 role rules, hidden endpoints, rate limits, SSE streaming and static hosting with a backend stopped. |
 | Security scans | Repository secrets/configuration and all application, migration and Nginx images. |
 
 These jobs do not depend on one another. A contract failure does not prevent
@@ -62,12 +62,12 @@ Bash:
 ./mvnw verify
 ```
 
-The reactor covers Ingestion, Disruption, Planning and Gateway. Use isolated
+The reactor covers Ingestion, Disruption and Planning. Use isolated
 Compose projects for disposable system tests and preserve normal development
 database volumes. On a memory-constrained engine, stop the development stack
 while running another complete application stack; restart it afterward.
 For the same zero-skips run as Core CI, add `-Docc.exportOpenapi=true` to
-include the opt-in Gateway contract export test (quote the flag in PowerShell).
+include the opt-in Ingestion contract export test (quote the flag in PowerShell).
 
 ## React authentication app
 
@@ -79,16 +79,16 @@ The manual-run control is available once the workflow exists on the default bran
 
 From `frontend/`, run `npm ci`, `npm run lint`, `npm run typecheck`,
 `npm run build`, `npx playwright install chromium`, then `npm test`.
-The browser journeys mock Supabase and Gateway; they prove frontend behavior
-and session lifecycle, not live provider or backend authorization. Gateway tests
-independently enforce the controller/captain role matrix. See
+The browser journeys mock Supabase and API responses; they prove frontend
+behavior and session lifecycle, not live provider or backend authorization.
+Ingestion tests independently enforce the controller/captain role matrix. See
 [development guide](DEVELOPMENT.md) for Nginx-targeted browser runs and
 [authentication](AUTHENTICATION.md) for opt-in live checks.
 
 Captain browser tests also cover pacing thresholds, instruction
 acknowledgement, the assigned route, narrow-screen layout and persistent
 day/night mode. They verify that the captain screen does not call the
-fleet-wide pacing API. Planning, ingestion and Gateway tests enforce that
+fleet-wide pacing API. Planning and ingestion tests enforce that
 captains read and acknowledge only instructions and pacing for the bus assigned
 to their verified identity.
 
@@ -101,8 +101,8 @@ and do not record decisions in a real database. Edge checks verify that retired
 
 CI compares Nginx responses byte-for-byte with the React build under `frontend/dist/`,
 checks role restrictions and hidden routes through HTTP/TLS, and proves static
-pages remain available with Gateway stopped. Public APIs route through Gateway;
-internal, management and API-documentation paths are blocked at Nginx.
+pages remain available with a backend stopped. Public APIs route directly to the
+owning service; internal, management and API-documentation paths are blocked at Nginx.
 
 Contract fixtures live in `tests/contracts/`; generated service contracts live
 under `services/<service>/openapi/`. CI validates compatibility and compares
@@ -143,7 +143,7 @@ The repository secret/misconfiguration job sets the CI-tool-only
 It still scans source files and enforces HIGH/CRITICAL findings through the
 sanitizer. Separate image vulnerability jobs use current vulnerability databases
 and retain their HIGH/CRITICAL failure gates and SBOM output.
-The image matrix covers all four applications and the combined database-setup
+The image matrix covers all three applications and the combined database-setup
 image; the pinned Nginx image has its own scan and SBOM job.
 
 The edge and CI fixtures use the same digest-pinned official Nginx Alpine slim
@@ -159,3 +159,19 @@ test-only proxy drops the first response after Planning returns HTTP 202, then
 the smoke restarts both services and verifies the same idempotency key and one
 durable Planning request survive. The control port is loopback-only and the
 profile must use its own Compose project and database volume.
+
+## Direct-edge migration regression checks
+
+`python tests/system/nginx_proxy_smoke.py` starts one disposable, hardened Nginx
+container with isolated echo upstreams. It checks destination selection, URI and
+query rewriting, HTTP methods, bearer/idempotency header forwarding, generated
+correlation IDs and removal of spoofed peer/Forwarded headers. It exercises the
+actual route template; it does not prove backend authorization. The edge smoke
+uses real backend filters and synthetic signed JWTs and checks both pacing SSE
+URLs, including the Ingestion-prefixed alias.
+
+Every automatic edge-smoke run also launches Chromium for `startup.spec.ts`
+against the built HTTPS site. This verifies that production JavaScript actually
+renders sign-in without an uncaught exception; asset-byte checks and successful
+Vite compilation alone cannot establish that. The full browser journeys remain
+available through the documented manual workflow and local Playwright commands.
