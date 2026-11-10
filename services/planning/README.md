@@ -101,18 +101,22 @@ using `OCC_PLANNING_DB_INTERNAL_URL`; when running from the service directory
 with the `local` profile, it uses `OCC_PLANNING_DB_PUBLIC_URL` and imports the
 root `.env`.
 
-To refresh the checked-in OpenAPI contract, start the local Compose stack, put a
-short-lived ADMIN or CONTROLLER access token in `OCC_OPENAPI_EXPORT_TOKEN` for the
-current shell only, then run from the repository root:
+The running service serves the committed contract at `/v3/planning.json` and the
+Swagger UI at `/swagger-ui/index.html`. springdoc is a test-only dependency, so the
+application itself generates neither.
 
-```powershell
-$env:OCC_OPENAPI_EXPORT_TOKEN = '<short-lived access token>'
-.\mvnw.cmd -pl services/planning -Popenapi org.springdoc:springdoc-openapi-maven-plugin:1.5:generate "-Dopenapi.apiDocsUrl=http://localhost:6769/v3/api-docs"
-Remove-Item Env:OCC_OPENAPI_EXPORT_TOKEN
+To refresh the checked-in OpenAPI contract, run the opt-in export test from the
+repository root (Docker provides the disposable PostgreSQL container):
+
+```shell
+.\mvnw.cmd -pl services/planning verify "-Docc.exportOpenapi=true"
 ```
 
-This updates `services/planning/openapi/planning.json` from the running API.
-Never save the token in `.env` or commit it.
+Commit the regenerated `services/planning/openapi/planning.json`. The build packages
+it as the served contract, and the export test fails when the packaged copy differs
+from the generated one. The `-Popenapi` profile still works against any process that
+serves `/v3/api-docs`, such as `spring-boot:run` started with
+`-Dspring-boot.run.useTestClasspath=true`.
 The OpenAPI security identifiers are `SupabaseJWT` and `DisruptionPeerToken`;
 these describe the existing bearer/peer-header authentication and do not change
 the API routes, role checks or header names.
