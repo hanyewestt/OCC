@@ -1,0 +1,46 @@
+# CloudFront origin server. Browser TLS terminates at the CloudFront
+# distribution; this listener speaks plain HTTP to the edge and is restricted
+# by the security group to the CloudFront origin-facing managed prefix list
+# plus the secret origin header checked here. Viewer-supplied X-Forwarded-*
+# and CloudFront-* header names cannot be forged through CloudFront: viewers
+# cannot set CloudFront-* headers, and the origin gate below means the only
+# possible client is the distribution itself.
+# Rate limiting keys on the trusted client identity variable that the shared
+# routes define; behind the gate it is the real CloudFront viewer address.
+limit_req_zone $occ_client_ip zone=occ_api:10m rate=20r/s;
+
+# CloudFront appends the viewer address to X-Forwarded-For, so the last entry
+# is the viewer and any earlier entries are viewer-supplied and untrusted.
+map $http_x_forwarded_for $occ_cf_viewer_ip {
+    ~^(?:.*,)?\s*(?<occ_last_forwarded>[^,\s]+)$ $occ_last_forwarded;
+    default $remote_addr;
+}
+
+# CloudFront injects CloudFront-Forwarded-Proto from the viewer connection;
+# viewers cannot set CloudFront-* headers.
+map $http_cloudfront_forwarded_proto $occ_cf_forwarded_proto {
+    default "https";
+}
+
+server {
+    listen ${OCC_NGINX_HTTP_INTERNAL_PORT};
+    server_name _;
+    server_tokens off;
+
+    # Every accepted request came from the distribution: the prefix list
+    # blocks other sources and this header is a deployment secret. It is
+    # stripped before proxying and never logged.
+    if ($http_x_occ_origin_secret != "${OCC_ORIGIN_SECRET}") {
+        return 403;
+    }
+
+    include /etc/nginx/conf.d/routes.inc;
+
+    # Override the shared defaults after the gate: the client is the viewer
+    # behind CloudFront and the protocol is what CloudFront reports.
+    set $occ_client_ip $occ_cf_viewer_ip;
+    set $occ_forwarded_proto $occ_cf_forwarded_proto;
+
+    location = /auth-test { return 404; }
+    location ^~ /auth-test/ { return 404; }
+}

@@ -9,6 +9,7 @@ from pathlib import Path
 import socket
 import ssl
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -17,12 +18,19 @@ from collections import Counter
 
 def request_status(base_url: str, path: str, headers: dict[str, str] | None = None,
                    method: str = "GET") -> int:
-    request = urllib.request.Request(base_url + path, headers=headers or {}, method=method)
+    request = urllib.request.Request(base_url + path,
+                                     headers={**ORIGIN_SECRET_HEADERS, **(headers or {})},
+                                     method=method)
     try:
         with urllib.request.urlopen(request, context=ssl._create_unverified_context(), timeout=10) as response:
             return response.status
     except urllib.error.HTTPError as response:
         return response.code
+
+
+# Populated from --origin-secret-file: the CloudFront origin edge refuses
+# requests that do not carry the deployment's secret header.
+ORIGIN_SECRET_HEADERS: dict[str, str] = {}
 
 
 def assert_status(base_url: str, label: str, path: str, expected: int,
@@ -34,7 +42,8 @@ def assert_status(base_url: str, label: str, path: str, expected: int,
 
 
 def assert_pacing_event_stream(base_url: str, token: str,
-                              path: str = "/api/v1/pacing-snapshots/stream") -> None:
+                               path: str = "/api/v1/pacing-snapshots/stream",
+                               max_heartbeat_gap: float | None = None) -> None:
     parts = urllib.parse.urlsplit(base_url)
     context = ssl._create_unverified_context() if parts.scheme == "https" else None
     connection = (
@@ -42,7 +51,9 @@ def assert_pacing_event_stream(base_url: str, token: str,
         if context else http.client.HTTPConnection(parts.hostname, parts.port, timeout=20)
     )
     connection.request("GET", path,
-                       headers={"Authorization": f"Bearer {token}", "Accept": "text/event-stream"})
+                       headers={**ORIGIN_SECRET_HEADERS,
+                                "Authorization": f"Bearer {token}",
+                                "Accept": "text/event-stream"})
     try:
         response = connection.getresponse()
         if response.status != 200:
@@ -60,6 +71,22 @@ def assert_pacing_event_stream(base_url: str, token: str,
         if b"data:" not in received and b"event:" not in received:
             raise AssertionError("pacing SSE: no event was delivered before the idle timeout")
         print("PASS pacing SSE stream is delivered without buffering")
+        if max_heartbeat_gap is not None:
+            # Measure the gap between consecutive events: the CloudFront
+            # origin read timeout must stay well above this cadence.
+            gap_deadline = time.monotonic() + max_heartbeat_gap
+            second_event = b""
+            while b"\n\n" not in second_event and time.monotonic() < gap_deadline:
+                chunk = response.read1(4096)
+                if not chunk:
+                    break
+                second_event += chunk
+            if b"\n\n" not in second_event:
+                raise AssertionError(
+                    f"pacing SSE: no second event arrived within {max_heartbeat_gap:g}s, "
+                    "so the measured heartbeat gap cannot calibrate the origin timeout")
+            print(f"PASS pacing SSE heartbeat gap stayed below {max_heartbeat_gap:g}s "
+                  "through the proxy")
     except (TimeoutError, socket.timeout) as error:
         raise AssertionError("pacing SSE: the stream did not deliver an event before the idle timeout") from error
     finally:
@@ -67,11 +94,21 @@ def assert_pacing_event_stream(base_url: str, token: str,
 
 
 def main() -> int:
+    global ORIGIN_SECRET_HEADERS
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="https://127.0.0.1:18443")
     parser.add_argument("--token-dir", type=Path)
     parser.add_argument("--static-only", action="store_true")
+    parser.add_argument("--origin-secret-file", type=Path,
+                        help="File holding the CloudFront origin secret; every request "
+                             "carries it as X-OCC-Origin-Secret")
+    parser.add_argument("--max-heartbeat-gap", type=float,
+                        help="Assert the measured SSE heartbeat gap stays below this many seconds")
     args = parser.parse_args()
+    if args.origin_secret_file:
+        ORIGIN_SECRET_HEADERS = {
+            "X-OCC-Origin-Secret": args.origin_secret_file.read_text(encoding="utf-8").strip()
+        }
     base_url = args.base_url.rstrip("/")
 
     root = Path(__file__).resolve().parents[2]
@@ -160,10 +197,12 @@ def main() -> int:
                           "/api/v1/planning/public/notices?page=0&size=1", 200,
                           {"Authorization": f"Bearer {token}"})
         assert_pacing_event_stream(base_url,
-                                   (token_dir / "controller.jwt").read_text(encoding="utf-8").strip())
+                                   (token_dir / "controller.jwt").read_text(encoding="utf-8").strip(),
+                                   max_heartbeat_gap=args.max_heartbeat_gap)
         assert_pacing_event_stream(base_url,
                                    (token_dir / "controller.jwt").read_text(encoding="utf-8").strip(),
-                                   "/api/v1/ingestion/pacing-snapshots/stream?serviceId=190")
+                                   "/api/v1/ingestion/pacing-snapshots/stream?serviceId=190",
+                                   max_heartbeat_gap=args.max_heartbeat_gap)
         for role in ("captain", "unassigned"):
             token = (token_dir / f"{role}.jwt").read_text(encoding="utf-8").strip()
             assert_status(base_url, f"valid {role.upper()} JWT is forbidden from Ingestion API",
