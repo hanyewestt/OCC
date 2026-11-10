@@ -249,6 +249,9 @@ class UserDirectoryIT {
         String contract = mvc.perform(get("/v3/api-docs").with(actor("ADMIN"))).andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         var schemas = tools.jackson.databind.json.JsonMapper.builder().build().readTree(contract).path("components").path("schemas");
+        var result = schemas.path("ProvisioningOperationResponse").path("properties").path("result");
+        assertThat(permitsJsonType(result, "object", schemas)).as("provisioning completed account").isTrue();
+        assertThat(permitsJsonType(result, "null", schemas)).as("provisioning pending null result").isTrue();
         for (String name : List.of("CaptainResponse", "DirectoryUserResponse")) {
             var assignment = schemas.path(name).path("properties").path("currentAssignment");
             assertThat(permitsJsonType(assignment, "object", schemas)).as(name + " assigned object").isTrue();
