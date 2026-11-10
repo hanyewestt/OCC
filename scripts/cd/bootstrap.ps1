@@ -145,12 +145,41 @@ if (-not $prefixListId) {
     throw "The com.amazonaws.global.cloudfront.origin-facing managed prefix list was not found in $Region."
 }
 
+# Outbound destinations are an explicit, fail-closed allow-list. The list is
+# created once with the deployment's exact required ranges (see
+# docs/DEPLOYMENT.md); bootstrap refuses to build a change set without it.
+Write-Output "Resolving the deployment egress allow-list..."
+$egressLists = Invoke-Aws @("ec2", "describe-managed-prefix-lists", "--filters", "Name=prefix-list-name,Values=occ-ec2-cd-egress") | ConvertFrom-Json
+$egressPrefixListId = $egressLists.PrefixLists | Select-Object -First 1 -ExpandProperty PrefixListId
+if (-not $egressPrefixListId) {
+    throw "The customer-managed prefix list occ-ec2-cd-egress was not found in $Region; create it with the required outbound ranges (see docs/DEPLOYMENT.md) and rerun."
+}
+# Refuse an empty list or one that reintroduces unrestricted egress through the
+# back door: the prefix list, not the template, carries the destinations.
+$egressEntries = @()
+$nextToken = $null
+do {
+    $entryArguments = @("ec2", "get-managed-prefix-list-entries", "--prefix-list-id", $egressPrefixListId)
+    if ($nextToken) { $entryArguments += @("--next-token", $nextToken) }
+    $page = Invoke-Aws $entryArguments | ConvertFrom-Json
+    $egressEntries += $page.Entries
+    $nextToken = $page.NextToken
+} while ($nextToken)
+if (-not $egressEntries) {
+    throw "The occ-ec2-cd-egress prefix list has no entries; add the deployment's required outbound ranges and rerun."
+}
+$unrestricted = $egressEntries | Where-Object { $_.Cidr -in @("0.0.0.0/0", "::/0") }
+if ($unrestricted) {
+    throw "The occ-ec2-cd-egress prefix list contains an unrestricted entry; remove it and list only required destinations."
+}
+
 # Create (or reuse) the change set. Nothing is applied without -ApplyChangeSet.
 $parameters = @(
     "ParameterKey=RepositoryName,ParameterValue=$Repository",
     "ParameterKey=InstanceType,ParameterValue=$InstanceType",
     "ParameterKey=OidcProviderArn,ParameterValue=$oidcArn",
-    "ParameterKey=CloudFrontOriginPrefixListId,ParameterValue=$prefixListId"
+    "ParameterKey=CloudFrontOriginPrefixListId,ParameterValue=$prefixListId",
+    "ParameterKey=EgressAllowedPrefixListId,ParameterValue=$egressPrefixListId"
 )
 Write-Output "Creating change set for stack $StackName..."
 $changeSet = "occ-bootstrap-" + (Get-Date -Format "yyyyMMddHHmmss")
