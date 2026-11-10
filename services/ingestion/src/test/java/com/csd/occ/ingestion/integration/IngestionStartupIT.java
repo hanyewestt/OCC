@@ -286,7 +286,7 @@ class IngestionStartupIT {
     }
 
     @Test
-    void demoReplayRowsRemainRunScopedAndUnavailableFromLiveQueries() {
+    void demoReplayRowsRemainRunScopedAndUnavailableFromLiveQueries() throws Exception {
         topology.replaceIfChanged(new BusReferencePort.BusReferenceData(
                 List.of(new BusReferencePort.BusStopRecord("44251", "Demo Road", "Demo Stop",
                         new java.math.BigDecimal("1.377"), new java.math.BigDecimal("103.771"))),
@@ -308,6 +308,20 @@ class IngestionStartupIT {
         assertThat(simulationPage.items()).hasSize(DemoReplayScenario.STEP_COUNT);
         assertThat(simulationPage.items()).allSatisfy(snapshot -> assertThat(snapshot.arrivals())
                 .extracting(BunchingFeedService.Arrival::visitOrder).containsExactly(1, 2, 3, 4));
+        var previous = simulationPage.items().get(1).arrivals();
+        var current = simulationPage.items().getLast().arrivals();
+        UUID bunchingEventId = UUID.randomUUID();
+        var affected = java.util.stream.Stream.concat(previous.stream(), current.stream())
+                .map(BunchingFeedService.Arrival::observationId).toList();
+        when(bunching.alerts(started.id())).thenReturn(List.of(new com.csd.occ.ingestion.domain.DemoBunchingAlert(
+                UUID.randomUUID(), bunchingEventId, "OPENED", "190", "44251", 1, Instant.now(), "SIMULATION",
+                current.get(1).observationId(), current.get(2).observationId(), affected, "{}")));
+        mvc.perform(get("/internal/v1/ingestion/demo-runs/{run}/bunching-groups/{event}", started.id(), bunchingEventId)
+                        .header("X-OCC-Peer-Token", "test-planning-to-ingestion-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.affectedBusReferences[0]").value("demo-190-1"))
+                .andExpect(jsonPath("$.affectedBusReferences[3]").value("demo-190-4"))
+                .andExpect(jsonPath("$.followingBusReference").value("demo-190-3"));
         assertThat(bunchingFeed.page(0, 100).items())
                 .noneMatch(snapshot -> simulationIds.contains(snapshot.rawObservationId()));
         assertThat(arrivals.findCurrent("44251", "190", null, "arrival", "asc", PageRequest.of(0, 50))

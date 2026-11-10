@@ -10,6 +10,9 @@ public interface AdvisoryContextPort {
     Fleet fleet(UUID runId);
     Route route(String serviceId);
     Limits limits();
+    BunchingGroup bunchingGroup(UUID demoRunId, UUID bunchingEventId);
+    record BunchingGroup(UUID demoRunId, UUID bunchingEventId, String serviceId, int directionId, String stopCode,
+                         List<String> affectedBusReferences, String followingBusReference) {}
     record Limits(int maxSpeedReductionKmh, int maxDurationSeconds, int maxSubsequentStops,
                   Duration acknowledgementWindow, Duration retention) {}
     record Hazard(UUID disruptionId, String kind, String status, String inactiveReason, String classification,

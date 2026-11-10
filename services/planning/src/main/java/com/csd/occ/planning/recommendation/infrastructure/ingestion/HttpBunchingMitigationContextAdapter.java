@@ -12,7 +12,6 @@ import com.csd.occ.planning.recommendation.domain.SimulatedImpactEstimate;
 import com.csd.occ.planning.recommendation.domain.ValidatedMitigationContext;
 import com.csd.occ.planning.recommendation.infrastructure.fixture.ClasspathBunchingMitigationContextAdapter;
 import java.math.BigDecimal;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,14 +46,15 @@ public class HttpBunchingMitigationContextAdapter implements BunchingMitigationC
         try {
             var scope = scopes.current();
             if (scope != null && scope.demoRunId() != null) {
-                var affectedBuses = context.fleet(scope.demoRunId()).items().stream()
-                        .filter(bus -> event.serviceId().equals(bus.serviceId()) && event.directionId() == bus.directionId())
-                        .sorted(Comparator.comparing(AdvisoryContextPort.Bus::busId))
-                        .toList();
-                if (affectedBuses.size() >= 2 && affectedBuses.size() <= 3) {
-                    List<String> busIds = affectedBuses.stream().map(AdvisoryContextPort.Bus::busId).toList();
+                var group = context.bunchingGroup(scope.demoRunId(), event.bunchingEventId());
+                List<String> busIds = group.affectedBusReferences();
+                if (scope.demoRunId().equals(group.demoRunId()) && event.bunchingEventId().equals(group.bunchingEventId())
+                        && event.serviceId().equals(group.serviceId()) && event.directionId() == group.directionId()
+                        && event.monitoredStopCode().equals(group.stopCode()) && busIds != null
+                        && busIds.size() >= 2 && busIds.size() <= 100 && group.followingBusReference() != null
+                        && busIds.contains(group.followingBusReference())) {
                     var mitigation = new ValidatedMitigationContext(
-                            busIds.getLast(), busIds, event.monitoredStopCode(), FollowingBusState.READY_TO_DEPART,
+                            group.followingBusReference(), busIds, event.monitoredStopCode(), FollowingBusState.READY_TO_DEPART,
                             MAXIMUM_HOLD_SECONDS, MAXIMUM_DWELL_ADJUSTMENT_SECONDS, CrowdSafetyStatus.PASSED,
                             MitigationValidationStatus.VALIDATED, event.evidenceIds());
                     int observedHeadway = event.observedHeadwaySeconds().getLast();
@@ -62,9 +62,11 @@ public class HttpBunchingMitigationContextAdapter implements BunchingMitigationC
                             BigDecimal.ZERO, BigDecimal.ZERO);
                     return Optional.of(new BunchingMitigationInputs(mitigation, impact));
                 }
+                return Optional.empty();
             }
         } catch (RuntimeException ignored) {
-            // Fall back when simulation fleet resolution fails or is unavailable
+            // An unresolved incident must not be replaced with unrelated fixture vehicles.
+            return Optional.empty();
         }
         return fallback != null ? fallback.findFor(event) : Optional.empty();
     }
