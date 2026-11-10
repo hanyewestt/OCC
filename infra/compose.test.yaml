@@ -42,11 +42,3 @@ services:
       # The model adapters are constructed at startup even with workers disabled;
       # this synthetic value is never used to call the provider in this stack.
       OCC_PLANNING_GEMINI_API_KEY: synthetic-ci-key
-
-  gateway:
-    build:
-      context: .
-      dockerfile: infra/java.Dockerfile
-      args:
-        OCC_SERVICE: gateway
-        OCC_SERVICE_INTERNAL_PORT: ${OCC_GATEWAY_INTERNAL_PORT:-8004}

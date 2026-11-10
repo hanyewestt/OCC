@@ -75,6 +75,13 @@ services:
       OCC_PLANNING_INTERNAL_URL: http://planning:${OCC_PLANNING_INTERNAL_PORT:-8003}
       OCC_DATAMALL_BASE_URL: ${OCC_DATAMALL_BASE_URL:-https://datamall2.mytransport.sg/ltaodataservice}
       DATAMALL_API_KEY: ${DATAMALL_API_KEY:?set DATAMALL_API_KEY in .env}
+      # Relocated public browser configuration (formerly served by Gateway).
+      SUPABASE_SB_PUBLISHABLE: ${SUPABASE_SB_PUBLISHABLE:-}
+      OCC_CONTROLLER_DATA_REFRESH_INTERVAL: ${OCC_CONTROLLER_DATA_REFRESH_INTERVAL:-30s}
+      OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL: ${OCC_INGESTION_BUS_ARRIVAL_POLL_INTERVAL:-60s}
+      OCC_ROUTE_INCIDENT_GAP_TOLERANCE: ${OCC_ROUTE_INCIDENT_GAP_TOLERANCE:-20s}
+      OCC_CAPTAIN_DATA_REFRESH_INTERVAL: ${OCC_CAPTAIN_DATA_REFRESH_INTERVAL:-5s}
+      OCC_PUBLIC_NOTICE_REFRESH_INTERVAL: ${OCC_PUBLIC_NOTICE_REFRESH_INTERVAL:-30s}
       OCC_INGESTION_TO_DISRUPTION_PEER_TOKEN: ${OCC_INGESTION_TO_DISRUPTION_PEER_TOKEN:?set peer token in .env}
       OCC_INGESTION_TO_PLANNING_PEER_TOKEN: ${OCC_INGESTION_TO_PLANNING_PEER_TOKEN:?set peer token in .env}
       OCC_DISRUPTION_TO_INGESTION_PEER_TOKEN: ${OCC_DISRUPTION_TO_INGESTION_PEER_TOKEN:?set peer token in .env}
@@ -156,33 +163,6 @@ services:
       retries: 12
       start_period: 30s
 
-  gateway:
-    image: occ-gateway:local
-    restart: unless-stopped
-    mem_limit: ${OCC_GATEWAY_MEMORY_LIMIT:-384m}
-    environment:
-      <<: *supabase-environment
-      JAVA_TOOL_OPTIONS: ${OCC_GATEWAY_JAVA_TOOL_OPTIONS:--Xms32m -Xmx128m -XX:+UseSerialGC -XX:ActiveProcessorCount=2 -XX:NativeMemoryTracking=summary}
-      SUPABASE_SB_PUBLISHABLE: ${SUPABASE_SB_PUBLISHABLE:-}
-      OCC_GATEWAY_INTERNAL_PORT: ${OCC_GATEWAY_INTERNAL_PORT:-8004}
-      OCC_INGESTION_INTERNAL_URL: http://ingestion:${OCC_INGESTION_INTERNAL_PORT:-8001}
-      OCC_DISRUPTION_INTERNAL_URL: http://disruption:${OCC_DISRUPTION_INTERNAL_PORT:-8002}
-      OCC_PLANNING_INTERNAL_URL: http://planning:${OCC_PLANNING_INTERNAL_PORT:-8003}
-    networks: [edge, app, egress]
-    depends_on:
-      ingestion:
-        condition: service_healthy
-      disruption:
-        condition: service_healthy
-      planning:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:$${OCC_GATEWAY_INTERNAL_PORT}/actuator/health/readiness >/dev/null"]
-      interval: 10s
-      timeout: 3s
-      retries: 12
-      start_period: 30s
-
   nginx:
     profiles: [edge]
     image: nginx:1.30.6-alpine-slim@sha256:f65ed258206d1eb6c4eb6141111715a2cf94ac0a4ec9675fc2da186f7aadb163
@@ -198,17 +178,25 @@ services:
       - /var/run:uid=101,gid=101,mode=0755
       - /tmp:uid=101,gid=101,mode=1777
     environment:
-      NGINX_ENVSUBST_FILTER: '^(OCC_GATEWAY_INTERNAL_URL|OCC_PGADMIN_INTERNAL_URL|OCC_NGINX_HTTP_INTERNAL_PORT|OCC_NGINX_HTTPS_INTERNAL_PORT|OCC_NGINX_SERVER_NAME)$'
-      OCC_GATEWAY_INTERNAL_URL: ${OCC_GATEWAY_INTERNAL_URL:-http://gateway:8004}
+      NGINX_ENVSUBST_FILTER: '^(OCC_INGESTION_INTERNAL_URL|OCC_DISRUPTION_INTERNAL_URL|OCC_PLANNING_INTERNAL_URL|OCC_PGADMIN_INTERNAL_URL|OCC_NGINX_HTTP_INTERNAL_PORT|OCC_NGINX_HTTPS_INTERNAL_PORT|OCC_NGINX_SERVER_NAME)$'
+      OCC_INGESTION_INTERNAL_URL: ${OCC_INGESTION_INTERNAL_URL:-http://ingestion:${OCC_INGESTION_INTERNAL_PORT:-8001}}
+      OCC_DISRUPTION_INTERNAL_URL: ${OCC_DISRUPTION_INTERNAL_URL:-http://disruption:${OCC_DISRUPTION_INTERNAL_PORT:-8002}}
+      OCC_PLANNING_INTERNAL_URL: ${OCC_PLANNING_INTERNAL_URL:-http://planning:${OCC_PLANNING_INTERNAL_PORT:-8003}}
       OCC_NGINX_HTTP_INTERNAL_PORT: ${OCC_NGINX_HTTP_INTERNAL_PORT:-8080}
       OCC_NGINX_HTTPS_INTERNAL_PORT: ${OCC_NGINX_HTTPS_INTERNAL_PORT:-8443}
       OCC_NGINX_SERVER_NAME: ${OCC_NGINX_SERVER_NAME:-localhost}
     volumes:
       - ./infra/nginx/routes.inc.template:/etc/nginx/templates/routes.inc.template:ro
       - ./frontend/dist:/usr/share/nginx/html:ro
-    networks: [edge]
+    # Nginx reaches all three backends on the application network; it stays off
+    # the private database network.
+    networks: [edge, app]
     depends_on:
-      gateway:
+      ingestion:
+        condition: service_healthy
+      disruption:
+        condition: service_healthy
+      planning:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "nginx", "-t"]

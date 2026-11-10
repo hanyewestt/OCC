@@ -243,3 +243,9 @@ export async function triggerDiagnosis(
     body,
   })
 }
+
+export type AdvisoryCandidate = { type: InstructionType; parameters: InstructionParameters; rationale: string }
+export type Advisory = { id: string; disruptionId: string; demoRunId: string; busId: string; status: string;
+  candidate: AdvisoryCandidate; finalCandidate: AdvisoryCandidate | null; preview: string; hazardClassification: string; limitations: string[]; createdAt: string }
+export type AdvisoryGroup = { id: string; disruptionId: string; demoRunId: string; serviceId: string; directionId: number;
+  hazardTitle: string; hazardClassification: string; candidate: AdvisoryCandidate; preview: string; members: Advisory[] }

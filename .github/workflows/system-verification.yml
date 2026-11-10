@@ -78,7 +78,7 @@ jobs:
           jwks_ready=false
           for attempt in $(seq 1 30); do
             if docker compose -p occ-edge-ci --env-file .env.example \
-              -f compose.yaml -f infra/compose.test.yaml exec -T gateway \
+              -f compose.yaml -f infra/compose.test.yaml exec -T ingestion \
               curl --fail --silent http://jwks-test:8080/auth/v1/.well-known/jwks.json >/dev/null; then
               jwks_ready=true
               break
@@ -91,7 +91,7 @@ jobs:
           fi
           compose=(docker compose -p occ-edge-ci --env-file .env.example
             -f compose.yaml -f infra/compose.test.yaml)
-          services=(gateway ingestion disruption planning)
+          services=(ingestion disruption planning)
           if [[ "$OCC_SYSTEM_SUITE" == extended ]]; then
             compose+=(-f infra/compose.workflow-test.yaml -f infra/compose.dispatch-test.yaml)
             services+=(planning-fault-proxy)
@@ -113,9 +113,11 @@ jobs:
             --user 101:101 --read-only --security-opt no-new-privileges --cap-drop ALL \
             --tmpfs /etc/nginx/conf.d:uid=101,gid=101,mode=1777 \
             --tmpfs /tmp:uid=101,gid=101,mode=1777 \
-            --network occ-edge-ci_edge --publish 127.0.0.1:18443:8443 \
-            --env 'NGINX_ENVSUBST_FILTER=^(OCC_GATEWAY_INTERNAL_URL|OCC_NGINX_DNS_VALIDITY|OCC_NGINX_HTTP_INTERNAL_PORT|OCC_NGINX_HTTPS_INTERNAL_PORT|OCC_NGINX_SERVER_NAME|OCC_NGINX_CLIENT_MAX_BODY_SIZE|OCC_NGINX_RATE_LIMIT_PER_SECOND|OCC_NGINX_RATE_LIMIT_BURST|OCC_NGINX_RATE_LIMIT_ZONE_SIZE|OCC_NGINX_PROXY_CONNECT_TIMEOUT|OCC_NGINX_PROXY_READ_TIMEOUT|OCC_NGINX_PROXY_SEND_TIMEOUT)$' \
-            --env OCC_GATEWAY_INTERNAL_URL=http://gateway:8004 \
+            --network occ-edge-ci_app --publish 127.0.0.1:18443:8443 \
+            --env 'NGINX_ENVSUBST_FILTER=^(OCC_INGESTION_INTERNAL_URL|OCC_DISRUPTION_INTERNAL_URL|OCC_PLANNING_INTERNAL_URL|OCC_NGINX_DNS_VALIDITY|OCC_NGINX_HTTP_INTERNAL_PORT|OCC_NGINX_HTTPS_INTERNAL_PORT|OCC_NGINX_SERVER_NAME|OCC_NGINX_CLIENT_MAX_BODY_SIZE|OCC_NGINX_RATE_LIMIT_PER_SECOND|OCC_NGINX_RATE_LIMIT_BURST|OCC_NGINX_RATE_LIMIT_ZONE_SIZE|OCC_NGINX_PROXY_CONNECT_TIMEOUT|OCC_NGINX_PROXY_READ_TIMEOUT|OCC_NGINX_PROXY_SEND_TIMEOUT)$' \
+            --env OCC_INGESTION_INTERNAL_URL=http://ingestion:8001 \
+            --env OCC_DISRUPTION_INTERNAL_URL=http://disruption:8002 \
+            --env OCC_PLANNING_INTERNAL_URL=http://planning:8003 \
             --env OCC_NGINX_DNS_VALIDITY=30s \
             --env OCC_NGINX_HTTPS_INTERNAL_PORT=8443 \
             --env OCC_NGINX_SERVER_NAME=localhost \
@@ -197,7 +199,7 @@ jobs:
           admin_token="$(cat "$RUNNER_TEMP/occ-edge-jwks/admin.jwt")"
           demo_run_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["demoRunId"])' "$RUNNER_TEMP/occ-api-performance-context.json")"
           bunching_event_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["bunchingEventId"])' "$RUNNER_TEMP/occ-api-performance-context.json")"
-          docker run --rm --network occ-edge-ci_edge \
+          docker run --rm --network occ-edge-ci_app \
             --mount "type=bind,source=$GITHUB_WORKSPACE/tests/system/important_api_performance.js,target=/work/important_api_performance.js,readonly" \
             grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34 \
             run \
@@ -215,6 +217,9 @@ jobs:
         run: >-
           python3 tests/system/nginx_edge_smoke.py --base-url https://127.0.0.1:18443
           --token-dir "$RUNNER_TEMP/occ-edge-jwks"
+      - name: Verify proxy rewrites and trusted header forwarding
+        if: inputs.suite == 'smoke'
+        run: python3 tests/system/nginx_proxy_smoke.py
       - name: Run browser E2E journeys through HTTPS Nginx (manual only)
         if: inputs.suite == 'smoke' && github.event_name == 'workflow_dispatch'
         working-directory: frontend
@@ -223,6 +228,14 @@ jobs:
         run: |
           npx playwright install --with-deps chromium
           npm test
+      - name: Verify the production JavaScript starts through HTTPS Nginx
+        if: inputs.suite == 'smoke' && github.event_name != 'workflow_dispatch'
+        working-directory: frontend
+        env:
+          OCC_FRONTEND_TEST_PUBLIC_URL: https://127.0.0.1:18443
+        run: |
+          npx playwright install --with-deps chromium
+          node node_modules/@playwright/test/cli.js test startup.spec.ts --project=application --workers=1
       - name: Verify local HTTP frontend and authentication boundaries
         if: inputs.suite == 'smoke'
         run: >-
@@ -234,8 +247,8 @@ jobs:
         run: |
           set -euo pipefail
           compose=(docker compose -p occ-edge-ci --env-file .env.example -f compose.yaml -f infra/compose.test.yaml)
-          trap '"${compose[@]}" start gateway' EXIT
-          "${compose[@]}" stop gateway
+          trap '"${compose[@]}" start ingestion' EXIT
+          "${compose[@]}" stop ingestion
           python3 tests/system/nginx_edge_smoke.py --base-url https://127.0.0.1:18443 --static-only
           python3 tests/system/nginx_edge_smoke.py --base-url http://127.0.0.1:18480 --static-only
       - name: Remove disposable containers and networks

@@ -47,9 +47,8 @@ the configurator leaves all captain IDs blank.
 | Component | Responsibility |
 | --- | --- |
 | Web frontend | Sign-in, role pages and shared error screens |
-| Nginx | Serves the website and forwards public API requests |
-| Gateway | Verifies access tokens, checks page permissions and routes APIs |
-| Ingestion | Transit and external-provider data ingestion |
+| Nginx | Serves the website and routes public API requests directly to the owning service |
+| Ingestion | Transit and external-provider data ingestion; session checks and public frontend configuration |
 | Disruption | Disruption detection and event handling |
 | Planning | Diagnosis and recovery recommendations |
 | Supabase Auth | Account sign-in and session lifecycle |

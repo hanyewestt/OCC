@@ -14,7 +14,6 @@ from unittest.mock import patch
 
 
 SERVICES = {
-    "gateway": Path("services/gateway/openapi/gateway.json"),
     "ingestion": Path("services/ingestion/openapi/ingestion.json"),
     "disruption": Path("services/disruption/openapi/disruption.json"),
     "planning": Path("services/planning/openapi/planning.json"),
@@ -142,7 +141,7 @@ def self_test() -> int:
         response = subprocess.CompletedProcess([], 0, stdout=json.dumps(contract))
         with patch("subprocess.run", return_value=response) as request:
             live = fetch_contract(
-                Path.cwd(), ["docker", "compose"], "synthetic", "gateway", contract, "8004"
+                Path.cwd(), ["docker", "compose"], "synthetic", "ingestion", contract, "8001"
             )
         if first_difference(contract, live) is not None or request.call_count != 1:
             return 1
@@ -150,7 +149,7 @@ def self_test() -> int:
         hosts = [argument for argument in command if argument.startswith("Host: ")]
         if hosts != ([] if expected_host is None else [f"Host: {expected_host}"]):
             return 1
-        if command[-1] != "http://127.0.0.1:8004/v3/api-docs":
+        if command[-1] != "http://127.0.0.1:8001/v3/api-docs":
             return 1
     print("OpenAPI comparison self-test passed: contract differences detected; "
           "relative and absolute server URLs supported")
