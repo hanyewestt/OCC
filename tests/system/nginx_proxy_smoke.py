@@ -42,6 +42,9 @@ http {
         fixture = Path(directory)
         (fixture / "routes.inc").write_text(routes, encoding="utf-8")
         (fixture / "nginx.conf").write_text(config, encoding="utf-8")
+        fixture.chmod(0o755)
+        for path in fixture.iterdir():
+            path.chmod(0o644)
         try:
             subprocess.run(["docker", "run", "--detach", "--name", name,
                             "--user", "101:101", "--read-only", "--cap-drop", "ALL",
