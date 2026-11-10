@@ -2,6 +2,7 @@ package com.csd.occ.planning.recommendation.domain;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.csd.occ.planning.advisory.domain.AdvisoryContextPort;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -169,6 +170,73 @@ class BunchingRecommendationPolicyTest {
                 confirmedEvent(), diagnosis(),
                 validatedContext(FollowingBusState.READY_TO_DEPART, 120, 75), impact()))
                 .isEmpty();
+    }
+
+    @Test
+    void suggestsAnOutcomeForEachBusUsingItsOwnGapAssignmentAndProgress() {
+        var now = Instant.parse("2026-09-27T23:45:02Z");
+        var references = List.of("lead", "approaching", "boarding", "wide", "unassigned", "stale", "spaced", "short-deficit");
+        var group = new AdvisoryContextPort.CurrentBunchingGroup(UUID.randomUUID(), EVENT_ID, "190", "44251", 1,
+                UUID.randomUUID(), now.minusSeconds(10), now.plusSeconds(30), references,
+                List.of(20L, 25L, 700L, 30L, 35L, 600L, 595L), List.of(true, true, true, true, true, true, true));
+        var approaching = new AdvisoryContextPort.Progress("44251", 2, group.fetchedAt(), 30, List.of(), List.of(),
+                now.plusSeconds(10), now.plusSeconds(30));
+        var boarding = new AdvisoryContextPort.Progress("44251", 2, group.fetchedAt(), 30, List.of(), List.of(),
+                now, now.plusSeconds(30), now.plusSeconds(20));
+        var stale = new AdvisoryContextPort.Progress("44251", 2, group.fetchedAt(), 30, List.of(), List.of(),
+                now.plusSeconds(10), now);
+        var fleet = List.of(bus("approaching", approaching, UUID.randomUUID()), bus("boarding", boarding, UUID.randomUUID()),
+                bus("unassigned", approaching, null), bus("stale", stale, UUID.randomUUID()),
+                bus("short-deficit", approaching, UUID.randomUUID()));
+        var route = new AdvisoryContextPort.Route("190", List.of(new AdvisoryContextPort.Operator("SBST", "BUS",
+                List.of(new AdvisoryContextPort.Direction(1, List.of(new AdvisoryContextPort.Stop("44251", "Stop", 2)))))));
+
+        assertThat(policy.suggestOutcomes(group, fleet, route, 600, now)).containsExactly(
+                new SuggestedBusOutcome("lead", null, 0, "No preceding gap in the reviewed group."),
+                new SuggestedBusOutcome("approaching", MitigationType.HOLD, 40, null),
+                new SuggestedBusOutcome("boarding", MitigationType.DWELL_ADJUSTMENT, 75, null),
+                new SuggestedBusOutcome("wide", null, 0, "The preceding gap already meets the expected headway."),
+                new SuggestedBusOutcome("unassigned", null, 0, "No captain is assigned to this bus."),
+                new SuggestedBusOutcome("stale", null, 0, "The bus has no fresh approaching or boarding evidence."),
+                new SuggestedBusOutcome("spaced", null, 0, "The preceding gap already meets the expected headway."),
+                new SuggestedBusOutcome("short-deficit", null, 0, "The preceding gap already meets the recovery target."));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"40, 50, 50, 90, 90", "10, 10, 60, 120, 70"})
+    void recoversTheBestCommonGapWithinTheHoldCap(long firstGap, long secondGap,
+            int firstHold, int secondHold, int projectedGap) {
+        var now = Instant.parse("2026-09-27T23:45:02Z");
+        var group = new AdvisoryContextPort.CurrentBunchingGroup(UUID.randomUUID(), EVENT_ID, "190", "44251", 1,
+                UUID.randomUUID(), now, now.plusSeconds(30), List.of("lead", "middle", "tail"),
+                List.of(firstGap, secondGap), List.of(true, true));
+        var approaching = new AdvisoryContextPort.Progress("44251", 2, now, 30, List.of(), List.of(),
+                now.plusSeconds(10), now.plusSeconds(30));
+        var fleet = List.of(bus("middle", approaching, UUID.randomUUID()), bus("tail", approaching, UUID.randomUUID()));
+        var route = new AdvisoryContextPort.Route("190", List.of(new AdvisoryContextPort.Operator("SBST", "BUS",
+                List.of(new AdvisoryContextPort.Direction(1, List.of(new AdvisoryContextPort.Stop("44251", "Stop", 2)))))));
+
+        var outcomes = policy.suggestOutcomes(group, fleet, route, 360, now);
+
+        assertThat(outcomes).extracting(SuggestedBusOutcome::adjustmentSeconds).containsExactly(0, firstHold, secondHold);
+        assertThat(firstGap + firstHold).isEqualTo(projectedGap);
+        assertThat(secondGap + secondHold - firstHold).isEqualTo(projectedGap);
+    }
+
+    @Test
+    void suppressesTimedSuggestionsTouchingAnUnreliableGap() {
+        var now = Instant.parse("2026-09-27T23:45:02Z");
+        var group = new AdvisoryContextPort.CurrentBunchingGroup(UUID.randomUUID(), EVENT_ID, "190", "44251", 1,
+                UUID.randomUUID(), now, now.plusSeconds(30), List.of("lead", "middle", "tail"),
+                List.of(20L, 30L), List.of(true, false));
+        assertThat(policy.suggestOutcomes(group, List.of(), null, 600, now)).containsExactly(
+                new SuggestedBusOutcome("lead", null, 0, "No preceding gap in the reviewed group."),
+                new SuggestedBusOutcome("middle", null, 0, "An adjacent gap needs manual review."),
+                new SuggestedBusOutcome("tail", null, 0, "An adjacent gap needs manual review."));
+    }
+
+    private static AdvisoryContextPort.Bus bus(String id, AdvisoryContextPort.Progress progress, UUID captain) {
+        return new AdvisoryContextPort.Bus(id, id, id, "190", 1, captain, captain == null ? "UNASSIGNED" : "ASSIGNED", progress);
     }
 
     private ConfirmedBunchingEvent confirmedEvent() {

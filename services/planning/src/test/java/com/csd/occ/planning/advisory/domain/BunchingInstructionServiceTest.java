@@ -72,8 +72,11 @@ class BunchingInstructionServiceTest {
         var hazard = new AdvisoryContextPort.Hazard(ID, "BUNCHING", "ACTIVE", null, "SIMULATION", RUN,
                 null, NOW, null, List.of(), List.of());
         when(records.findByIdempotencyKey(ID)).thenReturn(Optional.of(record));
+        when(records.findByIdempotencyKeyForUpdate(ID)).thenReturn(Optional.of(record));
         when(scopes.current()).thenReturn(new PlanningScope("DEMO", RUN));
         when(context.hazard(ID)).thenReturn(hazard);
+        when(context.currentBunchingGroup(RUN, ID)).thenReturn(new AdvisoryContextPort.CurrentBunchingGroup(
+                RUN, ID, "190", "44251", 1, UUID.randomUUID(), NOW, NOW.plusSeconds(60), List.of("demo-bus-2")));
         when(context.fleet(RUN)).thenReturn(new AdvisoryContextPort.Fleet(RUN, "RUNNING", List.of(bus), 1));
         when(context.route("190")).thenReturn(new AdvisoryContextPort.Route("190", List.of(
                 new AdvisoryContextPort.Operator("SBS Transit", "BUS", List.of(

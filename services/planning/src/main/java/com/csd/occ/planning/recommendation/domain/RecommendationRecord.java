@@ -13,7 +13,15 @@ public record RecommendationRecord(
         BunchingRootCauseDiagnosis diagnosis,
         ValidatedMitigationContext mitigationContext,
         ValidatedMitigationRecommendation recommendation,
-        Instant createdAt) {
+        Instant createdAt,
+        UUID revisionRawObservationId) {
+
+    public RecommendationRecord(UUID idempotencyKey, String requestHash, UUID requestId,
+            SourceClassification classification, ConfirmedBunchingEvent bunchingEvent, BunchingRootCauseDiagnosis diagnosis,
+            ValidatedMitigationContext mitigationContext, ValidatedMitigationRecommendation recommendation, Instant createdAt) {
+        this(idempotencyKey, requestHash, requestId, classification, bunchingEvent, diagnosis, mitigationContext,
+                recommendation, createdAt, null);
+    }
 
     public RecommendationRecord {
         Objects.requireNonNull(idempotencyKey, "idempotencyKey is required");

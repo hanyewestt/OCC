@@ -67,7 +67,9 @@ class DiagnosisRequestControllerTest {
         UUID requestId = UUID.randomUUID();
         Instant suggestedAt = Instant.parse("2026-11-07T09:00:00Z");
         var instructions = List.of(new ControllerBusInstruction("DEMO-190-01", "Hold at the next stop for 60 seconds."),
-                new ControllerBusInstruction("DEMO-190-02", "Continue at the planned pace."));
+                new ControllerBusInstruction("DEMO-190-02", "Continue at the planned pace."),
+                new ControllerBusInstruction("DEMO-190-03", "Continue."),
+                new ControllerBusInstruction("DEMO-190-04", "Continue."));
         when(suggestions.suggest(eq(requestId), eq(instructions), eq("Restore a safe headway."), eq("controller-subject")))
                 .thenReturn(new EarlyBunchingControllerSuggestion(requestId, instructions,
                         "Restore a safe headway.", "controller-subject", suggestedAt));
@@ -78,12 +80,14 @@ class DiagnosisRequestControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content("""
                                 {"instructions":[
                                   {"busReference":"DEMO-190-01","instruction":"Hold at the next stop for 60 seconds."},
-                                  {"busReference":"DEMO-190-02","instruction":"Continue at the planned pace."}
+                                  {"busReference":"DEMO-190-02","instruction":"Continue at the planned pace."},
+                                  {"busReference":"DEMO-190-03","instruction":"Continue."},
+                                  {"busReference":"DEMO-190-04","instruction":"Continue."}
                                 ],"controllerRationale":"Restore a safe headway."}
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.requestId").value(requestId.toString()))
-                .andExpect(jsonPath("$.instructions[1].busReference").value("DEMO-190-02"));
+                .andExpect(jsonPath("$.instructions[3].busReference").value("DEMO-190-04"));
         verify(suggestions).suggest(requestId, instructions, "Restore a safe headway.", "controller-subject");
     }
 

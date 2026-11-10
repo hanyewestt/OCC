@@ -12,20 +12,26 @@ public record ValidatedMitigationContext(
         int maximumDwellAdjustmentSeconds,
         CrowdSafetyStatus crowdSafetyStatus,
         MitigationValidationStatus validationStatus,
-        List<String> evidenceIds) {
+        List<String> evidenceIds,
+        List<Long> currentPredictionGaps) {
 
     public ValidatedMitigationContext {
         followingBusReference = requireNonBlank(followingBusReference, "followingBusReference");
         // Recommendations saved before the queue supported grouped bus events do not
-        // contain this field. Retain those records as single-bus contexts while all
-        // newly generated bunching contexts include the complete two- or three-bus set.
+        // contain this field. Retain those records as single-bus contexts.
         affectedBusReferences = affectedBusReferences == null || affectedBusReferences.isEmpty()
                 ? List.of(followingBusReference)
                 : List.copyOf(affectedBusReferences);
-        if (affectedBusReferences.size() > 3
+        if (affectedBusReferences.size() > 100
                 || affectedBusReferences.stream().anyMatch(reference -> reference == null || reference.isBlank())
+                || affectedBusReferences.stream().distinct().count() != affectedBusReferences.size()
                 || !affectedBusReferences.contains(followingBusReference)) {
-            throw new IllegalArgumentException("affectedBusReferences must contain up to three buses including the target bus");
+            throw new IllegalArgumentException("affectedBusReferences must contain at most 100 distinct buses including the target bus");
+        }
+        currentPredictionGaps = currentPredictionGaps == null ? List.of() : List.copyOf(currentPredictionGaps);
+        if (!currentPredictionGaps.isEmpty() && (currentPredictionGaps.size() != affectedBusReferences.size() - 1
+                || currentPredictionGaps.stream().anyMatch(gap -> gap < 0 || gap > Integer.MAX_VALUE))) {
+            throw new IllegalArgumentException("Current prediction gaps must match the ordered affected buses");
         }
         approvedControlStopCode = requireNonBlank(approvedControlStopCode, "approvedControlStopCode");
         Objects.requireNonNull(followingBusState, "followingBusState is required");
@@ -38,6 +44,19 @@ public record ValidatedMitigationContext(
         if (evidenceIds.isEmpty()) {
             throw new IllegalArgumentException("evidenceIds must not be empty");
         }
+    }
+
+    public ValidatedMitigationContext(String followingBusReference, List<String> affectedBusReferences,
+            String approvedControlStopCode, FollowingBusState followingBusState, int maximumHoldSeconds,
+            int maximumDwellAdjustmentSeconds, CrowdSafetyStatus crowdSafetyStatus,
+            MitigationValidationStatus validationStatus, List<String> evidenceIds) {
+        this(followingBusReference, affectedBusReferences, approvedControlStopCode, followingBusState, maximumHoldSeconds,
+                maximumDwellAdjustmentSeconds, crowdSafetyStatus, validationStatus, evidenceIds, List.of());
+    }
+
+    public int targetHeadwaySeconds(ConfirmedBunchingEvent event) {
+        return currentPredictionGaps.isEmpty() ? event.observedHeadwaySeconds().getLast()
+                : currentPredictionGaps.getLast().intValue();
     }
 
     public ValidatedMitigationContext(String followingBusReference, String approvedControlStopCode,

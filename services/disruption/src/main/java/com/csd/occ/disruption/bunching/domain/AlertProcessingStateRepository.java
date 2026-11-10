@@ -9,6 +9,7 @@ public interface AlertProcessingStateRepository extends JpaRepository<AlertProce
     @Query("select distinct state.demoRunId from AlertProcessingState state where state.demoRunId is not null and state.lastFetchedAt < :cutoff")
     java.util.List<UUID> findExpiredDemoRunIds(@Param("cutoff") Instant cutoff);
     long deleteByDemoRunId(UUID demoRunId);
+    Optional<AlertProcessingState> findByDemoRunIdAndActiveAlertId(UUID demoRunId, UUID activeAlertId);
     @Modifying @Query(value = "insert into disruption.disruption_processing_state (id,demo_run_id,service_id,stop_code,direction_id,last_fetched_at) values (:id,:run,:service,:stop,:direction,:fetched) on conflict (demo_run_id,service_id,stop_code,direction_id) do nothing", nativeQuery = true)
     int insertIfAbsent(@Param("id") UUID id, @Param("run") UUID run, @Param("service") String service, @Param("stop") String stop, @Param("direction") int direction, @Param("fetched") Instant fetched);
     @Lock(LockModeType.PESSIMISTIC_WRITE)

@@ -152,6 +152,61 @@ class BunchingAlertIT {
     }
 
     @Test
+    void latestEvidenceReplacesTheConfirmedGroupAndClearsOnInsufficientData() throws Exception {
+        UUID run = UUID.randomUUID();
+        jdbc.update("UPDATE disruption.consumer_state SET mode='DEMO', demo_run_id=?, updated_at=? WHERE id=1",
+                run, java.sql.Timestamp.from(NOW.minusSeconds(3600)));
+        record(simulation(snapshot(-4, 60, Optional.of(1)), run));
+        record(simulation(snapshot(-3, 60, Optional.of(1)), run));
+        var latest = simulation(snapshot(-2, 30, Optional.of(1)), run);
+        record(latest);
+        var state = jdbc.queryForMap("SELECT current_bunching_state, current_raw_observation_id, "
+                + "current_evidence_valid_until, current_affected_observation_ids::text AS affected "
+                + "FROM disruption.disruption_processing_state");
+        assertEquals("BUNCHING", state.get("current_bunching_state"));
+        assertEquals(latest.rawObservationId(), state.get("current_raw_observation_id"));
+        assertEquals(latest.fetchedAt().plusSeconds(120),
+                ((java.sql.Timestamp) state.get("current_evidence_valid_until")).toInstant());
+        for (var arrival : latest.arrivals()) assertTrue(state.get("affected").toString().contains(arrival.observationId().toString()));
+        UUID episode = jdbc.queryForObject("SELECT active_disruption_id FROM disruption.disruption_processing_state", UUID.class);
+        String path = "/internal/v1/disruption/demo-runs/" + run + "/bunching-groups/" + episode + "/current-evidence";
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(path)
+                        .header("X-OCC-Peer-Token", "test-ingestion-to-disruption-token"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.fresh").value(true))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.state").value("BUNCHING"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.rawObservationId").value(latest.rawObservationId().toString()))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.affectedObservationIds.length()").value(2));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(path)
+                        .header("X-OCC-Peer-Token", "test-planning-to-disruption-token"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnauthorized());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(path.replace(run.toString(), UUID.randomUUID().toString()))
+                        .header("X-OCC-Peer-Token", "test-ingestion-to-disruption-token"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNotFound());
+        jdbc.update("UPDATE disruption.disruption_processing_state SET current_evidence_valid_until=?",
+                java.sql.Timestamp.from(NOW.plusSeconds(10)));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(path)
+                        .header("X-OCC-Peer-Token", "test-ingestion-to-disruption-token"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.fresh").value(false));
+
+        var source = simulation(snapshot(-1, 60, Optional.of(1)), run);
+        record(new ArrivalSnapshot(source.rawObservationId(), source.pollRunId(), source.referenceVersionId(),
+                source.fetchedAt(), List.of(source.arrivals().getFirst()), "SIMULATION", run));
+        record(simulation(snapshot(-2, 30, Optional.of(1)), run));
+        state = jdbc.queryForMap("SELECT current_bunching_state, current_raw_observation_id, "
+                + "current_affected_observation_ids::text AS affected FROM disruption.disruption_processing_state");
+        assertEquals("INSUFFICIENT_EVIDENCE", state.get("current_bunching_state"));
+        assertEquals(source.rawObservationId(), state.get("current_raw_observation_id"));
+        assertEquals("[]", state.get("affected"));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(path)
+                        .header("X-OCC-Peer-Token", "test-ingestion-to-disruption-token"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.state").value("INSUFFICIENT_EVIDENCE"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.affectedObservationIds.length()").value(0));
+    }
+
+    @Test
     void concurrentSnapshotsAndRetriesCreateOneOpening() throws Exception {
         record(snapshot(-1, 60, Optional.of(1)));
         var same = snapshot(0, 60, Optional.of(1));
@@ -365,6 +420,11 @@ class BunchingAlertIT {
 
     private void record(ArrivalSnapshot snapshot) {
         recording.record(snapshot, Duration.ofSeconds(90), Duration.ofSeconds(120));
+    }
+
+    private ArrivalSnapshot simulation(ArrivalSnapshot source, UUID run) {
+        return new ArrivalSnapshot(source.rawObservationId(), source.pollRunId(), source.referenceVersionId(),
+                source.fetchedAt(), source.arrivals(), "SIMULATION", run);
     }
 
     private int events() { return jdbc.queryForObject("SELECT count(*) FROM disruption.disruption_event", Integer.class); }
