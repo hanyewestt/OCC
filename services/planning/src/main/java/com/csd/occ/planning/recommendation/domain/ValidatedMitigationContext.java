@@ -17,15 +17,15 @@ public record ValidatedMitigationContext(
     public ValidatedMitigationContext {
         followingBusReference = requireNonBlank(followingBusReference, "followingBusReference");
         // Recommendations saved before the queue supported grouped bus events do not
-        // contain this field. Retain those records as single-bus contexts while all
-        // newly generated bunching contexts include the complete two- or three-bus set.
+        // contain this field. Retain those records as single-bus contexts.
         affectedBusReferences = affectedBusReferences == null || affectedBusReferences.isEmpty()
                 ? List.of(followingBusReference)
                 : List.copyOf(affectedBusReferences);
-        if (affectedBusReferences.size() > 3
+        if (affectedBusReferences.size() > 100
                 || affectedBusReferences.stream().anyMatch(reference -> reference == null || reference.isBlank())
+                || affectedBusReferences.stream().distinct().count() != affectedBusReferences.size()
                 || !affectedBusReferences.contains(followingBusReference)) {
-            throw new IllegalArgumentException("affectedBusReferences must contain up to three buses including the target bus");
+            throw new IllegalArgumentException("affectedBusReferences must contain at most 100 distinct buses including the target bus");
         }
         approvedControlStopCode = requireNonBlank(approvedControlStopCode, "approvedControlStopCode");
         Objects.requireNonNull(followingBusState, "followingBusState is required");

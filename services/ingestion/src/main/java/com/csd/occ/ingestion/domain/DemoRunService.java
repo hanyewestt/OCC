@@ -138,7 +138,10 @@ public class DemoRunService {
                     stop.name(), stop.roadName(), alert.directionId(), alert.detectedAt(), headwaySeconds(leading, following),
                     leading == null ? null : leading.vehicle(), following == null ? null : following.vehicle(),
                     alert.affectedObservationIds().stream().map(id -> arrival(run.id(), id)).flatMap(Optional::stream)
-                            .map(DemoSimulationArrivalDetails::vehicle).toList(), alert.evidence()));
+                            .map(DemoSimulationArrivalDetails::vehicle)
+                            .collect(java.util.stream.Collectors.toMap(DemoVehicleDetails::busId,
+                                    java.util.function.Function.identity(), (first, duplicate) -> first,
+                                    java.util.LinkedHashMap::new)).values().stream().toList(), alert.evidence()));
         }
         return new DemoRunDetails(run.id(), run.status(), run.currentStep(), run.configuration(), result);
     }
