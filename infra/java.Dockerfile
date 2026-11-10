@@ -13,6 +13,7 @@ RUN sed -i 's#http://archive.ubuntu.com#https://archive.ubuntu.com#g; s#http://s
 COPY .mvn/ .mvn/
 COPY mvnw mvnw.cmd pom.xml ./
 COPY services/ services/
+COPY infra/swagger-ui/ infra/swagger-ui/
 
 RUN --mount=type=cache,id=occ-maven-${OCC_SERVICE},target=/root/.m2 \
     case "${OCC_SERVICE}" in ingestion|disruption|planning) ;; \
