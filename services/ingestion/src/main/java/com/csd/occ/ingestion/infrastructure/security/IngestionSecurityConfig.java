@@ -42,6 +42,7 @@ public class IngestionSecurityConfig {
                                 "/internal/v1/demo-runs/*/arrival-snapshots/**", "/internal/v1/traffic-incident-polls", "/internal/v1/hazard-polls")
                         .hasAuthority(PeerCapabilityAuthenticationFilter.DISRUPTION_AUTHORITY)
                         .requestMatchers(HttpMethod.GET, "/internal/v1/ingestion/demo-runs/*/planning-context",
+                                "/internal/v1/ingestion/demo-runs/*/bunching-groups/*",
                                 "/internal/v1/ingestion/planning-context")
                         .hasAuthority(PeerCapabilityAuthenticationFilter.PLANNING_AUTHORITY)
                         .requestMatchers("/internal/v1/**").denyAll()
