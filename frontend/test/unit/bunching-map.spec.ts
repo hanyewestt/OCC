@@ -259,6 +259,61 @@ test('areBusesConfirmedBunched validates bunching link between candidate buses',
   expect(areBusesConfirmedBunched(b2, b3, [], new Set(['972-3', '972-4']))).toBe(true)
 })
 
+test('areBusesConfirmedBunched matches multi-bus bunching from alert gaps when stripLink is null', () => {
+  const b1 = { serviceId: '190', directionId: 1, order: 1, x: 0, y: 0, label: '1', latitude: 1, longitude: 103 }
+  const b2 = { serviceId: '190', directionId: 1, order: 2, x: 0, y: 0, label: '2', latitude: 1, longitude: 103 }
+  const b3 = { serviceId: '190', directionId: 1, order: 3, x: 0, y: 0, label: '3', latitude: 1, longitude: 103 }
+
+  const alertWithGaps = {
+    eventId: 'evt-sim-1',
+    action: 'OPENED',
+    classification: 'OBSERVATION_ONLY',
+    serviceId: '190',
+    stopCode: '44251',
+    directionId: 1,
+    detectedAt: '2026-11-11T03:19:06Z',
+    stopName: 'Bt Panjang Stn/Blk 604',
+    stopRoadName: 'Bt Panjang Rd',
+    evidence: JSON.stringify({
+      snapshot: {
+        arrivals: [
+          { observationId: 'obs-1', visitOrder: 1, estimatedArrivalAt: '2026-11-11T03:20:00Z' },
+          { observationId: 'obs-2', visitOrder: 2, estimatedArrivalAt: '2026-11-11T03:20:45Z' },
+          { observationId: 'obs-3', visitOrder: 3, estimatedArrivalAt: '2026-11-11T03:21:30Z' },
+        ],
+      },
+      groups: [
+        {
+          headways: [
+            { isBunched: true, leadingObservationId: 'obs-1', followingObservationId: 'obs-2' },
+            { isBunched: true, leadingObservationId: 'obs-2', followingObservationId: 'obs-3' },
+          ],
+        },
+      ],
+    }),
+  } as any
+
+  const incident = {
+    id: 'inc-sim-1',
+    serviceId: '190',
+    directionId: 1,
+    routeKey: '190-1',
+    alerts: [alertWithGaps],
+    stopCodes: ['44251'],
+    stopNames: ['Bt Panjang Stn/Blk 604'],
+    firstDetectedAt: '2026-11-11T03:19:06Z',
+    latestDetectedAt: '2026-11-11T03:19:06Z',
+    gapSeconds: 45,
+    ageSeconds: 0,
+    historical: false,
+    latestStopIndex: 1,
+    stripLink: null, // stripLink is unlinked in simulation or unlinked state
+  }
+
+  expect(areBusesConfirmedBunched(b1, b2, [incident], new Set())).toBe(true)
+  expect(areBusesConfirmedBunched(b2, b3, [incident], new Set())).toBe(true)
+})
+
 test('filterMapBuses returns all fleet buses when viewing a single corridor', () => {
   const buses = [
     { serviceId: '190', directionId: 1, routeLengthM: 10000, bus: { order: 1, distanceAlongRouteM: 1000 } },
