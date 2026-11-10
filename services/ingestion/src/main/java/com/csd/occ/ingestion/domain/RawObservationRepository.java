@@ -12,6 +12,14 @@ import org.springframework.data.repository.query.Param;
 
 public interface RawObservationRepository extends JpaRepository<RawObservation, UUID> {
     long deleteByDemoRunId(UUID demoRunId);
+    @Query("""
+            select raw from RawObservation raw join PollRun run on run.id = raw.pollRunId
+            where raw.source = 'DEMO' and raw.demoRunId = :demoRunId and raw.sourceKey = :sourceKey
+              and raw.classification = 'SIMULATION' and raw.httpStatus between 200 and 299 and run.outcome = 'SUCCESS'
+            order by raw.feedSequence desc
+            """)
+    java.util.List<RawObservation> findLatestDemoBunchingSnapshot(@Param("demoRunId") UUID demoRunId,
+            @Param("sourceKey") String sourceKey, Pageable pageable);
     @Modifying
     @Query("delete from RawObservation raw where raw.classification = 'OBSERVATION_ONLY' and raw.fetchedAt < :cutoff and not exists (select arrival from BusArrivalObservation arrival where arrival.rawObservationId = raw.id) and not exists (select incident from TrafficIncidentObservation incident where incident.rawObservationId = raw.id)")
     int deleteExpiredLiveObservations(@Param("cutoff") Instant cutoff);

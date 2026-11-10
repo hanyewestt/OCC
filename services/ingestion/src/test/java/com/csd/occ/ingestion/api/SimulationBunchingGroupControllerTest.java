@@ -33,6 +33,7 @@ import org.springframework.test.web.servlet.MockMvc;
 class SimulationBunchingGroupControllerTest {
     @Autowired MockMvc mvc;
     @MockitoBean DemoRunService runs;
+    @MockitoBean com.csd.occ.ingestion.domain.CurrentSimulationBunchingGroupService current;
     @MockitoBean JwtDecoder decoder;
 
     @ParameterizedTest
