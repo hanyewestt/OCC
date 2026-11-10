@@ -76,6 +76,15 @@ class BunchingAlertIT {
         java.nio.file.Path output = java.nio.file.Path.of("openapi", "disruption.json");
         java.nio.file.Files.createDirectories(output.getParent());
         java.nio.file.Files.writeString(output, contract);
+        var packaged = getClass().getResourceAsStream("/static/v3/disruption.json");
+        org.assertj.core.api.Assertions.assertThat(packaged).as("packaged OpenAPI contract").isNotNull();
+        org.assertj.core.api.Assertions.assertThat(new String(packaged.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8))
+                .isEqualTo(contract);
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/v3/disruption.json")
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt()
+                                .authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().string(contract));
     }
 
     @BeforeEach
