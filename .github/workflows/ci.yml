@@ -251,7 +251,8 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/bundle" "$RUNNER_TEMP/artifacts"
           for name in occ-jar-ingestion occ-jar-disruption occ-jar-planning occ-web-dist; do
-            gh run download "$GITHUB_RUN_ID" --name "$name" --dir "$RUNNER_TEMP/artifacts/$name"
+            gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+              --name "$name" --dir "$RUNNER_TEMP/artifacts/$name"
             cp -n "$RUNNER_TEMP/artifacts/$name"/* "$RUNNER_TEMP/bundle/"
           done
       - name: Verify the artifact bundle against this run and SHA
@@ -546,8 +547,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh run download "$GITHUB_RUN_ID" --name "occ-image-${{ matrix.service }}" \
-            --dir "$RUNNER_TEMP/image"
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "occ-image-${{ matrix.service }}" --dir "$RUNNER_TEMP/image"
       - name: Load the exact packaged image and verify its recorded ID
         run: |
           docker load --input "$RUNNER_TEMP/image/occ-image-${{ matrix.service }}.tar"
