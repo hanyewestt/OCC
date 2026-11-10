@@ -22,10 +22,17 @@ map $http_cloudfront_forwarded_proto $occ_cf_forwarded_proto {
     default "https";
 }
 
+# The deployment's traffic gate include (mounted read-only from the host) is
+# included inside the server block below: it sets $occ_traffic_gate and the
+# expected gate token. While closed every request is rewritten to the
+# readiness path, which serves only the secret-bearing readiness request and
+# returns 503 for everything else.
 server {
     listen ${OCC_NGINX_HTTP_INTERNAL_PORT};
     server_name _;
     server_tokens off;
+
+    include /etc/nginx/gate/traffic-gate.inc;
 
     # Every accepted request came from the distribution: the prefix list
     # blocks other sources and this header is a deployment secret. It is
@@ -34,12 +41,32 @@ server {
         return 403;
     }
 
+    # The maintenance gate outranks every route while closed: everything
+    # except the readiness path is blocked, and the readiness path itself
+    # requires the gate token below.
+    if ($occ_traffic_gate != "open") {
+        rewrite ^(?!/_occ_gate_readiness)(.*)$ /_occ_gate_blocked last;
+    }
+
     include /etc/nginx/conf.d/routes.inc;
 
     # Override the shared defaults after the gate: the client is the viewer
     # behind CloudFront and the protocol is what CloudFront reports.
     set $occ_client_ip $occ_cf_viewer_ip;
     set $occ_forwarded_proto $occ_cf_forwarded_proto;
+
+    location = /_occ_gate_readiness {
+        access_log off;
+        if ($http_x_occ_gate_token != $occ_gate_token) {
+            return 503;
+        }
+        return 204;
+    }
+
+    location = /_occ_gate_blocked {
+        access_log off;
+        return 503;
+    }
 
     location = /auth-test { return 404; }
     location ^~ /auth-test/ { return 404; }

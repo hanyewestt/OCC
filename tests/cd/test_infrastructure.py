@@ -141,6 +141,10 @@ class CloudFrontTemplateTests(unittest.TestCase):
             template = template.replace("${OCC_NGINX_HTTP_INTERNAL_PORT}", "18080")
             template = template.replace("${OCC_ORIGIN_SECRET}", "synthetic-origin-secret")
             (fixture / "cloudfront.conf").write_text(template, encoding="utf-8")
+            gate_dir = fixture / "gate"
+            gate_dir.mkdir()
+            (gate_dir / "traffic-gate.inc").write_text(
+                'set $occ_traffic_gate "open";\n', encoding="utf-8")
             nginx_conf = """pid /tmp/nginx.pid;
 error_log /tmp/nginx-error.log notice;
 events { worker_connections 128; }
@@ -152,13 +156,15 @@ http {
 }
 """
             (fixture / "nginx.conf").write_text(nginx_conf, encoding="utf-8")
-            for path in fixture.iterdir():
-                path.chmod(0o644)
+            for path in fixture.rglob("*"):
+                if path.is_file():
+                    path.chmod(0o644)
             result = subprocess.run(
                 ["docker", "run", "--rm", "--user", "101:101", "--read-only",
                  "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                  "--tmpfs", "/tmp:mode=1777", "--tmpfs", "/var/cache/nginx:uid=101,gid=101,mode=1777",
                  "--mount", f"type=bind,source={fixture},target=/fixture,readonly",
+                 "--mount", f"type=bind,source={gate_dir},target=/etc/nginx/gate,readonly",
                  "--entrypoint", "nginx", NGINX_IMAGE,
                  "-c", "/fixture/nginx.conf", "-t"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace")
