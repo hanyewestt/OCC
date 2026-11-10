@@ -119,6 +119,13 @@ function RecommendationEvidenceList({ items }: { items: DiagnosisEvidenceDetail[
       {item.incidentType && <p className="font-medium text-foreground">{item.incidentType}</p>}
       {item.message && <p>{item.message}</p>}
       {item.distanceMetersFromSuppliedBusPosition !== null && <p>Approx. {Math.round(item.distanceMetersFromSuppliedBusPosition).toLocaleString('en-SG')} m from the supplied bus position near stop {item.monitoredStopCode}.</p>}
+      {item.secondsBeforeFirstConfirmed !== null && (
+        <p>
+          {item.secondsBeforeFirstConfirmed > 0
+            ? `Reported ${seconds(item.secondsBeforeFirstConfirmed)} before first confirmed bunching irregularity.`
+            : 'Reported at or after first confirmed bunching irregularity.'}
+        </p>
+      )}
       <p>Incident evidence: {item.evidenceId}{item.busPositionEvidenceId ? ` · Bus-position evidence: ${item.busPositionEvidenceId}` : ''}</p>
     </li>)}
   </ul>
@@ -590,7 +597,11 @@ export function ControllerPlanning({
 
   async function generateDiagnosis(request: PlanningDiagnosisRequest) {
     if (triggeringRequestId) return
-    setSearchParams({ request: request.requestId }, { replace: true })
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.set('request', request.requestId)
+      return next
+    }, { replace: true })
     setTriggeringRequestId(request.requestId)
     setMessage('')
     const controller = new AbortController()
@@ -799,10 +810,18 @@ function detectedBusReferences(request: PlanningDiagnosisRequest | null, alerts:
   const alert = corridorAlerts.find(item => request && (item.eventId === request.eventId ||
     (item.serviceId === request.serviceId && item.stopCode === request.stopCode))) ?? alerts[0]
   if (alert) {
+    const pairs = bunchedArrivalGaps(alert)
+    if (pairs.length) {
+      const orders = [...new Set(pairs.flatMap(p => [p.leadingOrder, p.followingOrder]))].sort((a, b) => a - b)
+      return orders.map((order, idx) => `Bus #${order} (${idx === 0 ? 'Leading' : 'Following'})`)
+    }
     const arrivals = bunchingArrivals(alert)
     const slots: string[] = []
-    if (arrivals[0] && arrivals[0] !== 'Unavailable' && arrivals[0] !== 'No prediction') slots.push('Bus 1 (Leading)')
-    if (arrivals[1] && arrivals[1] !== 'Unavailable' && arrivals[1] !== 'No prediction') slots.push('Bus 2 (Following)')
+    arrivals.forEach((arr, idx) => {
+      if (arr && arr !== 'Unavailable' && arr !== 'No prediction') {
+        slots.push(`Bus #${idx + 1} (${idx === 0 ? 'Leading' : 'Following'})`)
+      }
+    })
     if (slots.length) return slots
   }
   return []
@@ -897,13 +916,21 @@ function DiagnosisRequestDetail({ request, corridor, detectedBusReferences, gene
           : 'Diagnosis generated. This incident remains open here while you review it or wait for the AI mitigation recommendation.'
         : processing ? 'Diagnosis is being generated.' : retry ? 'The previous diagnosis attempt needs to be retried.' : 'Generate a diagnosis to receive an AI mitigation recommendation for this detected bunching event.'}</p>
       {request.failureCode && <p className="mt-2 text-sm text-destructive">Last attempt: {request.failureCode}</p>}</div>
-    {completed && <div className="rounded-lg border p-4">
-      <h3 className="text-sm font-medium">AI diagnosis</h3>
-      {request.likelyCause
-        ? <p className="mt-2 text-sm">{request.likelyCause}</p>
-        : <p className="mt-2 text-sm text-muted-foreground">No supported contributing cause was identified from the available evidence.</p>}
-      {request.confidence !== null && request.confidence > 0 && <p className="mt-2 text-xs text-muted-foreground">Confidence: {Math.round(request.confidence * 100)}%</p>}
-      {request.limitations.length > 0 && <div className="mt-3">
+    {completed && <div className="rounded-lg border p-4 space-y-3">
+      <div>
+        <h3 className="text-sm font-medium">AI diagnosis</h3>
+        {request.likelyCause
+          ? <p className="mt-2 text-sm">{request.likelyCause}</p>
+          : <p className="mt-2 text-sm text-muted-foreground">No supported contributing cause was identified from the available evidence.</p>}
+        {request.confidence !== null && request.confidence > 0 && <p className="mt-2 text-xs text-muted-foreground">Confidence: {Math.round(request.confidence * 100)}%</p>}
+      </div>
+      {!!request.evidenceDetails?.length && (
+        <div className="border-t pt-3">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Supporting incident evidence</h4>
+          <RecommendationEvidenceList items={request.evidenceDetails} />
+        </div>
+      )}
+      {request.limitations.length > 0 && <div className="border-t pt-3">
         <p className="text-xs font-medium text-muted-foreground">Limitations</p>
         <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-muted-foreground">
           {request.limitations.map(limitation => <li key={limitation}>{limitation}</li>)}
