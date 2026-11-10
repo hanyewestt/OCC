@@ -132,6 +132,13 @@ class CloudFormationContractTests(unittest.TestCase):
         self.assertIn("-split '-'", bootstrap)
         self.assertNotIn("$component[0].ToString()", bootstrap)
 
+    def test_bootstrap_ignores_release_managed_image_settings(self):
+        bootstrap = BOOTSTRAP_PS1.read_text(encoding="utf-8")
+        # Placeholder OCC_*_IMAGE values in .env must not reach the secret,
+        # where they would outrank the release manifest pins.
+        self.assertIn("release-managed", bootstrap)
+        self.assertIn("^OCC_[A-Z]+_IMAGE$", bootstrap)
+
     def test_host_data_overlay_binds_the_retained_volume(self):
         overlay = (ROOT / "infra" / "compose.host-data.yaml").read_text(encoding="utf-8")
         self.assertIn("${OCC_DATA_MOUNT", overlay)

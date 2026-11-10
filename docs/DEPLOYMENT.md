@@ -120,7 +120,9 @@ Direct-TLS production remains runnable through Compose by hand, but the
 automated pipeline deploys only the CloudFront mode. Each release publishes
 all five images regardless of which changed — the release contract requires
 a complete manifest, and unchanged components reuse their verified input
-hashes so they are rebuilt only when their inputs actually changed.
+hashes so they are rebuilt only when their inputs actually changed. The
+pipeline ignores any `OCC_*_IMAGE` entries in the imported `.env`; image
+references always come from the verified release manifest.
 
 ## Budget and cost model
 

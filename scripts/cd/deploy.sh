@@ -135,6 +135,10 @@ set -a
 # shellcheck disable=SC1090
 . "${OCC_DEPLOYMENT_ENV:?set OCC_DEPLOYMENT_ENV to the deployment environment file}"
 set +a
+# Image references are release-managed; drop any imported placeholder so the
+# manifest pins below are the only source the Compose stack sees.
+unset OCC_INGESTION_IMAGE OCC_DISRUPTION_IMAGE OCC_PLANNING_IMAGE \
+    OCC_DB_SETUP_IMAGE OCC_WEB_IMAGE
 # Prefer the CloudFront hostname recorded by the bootstrap for the public
 # checks; fall back to the local origin listener.
 OCC_PUBLIC_URL="${OCC_PUBLIC_URL:-${OCC_ORIGIN_PUBLIC_URL:-http://127.0.0.1:8080}}"
@@ -174,7 +178,8 @@ SETUP_FINGERPRINT=$(printf '%s\n%s\n' "$DB_SETUP_INPUT_HASH" "$ROLE_IDENTITY" \
 COMPOSE_ENV="$RUNTIME/env"
 {
     sed -E 's/^export[[:space:]]+//' "${OCC_DEPLOYMENT_ENV:?}" 2>/dev/null \
-        | grep -E '^(POSTGRES_|SUPABASE_|OCC_[A-Z_]+|DATAMALL_API_KEY)' || true
+        | grep -E '^(POSTGRES_|SUPABASE_|OCC_[A-Z_]+|DATAMALL_API_KEY)' \
+        | grep -vE '^OCC_[A-Z_]+_IMAGE=' || true
     python3 - "$BUNDLE/manifest.json" <<'PY'
 import json
 import sys

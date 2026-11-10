@@ -116,6 +116,14 @@ if ($obsolete) {
     Write-Output "WARNING: obsolete gateway/JVM-flag overrides detected (names only; they will NOT be imported because they override optimized defaults): $($obsolete -join ', ')"
 }
 
+# Image references are release-managed: the pipeline pins them from the
+# verified manifest. Placeholder values in .env must never be imported into
+# the deployment secret, where the shell would outrank the manifest pins.
+$releaseManaged = $envNames.Keys | Where-Object { $_ -match "^OCC_[A-Z]+_IMAGE$" }
+if ($releaseManaged) {
+    Write-Output "WARNING: release-managed image settings are ignored (the pipeline pins them): $($releaseManaged -join ', ')"
+}
+
 # Resolve the reused OIDC provider and the AWS-managed CloudFront prefix list.
 Write-Output "Resolving the existing GitHub OIDC provider..."
 $providers = Invoke-Aws @("iam", "list-open-id-connect-providers") | ConvertFrom-Json
@@ -174,7 +182,7 @@ foreach ($output in $stack.Stacks[0].Outputs) {
 Write-Output "Importing deployment settings into Secrets Manager (values are never displayed)..."
 $deployment = [ordered]@{}
 foreach ($name in $envNames.Keys) {
-    if ($obsolete -contains $name) { continue }
+    if ($obsolete -contains $name -or $releaseManaged -contains $name) { continue }
     $deployment[$name] = $envNames[$name]
 }
 $deployment["OCC_ORIGIN_PUBLIC_URL"] = $outputs["CloudFrontUrl"]
