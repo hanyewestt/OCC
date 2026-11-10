@@ -46,14 +46,16 @@ public class DemoFleetService {
                         .filter(direction -> direction.directionId() == assignment.directionId())
                         .flatMap(direction -> direction.stops().stream())
                         .filter(stop -> stop.stopCode().equals(arrival.getStopCode())).distinct().toList();
+            var freshUntil = arrival.getFetchedAt().plusSeconds(polling.staleAfterSeconds());
+            var eta = arrival.getEstimatedArrivalAt();
             return candidates.stream()
                     .filter(candidate -> arrival.getRouteStopSequence() == null
                             ? candidates.size() == 1
                             : candidate.stopSequence() == arrival.getRouteStopSequence())
                     .findFirst()
                     .map(stop -> new DemoFleetSnapshot.Progress(stop.stopCode(), stop.stopSequence(),
-                            arrival.getFetchedAt(), 30, List.of(5), List.of(300), arrival.getEstimatedArrivalAt(),
-                            arrival.getFetchedAt().plusSeconds(polling.staleAfterSeconds())));
+                            arrival.getFetchedAt(), 30, List.of(5), List.of(300), eta, freshUntil,
+                            eta == null || !eta.isBefore(freshUntil) ? null : DemoReplayScenario.boardingUntil(eta, freshUntil)));
         });
         // Speed values are labelled scenario assumptions, never measured vehicle telemetry.
     }

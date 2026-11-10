@@ -82,6 +82,7 @@ class DemoFleetServiceTest {
             assertThat(progress.stopSequence()).isEqualTo(40);
             assertThat(progress.estimatedArrivalAt()).isEqualTo(Instant.EPOCH.plusSeconds(60));
             assertThat(progress.freshUntil()).isEqualTo(Instant.EPOCH.plusSeconds(125));
+            assertThat(progress.boardingUntil()).isEqualTo(Instant.EPOCH.plusSeconds(120));
         });
     }
 }

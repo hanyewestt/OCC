@@ -26,7 +26,11 @@ public record PendingRecommendationResponse(
         String controlStopCode,
         int adjustmentSeconds,
         RecommendationExplanationResponse explanation,
-        RecommendationImpactResponse expectedImpact) {
+        RecommendationImpactResponse expectedImpact,
+        @Schema(description = "Source observation for a refreshed recommendation", nullable = true)
+        UUID revisionRawObservationId,
+        @Schema(description = "Current prediction gaps in seconds between successive affected buses; empty for the original review")
+        List<Long> currentPredictionGaps) {
 
     public static PendingRecommendationResponse from(RecommendationRecord record) {
         return from(record, null);
@@ -55,6 +59,8 @@ public record PendingRecommendationResponse(
                 recommendation.controlStopCode(),
                 recommendation.adjustmentSeconds(),
                 RecommendationExplanationResponse.from(recommendation.explanation(), diagnosisSummary),
-                RecommendationImpactResponse.from(recommendation.expectedImpact()));
+                RecommendationImpactResponse.from(recommendation.expectedImpact()),
+                record.revisionRawObservationId(),
+                record.mitigationContext().currentPredictionGaps());
     }
 }

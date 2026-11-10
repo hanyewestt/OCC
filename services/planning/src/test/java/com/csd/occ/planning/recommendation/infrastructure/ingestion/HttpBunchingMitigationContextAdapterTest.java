@@ -19,19 +19,10 @@ class HttpBunchingMitigationContextAdapterTest {
         UUID runId = UUID.randomUUID();
         var event = event();
         PlanningScopePort scope = () -> new PlanningScope("DEMO", runId);
-        AdvisoryContextPort context = new AdvisoryContextPort() {
-            @Override public Hazard hazard(UUID disruptionId) { throw new UnsupportedOperationException(); }
-            @Override public Fleet fleet(UUID id) {
-                return new Fleet(runId, "RUNNING", List.of(
-                        bus("demo-190-2"), bus("demo-190-1"), bus("demo-190-3")), 3);
-            }
-            @Override public Route route(String serviceId) { throw new UnsupportedOperationException(); }
-            @Override public Limits limits() { throw new UnsupportedOperationException(); }
-            @Override public BunchingGroup bunchingGroup(UUID run, UUID id) {
-                return new BunchingGroup(runId, event.bunchingEventId(), "190", 1, "44251",
-                        List.of("demo-190-2", "demo-190-1", "demo-190-4", "demo-190-3"), "demo-190-4");
-            }
-        };
+        var context = org.mockito.Mockito.mock(AdvisoryContextPort.class);
+        org.mockito.Mockito.when(context.bunchingGroup(runId, event.bunchingEventId())).thenReturn(
+                new AdvisoryContextPort.BunchingGroup(runId, event.bunchingEventId(), "190", 1, "44251",
+                        List.of("demo-190-2", "demo-190-1", "demo-190-4", "demo-190-3"), "demo-190-4"));
 
         var inputs = new HttpBunchingMitigationContextAdapter(scope, context).findFor(event).orElseThrow();
 
@@ -55,11 +46,6 @@ class HttpBunchingMitigationContextAdapterTest {
         assertThat(adapter.findFor(event)).isEmpty();
         org.mockito.Mockito.verifyNoInteractions(fallback);
         org.mockito.Mockito.verify(context, org.mockito.Mockito.never()).fleet(org.mockito.ArgumentMatchers.any());
-    }
-
-    private static AdvisoryContextPort.Bus bus(String id) {
-        return new AdvisoryContextPort.Bus(id, id, id, "190", 1, null,
-                "CAPTAIN_ASSIGNMENT_UNAVAILABLE", null);
     }
 
     private static ConfirmedBunchingEvent event() {

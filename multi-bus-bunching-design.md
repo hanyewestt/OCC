@@ -1,6 +1,6 @@
 ﻿# Multi-bus bunching workflow: design and assumptions
 
-Status: implementation in progress; refreshed recommendations and end-to-end verification are incomplete. Continue on `fix/multi-bus-bunching-instructions`.
+Status: the simulation refresh, grouped HOLD and grouped DWELL workflows have passed running-stack verification.
 
 ## Completed
 
@@ -11,23 +11,13 @@ Status: implementation in progress; refreshed recommendations and end-to-end ver
 - The current-group response includes prediction gaps between successive affected buses, calculated from the same source snapshot. These are gaps between the listed buses; other, non-affected buses may be between them.
 - Planning can persist a recommendation revision linked to its predecessor and source snapshot. Supersession is transactional, permits only one successor, retains the previous record, removes it from the pending queue, and serializes against decisions on that predecessor. A decision already recorded prevents supersession.
 - Before issuing a new simulation bunching decision, planning checks the current resolved group, route and freshness against the reviewed buses. Changed, expired or unavailable evidence causes the transaction to roll back. Existing issued-instruction replays retain their existing behavior.
-- Relevant ingestion, planning and disruption automated suites have passed. Browser tests covered the changed interface with mocked services. The complete cross-service workflow has not yet been exercised in a running application.
+- The Planning page can refresh a pending recommendation using the latest ordered group and prediction gaps. It displays those gaps separately from confirmation evidence and requires a new outcome for each bus. Issuance checks the revision’s exact source snapshot. Every grouped HOLD uses its bus’s own preceding prediction gap and fresh route progress. Planning reports the bus on an assignment or delivery failure and rolls back the whole decision. Instruction history shows acknowledgement deadlines and missed acknowledgements.
+- Grouped DWELL requires the bus to be in its synthetic boarding window at the reviewed stop and route occurrence. The window starts at the estimated arrival and ends one minute later or at the source freshness deadline, whichever comes first. Planning caps the adjustment at the smaller of the bus’s preceding headway deficit and the 75-second simulation dwell limit. Through Nginx, a boarding bus received DWELL while the next bus received HOLD, and both captains acknowledged their instructions.
+- The Maven reactor and OpenAPI export passed, and all three running services matched their generated contracts. Through Nginx, an isolated simulation exercised superseded and expired review rejection, assignment failure, and per-captain delivery and acknowledgement. A later prediction snapshot added to the isolated Ingestion database changed a confirmed group from four buses to three. Disruption evaluated the new snapshot, Planning rejected the prior review, and two captains independently acknowledged their own instructions.
 
-## Remaining tasks
+## Pre-merge migration check
 
-1. Provide a fresh review path for changed groups. The revision storage exists, but no endpoint or controller workflow creates one from current evidence yet. Generate a new reviewable recommendation based on the current group and gaps, bind its issuance to the reviewed snapshot, and require a new outcome for each current bus; do not reuse old adjustment limits as if they were derived from the latest snapshot.
-2. Validate HOLD and DWELL actions against each bus's own current conditions, and surface assignment, delivery and acknowledgement failures.
-3. Verify the cross-service and controller workflow in the running application, including stale evidence, membership changes and per-captain delivery. The simulation replay does not currently alter movement in response to instructions.
-
-### Where to continue
-
-- Start with `services/planning/src/main/java/com/csd/occ/planning/recommendation/domain/RecommendationRecordPort.java` and its `JdbcRecommendationRecordAdapter`: `supersede` stores one successor and a source snapshot under a row lock. Migration `V021__track_recommendation_revisions.sql` defines the relationship. The method is infrastructure for the refresh workflow; no production endpoint currently calls it.
-- Build refreshed recommendations from `AdvisoryContextPort.currentBunchingGroup(...)`, which obtains the current group and prediction gaps from ingestion. The existing `ConfirmedBunchingEvent` contains historical confirmation gaps, so preserve that history and explicitly record the new snapshot and current gap used to compute a new adjustment.
-- Update `BunchingInstructionService` for revised recommendations. Its current check against the original confirmed group intentionally rejects changed membership, even for a stored revision; a revised recommendation must instead be checked against its own reviewed snapshot and the latest group. Preserve the row lock and existing decision replay behavior, and reject stale, unavailable, changed or expired evidence without recording partial decisions or deliveries.
-- Add a controller-authorized refresh endpoint and planning-page action, return the new recommendation to the controller, and require a fresh outcome for every bus. Ensure superseded versions cannot be submitted and remain available as history. Test concurrent refreshes and decisions, retries, scope and authorization, changed membership and order, expired snapshots, and delivery or assignment failures.
-- Update the affected OpenAPI contracts and the planning page's gap display to distinguish current prediction gaps from historical confirmation evidence. Regenerate contracts through the existing opt-in export tests.
-- Run `./mvnw verify` (or `mvnw.cmd verify` on Windows) with Java and Docker available. For frontend changes, run the lint, TypeScript, build and relevant tests documented in `docs/DEVELOPMENT.md`, plus the required Nginx and running-application checks. Current automated checks include PostgreSQL-backed service tests and mocked-service browser tests; no full live cross-service exercise has been completed.
-- Before merging, check migration numbers against the target branch: this work adds disruption `V012` and planning `V021`. Do not modify migrations that have already been applied in another environment; resolve any collision with the team's migration process.
+- Disruption `V012`, Planning `V021`, and Ingestion `V027` had no collisions against the verified `origin/main` reference (`ec2bfe3b`).
 
 ## Policy and implementation details
 
@@ -46,6 +36,6 @@ Status: implementation in progress; refreshed recommendations and end-to-end ver
 - Recommendation gap display uses the recorded alert headways to include adjacent prediction slots beyond the number of bus references currently supplied by planning. Slot numbers remain observation order, not verified vehicle identities.
 - Route-strip gap calculations inspect up to 100 saved prediction slots, retaining the existing three-slot alert table. These slots are not stable vehicle identities.
 - Planning decision and early-suggestion storage accept up to 100 per-bus entries, matching the mitigation context bound. Multi-bus decisions require one instruction or reasoned no-instruction outcome per affected bus; the single-bus approval shortcut cannot bypass group review.
-- Before a new decision, planning checks the original confirmed group, verifies that each bus resolves in the active fleet, and compares it with ingestion's latest resolved group in arrival order. The evidence is a prediction snapshot, not physical position telemetry; it can also change after the last cross-service check. Movement safety limits still use the original following-bus context and require further per-bus validation.
+- Before a new decision, planning checks the original confirmed group, verifies that each bus resolves in the active fleet, and compares it with ingestion's latest resolved group in arrival order. The evidence is a prediction snapshot, not physical position telemetry; it can also change after the last cross-service check. Grouped holds use each bus’s preceding prediction gap.
 - Disruption retains the latest evaluated bunching state, source snapshot, affected observation IDs and freshness deadline per route/stop/direction. Ingestion resolves that evidence for planning's issuance check.
 - Skip-stop overrides are simulation-only and target the recommendation control stop. They require a unique stop occurrence at or beyond the bus's predicted stop, with a fresh prediction whose estimated arrival is still in the future. The prediction's freshness window is supplied by ingestion. Instructions are issued for captain acknowledgement; synthetic replay does not model passenger eligibility or change vehicle movement in response to instructions.

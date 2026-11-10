@@ -50,6 +50,7 @@ public class RecommendationDecisionController {
     @ApiResponse(responseCode = "400", description = "Decision request is invalid")
     @ApiResponse(responseCode = "404", description = "Recommendation not found")
     @ApiResponse(responseCode = "409", description = "A different or ineligible decision was supplied")
+    @ApiResponse(responseCode = "503", description = "A bus instruction could not be delivered and the entire decision was rolled back")
     public RecommendationDecisionResponse decide(
             @PathVariable UUID recommendationId,
             @Valid @RequestBody RecommendationDecisionRequest request,

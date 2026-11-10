@@ -9,6 +9,8 @@ import java.util.UUID;
 
 public final class BunchingRecommendationPolicy {
 
+    public static final int SIMULATION_MAXIMUM_HOLD_SECONDS = 120;
+    public static final int SIMULATION_MAXIMUM_DWELL_SECONDS = 75;
     private static final int ABSOLUTE_ADJUSTMENT_LIMIT_SECONDS = 120;
 
     public Optional<ValidatedMitigationRecommendation> evaluate(
@@ -34,8 +36,7 @@ public final class BunchingRecommendationPolicy {
 
         MitigationType mitigationType = mitigationTypeFor(context.followingBusState());
         int validatedLimitSeconds = validatedLimitFor(mitigationType, context);
-        int latestObservedHeadwaySeconds = event.observedHeadwaySeconds()
-                .getLast();
+        int latestObservedHeadwaySeconds = context.targetHeadwaySeconds(event);
         int headwayDeficitSeconds = event.expectedHeadwaySeconds() - latestObservedHeadwaySeconds;
         int adjustmentSeconds = Math.min(
                 headwayDeficitSeconds,

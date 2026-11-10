@@ -96,6 +96,14 @@ public class GlobalExceptionHandler {
                 "urn:occ:problem:controller-suggestion-conflict", request);
     }
 
+    @ExceptionHandler(com.csd.occ.planning.advisory.domain.BunchingInstructionService.DeliveryException.class)
+    ProblemDetail handleBunchingDeliveryFailure(
+            com.csd.occ.planning.advisory.domain.BunchingInstructionService.DeliveryException exception,
+            HttpServletRequest request) {
+        return problem(HttpStatus.SERVICE_UNAVAILABLE, "Instruction delivery failed", exception.getMessage(),
+                "urn:occ:problem:instruction-delivery-failed", request);
+    }
+
     @ExceptionHandler(RecommendationDecisionService.RecommendationNotFoundException.class)
     ProblemDetail handleRecommendationNotFound(HttpServletRequest request) {
         return problem(HttpStatus.NOT_FOUND, "Recommendation not found",

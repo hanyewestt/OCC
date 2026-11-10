@@ -22,14 +22,14 @@ public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort
 
     private static final String FIND_BY_IDEMPOTENCY_KEY = """
             SELECT recommendation_id, request_hash, request_payload,
-                   mitigation_context, response_payload, created_at
+                   mitigation_context, response_payload, created_at, revision_raw_observation_id
               FROM planning.recommendation
              WHERE recommendation_id = ?
             """;
 
     private static final String FIND_BY_BUNCHING_EVENT_ID = """
             SELECT recommendation_id, request_hash, request_payload,
-                   mitigation_context, response_payload, created_at
+                   mitigation_context, response_payload, created_at, revision_raw_observation_id
               FROM planning.recommendation
              WHERE bunching_event_id = ?
                AND NOT EXISTS (SELECT 1 FROM planning.recommendation revision
@@ -41,7 +41,7 @@ public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort
     private static final String FIND_PENDING = """
             SELECT recommendation.recommendation_id, recommendation.request_hash,
                    recommendation.request_payload, recommendation.mitigation_context,
-                   recommendation.response_payload, recommendation.created_at
+                   recommendation.response_payload, recommendation.created_at, recommendation.revision_raw_observation_id
               FROM planning.recommendation recommendation
               LEFT JOIN planning.recommendation_decision decision
                 ON decision.recommendation_id = recommendation.recommendation_id
@@ -207,7 +207,8 @@ public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort
                 request.diagnosis(),
                 context,
                 recommendation,
-                result.getTimestamp("created_at").toInstant());
+                result.getTimestamp("created_at").toInstant(),
+                result.getObject("revision_raw_observation_id", UUID.class));
     }
 
     private record PersistedRequest(
