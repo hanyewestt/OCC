@@ -8,6 +8,7 @@ services:
   nginx:
     volumes:
       - ./infra/nginx/cloudfront.conf.template:/etc/nginx/templates/cloudfront.conf.template:ro
+      - ${OCC_GATE_DIR:?set OCC_GATE_DIR to the rendered traffic-gate include directory}:/etc/nginx/gate:ro
     environment:
       NGINX_ENVSUBST_FILTER: '^(OCC_INGESTION_INTERNAL_URL|OCC_DISRUPTION_INTERNAL_URL|OCC_PLANNING_INTERNAL_URL|OCC_NGINX_HTTP_INTERNAL_PORT|OCC_ORIGIN_SECRET)$'
       OCC_ORIGIN_SECRET: ${OCC_ORIGIN_SECRET:?set OCC_ORIGIN_SECRET from the rendered deployment secret}

@@ -128,9 +128,15 @@ http {
         (fixture / "routes.inc").write_text(routes, encoding="utf-8")
         (fixture / "cloudfront.conf").write_text(template, encoding="utf-8")
         (fixture / "nginx.conf").write_text(config, encoding="utf-8")
+        gate_dir = fixture / "gate"
+        gate_dir.mkdir()
+        (gate_dir / "traffic-gate.inc").write_text(
+            'set $occ_traffic_gate "open";\nset $occ_gate_token "synthetic-gate-token";\n',
+            encoding="utf-8")
         fixture.chmod(0o755)
-        for path in fixture.iterdir():
-            path.chmod(0o644)
+        for path in fixture.rglob("*"):
+            if path.is_file():
+                path.chmod(0o644)
         try:
             subprocess.run(["docker", "run", "--detach", "--name", name,
                             "--user", "101:101", "--read-only", "--cap-drop", "ALL",
@@ -140,6 +146,7 @@ http {
                             "--mount",
                             f"type=bind,source={fixture.resolve()}/routes.inc,"
                             "target=/etc/nginx/conf.d/routes.inc,readonly",
+                            "--mount", f"type=bind,source={gate_dir.resolve()},target=/etc/nginx/gate,readonly",
                             "--entrypoint", "nginx", IMAGE, "-c", "/fixture/nginx.conf",
                             "-g", "daemon off;"], check=True, capture_output=True, text=True)
             address = subprocess.check_output(["docker", "port", name, "18080/tcp"], text=True).strip()
@@ -203,6 +210,111 @@ http {
             })
             assert status == 200 and body.split("|")[0] == "203.0.113.8", body
             print("PASS cloudfront origin separates two viewers at one edge")
+        except Exception:
+            subprocess.run(["docker", "logs", name], check=False)
+            raise
+        finally:
+            subprocess.run(["docker", "rm", "--force", name], check=False, capture_output=True)
+    run_closed_gate_cases()
+
+
+def run_closed_gate_cases() -> None:
+    """While the traffic gate is closed only the secret-bearing readiness
+    request is served; everything else, including the health endpoint, is 503."""
+    name = "occ-nginx-gate-" + uuid.uuid4().hex[:12]
+    template = (ROOT / "infra/nginx/cloudfront.conf.template").read_text(encoding="utf-8")
+    routes = (ROOT / "infra/nginx/routes.inc.template").read_text(encoding="utf-8")
+    routes = routes.replace("${OCC_INGESTION_INTERNAL_URL}", "http://127.0.0.1:18001")
+    routes = routes.replace("${OCC_DISRUPTION_INTERNAL_URL}", "http://127.0.0.1:18002")
+    routes = routes.replace("${OCC_PLANNING_INTERNAL_URL}", "http://127.0.0.1:18003")
+    template = template.replace("${OCC_NGINX_HTTP_INTERNAL_PORT}", "18081")
+    template = template.replace("${OCC_ORIGIN_SECRET}", "synthetic-origin-secret")
+    upstream = ("server { listen 18001; location / { return 200 'upstream'; } }")
+    config = """pid /tmp/nginx.pid;
+error_log /dev/stderr notice;
+events { worker_connections 128; }
+http {
+    access_log off;
+    client_body_temp_path /tmp/client_body;
+    proxy_temp_path /tmp/proxy;
+    fastcgi_temp_path /tmp/fastcgi;
+    uwsgi_temp_path /tmp/uwsgi_temp;
+    scgi_temp_path /tmp/scgi;
+    include /fixture/cloudfront.conf;
+""" + upstream + "\n}\n"
+    with tempfile.TemporaryDirectory(prefix="occ-nginx-gate-") as directory:
+        fixture = Path(directory)
+        (fixture / "routes.inc").write_text(routes, encoding="utf-8")
+        (fixture / "cloudfront.conf").write_text(template, encoding="utf-8")
+        (fixture / "nginx.conf").write_text(config, encoding="utf-8")
+        gate_dir = fixture / "gate"
+        gate_dir.mkdir()
+        (gate_dir / "traffic-gate.inc").write_text(
+            'set $occ_traffic_gate "closed";\nset $occ_gate_token "synthetic-gate-token";\n',
+            encoding="utf-8")
+        fixture.chmod(0o755)
+        for path in fixture.rglob("*"):
+            if path.is_file():
+                path.chmod(0o644)
+        try:
+            subprocess.run(["docker", "run", "--detach", "--name", name,
+                            "--user", "101:101", "--read-only", "--cap-drop", "ALL",
+                            "--security-opt", "no-new-privileges", "--tmpfs", "/tmp:mode=1777",
+                            "--publish", "127.0.0.1::18081",
+                            "--mount", f"type=bind,source={fixture.resolve()},target=/fixture,readonly",
+                            "--mount",
+                            f"type=bind,source={fixture.resolve()}/routes.inc,"
+                            "target=/etc/nginx/conf.d/routes.inc,readonly",
+                            "--mount", f"type=bind,source={gate_dir.resolve()},target=/etc/nginx/gate,readonly",
+                            "--entrypoint", "nginx", IMAGE, "-c", "/fixture/nginx.conf",
+                            "-g", "daemon off;"], check=True, capture_output=True, text=True)
+            address = subprocess.check_output(["docker", "port", name, "18081/tcp"], text=True).strip()
+            base = "http://" + address
+
+            def request(path, headers):
+                request = urllib.request.Request(base + path, headers=headers)
+                try:
+                    with urllib.request.urlopen(request, timeout=5) as response:
+                        return response.status
+                except urllib.error.HTTPError as response:
+                    return response.code
+
+            for attempt in range(30):
+                try:
+                    # Both deployment secrets are required: the origin gate
+                    # and the closed-traffic readiness path.
+                    probe = urllib.request.Request(
+                        base + "/_occ_gate_readiness",
+                        headers={"X-OCC-Origin-Secret": "synthetic-origin-secret",
+                                 "X-OCC-Gate-Token": "synthetic-gate-token"})
+                    urllib.request.urlopen(probe, timeout=2)
+                    break
+                except urllib.error.HTTPError as response:
+                    if response.code == 204:
+                        break
+                    if attempt == 29:
+                        raise
+                    time.sleep(0.1)
+                except (urllib.error.URLError, OSError):
+                    if attempt == 29:
+                        raise
+                    time.sleep(0.1)
+            token = {"X-OCC-Origin-Secret": "synthetic-origin-secret",
+                     "X-OCC-Gate-Token": "synthetic-gate-token"}
+            origin_only = {"X-OCC-Origin-Secret": "synthetic-origin-secret"}
+            status = request("/_occ_gate_readiness", token)
+            assert status == 204, f"gate readiness with the token must be served: {status}"
+            for path in ("/", "/frontend-config", "/_occ_edge_health", "/api/v1/arrivals"):
+                status = request(path, token)
+                assert status == 503, f"gate must block {path} while closed: {status}"
+                # With the origin secret but no gate token the request passes
+                # the origin gate and is still blocked by the closed gate.
+                status = request(path, origin_only)
+                assert status == 503, f"gate must block {path} without a token: {status}"
+            wrong = request("/_occ_gate_readiness", {"X-OCC-Origin-Secret": "synthetic-origin-secret",
+                                                     "X-OCC-Gate-Token": "wrong"})
+            assert wrong == 503, f"gate readiness with a wrong token must be blocked: {wrong}"
+            print("PASS closed traffic gate serves only the secret-bearing readiness request")
         except Exception:
             subprocess.run(["docker", "logs", name], check=False)
             raise
