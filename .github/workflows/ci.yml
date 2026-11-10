@@ -9,6 +9,9 @@ on:
 
 permissions:
   contents: read
+  # The packaging and scan jobs download artifacts from the producing run,
+  # which requires the Actions (read) permission on private repositories.
+  actions: read
 
 concurrency:
   group: core-${{ github.workflow }}-${{ github.ref }}

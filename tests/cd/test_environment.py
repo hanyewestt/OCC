@@ -50,7 +50,13 @@ class FakeAws:
                                if not a.startswith("s3://") and a != "-"), None)
                 if source and Path(source).is_file():
                     name = arguments[-1].rsplit("/", 1)[-1]
-                    (self.state / name).write_text(
+                    if "/state/operations/" in arguments[-1]:
+                        operations = self.state / "operations"
+                        operations.mkdir(exist_ok=True)
+                        target = operations / name
+                    else:
+                        target = self.state / name
+                    target.write_text(
                         Path(source).read_text(encoding="utf-8"), encoding="utf-8")
                 return environment.subprocess.CompletedProcess(arguments, 0, "", "")
             name = ("control.json" if "state/control.json" in joined else
@@ -66,6 +72,11 @@ class FakeAws:
                 raise environment.ControlError(stderr)
             return environment.subprocess.CompletedProcess(arguments, returncode,
                                                            stdout, stderr)
+        if joined.startswith("s3 rm"):
+            if "/state/operations/" in arguments[-1]:
+                (self.state / "operations" /
+                 arguments[-1].rsplit("/", 1)[-1]).unlink(missing_ok=True)
+            return environment.subprocess.CompletedProcess(arguments, 0, "", "")
         if joined.startswith("s3 ls"):
             operations = self.state / "operations"
             if operations.is_dir() and any(operations.iterdir()):
@@ -168,6 +179,28 @@ class PauseTests(EnvironmentTestCase):
         self.assertFalse(any(arguments[:2] == ["ec2", "terminate-instances"]
                              for arguments in self.fake.calls))
 
+    def test_pause_stops_through_the_deployed_compose_project(self):
+        self.write_control("running")
+        code, _, err = self.run_action("pause")
+        self.assertEqual(code, 0, err)
+        joined = "\n".join(self.ssm_commands())
+        self.assertIn("active-release.json", joined)
+        self.assertIn(". /opt/occ/env.rendered", joined)
+        self.assertIn("releases/$release_id/bundle", joined)
+        self.assertIn("traffic-gate.sh close", joined)
+        self.assertIn("-f compose.yaml", joined)
+        self.assertIn("stop nginx ingestion disruption planning postgres", joined)
+        self.assertNotIn("active-release.name", joined)
+
+    def test_lifecycle_commands_use_the_shared_recover_comment_prefix(self):
+        self.write_control("running")
+        code, _, err = self.run_action("pause")
+        self.assertEqual(code, 0, err)
+        joined = "\n".join(self.ssm_commands())
+        # deploy_remote.recover filters on this exact prefix.
+        self.assertIn("occ-operation:op-env-1", joined)
+        self.assertNotIn("occ-lifecycle:", joined)
+
     def test_pause_is_idempotent_when_already_paused(self):
         self.write_control("paused")
         code, _, err = self.run_action("pause")
@@ -211,6 +244,18 @@ class PauseTests(EnvironmentTestCase):
         self.assertIn("outstanding", err.lower())
         self.assertEqual(self.ssm_commands(), [])
 
+    def test_outstanding_operations_block_the_start(self):
+        self.write_control("paused")
+        operations = self.state / "operations"
+        operations.mkdir()
+        (operations / "op-1.json").write_text("{}", encoding="utf-8")
+        code, _, err = self.run_action("start")
+        self.assertNotEqual(code, 0)
+        self.assertIn("outstanding", err.lower())
+        self.assertEqual(self.ssm_commands(), [])
+        self.assertFalse(any(arguments[:2] == ["ec2", "start-instances"]
+                             for arguments in self.fake.calls))
+
 
 class StartResumeTests(EnvironmentTestCase):
     def setUp(self) -> None:
@@ -235,6 +280,40 @@ class StartResumeTests(EnvironmentTestCase):
         self.assertIn("releases/rel-1", joined)
         self.assertIn("deploy.sh apply", joined)
         self.assertEqual(self.read_control()["desiredMode"], "running")
+
+    def test_start_persists_intent_before_dispatch_and_clears_it(self):
+        self.write_control("paused")
+        self.fake.instance_state = "stopped"
+        code, _, err = self.run_action("start")
+        self.assertEqual(code, 0, err)
+        intent_calls = [
+            (position, arguments) for position, arguments in
+            enumerate(self.fake.calls)
+            if "/state/operations/op-env-1.json" in " ".join(arguments)]
+        self.assertTrue(intent_calls)
+        write_position = next(position for position, arguments in intent_calls
+                              if arguments[:2] == ["s3", "cp"])
+        remove_position = next(position for position, arguments in intent_calls
+                               if arguments[:2] == ["s3", "rm"])
+        dispatch_position = next(
+            position for position, arguments in enumerate(self.fake.calls)
+            if arguments[:2] == ["ssm", "send-command"])
+        # The intent is durable before SSM accepts the command and cleared
+        # only after the verified terminal success.
+        self.assertLess(write_position, dispatch_position)
+        self.assertGreater(remove_position, dispatch_position)
+        self.assertFalse((self.state / "operations" / "op-env-1.json").exists())
+
+    def test_failed_start_retains_the_operation_intent(self):
+        self.write_control("paused")
+        self.fake.instance_state = "stopped"
+        self.fake.ssm_status = "Failed"
+        code, _, err = self.run_action("start")
+        self.assertNotEqual(code, 0)
+        self.assertIn("paused intent", err.lower())
+        # A failed resume keeps the dispatch record so a lost runner cannot be
+        # silently forgotten; it blocks further mutations until reconciled.
+        self.assertTrue((self.state / "operations" / "op-env-1.json").is_file())
 
     def test_resume_is_an_alias_of_start(self):
         self.write_control("paused")
@@ -306,6 +385,13 @@ class StatusTests(EnvironmentTestCase):
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_poll_ceiling_exceeds_the_ssm_command_timeout(self):
+        # A slow resume must never be declared failed while the remote deploy
+        # is still running under its own timeout.
+        self.assertGreater(
+            environment.POLL_ATTEMPTS * environment.POLL_INTERVAL_SECONDS,
+            environment.SSM_TIMEOUT_SECONDS)
+
     def test_environment_control_dispatches_the_four_actions(self):
         text = CONTROL_WORKFLOW.read_text(encoding="utf-8")
         for action in ("start", "resume", "pause", "status"):

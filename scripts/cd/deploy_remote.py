@@ -21,7 +21,9 @@ import time
 from pathlib import Path
 
 OPERATION_COMMENT_PREFIX = "occ-operation:"
-POLL_ATTEMPTS = 120
+# The poll ceiling must exceed the SSM command's own --timeout-seconds so a
+# slow pull/setup is never declared failed while the command still runs.
+POLL_ATTEMPTS = 800
 POLL_INTERVAL_SECONDS = 5
 
 
@@ -160,7 +162,26 @@ def advance_pointer(bucket: str, region: str, release_id: str, sequence: int) ->
     release = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(release)
 
-    candidate = {"releaseId": release_id, "sequence": sequence,
+    # The candidate carries the same immutable fields the host's deploy.sh
+    # writes (releaseId, revision, releaseKey, version, checksum). The
+    # revision belongs to the release being deployed, not to whatever is
+    # newest in the published pointer.
+    revision = ""
+    for key in (f"releases/{release_id}.json", "state/latest-published.json"):
+        manifest = aws(["s3", "cp", f"s3://{bucket}/{key}", "-"], region, check=False)
+        if manifest.returncode != 0 or not manifest.stdout.strip():
+            continue
+        try:
+            revision = json.loads(manifest.stdout).get("revision", "")
+        except json.JSONDecodeError:
+            revision = ""
+        if revision:
+            break
+    if not revision:
+        raise RemoteError(
+            f"release manifest has no revision for {release_id}; refusing to "
+            "advance the deployed pointer")
+    candidate = {"releaseId": release_id, "revision": revision, "sequence": sequence,
                  "releaseKey": f"releases/{release_id}",
                  "version": "-", "checksum": "-"}
     result = aws(["s3", "cp", f"s3://{bucket}/state/last-deployed.json", "-"],
@@ -170,7 +191,20 @@ def advance_pointer(bucket: str, region: str, release_id: str, sequence: int) ->
             current = json.loads(result.stdout)
         except json.JSONDecodeError as error:
             raise RemoteError(f"remote last-deployed pointer is not valid JSON: {error}") from error
-        release.reject_older_overwrite(current, candidate)
+        if current.get("releaseId") == release_id and \
+                current.get("revision") == revision:
+            # The host already advanced the pointer to this exact release as
+            # part of its verified deploy. Advance idempotently by adding the
+            # monotonic sequence rather than rejecting the identical pointer.
+            prior_sequence = current.get("sequence")
+            if prior_sequence is not None and sequence <= prior_sequence:
+                raise RemoteError(
+                    "candidate sequence is not newer than the deployed pointer; "
+                    "compare-and-set rejects the overwrite")
+            candidate = dict(current)
+            candidate["sequence"] = sequence
+        else:
+            release.reject_older_overwrite(current, candidate)
     pointer = Path(__file__).resolve().parent / ".last-deployed.json"
     pointer.write_text(json.dumps(candidate), encoding="utf-8")
     aws(["s3", "cp", pointer.as_posix(), f"s3://{bucket}/state/last-deployed.json"], region)
@@ -237,9 +271,15 @@ def run_recover(region: str, instance_id: str, bucket: str, operation_id: str,
         status = recovered["Status"]
         if status != "Success":
             raise RemoteError(f"recovered invocation ended in status {status}")
-    advance_pointer(bucket, region, json.loads(
-        (aws(["s3", "cp", f"s3://{bucket}/state/operations/{operation_id}.json", "-"],
-             region)).stdout or "{}").get("releaseId", ""), sequence)
+    intent = aws(["s3", "cp", f"s3://{bucket}/state/operations/{operation_id}.json", "-"],
+                 region, check=False)
+    if intent.returncode != 0 or not intent.stdout.strip():
+        raise RemoteError(f"no operation intent found for {operation_id}; "
+                          "there is nothing outstanding to reconcile")
+    release_id = json.loads(intent.stdout).get("releaseId", "")
+    if not release_id:
+        raise RemoteError(f"operation intent for {operation_id} has no release id")
+    advance_pointer(bucket, region, release_id, sequence)
     clear_intent(bucket, region, operation_id)
     print(f"operation {operation_id} reconciled to a verified terminal success")
     return 0

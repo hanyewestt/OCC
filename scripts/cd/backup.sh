@@ -17,6 +17,7 @@ OCC_BACKUP_RETAIN="${OCC_BACKUP_RETAIN:-7}"
 OCC_BACKUP_STAMP="${OCC_BACKUP_STAMP:-$(date -u +%Y%m%dT%H%M%SZ)}"
 OCC_BACKUP_DIR="${OCC_BACKUP_DIR:-/opt/occ/backups}"
 OCC_RESTORE_CONTAINER="${OCC_RESTORE_CONTAINER:-occ-restore}"
+OCC_PROJECT="${OCC_PROJECT:-occ-production}"
 POSTGRES_DB="${POSTGRES_DB:?set POSTGRES_DB}"
 POSTGRES_USER="${POSTGRES_USER:-occ_admin}"
 POSTGIS_IMAGE="${POSTGIS_IMAGE:-postgis/postgis:18-3.6@sha256:7e00e8c3539fdd43f513b98806c8204714dcd09dea683c259e333d7690317119}"
@@ -27,12 +28,19 @@ die() { printf 'backup: error: %s\n' "$*" >&2; exit 1; }
 backup() {
     mkdir -p "$OCC_BACKUP_DIR"
     dump_path="$OCC_BACKUP_DIR/occ-$OCC_BACKUP_STAMP.sql"
+    POSTGRES_CONTAINER=$(docker ps --quiet \
+        --filter "label=com.docker.compose.project=$OCC_PROJECT" \
+        --filter "label=com.docker.compose.service=postgres" | head -n 1)
+    [ -n "$POSTGRES_CONTAINER" ] || \
+        die "the postgres container for $OCC_PROJECT is not running"
     log "dumping $POSTGRES_DB consistently"
     # --single-transaction: one snapshot; the dump is only uploaded when the
-    # whole dump completed, so partial dumps never reach the bucket.
-    pg_dump --dbname "$POSTGRES_DB" --username "$POSTGRES_USER" \
+    # whole dump completed, so partial dumps never reach the bucket. The
+    # client lives in the running postgres image, not on the host.
+    docker exec "$POSTGRES_CONTAINER" \
+        pg_dump --dbname "$POSTGRES_DB" --username "$POSTGRES_USER" \
         --format plain --single-transaction --no-owner \
-        --file "$dump_path" \
+        > "$dump_path" \
         || die "pg_dump failed; nothing was uploaded"
     gzip -f "$dump_path"
     dump_gz="$dump_path.gz"
@@ -76,16 +84,42 @@ restore() {
     local_path="$OCC_BACKUP_DIR/restore.sql.gz"
     log "downloading $key"
     aws s3 cp "s3://$OCC_RELEASE_BUCKET/$key" "$local_path"
+    local_sql="${local_path%.gz}"
+    gunzip -c "$local_path" > "$local_sql" \
+        || die "the downloaded backup could not be decompressed"
     log "restoring into the isolated container $OCC_RESTORE_CONTAINER"
     # The isolated container is disposable; production volumes and the
-    # production Compose project are never involved.
-    docker run --rm --name "$OCC_RESTORE_CONTAINER" \
+    # production Compose project are never involved. Start a real PostGIS
+    # server, wait for it, then pipe the plain-SQL dump to psql.
+    cleanup_restore() {
+        docker rm --force "$OCC_RESTORE_CONTAINER" >/dev/null 2>&1 || true
+    }
+    trap cleanup_restore EXIT INT TERM
+    docker run --detach --name "$OCC_RESTORE_CONTAINER" \
         -e POSTGRES_DB="$POSTGRES_DB" -e POSTGRES_USER="$POSTGRES_USER" \
-        "$POSTGIS_IMAGE" \
-        sh -c 'exec pg_restore --dbname "$POSTGRES_DB" --username "$POSTGRES_USER" \
-               --no-owner --if-exists --clean' \
-        < "$local_path" \
+        -e POSTGRES_PASSWORD=occ-restore-disposable \
+        "$POSTGIS_IMAGE" >/dev/null \
+        || die "restore failed: the isolated PostGIS container could not be started"
+    attempt=0
+    ready=""
+    while [ "$attempt" -lt 60 ]; do
+        if docker exec "$OCC_RESTORE_CONTAINER" \
+            pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+            >/dev/null 2>&1; then
+            ready=1
+            break
+        fi
+        attempt=$((attempt + 1))
+        sleep 1
+    done
+    [ -n "$ready" ] || die "the isolated PostGIS container did not become ready"
+    docker exec --interactive "$OCC_RESTORE_CONTAINER" \
+        psql --dbname "$POSTGRES_DB" --username "$POSTGRES_USER" \
+        --set ON_ERROR_STOP=1 < "$local_sql" \
         || die "restore failed in the isolated container; production is untouched"
+    cleanup_restore
+    trap - EXIT INT TERM
+    rm -f "$local_sql"
     log "restore completed inside $OCC_RESTORE_CONTAINER"
 }
 

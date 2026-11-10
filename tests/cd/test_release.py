@@ -245,7 +245,8 @@ class PlanOwnershipTests(ReleaseTestCase):
 
     def test_config_only_release_rebuilds_nothing(self):
         repo = self.make_repo()
-        for path in ("compose.yaml", "infra/compose.production.yaml", ".github/workflows/ci.yml"):
+        for path in ("compose.yaml", "infra/compose.production.yaml",
+                     "infra/compose.host-data.yaml", ".github/workflows/ci.yml"):
             base = self.git(repo, "rev-parse", "HEAD")
             self.write(repo, {path: "# changed\n"})
             head = self.commit(repo, f"change {path}")

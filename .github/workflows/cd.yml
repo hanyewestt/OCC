@@ -3,7 +3,7 @@ name: Release and deploy
 # Runs after Main verification completes on main. It re-verifies the exact
 # run/SHA-bound artifacts, publishes the complete immutable release bundle
 # and the five digest-pinned ECR images, scans those exact bytes with current
-# vulnerability data, advances the published pointer with a compare-and-set,
+# vulnerability data, advances the published record with a compare-and-set,
 # and deploys only when the environment's desired mode is running. While the
 # environment is paused, publishing still happens and deployment is deferred.
 on:
@@ -15,6 +15,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  actions: read
 
 # One production mutation at a time; queued runs are never cancelled. The
 # group is shared with the environment-control workflow's mutating jobs.
@@ -42,6 +43,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Assume the publish role
@@ -74,7 +76,7 @@ jobs:
           python3 scripts/cd/stage.py verify-bundle --bundle "$RUNNER_TEMP/bundle"
           --revision "${{ github.event.workflow_run.head_sha }}" --max-age-hours 24
 
-      - name: Download the current published release record
+      - name: Download the current published release manifest
         run: |
           set -euo pipefail
           aws s3 cp "s3://$OCC_RELEASE_BUCKET/state/latest-published.json" \
@@ -90,6 +92,11 @@ jobs:
           if python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("revision") else 1)' \
               "$published"; then
             args+=(--published "$published")
+          else
+            # First release: there is no published baseline to diff against,
+            # so diff from the root commit and rebuild conservatively.
+            base=$(git rev-list --max-parents=0 "${{ github.event.workflow_run.head_sha }}" | tail -n 1)
+            args+=(--base "$base")
           fi
           python3 scripts/cd/release.py "${args[@]}" > "$RUNNER_TEMP/plan.json"
           release_id="${{ github.event.workflow_run.head_sha }}-${{ github.run_id }}-${{ github.run_attempt }}"
@@ -141,22 +148,50 @@ jobs:
       - name: Build the immutable release bundle
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/release-bundle/scripts"
+          release_id="${{ steps.plan.outputs.release-id }}"
+          # The manifest is the release contract the host deploy validates.
+          # latest-published.json stores the full manifest (inputHashes,
+          # images, releaseId, revision) so the next plan can diff against it.
+          # A first release has no prior record (the download fallback is
+          # `{}`), so --previous is only passed when a revision is present.
+          previous_args=()
+          if python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("revision") else 1)' \
+              "$RUNNER_TEMP/latest-published.json"; then
+            previous_args=(--previous "$RUNNER_TEMP/latest-published.json")
+          fi
+          python3 scripts/cd/release.py manifest \
+            --plan "$RUNNER_TEMP/plan.json" \
+            "${previous_args[@]}" \
+            --digests "$RUNNER_TEMP/digests.json" \
+            --release-id "$release_id" \
+            --compatibility unknown > "$RUNNER_TEMP/manifest.json"
+          mkdir -p "$RUNNER_TEMP/release-bundle/scripts" \
+            "$RUNNER_TEMP/release-bundle/infra/nginx"
+          cp "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/release-bundle/"
           cp "$RUNNER_TEMP/digests.json" "$RUNNER_TEMP/release-bundle/images.json"
           cp compose.yaml infra/compose.images.yaml infra/compose.cloudfront.yaml \
-            "$RUNNER_TEMP/release-bundle/"
+            infra/compose.host-data.yaml "$RUNNER_TEMP/release-bundle/"
+          # The CloudFront overlay mounts this server block from the bundle
+          # root; the web image deliberately bakes only the shared routes.
+          cp infra/nginx/cloudfront.conf.template \
+            "$RUNNER_TEMP/release-bundle/infra/nginx/"
           cp scripts/cd/deploy.sh scripts/cd/traffic-gate.sh \
             "$RUNNER_TEMP/release-bundle/scripts/"
           (cd "$RUNNER_TEMP/release-bundle" && \
             find . -type f ! -name checksums.txt -print0 | \
             xargs -0 sha256sum | sed 's|\./||' > checksums.txt)
 
-      - name: Upload the release bundle
+      - name: Upload the release bundle and manifest
         run: |
           set -euo pipefail
           release_id="${{ steps.plan.outputs.release-id }}"
+          # The host runs <release>/bundle/scripts/deploy.sh and validates
+          # <release>/bundle/manifest.json, so the bundle lives under a
+          # `bundle/` prefix while the manifest record is a sibling key.
           aws s3 cp --recursive "$RUNNER_TEMP/release-bundle/" \
-            "s3://$OCC_RELEASE_BUCKET/releases/$release_id/"
+            "s3://$OCC_RELEASE_BUCKET/releases/$release_id/bundle/"
+          aws s3 cp "$RUNNER_TEMP/manifest.json" \
+            "s3://$OCC_RELEASE_BUCKET/releases/$release_id.json"
 
       - name: Summarize the release
         run: |
@@ -232,73 +267,73 @@ jobs:
           retention-days: 7
 
   publish:
-    name: Publish the release pointer
+    name: Publish the release manifest
     needs: [release, scan]
     if: needs.release.outputs.deploy-required == 'true'
     runs-on: ubuntu-24.04
     environment: production
     outputs:
-      release-id: ${{ steps.plan.outputs.release-id }}
+      release-id: ${{ needs.release.outputs.release-id }}
       deploy-required: ${{ needs.release.outputs.deploy-required }}
     steps:
-      - name: Check out the CD tooling
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          persist-credentials: false
-
       - name: Assume the publish role
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.OCC_PUBLISH_ROLE_ARN }}
           aws-region: ${{ secrets.OCC_REGION }}
 
-      - name: Advance the published pointer with a compare-and-set
-        id: plan
+      - name: Advance the published manifest with a compare-and-set
         run: |
           set -euo pipefail
           release_id="${{ needs.release.outputs.release-id }}"
-          revision="${{ github.event.workflow_run.head_sha }}"
-          echo "release-id=$release_id" >> "$GITHUB_OUTPUT"
           aws s3 cp "s3://$OCC_RELEASE_BUCKET/state/latest-published.json" \
             "$RUNNER_TEMP/latest-published.json" \
             || echo '{}' > "$RUNNER_TEMP/latest-published.json"
-          python3 - "$RUNNER_TEMP" "$release_id" "$revision" "${{ github.run_id }}" <<'PY'
-          import importlib.util
+          aws s3 cp "s3://$OCC_RELEASE_BUCKET/releases/$release_id.json" \
+            "$RUNNER_TEMP/new-manifest.json"
+          # CAS on the manifest: the candidate is the full release manifest
+          # with the run id as its monotonic sequence. An older or duplicate
+          # sequence is rejected, so out-of-order runs cannot regress the
+          # published record.
+          python3 - "$RUNNER_TEMP" "${{ github.run_id }}" <<'PY'
           import json
-          import os
-          import subprocess
           import sys
 
-          temp, release_id, revision, sequence = sys.argv[1:5]
-          pointer = {
-              "releaseId": release_id,
-              "revision": revision,
-              "releaseKey": f"releases/{release_id}",
-              "version": "-",
-              "checksum": "-",
-              "sequence": int(sequence),
-          }
-          spec = importlib.util.spec_from_file_location(
-              "occ_release", "scripts/cd/release.py")
-          release = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(release)
+          temp, sequence = sys.argv[1], int(sys.argv[2])
+          candidate = json.load(open(f"{temp}/new-manifest.json", encoding="utf-8"))
+          candidate["sequence"] = sequence
           try:
               current = json.load(open(f"{temp}/latest-published.json", encoding="utf-8"))
           except (FileNotFoundError, json.JSONDecodeError):
               current = None
           if current and current.get("releaseId"):
-              release.reject_older_overwrite(current, pointer)
-          json.dump(pointer, open(f"{temp}/published-pointer.json", "w", encoding="utf-8"),
-                    sort_keys=True)
+              current_sequence = current.get("sequence", 0)
+              if candidate["releaseId"] == current.get("releaseId") and \
+                      candidate.get("revision") == current.get("revision"):
+                  raise SystemExit(
+                      "duplicate publication of an already-published release; "
+                      "a refresh must use a new release id")
+              if sequence <= current_sequence:
+                  raise SystemExit(
+                      "candidate sequence is not newer than the published record; "
+                      "an older run cannot replace a newer publication")
+          json.dump(candidate, open(f"{temp}/published-manifest.json", "w",
+                                    encoding="utf-8"), sort_keys=True)
           PY
-          aws s3 cp "$RUNNER_TEMP/published-pointer.json" \
+          aws s3 cp "$RUNNER_TEMP/published-manifest.json" \
             "s3://$OCC_RELEASE_BUCKET/state/latest-published.json"
+
+      - name: Summarize the publication
+        run: |
+          set -euo pipefail
+          {
+            echo "## Published ${{ needs.release.outputs.release-id }}"
+            echo "- latest-published.json now carries the full release manifest"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
     name: Deploy to the EC2 host
     needs: publish
-    if: needs.publish.outputs.deploy-required == 'true'
     runs-on: ubuntu-24.04
     environment: production
     steps:

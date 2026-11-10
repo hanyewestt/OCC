@@ -83,6 +83,12 @@ class CloudFormationContractTests(unittest.TestCase):
         self.assertNotIn("ACMCertificateArn", text)
         self.assertNotIn("CNAMEs", text)
 
+    def test_origin_request_policy_is_the_allviewer_managed_policy(self):
+        text = template_text()
+        # AllViewer (216adef6-…) forwards Authorization/cookies/query strings;
+        # an unrecognized policy id fails only at distribution creation.
+        self.assertIn("216adef6-5c7f-47e4-b989-5492eafa07d3", text)
+
     def test_guard_rules_cover_critical_controls(self):
         guard = GUARD.read_text(encoding="utf-8")
         for required in ("Encrypted", "HttpTokens", "IMMUTABLE", "cloudfront.origin-facing",
@@ -96,6 +102,45 @@ class CloudFormationContractTests(unittest.TestCase):
         self.assertNotRegex(guard, r"AWS::\w+::\w+\.Properties")
         self.assertNotRegex(guard, r"\] !exists")
         self.assertIn("Properties {", guard)
+
+    def test_publish_role_can_read_and_advance_release_state(self):
+        text = template_text()
+        publish = text[text.find("PolicyName: occ-publish"):text.find("OccDeployRole:")]
+        # The release job reads latest-published.json and the publish job
+        # writes it; both run under this role.
+        self.assertIn("s3:GetObject", publish)
+        self.assertIn("${OccReleaseBucket.Arn}/releases/*", publish)
+        self.assertIn("${OccReleaseBucket.Arn}/state/*", publish)
+
+    def test_host_role_can_write_and_prune_backups(self):
+        text = template_text()
+        host = text[text.find("PolicyName: occ-release-artifacts"):text.find("OccInstanceProfile:")]
+        self.assertIn("${OccReleaseBucket.Arn}/backups/*", host)
+        self.assertIn("s3:DeleteObject", host)
+
+    def test_deploy_role_can_list_commands_for_recovery(self):
+        text = template_text()
+        deploy = text[text.find("PolicyName: occ-deploy"):]
+        # ListCommands does not support resource scoping, so it is granted
+        # separately; recover's lookup depends on it.
+        self.assertIn("ssm:ListCommands", deploy)
+        self.assertIn('Resource: "*"', deploy)
+
+    def test_bootstrap_maps_the_db_setup_repository_output(self):
+        bootstrap = BOOTSTRAP_PS1.read_text(encoding="utf-8")
+        # CloudFormation emits DbSetupRepositoryUri, not Db-setupRepositoryUri.
+        self.assertIn("-split '-'", bootstrap)
+        self.assertNotIn("$component[0].ToString()", bootstrap)
+
+    def test_host_data_overlay_binds_the_retained_volume(self):
+        overlay = (ROOT / "infra" / "compose.host-data.yaml").read_text(encoding="utf-8")
+        self.assertIn("${OCC_DATA_MOUNT", overlay)
+        self.assertIn("/var/lib/postgresql", overlay)
+        self.assertIn("!override", overlay)
+
+    def test_bootstrap_writes_the_durable_marker(self):
+        host = BOOTSTRAP_HOST.read_text(encoding="utf-8")
+        self.assertIn(".occ-data-marker", host)
 
 
 class CloudFrontTemplateTests(unittest.TestCase):
