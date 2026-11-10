@@ -7,6 +7,11 @@ on:
         description: 'smoke, contracts or extended; selected by the calling workflow'
         required: true
         type: string
+      artifact-run-id:
+        description: 'Run whose verified candidate images and dist to reuse; empty builds everything from source'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -17,11 +22,32 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       OCC_SYSTEM_SUITE: ${{ inputs.suite }}
+      OCC_CANDIDATE_ARTIFACTS: ${{ inputs.artifact-run-id }}
+      ARTIFACT_RUN_ID: ${{ inputs.artifact-run-id }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Load verified candidate images and dist
+        if: inputs.artifact-run-id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/occ-candidates"
+          for component in ingestion disruption planning db-setup web; do
+            gh run download "$ARTIFACT_RUN_ID" --name "occ-image-${component}" \
+              --dir "$RUNNER_TEMP/occ-candidates"
+            docker load --input "$RUNNER_TEMP/occ-candidates/occ-image-${component}.tar"
+            docker tag "occ-${component}:ci" "occ-${component}:local"
+          done
+          gh run download "$ARTIFACT_RUN_ID" --name "occ-web-dist" \
+            --dir "$RUNNER_TEMP/occ-candidates/dist"
+          rm -rf frontend/dist
+          mkdir -p frontend/dist
+          tar --extract --gzip --file "$RUNNER_TEMP/occ-candidates/dist/web-dist.tar.gz" \
+            --directory frontend/dist
       - name: Set up Node 22
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -29,7 +55,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Build React static assets
-        if: inputs.suite != 'contracts'
+        if: inputs.suite != 'contracts' && inputs.artifact-run-id == ''
         working-directory: frontend
         run: |
           npm ci
@@ -38,7 +64,9 @@ jobs:
         run: |
           set -euo pipefail
           compose=(docker compose -p occ-edge-ci --env-file .env.example -f compose.yaml -f infra/compose.test.yaml)
-          "${compose[@]}" --profile setup build
+          if [[ -z "$OCC_CANDIDATE_ARTIFACTS" ]]; then
+            "${compose[@]}" --profile setup build
+          fi
           "${compose[@]}" up -d --wait postgres
           "${compose[@]}" run --rm --no-deps db-setup
           test -z "$("${compose[@]}" ps -a -q db-setup)"
