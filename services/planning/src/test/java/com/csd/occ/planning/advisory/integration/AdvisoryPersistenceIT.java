@@ -360,20 +360,26 @@ class AdvisoryPersistenceIT {
                 List.of("SBS5898U", "BUS-C", "BUS-D"));
         when(context.bunchingGroup(run, recommendation)).thenReturn(new AdvisoryContextPort.BunchingGroup(
                 run, recommendation, "190", 1, "44251", List.of("SBS5898U", "BUS-C", "BUS-D"), "SBS5898U"));
-        mvc.perform(post("/api/v1/planning/recommendations/" + recommendation + "/decision").with(controller())
-                        .contentType("application/json").content("""
-                                {"action":"REJECTED","controllerRationale":"Reduce the bunching safely.",
-                                 "replacementInstructions":[
-                                   {"busReference":"SBS5898U","action":"SKIP_STOP"},
-                                   {"busReference":"BUS-C","action":"HOLD","adjustmentSeconds":45},
-                                   {"busReference":"BUS-D","action":"HOLD","adjustmentSeconds":30}]}
-                                """))
+        String decisionPath = "/api/v1/planning/recommendations/" + recommendation + "/decision";
+        String body = """
+                {"action":"REJECTED","controllerRationale":"Reduce the bunching safely.",
+                 "replacementInstructions":[
+                   {"busReference":"SBS5898U","action":"SKIP_STOP"},
+                   {"busReference":"BUS-C","action":"HOLD","adjustmentSeconds":45},
+                   {"busReference":"BUS-D","action":"HOLD","adjustmentSeconds":30}]}
+                """;
+        mvc.perform(post(decisionPath).with(controller()).contentType("application/json").content(body))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("The adjustments would make the gap between BUS-C and BUS-D too short"));
+        assertThat(issued.findByProposalIdOrderByIssuedAtAsc(recommendation)).isEmpty();
+        mvc.perform(post(decisionPath).with(controller()).contentType("application/json")
+                        .content(body.replace("\"adjustmentSeconds\":30", "\"adjustmentSeconds\":45")))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.overrideInstructions.length()").value(3));
 
         var issuedForRecommendation = issued.findByProposalIdOrderByIssuedAtAsc(recommendation);
         assertThat(issuedForRecommendation).hasSize(3)
                 .extracting(item -> item.busId() + ":" + item.parameters().durationSeconds())
-                .containsExactlyInAnyOrder("demo-190-b:null", "demo-190-c:45", "demo-190-d:30");
+                .containsExactlyInAnyOrder("demo-190-b:null", "demo-190-c:45", "demo-190-d:45");
         mvc.perform(get("/api/v1/planning/instructions").with(controller()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(3));
     }
@@ -908,7 +914,7 @@ class AdvisoryPersistenceIT {
 
     @Test
     void everyAffectedBusNeedsAnOutcomeAndNoInstructionReasonsAreAudited() throws Exception {
-        var references = List.of("bus-2", "SBS5898U", "bus-3", "bus-4");
+        var references = List.of("bus-2", "bus-3", "bus-4", "SBS5898U");
         var fleet = new java.util.ArrayList<AdvisoryContextPort.Bus>();
         fleet.add(bus);
         for (int index = 2; index <= 4; index++) {
@@ -1215,14 +1221,14 @@ class AdvisoryPersistenceIT {
     }
 
     @Test
-    void refreshedRecommendationRequiresTheReviewedSnapshotAndEachBusToRespectItsOwnGap() {
+    void refreshedRecommendationRequiresTheReviewedSnapshotAndEachBusToRespectItsOwnGap() throws Exception {
         var originalId = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
         when(recommendationScopes.current()).thenReturn(new PlanningScope("DEMO", run));
         var busReferences = List.of("lead", "middle", "tail");
         var gaps = List.of(590L, 570L);
         var snapshotId = UUID.randomUUID();
         var reviewedGroup = new AdvisoryContextPort.CurrentBunchingGroup(
-                run, originalId, "190", "44251", 1, snapshotId, NOW, NOW.plusSeconds(60), busReferences, gaps);
+                run, originalId, "190", "44251", 1, snapshotId, NOW, NOW.plusSeconds(60), busReferences, gaps, List.of(true, true));
         when(context.currentBunchingGroup(run, originalId)).thenReturn(reviewedGroup);
         var progress = new AdvisoryContextPort.Progress("44251", 10, NOW, 30, List.of(5), List.of(300),
                 NOW.plusSeconds(60), NOW.plusSeconds(120));
@@ -1230,14 +1236,28 @@ class AdvisoryPersistenceIT {
                 id, id, id, "190", 1, UUID.randomUUID(), "ASSIGNED", progress)).toList();
         when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING", fleet, fleet.size()));
 
-        var revision = refreshes.refresh(originalId);
-        var revisionId = revision.idempotencyKey();
+        mvc.perform(post("/api/v1/planning/recommendations/{id}/refresh", originalId).with(controller()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revisionRawObservationId").value(snapshotId.toString()))
+                .andExpect(jsonPath("$.suggestedOutcomes.length()").value(3))
+                .andExpect(jsonPath("$.suggestedOutcomes[0].reason").value("No preceding gap in the reviewed group."))
+                .andExpect(jsonPath("$.suggestedOutcomes[1].mitigationType").value("HOLD"))
+                .andExpect(jsonPath("$.suggestedOutcomes[1].adjustmentSeconds").value(10))
+                .andExpect(jsonPath("$.confirmationGaps[0]").value(276))
+                .andExpect(jsonPath("$.currentPredictionGaps[0]").value(590));
+        var revisionId = records.findRevision(originalId).orElseThrow().recommendationId();
+        var revision = records.findByIdempotencyKey(revisionId).orElseThrow();
         assertThat(refreshes.refresh(originalId)).isEqualTo(revision);
+        assertThat(refreshes.refresh(revisionId)).isEqualTo(revision);
         assertThat(records.findByIdempotencyKey(revisionId)).contains(revision);
         assertThat(revision.bunchingEvent().observedHeadwaySeconds()).containsExactly(276, 221);
         assertThat(revision.mitigationContext().affectedBusReferences()).containsExactlyElementsOf(busReferences);
         assertThat(revision.mitigationContext().currentPredictionGaps()).containsExactlyElementsOf(gaps);
         assertThat(revision.recommendation().adjustmentSeconds()).isEqualTo(30);
+        assertThat(revision.recommendation().suggestedOutcomes()).containsExactly(
+                new SuggestedBusOutcome("lead", null, 0, "No preceding gap in the reviewed group."),
+                new SuggestedBusOutcome("middle", MitigationType.HOLD, 10, null),
+                new SuggestedBusOutcome("tail", MitigationType.HOLD, 30, null));
         assertThatThrownBy(() -> bunchingInstructions.approveAndIssue(originalId, "controller"))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("superseded");
 
@@ -1246,10 +1266,18 @@ class AdvisoryPersistenceIT {
         var tail = new BunchingInstructionService.ReplacementBusInstruction("tail", MitigationType.HOLD, 30);
         var outcomes = List.of(lead, middle, tail);
         var newerGroup = new AdvisoryContextPort.CurrentBunchingGroup(
-                run, originalId, "190", "44251", 1, UUID.randomUUID(), NOW, NOW.plusSeconds(60), busReferences, gaps);
+                run, originalId, "190", "44251", 1, UUID.randomUUID(), NOW, NOW.plusSeconds(60), busReferences, gaps, List.of(true, true));
         when(context.currentBunchingGroup(run, originalId)).thenReturn(newerGroup);
         assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(revisionId, "controller", outcomes, null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("reviewed prediction snapshot");
+
+        var nonconsecutiveGroup = new AdvisoryContextPort.CurrentBunchingGroup(
+                run, originalId, "190", "44251", 1, snapshotId, NOW, NOW.plusSeconds(60),
+                busReferences, gaps, List.of(true, false));
+        when(context.currentBunchingGroup(run, originalId)).thenReturn(nonconsecutiveGroup);
+        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(revisionId, "controller", outcomes, null))
+                .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("needs manual review");
+        assertThat(issued.findAll()).isEmpty();
 
         when(context.currentBunchingGroup(run, originalId)).thenReturn(reviewedGroup);
         var excessiveHold = new BunchingInstructionService.ReplacementBusInstruction("middle", MitigationType.HOLD, 11);
@@ -1261,7 +1289,18 @@ class AdvisoryPersistenceIT {
         var dwell = new BunchingInstructionService.ReplacementBusInstruction("middle", MitigationType.DWELL_ADJUSTMENT, 10);
         assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(revisionId, "controller", List.of(lead, dwell, tail), null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("boarding evidence for middle");
-        var unassigned = new AdvisoryContextPort.Bus("middle", "middle", "middle", "190", 1, null,
+        var olderProgress = new AdvisoryContextPort.Progress("44251", 10, NOW.minusSeconds(1), 30, List.of(5), List.of(300),
+                NOW.plusSeconds(60), NOW.plusSeconds(120));
+        var middleCaptain = fleet.get(1).captainUserId();
+        var olderBus = new AdvisoryContextPort.Bus("middle", "middle", "middle", "190", 1, middleCaptain,
+                "ASSIGNED", olderProgress);
+        when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING",
+                List.of(fleet.getFirst(), olderBus, fleet.getLast()), fleet.size()));
+        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(revisionId, "controller", outcomes, null))
+                .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("reviewed prediction snapshot for middle");
+        assertThat(issued.findAll()).isEmpty();
+
+        var unassigned = new AdvisoryContextPort.Bus("middle", "middle", "middle", "190", 1, middleCaptain,
                 "CAPTAIN_ASSIGNMENT_UNAVAILABLE", progress);
         when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING",
                 List.of(fleet.getFirst(), unassigned, fleet.getLast()), fleet.size()));
@@ -1326,7 +1365,8 @@ class AdvisoryPersistenceIT {
                 null, NOW, null, List.of(), List.of()));
         when(context.currentBunchingGroup(run, id)).thenReturn(new AdvisoryContextPort.CurrentBunchingGroup(
                 run, id, "190", "44251", 1, UUID.randomUUID(), NOW, NOW.plusSeconds(60), affectedBusReferences,
-                java.util.Collections.nCopies(affectedBusReferences.size() - 1, 221L)));
+                java.util.Collections.nCopies(affectedBusReferences.size() - 1, 221L),
+                java.util.Collections.nCopies(affectedBusReferences.size() - 1, true)));
         when(context.route("190")).thenReturn(new AdvisoryContextPort.Route("190", List.of(
                 new AdvisoryContextPort.Operator("SBS Transit", "BUS", List.of(
                         new AdvisoryContextPort.Direction(1, List.of(new AdvisoryContextPort.Stop("44251", "School", 10))))))));

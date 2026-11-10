@@ -117,7 +117,9 @@ export type PendingRecommendation = {
   mitigationType: string; targetBusReference: string; affectedBusReferences: string[]
   controlStopCode: string; adjustmentSeconds: number
   explanation: RecommendationExplanation; expectedImpact: RecommendationImpact
-  revisionRawObservationId?: string | null; currentPredictionGaps?: number[]
+  revisionRawObservationId?: string | null; currentPredictionGaps?: number[]; confirmationGaps?: number[]
+  suggestedOutcomes?: { busReference: string; mitigationType: 'HOLD' | 'DWELL_ADJUSTMENT' | null;
+    adjustmentSeconds: number; reason: string | null }[]
 }
 export type ControllerBusInstruction = { busReference: string; instruction: string }
 export type EarlyControllerSuggestion = {

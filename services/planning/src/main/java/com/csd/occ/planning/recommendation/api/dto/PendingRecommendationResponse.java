@@ -30,7 +30,17 @@ public record PendingRecommendationResponse(
         @Schema(description = "Source observation for a refreshed recommendation", nullable = true)
         UUID revisionRawObservationId,
         @Schema(description = "Current prediction gaps in seconds between successive affected buses; empty for the original review")
-        List<Long> currentPredictionGaps) {
+        List<Long> currentPredictionGaps,
+        @Schema(description = "Historical confirmation headways in seconds, in confirmation order")
+        List<Integer> confirmationGaps,
+        @Schema(description = "Ordered suggestions tied to the reviewed snapshot; empty for older recommendations")
+        List<SuggestedBusOutcomeResponse> suggestedOutcomes) {
+
+    public record SuggestedBusOutcomeResponse(
+            String busReference,
+            @Schema(nullable = true, description = "HOLD or DWELL_ADJUSTMENT; null for no instruction") String mitigationType,
+            @Schema(description = "Proposed delay in seconds, or zero for no instruction") int adjustmentSeconds,
+            @Schema(nullable = true, description = "Reason for suggesting no instruction") String reason) {}
 
     public static PendingRecommendationResponse from(RecommendationRecord record) {
         return from(record, null);
@@ -61,6 +71,10 @@ public record PendingRecommendationResponse(
                 RecommendationExplanationResponse.from(recommendation.explanation(), diagnosisSummary),
                 RecommendationImpactResponse.from(recommendation.expectedImpact()),
                 record.revisionRawObservationId(),
-                record.mitigationContext().currentPredictionGaps());
+                record.mitigationContext().currentPredictionGaps(),
+                observed,
+                recommendation.suggestedOutcomes().stream().map(outcome -> new SuggestedBusOutcomeResponse(
+                        outcome.busReference(), outcome.mitigationType() == null ? null : outcome.mitigationType().name(),
+                        outcome.adjustmentSeconds(), outcome.reason())).toList());
     }
 }

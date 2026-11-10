@@ -146,6 +146,8 @@ class BunchingRecommendationControllerTest {
         org.mockito.Mockito.when(recommendation.targetBusReference()).thenReturn("DEMO-190-B");
         org.mockito.Mockito.when(recommendation.controlStopCode()).thenReturn("44251");
         org.mockito.Mockito.when(recommendation.adjustmentSeconds()).thenReturn(120);
+        org.mockito.Mockito.when(recommendation.suggestedOutcomes()).thenReturn(List.of(
+                new com.csd.occ.planning.recommendation.domain.SuggestedBusOutcome("DEMO-190-B", null, 0, "Manual review.")));
         org.mockito.Mockito.when(recommendation.explanation()).thenReturn(explanation);
         org.mockito.Mockito.when(recommendation.expectedImpact()).thenReturn(impact);
         org.mockito.Mockito.when(explanation.rationale()).thenReturn("Widen the gap.");
@@ -170,6 +172,12 @@ class BunchingRecommendationControllerTest {
         var page = new BunchingRecommendationController(records, scopes, diagnosisQueries).pending(0, 50);
 
         assertThat(page.items()).singleElement().satisfies(item -> {
+            assertThat(item.confirmationGaps()).containsExactly(90, 60);
+            assertThat(item.suggestedOutcomes()).singleElement().satisfies(outcome -> {
+                assertThat(outcome.busReference()).isEqualTo("DEMO-190-B");
+                assertThat(outcome.mitigationType()).isNull();
+                assertThat(outcome.reason()).isEqualTo("Manual review.");
+            });
             assertThat(item.explanation().likelyCause()).contains("Vehicle Breakdown", "Teck Whye Avenue")
                     .doesNotContain("traffic-incident:");
             assertThat(item.explanation().evidenceDetails()).singleElement()

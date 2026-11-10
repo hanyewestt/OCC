@@ -125,7 +125,8 @@ public class BunchingInstructionService {
                 throw new AdvisoryConflictException("Affected bus group changed; refresh and review it again");
         }
         var fleet = context.fleet(run);
-        if (!List.of("RUNNING", "REPLAY_COMPLETE").contains(fleet.status())) throw new AdvisoryConflictException("Run is closed");
+        if (!run.equals(fleet.demoRunId()) || !List.of("RUNNING", "REPLAY_COMPLETE").contains(fleet.status()))
+            throw new AdvisoryConflictException("Current simulation fleet is unavailable or closed");
         if (allowedReferences.stream().anyMatch(reference -> fleet.items().stream().filter(b ->
                 b.serviceId().equals(record.bunchingEvent().serviceId())
                         && b.directionId() == record.bunchingEvent().directionId()
@@ -165,6 +166,24 @@ public class BunchingInstructionService {
             if (!reviewedBusIds.equals(currentBusIds) || currentBusIds.stream().distinct().count() != currentBusIds.size())
                 throw new AdvisoryConflictException("Affected bus group changed; refresh and review it again");
         }
+        if (grouped) {
+            var delays = actions.stream().collect(java.util.stream.Collectors.toMap(
+                    ReplacementBusInstruction::busReference, ReplacementBusInstruction::seconds));
+            for (int index = 1; index < allowedReferences.size(); index++) {
+                var preceding = allowedReferences.get(index - 1);
+                var following = allowedReferences.get(index);
+                int precedingDelay = delays.get(preceding);
+                int followingDelay = delays.get(following);
+                if (precedingDelay == 0 && followingDelay == 0) continue;
+                if (!currentGroup.hasReliableGap(index - 1))
+                    throw new AdvisoryConflictException("The gap between " + preceding + " and " + following
+                            + " needs manual review before a timed adjustment can be issued");
+                if (!BunchingRecommendationPolicy.preservesGap(currentGroup.adjacentGapSeconds().get(index - 1),
+                        precedingDelay, followingDelay, record.bunchingEvent().expectedHeadwaySeconds()))
+                    throw new AdvisoryConflictException("The adjustments would make the gap between " + preceding
+                            + " and " + following + " too short");
+            }
+        }
         if (replaceInstructionId != null) {
             var predecessor = instructions.findForUpdate(replaceInstructionId).orElseThrow(AdvisoryNotFoundException::new);
             boolean busMatches = fleet.items().stream().anyMatch(b -> b.serviceId().equals(record.bunchingEvent().serviceId())
@@ -191,36 +210,28 @@ public class BunchingInstructionService {
                     && b.directionId() == record.bunchingEvent().directionId()
                     && (java.util.Objects.equals(b.busId(), action.busReference()) || java.util.Objects.equals(b.registrationNumber(), action.busReference())))
                     .toList();
-            if (buses.size() != 1 || buses.getFirst().captainUserId() == null)
+            if (buses.size() != 1 || buses.getFirst().captainUserId() == null
+                    || !"ASSIGNED".equals(buses.getFirst().assignmentStatus()))
                 throw new AdvisoryConflictException("Current captain assignment is unavailable for " + action.busReference());
             var bus = buses.getFirst();
             if (bus.progress() == null)
                 throw new AdvisoryConflictException("Current bus progress is unavailable for " + action.busReference());
-            var stops = context.route(bus.serviceId()).operators().stream().flatMap(o -> o.directions().stream())
-                    .filter(d -> d.directionId() == bus.directionId()).flatMap(d -> d.stops().stream())
-                    .filter(s -> s.stopCode().equals(recommendation.controlStopCode()) && s.stopSequence() >= bus.progress().stopSequence())
-                    .toList();
-            if (stops.size() != 1) throw new AdvisoryConflictException("Upcoming control stop unavailable or ambiguous for " + action.busReference());
-            var stop = stops.getFirst();
-            if (((grouped && action.type() == MitigationType.HOLD) || action.type() == MitigationType.SKIP_STOP) && (bus.progress().estimatedArrivalAt() == null
-                    || bus.progress().freshUntil() == null || bus.progress().observedAt() == null
-                    || bus.progress().observedAt().isAfter(clock.instant())
-                    || !clock.instant().isBefore(bus.progress().freshUntil())
-                    || !clock.instant().isBefore(bus.progress().estimatedArrivalAt())))
+            var stop = context.route(bus.serviceId()).upcomingStop(bus.directionId(),
+                    recommendation.controlStopCode(), bus.progress().stopSequence()).orElseThrow(() ->
+                    new AdvisoryConflictException("Upcoming control stop unavailable or ambiguous for " + action.busReference()));
+            var now = clock.instant();
+            if (!currentGroup.isFreshAt(now))
+                throw new AdvisoryConflictException("Current bunching evidence expired during issuance; refresh and review it again");
+            if (grouped && action.type() == MitigationType.HOLD && !currentGroup.fetchedAt().equals(bus.progress().observedAt()))
+                throw new AdvisoryConflictException("Hold requires progress from the reviewed prediction snapshot for " + action.busReference());
+            if (((grouped && action.type() == MitigationType.HOLD) || action.type() == MitigationType.SKIP_STOP)
+                    && !bus.progress().isApproachingAt(now))
                 throw new AdvisoryConflictException((action.type() == MitigationType.SKIP_STOP
                         ? "Skip stop requires a fresh prediction for an upcoming stop for "
                         : "Hold requires a fresh prediction for an upcoming stop for ") + action.busReference());
-            if (grouped && action.type() == MitigationType.DWELL_ADJUSTMENT) {
-                var progress = bus.progress();
-                var now = clock.instant();
-                if (!stop.stopCode().equals(progress.stopCode()) || stop.stopSequence() != progress.stopSequence()
-                        || !currentGroup.fetchedAt().equals(progress.observedAt())
-                        || progress.estimatedArrivalAt() == null || now.isBefore(progress.estimatedArrivalAt())
-                        || progress.boardingUntil() == null || !now.isBefore(progress.boardingUntil())
-                        || progress.freshUntil() == null || !now.isBefore(progress.freshUntil())
-                        || !currentGroup.isFreshAt(now))
-                    throw new AdvisoryConflictException("Dwell adjustment requires current boarding evidence for " + action.busReference());
-            }
+            if (grouped && action.type() == MitigationType.DWELL_ADJUSTMENT
+                    && !bus.progress().isBoardingAt(stop, currentGroup, now))
+                throw new AdvisoryConflictException("Dwell adjustment requires current boarding evidence for " + action.busReference());
             if (grouped && action.type() != MitigationType.SKIP_STOP) {
                 int position = allowedReferences.indexOf(action.busReference());
                 var gaps = currentGroup.adjacentGapSeconds();
