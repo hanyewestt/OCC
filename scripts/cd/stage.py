@@ -104,7 +104,11 @@ def stage_runtime_context(bundle: Path, service: str, output: Path) -> None:
     (output / "app.jar").write_bytes(source.read_bytes())
 
 
-NGINX_TEMPLATES = ("default.conf.template", "routes.inc.template")
+# The web image bakes the shared routing include only. Each deployment mode
+# supplies its server block: direct TLS mounts default.conf.template, the
+# CloudFront overlay mounts cloudfront.conf.template, local development
+# mounts local.conf.template over the stock Nginx image.
+NGINX_TEMPLATES = ("routes.inc.template",)
 
 
 def stage_web_context(bundle: Path, output: Path) -> None:

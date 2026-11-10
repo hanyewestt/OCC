@@ -245,6 +245,48 @@ jobs:
         run: >-
           python3 tests/system/nginx_edge_smoke.py --base-url https://127.0.0.1:18443
           --token-dir "$RUNNER_TEMP/occ-edge-jwks"
+      - name: Verify the CloudFront origin edge with a synthetic secret
+        if: inputs.suite == 'smoke'
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'synthetic-origin-secret' > "$RUNNER_TEMP/occ-edge-origin-secret"
+          chmod 600 "$RUNNER_TEMP/occ-edge-origin-secret"
+          docker run --detach --name occ-edge-ci-cfnginx \
+            --user 101:101 --read-only --security-opt no-new-privileges --cap-drop ALL \
+            --tmpfs /etc/nginx/conf.d:uid=101,gid=101,mode=1777 \
+            --tmpfs /var/cache/nginx:uid=101,gid=101,mode=1777 \
+            --tmpfs /var/run:uid=101,gid=101,mode=1777 \
+            --tmpfs /tmp:uid=101,gid=101,mode=1777 \
+            --network occ-edge-ci_app --publish 127.0.0.1:18080:18080 \
+            --env 'NGINX_ENVSUBST_FILTER=^(OCC_INGESTION_INTERNAL_URL|OCC_DISRUPTION_INTERNAL_URL|OCC_PLANNING_INTERNAL_URL|OCC_NGINX_HTTP_INTERNAL_PORT|OCC_ORIGIN_SECRET)$' \
+            --env OCC_INGESTION_INTERNAL_URL=http://ingestion:8001 \
+            --env OCC_DISRUPTION_INTERNAL_URL=http://disruption:8002 \
+            --env OCC_PLANNING_INTERNAL_URL=http://planning:8003 \
+            --env OCC_NGINX_HTTP_INTERNAL_PORT=18080 \
+            --env OCC_ORIGIN_SECRET=synthetic-origin-secret \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/routes.inc.template,target=/etc/nginx/templates/routes.inc.template,readonly" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/cloudfront.conf.template,target=/etc/nginx/templates/cloudfront.conf.template,readonly" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/frontend/dist,target=/usr/share/nginx/html,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/occ-edge-nginx.conf,target=/etc/nginx/nginx.conf,readonly" \
+            nginx:1.30.6-alpine-slim@sha256:f65ed258206d1eb6c4eb6141111715a2cf94ac0a4ec9675fc2da186f7aadb163
+          for attempt in $(seq 1 30); do
+            status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              --header 'X-OCC-Origin-Secret: synthetic-origin-secret' \
+              http://127.0.0.1:18080/_occ_edge_health || true)
+            if [[ "$status" == 204 ]]; then
+              break
+            fi
+            if [[ "$attempt" == 30 ]]; then
+              docker logs occ-edge-ci-cfnginx
+              exit 1
+            fi
+            sleep 2
+          done
+          python3 tests/system/nginx_edge_smoke.py --base-url http://127.0.0.1:18080 \
+            --token-dir "$RUNNER_TEMP/occ-edge-jwks" \
+            --origin-secret-file "$RUNNER_TEMP/occ-edge-origin-secret" \
+            --max-heartbeat-gap 120
       - name: Verify proxy rewrites and trusted header forwarding
         if: inputs.suite == 'smoke'
         run: python3 tests/system/nginx_proxy_smoke.py
@@ -283,10 +325,12 @@ jobs:
         if: always()
         run: |
           docker rm --force occ-edge-ci-nginx 2>/dev/null || true
+          docker rm --force occ-edge-ci-cfnginx 2>/dev/null || true
           docker rm --force occ-edge-ci-http 2>/dev/null || true
           docker rm --force occ-edge-ci-jwks 2>/dev/null || true
           docker compose -p occ-edge-ci --env-file .env.example \
             -f compose.yaml -f infra/compose.test.yaml -f infra/compose.workflow-test.yaml \
             -f infra/compose.dispatch-test.yaml down --remove-orphans
           rm -rf "$RUNNER_TEMP/occ-edge-jwks" \
-            "$RUNNER_TEMP/occ-edge-test.key" "$RUNNER_TEMP/occ-edge-test.crt"
+            "$RUNNER_TEMP/occ-edge-test.key" "$RUNNER_TEMP/occ-edge-test.crt" \
+            "$RUNNER_TEMP/occ-edge-origin-secret"

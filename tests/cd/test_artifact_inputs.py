@@ -166,8 +166,10 @@ class StageContextTests(CliTestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         names = sorted(str(p.relative_to(output)) for p in output.rglob("*"))
         self.assertIn(str(Path("dist") / "index.html"), names)
-        self.assertIn(str(Path("templates") / "default.conf.template"), names)
+        # The web image bakes the shared routing include only; server blocks
+        # are mounted per deployment mode.
         self.assertIn(str(Path("templates") / "routes.inc.template"), names)
+        self.assertNotIn(str(Path("templates") / "default.conf.template"), names)
         for name in names:
             self.assertTrue(name.startswith(("dist", "templates")), name)
 
