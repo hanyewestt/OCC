@@ -42,7 +42,14 @@ public interface AdvisoryContextPort {
     record Bus(String busId, String tripId, String registrationNumber, String serviceId, int directionId,
                UUID captainUserId, String assignmentStatus, Progress progress) {}
     record Progress(String stopCode, int stopSequence, Instant observedAt, int assumedSpeedKmh,
-                    List<Integer> allowedSpeedReductionsKmh, List<Integer> allowedDurationsSeconds) {}
+                    List<Integer> allowedSpeedReductionsKmh, List<Integer> allowedDurationsSeconds,
+                    Instant estimatedArrivalAt, Instant freshUntil) {
+        public Progress(String stopCode, int stopSequence, Instant observedAt, int assumedSpeedKmh,
+                List<Integer> allowedSpeedReductionsKmh, List<Integer> allowedDurationsSeconds) {
+            this(stopCode, stopSequence, observedAt, assumedSpeedKmh, allowedSpeedReductionsKmh,
+                    allowedDurationsSeconds, null, null);
+        }
+    }
     record Route(String serviceId, List<Operator> operators) {}
     record Operator(String operator, String category, List<Direction> directions) {}
     record Direction(int directionId, List<Stop> stops) {}

@@ -305,6 +305,12 @@ class IngestionStartupIT {
 
         assertThat(demoMode.enabled()).isTrue();
         assertThat(completed.status()).isEqualTo("REPLAY_COMPLETE");
+        mvc.perform(get("/internal/v1/ingestion/demo-fleet")
+                        .param("demoRunId", started.id().toString())
+                        .header("X-OCC-Peer-Token", "test-planning-to-ingestion-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].progress.estimatedArrivalAt").isNotEmpty())
+                .andExpect(jsonPath("$.items[0].progress.freshUntil").isNotEmpty());
         assertThat(simulationPage.items()).hasSize(DemoReplayScenario.STEP_COUNT);
         assertThat(simulationPage.items()).allSatisfy(snapshot -> assertThat(snapshot.arrivals())
                 .extracting(BunchingFeedService.Arrival::visitOrder).containsExactly(1, 2, 3, 4));

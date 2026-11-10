@@ -26,8 +26,8 @@ public record RecommendationDecision(
             }
         } else {
             boolean legacyDecisionWithoutOverride = overrideInstructions.isEmpty() && controllerRationale == null;
-            if (!legacyDecisionWithoutOverride && (overrideInstructions.isEmpty() || overrideInstructions.size() > 3)) {
-                throw new IllegalArgumentException("rejected decisions require 1..3 bus instructions");
+            if (!legacyDecisionWithoutOverride && (overrideInstructions.isEmpty() || overrideInstructions.size() > 100)) {
+                throw new IllegalArgumentException("rejected decisions require 1..100 bus instructions");
             }
             if (controllerRationale != null) controllerRationale = controllerRationale.trim();
             if (controllerRationale != null && controllerRationale.length() > 1000) {

@@ -1,6 +1,6 @@
 export type Identity = { subject: string; role: 'CONTROLLER' | 'CAPTAIN' | 'ADMIN' | 'UNASSIGNED' }
 
-export type InstructionType = 'BE_CAUTIOUS' | 'REDUCE_SPEED' | 'SLOW_DOWN_NEAR_STOPS' | 'HOLD' | 'DWELL_ADJUSTMENT'
+export type InstructionType = 'BE_CAUTIOUS' | 'REDUCE_SPEED' | 'SLOW_DOWN_NEAR_STOPS' | 'HOLD' | 'DWELL_ADJUSTMENT' | 'SKIP_STOP'
 export type InstructionParameters = { stopCode: string | null; stopName: string | null; stopSequence: number | null;
   subsequentStopCount: number | null; speedReductionKmh: number | null; durationSeconds: number | null }
 export type CaptainInstruction = { id: string; demoRunId: string; busId: string; type: InstructionType;

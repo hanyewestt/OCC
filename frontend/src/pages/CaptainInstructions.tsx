@@ -9,11 +9,11 @@ import { dataClassificationLabel } from '@/lib/presentation'
 import { formatSgtDateTime } from '@/lib/time'
 import { acknowledgementTimeLeft, instructionHeadline, instructionState, instructionTimeLeft } from '@/lib/captain-instructions'
 import { cn } from '@/lib/utils'
-import { Ban, CircleCheck, Clock, Gauge, Hand, TrendingDown, TriangleAlert, type LucideIcon } from 'lucide-react'
+import { Ban, CircleCheck, Clock, FastForward, Gauge, Hand, TrendingDown, TriangleAlert, type LucideIcon } from 'lucide-react'
 import { usePagedCollection } from '@/lib/paged-collection'
 
 const instructionIcons: Record<InstructionType, LucideIcon> = {
-  HOLD: Hand, DWELL_ADJUSTMENT: Clock, REDUCE_SPEED: Gauge, SLOW_DOWN_NEAR_STOPS: TrendingDown, BE_CAUTIOUS: TriangleAlert,
+  HOLD: Hand, DWELL_ADJUSTMENT: Clock, SKIP_STOP: FastForward, REDUCE_SPEED: Gauge, SLOW_DOWN_NEAR_STOPS: TrendingDown, BE_CAUTIOUS: TriangleAlert,
 }
 
 type CaptainInstructionPage = PageResult<CaptainInstruction> & { receivedAt: number }
