@@ -486,6 +486,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         {pathname.endsWith('/planning') && <ControllerPlanning recommendations={recommendationCollection} diagnosisRequests={diagnosisCollection}
           loading={loading} modeError={run.error} mode={modeValue} demoRunId={simulation?.id ?? null} token={token}
           detectedAlerts={simulation ? simulation.alerts : alertCollection.items}
+          positions={routePositions.data ?? []}
           routes={routeStops.data ?? []} pollIntervalSeconds={pollIntervalSeconds}
           gapToleranceSeconds={Math.max(30, routeIncidentGapToleranceSeconds)}
           nowMs={Date.parse(alertCollection.lastSuccessAt ?? '') || 0}

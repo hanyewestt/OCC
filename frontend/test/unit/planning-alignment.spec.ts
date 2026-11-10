@@ -352,3 +352,103 @@ test('ControllerPlanning renders supporting incident evidence with timing and di
   expect(html).toMatch(/Incident evidence:\s*(<!-- -->)?\s*evi-road-1/)
   expect(html).toContain('Bus-position evidence: evi-bus-pos-1')
 })
+
+test('ControllerPlanning renders PlanningCorridorMap with control stop, bunched buses, and fit controls in RecommendationDetail', () => {
+  const sampleRecommendation: PendingRecommendation = {
+    recommendationId: 'rec-test-1',
+    serviceId: '190',
+    directionId: 2,
+    classification: 'PREDICTED_BUNCHING',
+    status: 'AWAITING_REVIEW',
+    createdAt: '2026-11-11T03:53:58Z',
+    observedHeadwaySeconds: 600,
+    targetBusReference: 'demo-190-2',
+    affectedBusReferences: ['demo-190-1', 'demo-190-2', 'demo-190-3'],
+    detectedAt: '2026-11-11T03:53:58Z',
+    monitoredStopCode: '40191',
+    controlStopCode: '40191',
+    mitigationType: 'HOLD',
+    adjustmentSeconds: 45,
+    currentPredictionGaps: [45, 45],
+    expectedImpact: {
+      headwayBeforeSeconds: 600,
+      headwayAfterSeconds: 600,
+      passengerMinutesBefore: 120,
+      passengerMinutesAfter: 60,
+      queueBeforePassengers: 10,
+      queueAfterPassengers: 5,
+    },
+    expectedHeadwaySeconds: 600,
+    explanation: {
+      likelyCause: 'Cumulative route drift: Long-distance spacing decay on corridor.',
+      rationale: 'Holding bus 2 restores spacing.',
+      diagnosisConfidence: 0.9,
+      tradeOffs: [],
+      limitations: [],
+    },
+    suggestedOutcomes: [
+      { busReference: 'demo-190-1', mitigationType: null, adjustmentSeconds: 0, reason: 'No preceding gap in the reviewed group.' },
+      { busReference: 'demo-190-2', mitigationType: 'HOLD', adjustmentSeconds: 45, reason: 'Restore 10-minute headway.' },
+      { busReference: 'demo-190-3', mitigationType: 'HOLD', adjustmentSeconds: 45, reason: 'Maintain following spacing.' },
+    ],
+    bunchingEventId: 'evt-001',
+  }
+
+  const samplePositions = [
+    {
+      serviceId: '190',
+      computedAt: '2026-11-11T03:53:58Z',
+      sourceObservedAt: '2026-11-11T03:53:58Z',
+      maxSourceAgeSeconds: 30,
+      refreshIntervalSeconds: 30,
+      directions: [
+        {
+          operator: 'SMRT',
+          directionId: 2,
+          routeLengthM: 900,
+          buses: [
+            { order: 1, distanceAlongRouteM: 600, uncertaintyM: 10, speedMps: 8 },
+            { order: 2, distanceAlongRouteM: 605, uncertaintyM: 10, speedMps: 8 },
+            { order: 3, distanceAlongRouteM: 610, uncertaintyM: 10, speedMps: 8 },
+          ],
+        },
+      ],
+    },
+  ]
+
+  const recommendations = mockPagedCollection<PendingRecommendation, Planning['recommendations']>(
+    [sampleRecommendation],
+    { items: [sampleRecommendation], page: 0, totalItems: 1, totalPages: 1, mode: 'LIVE', demoRunId: null }
+  )
+  const diagnosisRequests = mockPagedCollection<PlanningDiagnosisRequest, PlanningDiagnosisRequestPage>(
+    [], { items: [], page: 0, totalItems: 0, totalPages: 0, mode: 'LIVE', demoRunId: null }
+  )
+
+  const html = renderToString(
+    createElement(MemoryRouter, { initialEntries: ['/controller/planning?recommendation=rec-test-1'] },
+      createElement(ControllerPlanning, {
+        recommendations,
+        diagnosisRequests,
+        loading: false,
+        modeError: '',
+        mode: 'LIVE',
+        demoRunId: null,
+        token: 'test-token',
+        detectedAlerts: [sampleAlert],
+        routes: [sampleRoute],
+        positions: samplePositions,
+        nowMs: Date.now(),
+        onPendingChange: () => {},
+        onRefresh: () => {},
+        onSaved: () => {},
+      })
+    )
+  )
+
+  expect(html).toContain('Assigned control stop &amp; corridor')
+  expect(html).toContain('Target control stop:')
+  expect(html).toMatch(/Assigned action:\s*(<!-- -->)?\s*HOLD/)
+  expect(html).toContain('Fit corridor')
+  expect(html).toContain('1 · 2 · 3')
+  expect(html).toContain('Buses bunching')
+})
