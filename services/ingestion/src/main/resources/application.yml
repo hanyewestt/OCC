@@ -43,6 +43,12 @@ springdoc:
     version: OPENAPI_3_1
 
 occ:
+  identity:
+    enabled: ${OCC_IDENTITY_ENABLED:false}
+    project-url: ${SUPABASE_PROJECT_URL:}
+    secret-key-file: ${OCC_IDENTITY_SECRET_KEY_FILE:}
+    timeout: 5s
+    directory-interval: 5m
   frontend:
     project-url: ${occ.security.supabase.project-url}
     publishable-key: ${SUPABASE_SB_PUBLISHABLE:}

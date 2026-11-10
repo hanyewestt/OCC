@@ -1,0 +1,289 @@
+package com.csd.occ.ingestion.integration;
+
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.Mockito.*;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+import com.csd.occ.ingestion.domain.*;
+import com.csd.occ.ingestion.infrastructure.config.*;
+import com.csd.occ.ingestion.infrastructure.datamall.DataMallAdapter;
+import java.time.Instant;
+import java.time.Clock;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.postgresql.PostgreSQLContainer;
+import org.testcontainers.utility.DockerImageName;
+
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {"occ.datamall.account-key=synthetic-key",
+        "occ.ingestion.import-reference-on-startup=false", "occ.ingestion.seed-targets-on-startup=false"})
+@ActiveProfiles("test")
+@AutoConfigureMockMvc
+@Testcontainers(disabledWithoutDocker = true)
+class UserDirectoryIT {
+    @Container static final PostgreSQLContainer postgres = new PostgreSQLContainer(
+            DockerImageName.parse("postgis/postgis:18-3.6").asCompatibleSubstituteFor("postgres"))
+            .withDatabaseName("occ").withUsername("occ_admin").withPassword("synthetic-admin")
+            .withInitScript("db/ingestion-test-schema.sql");
+
+    @DynamicPropertySource static void database(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", postgres::getJdbcUrl);
+        registry.add("spring.datasource.username", () -> "occ_ingestion");
+        registry.add("spring.datasource.password", () -> "synthetic-ingestion");
+    }
+
+    @MockitoBean IdentityProviderPort provider;
+    @MockitoBean DataMallAdapter dataMall;
+    @MockitoBean BusArrivalSchedule schedule;
+    @MockitoBean TrafficIncidentSchedule trafficSchedule;
+    @MockitoBean DemoReplaySchedule replaySchedule;
+    @MockitoBean PacingSchedule pacingSchedule;
+    @MockitoBean HazardSchedule hazardSchedule;
+    @MockitoBean BunchingControlPort bunching;
+    @MockitoBean Clock clock;
+    @Autowired DirectoryProjectionService projection;
+    @Autowired UserDirectoryService directory;
+    @Autowired OccUserRepository users;
+    @Autowired JdbcTemplate jdbc;
+    @Autowired MockMvc mvc;
+    @org.springframework.boot.test.web.server.LocalServerPort int port;
+    private final DirectoryActor admin = new DirectoryActor("verified-admin", OccRole.ADMIN);
+    private final Instant first = Instant.parse("2026-11-01T00:00:00Z");
+
+    @BeforeEach void resetDirectory() {
+        when(clock.instant()).thenReturn(first);
+        jdbc.update("delete from ingestion.occ_user");
+        jdbc.update("update ingestion.directory_synchronization set scan_started_at=null, synchronized_at=null where id=1");
+    }
+
+    @Test
+    void partialProviderFailurePreservesStoredUsersAndCheckpoint() {
+        var previous = user("old@example.test", OccRole.CAPTAIN, true);
+        projection.publish(first, List.of(previous));
+        when(provider.listPage(1, 1000)).thenReturn(new IdentityProviderPort.UserPage(List.of(user("new@example.test", OccRole.CAPTAIN, true)), true));
+        when(provider.listPage(2, 1000)).thenThrow(new IdentityProviderException(IdentityProviderException.Reason.UNAVAILABLE));
+        assertThatThrownBy(() -> directory.synchronize(admin)).isInstanceOf(IdentityProviderException.class);
+        assertThat(users.findById(previous.id())).get().extracting(OccUser::available).isEqualTo(true);
+        assertThat(users.count()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select scan_started_at from ingestion.directory_synchronization where id=1", Instant.class)).isEqualTo(first);
+    }
+
+    @Test
+    void fullSnapshotMarksMissingUnavailableAndAllowsReusedEmailWithDifferentIdentity() {
+        var previous = user("same@example.test", OccRole.CAPTAIN, true);
+        var replacement = user("same@example.test", OccRole.CONTROLLER, true);
+        projection.publish(first, List.of(previous));
+        when(clock.instant()).thenReturn(first.plusSeconds(20));
+        projection.publish(first.plusSeconds(10), List.of(replacement));
+        assertThat(users.findById(previous.id())).get().extracting(OccUser::available).isEqualTo(false);
+        assertThat(users.findById(replacement.id())).get().extracting(OccUser::available).isEqualTo(true);
+        assertThat(users.count()).isEqualTo(2);
+    }
+
+    @Test
+    void olderScanCannotOverwriteNewerSuccessfulPublication() {
+        var older = user("old@example.test", OccRole.CAPTAIN, true);
+        var newer = user("new@example.test", OccRole.CONTROLLER, true);
+        projection.publish(first.plusSeconds(10), List.of(newer));
+        Instant checkpoint = projection.publish(first, List.of(older));
+        assertThat(users.findById(older.id())).isEmpty();
+        assertThat(users.findById(newer.id())).get().extracting(OccUser::available).isEqualTo(true);
+        assertThat(checkpoint).isNotNull();
+    }
+
+    @Test
+    void olderScanDoesNotHideOrOverwriteAUserObservedAfterItStarted() {
+        var observed = user("observed@example.test", OccRole.CAPTAIN, true);
+        var stale = new IdentityProviderPort.User(observed.id(), "Old name", observed.email(), OccRole.UNASSIGNED,
+                false, observed.createdAt(), null, null);
+        // A future provisioning confirmation can project one user independently of the full-scan checkpoint.
+        users.save(new OccUser(observed, first.plusSeconds(10), first.plusSeconds(10)));
+        projection.publish(first, List.of(stale));
+        assertThat(users.findById(observed.id())).get().satisfies(row -> {
+            assertThat(row.available()).isTrue();
+            assertThat(row.role()).isEqualTo(OccRole.CAPTAIN);
+        });
+        projection.publish(first.plusSeconds(1), List.of());
+        assertThat(users.findById(observed.id())).get().extracting(OccUser::available).isEqualTo(true);
+    }
+
+    @Test
+    void laterStartingOverlappingScanRefreshesTheEarlierPublishedSnapshot() {
+        var initial = user("overlap@example.test", OccRole.CAPTAIN, true);
+        var later = new IdentityProviderPort.User(initial.id(), "Updated name", initial.email(), OccRole.CONTROLLER,
+                true, initial.createdAt(), null, null);
+        when(clock.instant()).thenReturn(first.plusSeconds(4));
+        projection.publish(first, List.of(initial));
+        when(clock.instant()).thenReturn(first.plusSeconds(7));
+        projection.publish(first.plusSeconds(2), List.of(later));
+        assertThat(users.findById(initial.id())).get().satisfies(row -> {
+            assertThat(row.role()).isEqualTo(OccRole.CONTROLLER);
+            assertThat(row.displayName()).isEqualTo("Updated name");
+            assertThat(row.synchronizedAt()).isEqualTo(first.plusSeconds(7));
+        });
+    }
+
+    @Test
+    void captainAssignmentComesOnlyFromTheCurrentRunningOrCompletedReplay() throws Exception {
+        var captain = user("assigned@example.test", OccRole.CAPTAIN, true);
+        projection.publish(first, List.of(captain));
+        UUID runId = UUID.randomUUID();
+        var run = new DemoRun(runId, first, "multi-route-bunching-v2", 190);
+        runRepository.save(run);
+        assignmentRepository.save(new DemoVehicleAssignment(new DemoVehicleAssignmentId(runId, "BUS-1"),
+                "190", 1, "DEMO-190-01", "SBST", "SD", "captain-code", captain.id()));
+        try {
+            mvc.perform(get("/api/v1/captains").with(actor("CONTROLLER")))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].currentAssignment").isEmpty());
+            run.startReplay();
+            runRepository.save(run);
+            mvc.perform(get("/api/v1/captains").with(actor("ADMIN")))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].currentAssignment.busId").value("BUS-1"));
+            run.complete(first.plusSeconds(1));
+            runRepository.save(run);
+            mvc.perform(get("/api/v1/admin/users/{id}", captain.id()).with(actor("ADMIN")))
+                    .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"))
+                    .andExpect(jsonPath("$.currentAssignment.demoRunId").value(runId.toString()));
+            run.close(first.plusSeconds(2));
+            runRepository.save(run);
+            mvc.perform(get("/api/v1/captains").with(actor("CONTROLLER")))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].currentAssignment").isEmpty());
+        } finally {
+            assignmentRepository.deleteById(new DemoVehicleAssignmentId(runId, "BUS-1"));
+            runRepository.deleteById(runId);
+        }
+    }
+
+    @Test
+    void pagedQueriesFilterRolesAndLiteralCaseInsensitiveSearch() throws Exception {
+        projection.publish(first, List.of(user("alpha@example.test", OccRole.ADMIN, true),
+                user("CAPTAIN%one@example.test", OccRole.CAPTAIN, true),
+                user("captain-two@example.test", OccRole.CAPTAIN, false),
+                user("unassigned@example.test", OccRole.UNASSIGNED, true)));
+        mvc.perform(get("/api/v1/admin/users").with(actor("ADMIN")).param("role", "CAPTAIN").param("search", "%ONE").param("size", "1"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalItems").value(1))
+                .andExpect(jsonPath("$.items[0].email").value("CAPTAIN%one@example.test"))
+                .andExpect(jsonPath("$.directorySynchronizedAt").isNotEmpty());
+        mvc.perform(get("/api/v1/captains").with(actor("CONTROLLER")).param("available", "true"))
+                .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.totalItems").value(1))
+                .andExpect(jsonPath("$.items[0].id").exists()).andExpect(jsonPath("$.items[0].role").doesNotExist())
+                .andExpect(jsonPath("$.items[0].createdAt").doesNotExist());
+    }
+
+    @Test
+    void captainDirectoryIncludesUnavailableAccountsUnlessAvailabilityIsFiltered() throws Exception {
+        var available = user("available@example.test", OccRole.CAPTAIN, true);
+        var unavailable = user("unavailable@example.test", OccRole.CAPTAIN, false);
+        projection.publish(first, List.of(available, unavailable, user("controller@example.test", OccRole.CONTROLLER, true)));
+        mvc.perform(get("/api/v1/captains").with(actor("CONTROLLER")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalItems").value(2))
+                .andExpect(jsonPath("$.items[1].id").value(unavailable.id().toString()))
+                .andExpect(jsonPath("$.items[1].available").doesNotExist());
+        mvc.perform(get("/api/v1/captains").with(actor("CONTROLLER")).param("available", "true"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalItems").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(available.id().toString()));
+    }
+
+    @Test
+    void apiRejectsWrongRolesInvalidPagesAndUnknownUsers() throws Exception {
+        for (String role : List.of("CONTROLLER", "CAPTAIN", "UNASSIGNED")) {
+            mvc.perform(get("/api/v1/admin/users").with(actor(role))).andExpect(status().isForbidden());
+            mvc.perform(post("/api/v1/admin/users/synchronizations").with(actor(role))).andExpect(status().isForbidden());
+        }
+        mvc.perform(get("/api/v1/admin/users")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/admin/users").with(actor("ADMIN")).param("size", "101")).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/admin/users/{id}", UUID.randomUUID()).with(actor("ADMIN"))).andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/admin/users").with(actor("ADMIN")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items").isEmpty())
+                .andExpect(jsonPath("$.directorySynchronizedAt").isEmpty());
+    }
+
+    @Test
+    void adminSynchronizesEveryProviderPageAndReceivesSafeUnavailableErrors() throws Exception {
+        var captain = user("captain@example.test", OccRole.CAPTAIN, true);
+        var administrator = user("admin@example.test", OccRole.ADMIN, true);
+        when(provider.listPage(1, 1000)).thenReturn(new IdentityProviderPort.UserPage(List.of(captain), true));
+        when(provider.listPage(2, 1000)).thenReturn(new IdentityProviderPort.UserPage(List.of(administrator), false));
+        mvc.perform(post("/api/v1/admin/users/synchronizations").with(actor("ADMIN")))
+                .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.directorySynchronizedAt").value(first.toString()));
+        assertThat(users.count()).isEqualTo(2);
+        when(provider.listPage(1, 1000)).thenThrow(new IdentityProviderException(IdentityProviderException.Reason.UNAVAILABLE));
+        mvc.perform(post("/api/v1/admin/users/synchronizations").with(actor("ADMIN")))
+                .andExpect(status().isServiceUnavailable()).andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(jsonPath("$.detail").value("Identity provider is unavailable"));
+        assertThat(users.count()).isEqualTo(2);
+        assertThat(jdbc.queryForObject("select scan_started_at from ingestion.directory_synchronization where id=1", Instant.class)).isEqualTo(first);
+    }
+
+    @Test
+    void runningApplicationServesReadinessAndRejectsUnauthenticatedDirectoryHttp() throws Exception {
+        var client = java.net.http.HttpClient.newHttpClient();
+        var base = "http://127.0.0.1:" + port;
+        var health = client.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(base + "/actuator/health/readiness")).GET().build(),
+                java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertThat(health.statusCode()).isEqualTo(200);
+        var directory = client.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(base + "/api/v1/admin/users")).GET().build(),
+                java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertThat(directory.statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void generatedAssignmentSchemasPermitBothObjectAndNull() throws Exception {
+        String contract = mvc.perform(get("/v3/api-docs").with(actor("ADMIN"))).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        var schemas = tools.jackson.databind.json.JsonMapper.builder().build().readTree(contract).path("components").path("schemas");
+        for (String name : List.of("CaptainResponse", "DirectoryUserResponse")) {
+            var assignment = schemas.path(name).path("properties").path("currentAssignment");
+            assertThat(permitsJsonType(assignment, "object", schemas)).as(name + " assigned object").isTrue();
+            assertThat(permitsJsonType(assignment, "null", schemas)).as(name + " unassigned null").isTrue();
+        }
+    }
+
+    /** Check type intersections/unions through refs; complete response examples are also JSON-Schema validated. */
+    private boolean permitsJsonType(tools.jackson.databind.JsonNode schema, String type, tools.jackson.databind.JsonNode schemas) {
+        if (schema.isMissingNode()) return false;
+        var declared = schema.path("type");
+        if (declared.isString() && !declared.asText().equals(type)) return false;
+        if (declared.isArray() && java.util.stream.StreamSupport.stream(declared.spliterator(), false)
+                .noneMatch(value -> value.asText().equals(type))) return false;
+        if (schema.has("$ref")) {
+            String reference = schema.path("$ref").asText();
+            if (!permitsJsonType(schemas.path(reference.substring(reference.lastIndexOf('/') + 1)), type, schemas)) return false;
+        }
+        if (schema.has("allOf") && java.util.stream.StreamSupport.stream(schema.path("allOf").spliterator(), false)
+                .anyMatch(branch -> !permitsJsonType(branch, type, schemas))) return false;
+        if (schema.has("anyOf") && java.util.stream.StreamSupport.stream(schema.path("anyOf").spliterator(), false)
+                .noneMatch(branch -> permitsJsonType(branch, type, schemas))) return false;
+        return !schema.has("oneOf") || java.util.stream.StreamSupport.stream(schema.path("oneOf").spliterator(), false)
+                .filter(branch -> permitsJsonType(branch, type, schemas)).count() == 1;
+    }
+
+    @Autowired DemoRunRepository runRepository;
+    @Autowired DemoVehicleAssignmentRepository assignmentRepository;
+
+    private org.springframework.test.web.servlet.request.RequestPostProcessor actor(String role) {
+        return jwt().jwt(jwt -> jwt.subject("verified-actor"))
+                .authorities(new SimpleGrantedAuthority("ROLE_" + role));
+    }
+
+    private IdentityProviderPort.User user(String email, OccRole role, boolean available) {
+        return new IdentityProviderPort.User(UUID.randomUUID(), email, email, role, available, first.minusSeconds(1), null, null);
+    }
+}
