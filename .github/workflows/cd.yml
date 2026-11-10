@@ -57,12 +57,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/bundle" "$RUNNER_TEMP/images"
+          mkdir -p "$RUNNER_TEMP/bundle" "$RUNNER_TEMP/images" "$RUNNER_TEMP/artifacts"
           for name in occ-jar-ingestion occ-jar-disruption occ-jar-planning \
                       occ-web-dist occ-image-ingestion occ-image-disruption \
                       occ-image-planning occ-image-db-setup occ-image-web; do
             gh run download "${{ github.event.workflow_run.id }}" --name "$name" \
-              --dir "$RUNNER_TEMP/bundle"
+              --dir "$RUNNER_TEMP/artifacts/$name"
+            cp -n "$RUNNER_TEMP/artifacts/$name"/* "$RUNNER_TEMP/bundle/"
           done
           for component in ingestion disruption planning db-setup web; do
             mv "$RUNNER_TEMP/bundle/occ-image-${component}.tar" \
