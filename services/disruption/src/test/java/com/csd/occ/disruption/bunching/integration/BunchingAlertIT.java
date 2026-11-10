@@ -87,6 +87,30 @@ class BunchingAlertIT {
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().string(contract));
     }
 
+    @Test
+    void packagesTheCommittedContractAndSwaggerUiAsStaticResources() throws Exception {
+        // springdoc stays on the test classpath and owns /swagger-ui/index.html inside this
+        // context, so assert the packaged bytes: the runtime image serves exactly these.
+        var ui = getClass().getResourceAsStream("/static/swagger-ui/index.html");
+        org.assertj.core.api.Assertions.assertThat(ui).as("packaged Swagger UI").isNotNull();
+        var html = new String(ui.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        org.assertj.core.api.Assertions.assertThat(html).doesNotContain("${").doesNotContain("@project.artifactId@")
+                .contains("/v3/disruption.json");
+        var bundle = java.util.regex.Pattern.compile("src=\"(/webjars/swagger-ui/[^\"]+/swagger-ui-bundle\\.js)\"")
+                .matcher(html);
+        org.assertj.core.api.Assertions.assertThat(bundle.find()).as("Swagger UI bundle path").isTrue();
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(bundle.group(1))
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt()
+                                .authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/v3/disruption.json")
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt()
+                                .authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.info.title")
+                        .value("OCC Disruption API"));
+    }
+
     @BeforeEach
     void reset() { jdbc.update("UPDATE disruption.consumer_state SET mode='LIVE', demo_run_id=null, updated_at=?", java.sql.Timestamp.from(NOW.minusSeconds(3600))); jdbc.execute("TRUNCATE disruption.hazard_state, disruption.planning_outbox, disruption.bunching_diagnosis_link, disruption.bunching_diagnosis_correlation, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption, disruption.source_processing_state"); }
 
