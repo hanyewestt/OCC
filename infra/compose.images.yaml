@@ -1,0 +1,27 @@
+# Immutable-image deployment overlay. Pin every OCC-built image with a
+# registry digest and drop the source/dist mounts the web image already
+# bakes. TLS termination stays configurable by later overlays; this file
+# never requires TLS material. PostgreSQL/PostGIS remains a pinned upstream
+# image from the base Compose file and is never built by OCC.
+services:
+  ingestion:
+    image: ${OCC_INGESTION_IMAGE:?set OCC_INGESTION_IMAGE to an immutable registry digest}
+    pull_policy: always
+
+  disruption:
+    image: ${OCC_DISRUPTION_IMAGE:?set OCC_DISRUPTION_IMAGE to an immutable registry digest}
+    pull_policy: always
+
+  planning:
+    image: ${OCC_PLANNING_IMAGE:?set OCC_PLANNING_IMAGE to an immutable registry digest}
+    pull_policy: always
+
+  db-setup:
+    image: ${OCC_DB_SETUP_IMAGE:?set OCC_DB_SETUP_IMAGE to an immutable registry digest}
+    pull_policy: always
+
+  nginx:
+    image: ${OCC_WEB_IMAGE:?set OCC_WEB_IMAGE to an immutable registry digest}
+    pull_policy: always
+    # The web image bakes the frontend build and routing templates.
+    volumes: !reset []
