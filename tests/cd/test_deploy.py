@@ -245,7 +245,10 @@ exit 0
         (self.runtime / "deployment.env").write_text(
             "POSTGRES_PASSWORD=synthetic\nPOSTGRES_USER=occ_admin\nPOSTGRES_DB=occ\n"
             "OCC_INGESTION_INTERNAL_PORT=8001\nOCC_DISRUPTION_INTERNAL_PORT=8002\n"
-            "OCC_PLANNING_INTERNAL_PORT=8003\n",
+            "OCC_PLANNING_INTERNAL_PORT=8003\n"
+            # A placeholder imported from .env must never override the release pins.
+            "OCC_INGESTION_IMAGE=registry.example.invalid/occ/ingestion@sha256:"
+            + "0" * 64 + "\n",
             encoding="utf-8")
 
 
@@ -331,6 +334,15 @@ class ApplyTests(DeployTestBase):
         self.assertIn("--profile edge", joined)
         self.assertIn("--profile setup run --rm --no-deps db-setup", joined)
         self.assertIn("compose.host-data.yaml", joined)
+
+    def test_release_manifest_images_override_imported_placeholders(self):
+        release = self.sandbox.write_release("rel-a-1", REVISION_A)
+        result = self.sandbox.deploy(release)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        compose_env = (self.sandbox.runtime / "env").read_text(encoding="utf-8")
+        # The imported .env placeholder is dropped; the manifest pin remains.
+        self.assertNotIn("registry.example.invalid", compose_env)
+        self.assertIn("OCC_INGESTION_IMAGE=", compose_env)
 
     def test_public_smoke_sends_the_origin_secret(self):
         release = self.sandbox.write_release("rel-a-1", REVISION_A)
