@@ -47,10 +47,7 @@ Commit classification follows [commit convention](commit-convention.md):
 classify by behavior, not file extension. Deployment-affecting commits —
 workflows, Dockerfiles and build tooling, runtime Compose/Nginx/CloudFront
 configuration, database setup/migrations and CD/lifecycle scripts — always run
-CI/CD on `main`, even with no service or frontend source edits. The automatic
-verify/release/deploy workflows introduced by the EC2 CD work consume this
-classification, so infrastructure-only or workflow-only changes reach the
-release path without service edits.
+CI/CD on `main`, even with no service or frontend source edits.
 
 Commits that are exclusively documentation, agent prose or local launchers
 keep the `[skip ci]` marker. GitHub suppresses push workflows for those
@@ -59,6 +56,30 @@ deployment-affecting commit, manually dispatch the verification workflow for
 that commit. If a docs-only skipped run leaves required checks pending on a
 pull request, add a normal non-skipped commit or validate manually according
 to branch protection.
+
+### Branch protection migration for the CD pipeline
+
+Pushes to `main` no longer run `Core CI` directly: they run
+**Main verification**, which invokes the same reusable verification once for
+the exact pushed SHA. Pull requests continue to run `Core CI` with unchanged
+job names. In branch protection:
+
+- Pull-request required checks keep their existing `Core CI` names (including
+  the two system caller jobs' `System verification` checks).
+- Required checks for pushes to `main`, if your protection rules target them,
+  move from the `Core CI` names to the same names under the
+  `Main verification` caller workflow. Workflow files do not change
+  branch-protection settings automatically; update the rules in the
+  repository settings when adopting the CD pipeline.
+- The **Release and deploy** workflow runs after every successful Main
+  verification on `main`. Its publish, scan and deploy jobs use the
+  `production` environment (main-only, no per-push reviewers) and the
+  deployment role secrets; pull-request jobs never see them. Its mutation
+  runs are serialized in one concurrency group and are never cancelled.
+
+The Extended verification workflow keeps its path-filtered, non-universal
+semantics, and its runs still build from source with their isolated synthetic
+providers.
 
 All system jobs reuse
 [`system-verification.yml`](../.github/workflows/system-verification.yml).

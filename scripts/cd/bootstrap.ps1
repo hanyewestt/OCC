@@ -205,6 +205,7 @@ if ($LASTEXITCODE -ne 0) {
 & gh secret set OCC_DEPLOY_ROLE_ARN --body $outputs["DeployRoleArn"] --repo $Repository --env production
 & gh secret set OCC_RELEASE_BUCKET --body $outputs["ReleaseBucketName"] --repo $Repository --env production
 & gh secret set OCC_REGION --body $Region --repo $Repository --env production
+& gh secret set OCC_INSTANCE_ID --body $outputs["InstanceId"] --repo $Repository --env production
 foreach ($component in @("ingestion", "disruption", "planning", "db-setup", "web")) {
     $key = "OCC_" + ($component.ToUpper() -replace "-", "_") + "_REPOSITORY"
     & gh secret set $key --body $outputs[$component[0].ToString().ToUpper() + $component.Substring(1) + "RepositoryUri"] --repo $Repository --env production
