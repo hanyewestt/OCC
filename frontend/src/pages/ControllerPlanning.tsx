@@ -63,8 +63,14 @@ function RecommendationBunchingGaps({ recommendation, alerts }: { recommendation
   })
   return <div>{!!predictionGaps?.length && <div className="mb-3">
     <p className="text-xs text-muted-foreground">Reviewed prediction gaps</p>
-    <ul className="mt-1 space-y-1 font-medium tabular-nums">{predictionGaps.map((gap, index) =>
-      <li key={buses[index + 1]}>{buses[index]} to {buses[index + 1]} · {seconds(gap)}</li>)}</ul>
+    <ul className="mt-1 space-y-1 font-medium tabular-nums">{predictionGaps.map((gap, index) => {
+      const outcomes = recommendation.suggestedOutcomes
+      const preceding = outcomes?.find(item => item.busReference === buses[index])?.adjustmentSeconds ?? 0
+      const following = outcomes?.find(item => item.busReference === buses[index + 1])?.adjustmentSeconds ?? 0
+      return <li key={buses[index + 1]}>{buses[index]} to {buses[index + 1]} · {seconds(gap)}
+        {(preceding > 0 || following > 0) && <span className="text-muted-foreground"> · {seconds(gap + following - preceding)} projected</span>}
+      </li>
+    })}</ul>
   </div>}<p className="text-xs text-muted-foreground">{predictionGaps?.length ? 'Historical confirmation gaps' : 'Observed bunching gaps'}</p>
     <ul className="mt-1 space-y-1 font-medium tabular-nums">{predictionGaps?.length && recommendation.confirmationGaps?.length
       ? recommendation.confirmationGaps.map((gap, index) => <li key={index}>Confirmation {index + 1} · {seconds(gap)}</li>)
@@ -101,9 +107,8 @@ function initialBusInstructions(recommendation: PendingRecommendation): BusRepla
     const outcome = recommendation.suggestedOutcomes?.find(item => item.busReference === busReference)
     if (outcome) return { busReference, action: outcome.mitigationType ?? 'NONE',
       adjustmentSeconds: outcome.adjustmentSeconds, noInstructionReason: outcome.reason ?? '' }
-    return { busReference, ...initial,
-      action: busReference === recommendation.targetBusReference &&
-        (buses.length === 1 || recommendation.mitigationType === 'HOLD') ? initial.action : 'NONE' }
+    return buses.length === 1 ? { busReference, ...initial }
+      : { busReference, action: 'NONE', adjustmentSeconds: 0, noInstructionReason: '' }
   })
 }
 
@@ -709,7 +714,8 @@ export function ControllerPlanning({
             <BunchedPairs alert={detectedAlerts.find(alert => alert.serviceId === item.serviceId && alert.directionId === item.directionId &&
               alert.stopCode === item.monitoredStopCode && alert.detectedAt === item.detectedAt)} />
             <p className="text-xs text-muted-foreground">{item.suggestedOutcomes?.length ? `Suggested outcomes for ${item.suggestedOutcomes.length} buses`
-              : `${item.mitigationType.replaceAll('_', ' ')} · Target: ${item.targetBusReference}`}</p>
+              : affectedBuses(item).length > 1 ? 'Refresh for current suggestions'
+                : `${item.mitigationType.replaceAll('_', ' ')} · Target: ${item.targetBusReference}`}</p>
           </button>)}
           {!visibleWithRetained.length && !visibleCorridors.length && (
             <div className="space-y-2 p-6 text-center text-sm text-muted-foreground">
@@ -941,6 +947,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
   const [editorOpen, setEditorOpen] = useState(false)
   const [discardOpen, setDiscardOpen] = useState(false)
   const hasBusSuggestions = !!selected.suggestedOutcomes?.length
+  const showsLegacySuggestion = !hasBusSuggestions && affectedBuses(selected).length === 1
   const [instructions, setInstructions] = useState<BusReplacement[]>(() => initialBusInstructions(selected))
   const [rationale, setRationale] = useState('')
   const [openingDraft, setOpeningDraft] = useState<{ instructions: BusReplacement[]; rationale: string } | null>(null)
@@ -1129,29 +1136,32 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
           <div><p className="text-xs text-muted-foreground">Diagnosis</p><p className="mt-1 font-medium">{selected.explanation.likelyCause}</p></div>
           <div className="grid gap-4 text-sm sm:min-w-40">
             <RecommendationBunchingGaps recommendation={selected} alerts={detectedAlerts} />
-            <div><p className="text-xs text-muted-foreground">Target gap</p><p className="mt-1 font-medium tabular-nums">{seconds(selected.expectedHeadwaySeconds)}</p></div>
+            <div><p className="text-xs text-muted-foreground">Expected headway</p><p className="mt-1 font-medium tabular-nums">{seconds(selected.expectedHeadwaySeconds)}</p></div>
           </div>
         </div>
 
-        <section aria-labelledby="affected-buses" className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 id="affected-buses" className="text-sm font-medium">Buses bunching</h3>{!hasBusSuggestions && <span className="text-xs text-muted-foreground">Expected gap {seconds(selected.expectedImpact.headwayAfterSeconds)}</span>}</div>
+        <section aria-labelledby="affected-buses" className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 id="affected-buses" className="text-sm font-medium">Buses bunching</h3>{showsLegacySuggestion && <span className="text-xs text-muted-foreground">Expected gap {seconds(selected.expectedImpact.headwayAfterSeconds)}</span>}</div>
+          {!hasBusSuggestions && affectedBuses(selected).length > 1 && <p className="text-sm text-muted-foreground">
+            Current suggestions are unavailable. Select Refresh bus group to calculate recovery timing from current predictions.
+          </p>}
           <div className="divide-y rounded-lg border">{affectedBuses(selected).map(busReference => {
             const outcome = selected.suggestedOutcomes?.find(item => item.busReference === busReference)
             const instruction = outcome
               ? outcome.mitigationType
                 ? suggestedInstruction(selected, outcome)
                 : `No instruction. ${outcome.reason ?? ''}`
-              : busReference === selected.targetBusReference && !hasBusSuggestions
+              : showsLegacySuggestion
                 ? suggestedInstruction(selected) : 'No individual instruction proposed.'
             return <div key={busReference} className="grid gap-1 p-4 sm:grid-cols-[minmax(10rem,0.35fr)_1fr] sm:gap-4"><p className="font-medium">{busReference}</p><p className="text-sm text-muted-foreground">{instruction}</p></div>
           })}</div>
         </section>
 
-        {!hasBusSuggestions && <div className="grid gap-5 border-t pt-4 sm:grid-cols-2"><div><h3 className="text-sm font-medium">Why this action</h3><p className="mt-2 text-sm text-muted-foreground">{selected.explanation.rationale}</p></div><dl className="space-y-2 text-sm"><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Passenger minutes</dt><dd>{selected.expectedImpact.passengerMinutesBefore} → {selected.expectedImpact.passengerMinutesAfter}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Queue passengers</dt><dd>{selected.expectedImpact.queueBeforePassengers} → {selected.expectedImpact.queueAfterPassengers}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Adjustment</dt><dd>{selected.adjustmentSeconds} seconds</dd></div></dl></div>}
+        {showsLegacySuggestion && <div className="grid gap-5 border-t pt-4 sm:grid-cols-2"><div><h3 className="text-sm font-medium">Why this action</h3><p className="mt-2 text-sm text-muted-foreground">{selected.explanation.rationale}</p></div><dl className="space-y-2 text-sm"><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Passenger minutes</dt><dd>{selected.expectedImpact.passengerMinutesBefore} → {selected.expectedImpact.passengerMinutesAfter}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Queue passengers</dt><dd>{selected.expectedImpact.queueBeforePassengers} → {selected.expectedImpact.queueAfterPassengers}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Adjustment</dt><dd>{selected.adjustmentSeconds} seconds</dd></div></dl></div>}
 
         <details className="border-t pt-4"><summary className="cursor-pointer text-sm font-medium">Evidence and limitations</summary>
           <div className="mt-4 space-y-4">
             {!!selected.explanation.evidenceDetails?.length && <div><h3 className="text-sm font-medium">Supporting incident evidence</h3><RecommendationEvidenceList items={selected.explanation.evidenceDetails} /></div>}
-            <div className="grid gap-5 sm:grid-cols-2">{!hasBusSuggestions && <div><h3 className="text-sm font-medium">Trade-offs</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.tradeOffs.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}<div><h3 className="text-sm font-medium">Limitations</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.limitations.map((item, index) => <li key={index}>{item}</li>)}</ul></div></div>
+            <div className="grid gap-5 sm:grid-cols-2">{showsLegacySuggestion && <div><h3 className="text-sm font-medium">Trade-offs</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.tradeOffs.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}<div><h3 className="text-sm font-medium">Limitations</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.limitations.map((item, index) => <li key={index}>{item}</li>)}</ul></div></div>
           </div>
         </details>
 

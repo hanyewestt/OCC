@@ -46,6 +46,27 @@ public class BunchingRecommendationRefreshService {
             throw new AdvisoryConflictException("This recommendation already has a decision");
         }
 
+        var replacement = reviewCurrentGroup(previous, run, UUID.randomUUID());
+        if (replacement == previous) return previous;
+        if (!records.supersede(id, replacement, replacement.revisionRawObservationId())) {
+            throw new AdvisoryConflictException("The recommendation changed while it was being refreshed");
+        }
+        return replacement;
+    }
+
+    RecommendationRecord initialReview(RecommendationRecord original) {
+        if (original.classification() != SourceClassification.SIMULATION
+                || original.mitigationContext().affectedBusReferences().size() < 2) return original;
+        try {
+            var scope = scopes.current();
+            return scope == null || scope.demoRunId() == null ? original
+                    : reviewCurrentGroup(original, scope.demoRunId(), original.idempotencyKey());
+        } catch (AdvisoryConflictException | com.csd.occ.planning.diagnosis.domain.PlanningScopePort.UnavailableException unavailable) {
+            return original;
+        }
+    }
+
+    private RecommendationRecord reviewCurrentGroup(RecommendationRecord previous, UUID run, UUID revisionId) {
         var event = previous.bunchingEvent();
         AdvisoryContextPort.CurrentBunchingGroup group;
         try {
@@ -97,15 +118,10 @@ public class BunchingRecommendationRefreshService {
         int gap = mitigation.targetHeadwaySeconds(event);
         var impact = new SimulatedImpactEstimate(gap,
                 gap + Math.max(0, Math.min(event.expectedHeadwaySeconds() - gap, mitigation.maximumHoldSeconds())), 0, 0, BigDecimal.ZERO, BigDecimal.ZERO);
-        UUID revisionId = UUID.randomUUID();
         var recommendation = policy.evaluate(revisionId, previous.classification(),
                 event, previous.diagnosis(), mitigation, impact, suggestions)
                 .orElseThrow(() -> new AdvisoryConflictException("Current predictions do not support a hold recommendation"));
-        var replacement = new RecommendationRecord(revisionId, previous.requestHash(), previous.requestId(),
+        return new RecommendationRecord(revisionId, previous.requestHash(), previous.requestId(),
                 previous.classification(), event, previous.diagnosis(), mitigation, recommendation, now, group.rawObservationId());
-        if (!records.supersede(id, replacement, group.rawObservationId())) {
-            throw new AdvisoryConflictException("The recommendation changed while it was being refreshed");
-        }
-        return replacement;
     }
 }

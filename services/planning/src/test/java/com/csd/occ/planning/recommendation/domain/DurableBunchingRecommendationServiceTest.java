@@ -93,6 +93,8 @@ class DurableBunchingRecommendationServiceTest {
             RecommendationRecordPort records,
             ModelInvocationRecordPort modelInvocations) {
         Clock clock = Clock.fixed(Instant.parse("2026-09-28T00:00:00Z"), ZoneOffset.UTC);
-        return new DurableBunchingRecommendationService(recommendations, records, modelInvocations, clock);
+        var reviews = org.mockito.Mockito.mock(BunchingRecommendationRefreshService.class);
+        org.mockito.Mockito.when(reviews.initialReview(org.mockito.ArgumentMatchers.any())).thenAnswer(call -> call.getArgument(0));
+        return new DurableBunchingRecommendationService(recommendations, records, modelInvocations, clock, reviews);
     }
 }

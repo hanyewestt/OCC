@@ -1241,8 +1241,8 @@ class AdvisoryPersistenceIT {
                 .andExpect(jsonPath("$.revisionRawObservationId").value(snapshotId.toString()))
                 .andExpect(jsonPath("$.suggestedOutcomes.length()").value(3))
                 .andExpect(jsonPath("$.suggestedOutcomes[0].reason").value("No preceding gap in the reviewed group."))
-                .andExpect(jsonPath("$.suggestedOutcomes[1].mitigationType").value("HOLD"))
-                .andExpect(jsonPath("$.suggestedOutcomes[1].adjustmentSeconds").value(10))
+                .andExpect(jsonPath("$.suggestedOutcomes[1].reason").value("The preceding gap already meets the recovery target."))
+                .andExpect(jsonPath("$.suggestedOutcomes[1].adjustmentSeconds").value(0))
                 .andExpect(jsonPath("$.confirmationGaps[0]").value(276))
                 .andExpect(jsonPath("$.currentPredictionGaps[0]").value(590));
         var revisionId = records.findRevision(originalId).orElseThrow().recommendationId();
@@ -1256,8 +1256,8 @@ class AdvisoryPersistenceIT {
         assertThat(revision.recommendation().adjustmentSeconds()).isEqualTo(30);
         assertThat(revision.recommendation().suggestedOutcomes()).containsExactly(
                 new SuggestedBusOutcome("lead", null, 0, "No preceding gap in the reviewed group."),
-                new SuggestedBusOutcome("middle", MitigationType.HOLD, 10, null),
-                new SuggestedBusOutcome("tail", MitigationType.HOLD, 30, null));
+                new SuggestedBusOutcome("middle", null, 0, "The preceding gap already meets the recovery target."),
+                new SuggestedBusOutcome("tail", null, 0, "The preceding gap already meets the recovery target."));
         assertThatThrownBy(() -> bunchingInstructions.approveAndIssue(originalId, "controller"))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("superseded");
 

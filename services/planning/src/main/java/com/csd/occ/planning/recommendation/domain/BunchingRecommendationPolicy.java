@@ -14,6 +14,7 @@ public final class BunchingRecommendationPolicy {
     public static final int SIMULATION_MAXIMUM_HOLD_SECONDS = 120;
     public static final int SIMULATION_MAXIMUM_DWELL_SECONDS = 75;
     private static final int ABSOLUTE_ADJUSTMENT_LIMIT_SECONDS = 120;
+    private static final int SIMULATION_RECOVERY_GAP_SECONDS = 90;
 
     public Optional<ValidatedMitigationRecommendation> evaluate(
             UUID recommendationId,
@@ -82,16 +83,51 @@ public final class BunchingRecommendationPolicy {
             long gap = group.adjacentGapSeconds().get(index - 1);
             outcomes.add(suggestOutcome(bus, expectedHeadway - gap, group, fleet, route, now));
         }
-        // Resolve the following bus first so a removed delay cannot leave an earlier suggestion unsafe.
-        for (int index = outcomes.size() - 2; index > 0; index--) {
-            var outcome = outcomes.get(index);
-            if (outcome.adjustmentSeconds() > 0 && !preservesGap(group.adjacentGapSeconds().get(index),
-                    outcome.adjustmentSeconds(), outcomes.get(index + 1).adjustmentSeconds(), expectedHeadway)) {
-                outcomes.set(index, new SuggestedBusOutcome(outcome.busReference(), null, 0,
-                        "The adjustment would make the following gap too short."));
+        int recoveryTarget = Math.min(expectedHeadway, SIMULATION_RECOVERY_GAP_SECONDS);
+        var gaps = group.adjacentGapSeconds();
+        var delays = new int[buses.size()];
+        // A bus that cannot take a timed action fixes the boundary of an adjustable run.
+        for (int start = 1; start < outcomes.size(); ) {
+            if (outcomes.get(start).adjustmentSeconds() == 0) {
+                start++;
+                continue;
             }
+            int end = start;
+            while (end + 1 < outcomes.size() && outcomes.get(end + 1).adjustmentSeconds() > 0) end++;
+            int low = 0;
+            int high = recoveryTarget;
+            while (low < high) {
+                int target = (low + high + 1) / 2;
+                if (planRecovery(outcomes, gaps, expectedHeadway, start, end, target, delays)) low = target;
+                else high = target - 1;
+            }
+            planRecovery(outcomes, gaps, expectedHeadway, start, end, low, delays);
+            for (int index = start; index <= end; index++) {
+                var outcome = outcomes.get(index);
+                int delay = delays[index];
+                outcomes.set(index, delay > 0 ? new SuggestedBusOutcome(outcome.busReference(), outcome.mitigationType(), delay, null)
+                        : new SuggestedBusOutcome(outcome.busReference(), null, 0, gaps.get(index - 1) >= recoveryTarget
+                                ? "The preceding gap already meets the recovery target."
+                                : "The timed adjustment cannot improve the gap without shrinking a neighboring gap."));
+            }
+            start = end + 1;
         }
         return List.copyOf(outcomes);
+    }
+
+    /** Find the least delay that meets the proposed target at each adjustable gap. */
+    private boolean planRecovery(List<SuggestedBusOutcome> outcomes, List<Long> gaps, int expectedHeadway,
+            int start, int end, int target, int[] delays) {
+        int precedingDelay = 0;
+        for (int index = start; index <= end; index++) {
+            long gap = gaps.get(index - 1);
+            long minimumGap = Math.max(target, Math.min(gap, expectedHeadway));
+            long delay = Math.max(0, minimumGap - gap + precedingDelay);
+            if (delay > outcomes.get(index).adjustmentSeconds()) return false;
+            delays[index] = (int) delay;
+            precedingDelay = delays[index];
+        }
+        return end == outcomes.size() - 1 || preservesGap(gaps.get(end), precedingDelay, 0, expectedHeadway);
     }
 
     public static boolean preservesGap(long originalGap, int precedingDelay, int followingDelay, int expectedHeadway) {

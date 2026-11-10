@@ -15,16 +15,18 @@ public class DurableBunchingRecommendationService {
     private final RecommendationRecordPort records;
     private final ModelInvocationRecordPort modelInvocations;
     private final Clock clock;
+    private final BunchingRecommendationRefreshService reviews;
 
     public DurableBunchingRecommendationService(
             BunchingRecommendationService recommendations,
             RecommendationRecordPort records,
             ModelInvocationRecordPort modelInvocations,
-            Clock clock) {
+            Clock clock, BunchingRecommendationRefreshService reviews) {
         this.recommendations = recommendations;
         this.records = records;
         this.modelInvocations = modelInvocations;
         this.clock = clock;
+        this.reviews = reviews;
     }
 
     @Transactional
@@ -49,7 +51,7 @@ public class DurableBunchingRecommendationService {
 
         return recommendations.evaluate(idempotencyKey, classification, event, diagnosis)
                 .map(decision -> persistOrReplay(
-                        new RecommendationRecord(
+                        reviews.initialReview(new RecommendationRecord(
                                 idempotencyKey,
                                 requestHash,
                                 requestId,
@@ -58,7 +60,7 @@ public class DurableBunchingRecommendationService {
                                 diagnosis,
                                 decision.mitigationContext(),
                                 decision.recommendation(),
-                                Instant.now(clock)),
+                                Instant.now(clock))),
                         decision.modelInvocation()));
     }
 
