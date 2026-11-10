@@ -57,12 +57,16 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      # Candidate runs reuse the verified dist but still need the checked-in
+      # dependencies for the Playwright startup check.
+      - name: Install frontend dependencies
+        if: inputs.suite != 'contracts'
+        working-directory: frontend
+        run: npm ci
       - name: Build React static assets
         if: inputs.suite != 'contracts' && inputs.artifact-run-id == ''
         working-directory: frontend
-        run: |
-          npm ci
-          npm run build
+        run: npm run build
       - name: Start isolated application stack
         run: |
           set -euo pipefail
