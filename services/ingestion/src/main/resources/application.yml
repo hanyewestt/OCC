@@ -37,6 +37,7 @@ management:
           include: livenessState
         readiness:
           include: readinessState,db
+# Read by the test-scope spec generator during contract export; the runtime has no springdoc.
 springdoc:
   api-docs:
     version: OPENAPI_3_1

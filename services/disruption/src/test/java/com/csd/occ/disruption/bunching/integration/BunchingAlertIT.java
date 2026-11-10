@@ -88,27 +88,28 @@ class BunchingAlertIT {
     }
 
     @Test
-    void packagesTheCommittedContractAndSwaggerUiAsStaticResources() throws Exception {
-        // springdoc stays on the test classpath and owns /swagger-ui/index.html inside this
-        // context, so assert the packaged bytes: the runtime image serves exactly these.
-        var ui = getClass().getResourceAsStream("/static/swagger-ui/index.html");
-        org.assertj.core.api.Assertions.assertThat(ui).as("packaged Swagger UI").isNotNull();
-        var html = new String(ui.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-        org.assertj.core.api.Assertions.assertThat(html).doesNotContain("${").doesNotContain("@project.artifactId@")
+    void servesTheStaticContractAndSwaggerUi() throws Exception {
+        var admin = org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt()
+                .authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN"));
+        var ui = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .get("/swagger-ui/index.html").with(admin))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        org.assertj.core.api.Assertions.assertThat(ui).doesNotContain("${").doesNotContain("@project.artifactId@")
                 .contains("/v3/disruption.json");
         var bundle = java.util.regex.Pattern.compile("src=\"(/webjars/swagger-ui/[^\"]+/swagger-ui-bundle\\.js)\"")
-                .matcher(html);
+                .matcher(ui);
         org.assertj.core.api.Assertions.assertThat(bundle.find()).as("Swagger UI bundle path").isTrue();
-        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(bundle.group(1))
-                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt()
-                                .authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN"))))
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(bundle.group(1)).with(admin))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
-        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/v3/disruption.json")
-                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt()
-                                .authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_ADMIN"))))
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/v3/disruption.json").with(admin))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.info.title")
                         .value("OCC Disruption API"));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/swagger-ui.html").with(admin))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().is3xxRedirection())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .redirectedUrl("/swagger-ui/index.html"));
     }
 
     @BeforeEach

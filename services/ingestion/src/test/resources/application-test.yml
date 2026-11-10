@@ -23,3 +23,8 @@ occ:
     peer-clients:
       disruption-token: test-ingestion-to-disruption-token
       planning-token: test-ingestion-to-planning-token
+
+# The runtime has no springdoc; disable its UI so tests exercise the static wiring.
+springdoc:
+  swagger-ui:
+    enabled: false
