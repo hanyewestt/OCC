@@ -10,8 +10,8 @@ export interface LatLng {
  */
 export const BUNDLED_ROUTE_POLYLINES: Record<string, string[]> = {
   '190': [
+    '{umGqxexRiABPnJVn@hA`Al@RrH}AmD{PdGmDr@u@pH}Sj@}BMcFbEqPdB_BjBo@zDWbDXfB_@iDgIkFsPkHkRa@mCCiCf@kDb@iAp]sp@l@cDj@cP\\aBVWnA]b@HhCrBlANdJcAxOkCbJgAfZqCjLyC`FgBfFkCpF}DrEoEpEaGvMoU~DsEvG{ExAcBb@{Af@iNb@eDv@eDrAeDrAuBxJcKhf@kd@z_@gc@v@sA|AqEhAoG|@sCnPi_@xGoSzCyEvEqE|@iBd@sCC}C_@kBa@Sk@@a@j@Ap@j@nB^PfGtAnCDzEW~H~ChIjB|@Bn^mC~Ba@xA_A`DgFxFq\\Lc@fAgA`Bs@bN_A|RnG~CZrCoF~J{TzDkKtOmr@MeF\\gBlOeSdHjGdH|CjKpD|E`CpK~Hru@xl@lAvAzEvIFf@hHnJJrBYfADd@a@pE`@rGfAk@Ve@k@cG',
     'uexF_}vxRj@bGWd@gAj@a@sG`@qEEe@XgAKsBiHoJGg@{EwImAwAsu@yl@qK_I}EaCkKqDeH}CeHkGmOdS]fBLdFuOlr@{DjK_KzTsCnF_D[}RoGcN~@aBr@gAfAMb@yFp\\aDfFyA~@_C`@o^lC}@CiIkB_I_D{EVoCEgGuA_@Qk@oB@q@`@k@j@A`@R^jBB|Ce@rC}@hBwEpE{CxEyGnSoPh_@}@rCiAnG}ApEw@rA{_@fc@if@jd@yJbKsAtBsAdDw@dDc@dDg@hNc@zAyAbBwGzE_ErEwMnUqE`GsEnEqF|DgFjCaFfBkLxCgZpCcJfAyOjCeJbAmAOiCsBc@IoA\\WV]`Bk@bPm@bDq]rp@c@hAg@jDBhC`@lCjHjRjFrPhDfIgB^cDY{DVkBn@eB~AcEpPLbFk@|BqH|Ss@t@eGlDlDzPsH|Am@SiAaAWo@QoJhAC',
-    'uexF_}vxRj@bGWd@gAj@a@eIo@uAjAoBXgAKsBwIyKoGgKuGwEwy@gp@Ik@_EuBkKqDeH}CyAbD_CmAm@HkBnBqDzBkExFAlAlAfBIxBkCvLsC~Eo@bB_Ghc@~AxAJnBQn@q@f@_@?}BaAeBhDyGlH]f@Dd@vBjB_C|CeAtBsBoAeE_Es@_@oKqDqGQyNTeAf@w@tAyFp\\aDfFyA~@qGz@}YrBwBSoG{A_I_D{EVoCEkA\\eCxDoGtFwCzEqG~R_Pr]y@`CaC~LoBzDeb@|e@gl@pi@cBpBiDvGo@nFTrBpDnDl@`ADvAW~@uBnB{MpHoFhEiB~BwMpUqE~FuEnEqF|DeFlCqMhEuJzA{VrBs]pFuFnAsGlBw@d@u@pDc@xFo@pBw\\~n@c@hAg@jDBhC`@lCjHjRjFtPhDdIgB^cDYyBFcCj@yBtAyEnQLbFk@|BqH|Ss@t@eGlD}Bb@oDBDzBhAC',
   ],
   '972': [
     'sdlGyhixR~@Q_@}B_@c@{AY}VvJrAjDG|@[d@iIrBuBz@cAjAyAzEcAl@{AJyDiAm@oAAeAhBuHCeC[iAoAwBaD}DUaAJ{@~BaDnE`D~BfDdGsDXiA?q@q@cEcA_CyBgAyDi@uDoA{HaDu@{@OsBPy@hHeNtAe@~Ad@vJlFvEzEfDjBfET|EB|@Mn@]p@aAH}Bw@yAgBiAs@_AQkAVwBbDTjGQjBT~B~@hAIx@[bFsJn@qBVeBj@cPHy@j@_AnA]b@HhCrBlANdJcAxOkCbJgAfZqCjLyC`FgBfFkCpF}DrEoEpEaGvMoUjBaCrAqAvG{ExAcBb@{Af@iNb@eDv@eDrAeDrAuBxJcKhf@kd@z_@gc@v@sA|AqEhAoG|@sCnPi_@xGoSzCyEvEqE|@iBj@uEYcDOc@a@Sk@@UPMjAj@nBvAh@nE|@zAFnGY~H~ChIjB|@Bn^mC~Ba@xA_A`DgFxFq\\Lc@fAgA`Bs@bN_A|RnG~CZrCoF~J{TzDkKtOmr@MeF\\gB`CgDjCxBkExFAlAlAfBIxBkCvLsC~Eo@bB_Ghc@~AxAJnBQn@q@f@_@?}BaAeBhDyGlH]f@Dd@vBjB_C|CeAtBsBoAeE_Es@_@oKqDqGQyNTeAf@w@tAyFp\\aDfFyA~@qGz@}YrBwBSoG{A_I_D{EVoCEkA\\eCxDoGtFwCzEqG~R_Pr]y@`CaC~LoBzDeb@|e@gl@pi@cBpBiDvGo@nFTrBpDnDl@`ADvAW~@uBnB{MpHoFhEiB~BwMpUqE~FuEnEqF|DeFlCqMhEuJzA{VrBiHfAiThDuFnAkHxBs@x@a@pCKrCm@bDuH`OsC{AcDm@kGPoBIaAj@GxAZfAnCrBv@xAI|Bq@`Ao@\\}@L}ECgEUgDkBwE{EwJmF_Be@uAd@gAvBLFMGaFlJQx@NrBt@z@zH`DtDnAxDh@xBfAbA~Bp@bE?p@YhAqMrHMZCXp@lCDrAwBxJ@dAl@nAxDhAnBU`A_AfA_EbAkAtB{@dH_Bl@]Xq@?g@sAkD|YeLz@hF_AP',
@@ -343,4 +343,36 @@ export function computePolylineDirectionArrows(
   }
 
   return arrows
+}
+
+/**
+ * Ensures that a polyline geometry flows in the same direction as the route stops
+ * (from the first stop towards the terminus). If the polyline was provided in
+ * reverse order (e.g. from opposite direction feed), it reverses the points.
+ */
+export function ensurePolylineFollowsRoute(
+  polyline: LatLng[],
+  stops: Array<{ latitude?: number | null; longitude?: number | null }>,
+): LatLng[] {
+  if (!polyline || polyline.length < 2 || !stops || stops.length < 2) {
+    return polyline
+  }
+  const validStops = stops.filter(
+    s => s.latitude !== null && s.latitude !== undefined && s.longitude !== null && s.longitude !== undefined && Number.isFinite(s.latitude) && Number.isFinite(s.longitude)
+  ) as Array<{ latitude: number; longitude: number }>
+  if (validStops.length < 2) return polyline
+
+  const sFirst = validStops[0]
+  const sLast = validStops[validStops.length - 1]
+  const pFirst = polyline[0]
+  const pLast = polyline[polyline.length - 1]
+
+  const distForward = haversineDistanceM(pFirst, sFirst) + haversineDistanceM(pLast, sLast)
+  const distReversed = haversineDistanceM(pLast, sFirst) + haversineDistanceM(pFirst, sLast)
+
+  // If the reversed polyline matches the first and last stops substantially better, reverse it
+  if (distReversed < distForward) {
+    return [...polyline].reverse()
+  }
+  return polyline
 }
