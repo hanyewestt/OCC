@@ -3,6 +3,8 @@ package com.csd.occ.ingestion.api;
 import com.csd.occ.ingestion.api.dto.LiveBunchingAlertPageResponse;
 import com.csd.occ.ingestion.api.dto.LiveBunchingAlertResponse;
 import com.csd.occ.ingestion.domain.BunchingControlPort;
+import com.csd.occ.ingestion.domain.BusArrivalObservationRepository;
+import com.csd.occ.ingestion.api.dto.DemoVehicleResponse;
 import com.csd.occ.ingestion.domain.LiveBunchingAlert;
 import com.csd.occ.ingestion.domain.LiveBunchingAlertPage;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,8 +27,11 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(name = "Live bunching alerts")
 public class LiveBunchingAlertController {
     private final BunchingControlPort bunching;
+    private final BusArrivalObservationRepository arrivals;
 
-    public LiveBunchingAlertController(BunchingControlPort bunching) { this.bunching = bunching; }
+    public LiveBunchingAlertController(BunchingControlPort bunching, BusArrivalObservationRepository arrivals) {
+        this.bunching = bunching; this.arrivals = arrivals;
+    }
 
     @GetMapping
     @Operation(operationId = "listCurrentLiveBunchingAlertsFromIngestion",
@@ -47,6 +52,10 @@ public class LiveBunchingAlertController {
     private LiveBunchingAlertResponse response(LiveBunchingAlert alert) {
         return new LiveBunchingAlertResponse(alert.eventId(), alert.alertId(), alert.action(), alert.classification(),
                 alert.serviceId(), alert.stopCode(), alert.directionId(), alert.detectedAt(), alert.fetchedAt(),
-                alert.rawObservationId(), alert.pollRunId(), alert.evidence());
+                alert.rawObservationId(), alert.pollRunId(), alert.evidence(), alert.affectedObservationIds(),
+                alert.demoRunId() == null ? java.util.List.of() : alert.affectedObservationIds().stream()
+                        .map(id -> arrivals.findSimulationArrivalDetails(alert.demoRunId(), id))
+                        .flatMap(java.util.Optional::stream).map(value -> new DemoVehicleResponse(value.registrationNumber(),
+                                value.operator(), value.vehicleType(), value.captainCode(), value.busId())).toList());
     }
 }

@@ -32,9 +32,8 @@ public record RecommendationDecisionRequest(
         }
         if (action == RecommendationDecisionAction.REJECTED
                 && ((replacementInstructions == null || replacementInstructions.isEmpty())
-                    && (replacementAction == null || adjustmentSeconds == null)
-                    || controllerRationale == null || controllerRationale.isBlank())) {
-            throw new IllegalArgumentException("rejected decisions require per-bus actions and a rationale");
+                    && (replacementAction == null || adjustmentSeconds == null))) {
+            throw new IllegalArgumentException("rejected decisions require per-bus actions");
         }
     }
 }

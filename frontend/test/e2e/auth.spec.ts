@@ -819,7 +819,7 @@ for (const [action, button] of [['APPROVED', 'Approve recommendation'], ['REJECT
       const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
       await expect(editor).toBeVisible()
       await expect(editor.getByLabel('Action for SAMPLE-BUS')).toBeFocused()
-      await editor.getByLabel('Controller rationale').fill('Use a shorter hold to reduce passenger delay.')
+
       await editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true }).click()
       await expect(editor).toHaveCount(0)
     }
@@ -829,7 +829,7 @@ for (const [action, button] of [['APPROVED', 'Approve recommendation'], ['REJECT
     expect(body.adjustmentSeconds).toBeNull()
     expect(body.replacementInstructions).toEqual(action === 'REJECTED'
       ? [{ busReference: 'SAMPLE-BUS', action: 'HOLD', adjustmentSeconds: 120 }] : null)
-    expect(body.controllerRationale).toBe(action === 'REJECTED' ? 'Use a shorter hold to reduce passenger delay.' : null)
+    expect(body.controllerRationale).toBeNull()
     await expect(page.getByText(action === 'APPROVED' ? 'Recommendation approved and instruction issued to the assigned captain.' : 'Replacement instructions issued to the affected captains.')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toHaveCount(0)
     await page.getByRole('link', { name: 'Audit log', exact: true }).click()
@@ -861,7 +861,7 @@ test('controller replacement editor collects and submits one instruction for eac
   await editor.getByLabel('Seconds').nth(0).fill('60')
   await editor.getByLabel('Seconds').nth(1).fill('45')
   await editor.getByLabel('Seconds').nth(2).fill('30')
-  await editor.getByLabel('Controller rationale').fill('Apply tailored holds across the detected bunch.')
+
   const posted = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/decision'))
   await editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true }).click()
   const body = (await posted).postDataJSON()
@@ -878,7 +878,7 @@ test('controller handles conflicting decisions by retrieving the saved result', 
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
-  await editor.getByLabel('Controller rationale').fill('Keep the shorter hold.')
+  await editor.getByLabel('Seconds').first().fill('60')
   await editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true }).click()
   await expect(page.getByText(/already has a decision/)).toBeVisible()
 })
@@ -899,18 +899,17 @@ test('dirty controller recommendation editor confirms dismissal and discards onl
   await expect(editor).toBeVisible()
   const action = editor.getByLabel('Action for SAMPLE-BUS')
   const adjustment = editor.getByLabel('Seconds').first()
-  const rationale = editor.getByLabel('Controller rationale')
   await expect(action).toBeFocused()
   const submit = editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true })
   await submit.focus()
   await page.keyboard.press('Tab')
   await expect(action).toBeFocused()
   await action.selectOption('DWELL_ADJUSTMENT')
-  await adjustment.fill('65')
+  await adjustment.fill('0')
   await submit.click()
   await expect(editor.getByRole('alert')).toContainText('1–120 second HOLD or DWELL action')
   expect(decisionRequests).toBe(0)
-  await rationale.fill('Avoid sudden braking near the report.')
+  await adjustment.fill('65')
   await expect(editor.getByRole('alert')).toHaveCount(0)
 
   await page.keyboard.press('Escape')
@@ -927,7 +926,6 @@ test('dirty controller recommendation editor confirms dismissal and discards onl
   await expect(editor).toBeVisible()
   await expect(action).toHaveValue('DWELL_ADJUSTMENT')
   await expect(adjustment).toHaveValue('65')
-  await expect(rationale).toHaveValue('Avoid sudden braking near the report.')
 
   await editor.getByRole('button', { name: 'Cancel', exact: true }).click()
   confirmation = page.getByRole('alertdialog', { name: 'Discard unsaved changes?', exact: true })
@@ -936,7 +934,6 @@ test('dirty controller recommendation editor confirms dismissal and discards onl
   await expect(editor).toBeVisible()
   await expect(action).toHaveValue('DWELL_ADJUSTMENT')
   await expect(adjustment).toHaveValue('65')
-  await expect(rationale).toHaveValue('Avoid sudden braking near the report.')
 
   await page.locator('[data-slot="dialog-overlay"]').click({ position: { x: 4, y: 4 } })
   confirmation = page.getByRole('alertdialog', { name: 'Discard unsaved changes?', exact: true })
@@ -972,14 +969,14 @@ test('recommendation editor keeps edits on API failure and cannot close or submi
     }
     return route.fulfill({ json: { recommendationId: 'recommendation-1', action: 'REJECTED', actorSubject: userId,
       overrideInstructions: [{ busReference: 'SAMPLE-BUS', instruction: 'Hold for 120 seconds at stop B01.' }],
-      controllerRationale: 'Use the controller proposal.', decidedAt: '2026-10-25T07:00:00Z' } })
+      controllerRationale: null, decidedAt: '2026-10-25T07:00:00Z' } })
   })
   await login(page)
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
-  const rationale = editor.getByLabel('Controller rationale')
-  await rationale.fill('Use the controller proposal.')
+  const draftAdjustment = editor.getByLabel('Seconds').first()
+  await draftAdjustment.fill('60')
   const save = editor.locator('form button[type="submit"]')
   await save.click()
   await requestStarted
@@ -990,7 +987,7 @@ test('recommendation editor keeps edits on API failure and cannot close or submi
   expect(attempts).toBe(1)
   releaseFirstRequest()
   await expect(editor.getByRole('alert')).toContainText('Unable to save the decision.')
-  await expect(rationale).toHaveValue('Use the controller proposal.')
+  await expect(draftAdjustment).toHaveValue('60')
   await expect(save).toBeEnabled()
 
   await save.click()
@@ -1020,7 +1017,7 @@ test('saving pauses polling and reconciles the decision after the response', asy
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
-  await editor.getByLabel('Controller rationale').fill('Keep the submitted decision visible until its response.')
+  await editor.getByLabel('Seconds').first().fill('60')
   await editor.locator('form button[type="submit"]').click()
   await expect.poll(() => saving).toBe(true)
   await page.clock.runFor(30000)
@@ -1055,18 +1052,18 @@ test('recommendation editor retains its draft during an unrelated refresh', asyn
   await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
-  const rationale = editor.getByLabel('Controller rationale')
-  await rationale.fill('Keep the current draft while route data refreshes.')
+  const draftAdjustment = editor.getByLabel('Seconds').first()
+  await draftAdjustment.fill('60')
 
   holdRouteRefresh = true
   await page.clock.fastForward(1000)
   await routeRefreshStarted
   await expect(editor).toBeVisible()
-  await expect(rationale).toHaveValue('Keep the current draft while route data refreshes.')
+  await expect(draftAdjustment).toHaveValue('60')
   releaseRoute()
   await expect(editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true })).toBeEnabled()
   await expect(editor).toBeVisible()
-  await expect(rationale).toHaveValue('Keep the current draft while route data refreshes.')
+  await expect(draftAdjustment).toHaveValue('60')
 })
 
 test('recommendation editor retains a later-page draft while refresh checks all pending pages', async ({ page, context }) => {
@@ -1074,7 +1071,7 @@ test('recommendation editor retains a later-page draft while refresh checks all 
   await mockDashboard(context)
   await context.route('**/frontend-config', route => route.fulfill({ json: {
     projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
-    controllerRefreshIntervalSeconds: 1, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20, captainRefreshIntervalSeconds: 5, publicNoticeRefreshIntervalSeconds: 30,
+    controllerRefreshIntervalSeconds: 60, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20, captainRefreshIntervalSeconds: 5, publicNoticeRefreshIntervalSeconds: 30,
   } }))
   const makeRecommendation = (recommendationId: string, serviceId: string, likelyCause: string) => ({
     recommendationId, classification: 'SIMULATION', status: 'RECOMMENDED', serviceId, directionId: 1, monitoredStopCode: 'B01',
@@ -1114,22 +1111,22 @@ test('recommendation editor retains a later-page draft while refresh checks all 
   await laterProposal.click()
   await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
-  const rationale = editor.getByLabel('Controller rationale')
-  await rationale.fill('Keep this later-page draft during its revalidation.')
+  const draftAdjustment = editor.getByLabel('Seconds').first()
+  await draftAdjustment.fill('60')
 
   const previousPageZeroRequests = pageZeroRequests
   const refreshedPageZero = page.waitForResponse(response => {
     const url = new URL(response.url())
     return url.pathname === '/api/v1/planning/recommendations/pending' && url.searchParams.get('page') === '0' && pageZeroRequests > previousPageZeroRequests
   })
-  await page.clock.fastForward(1000)
+  await page.clock.fastForward(60_000)
   await refreshedPageZero
   await page.clock.runFor(100)
   await expect(editor).toBeVisible()
-  await expect(rationale).toHaveValue('Keep this later-page draft during its revalidation.')
+  await expect(draftAdjustment).toHaveValue('60')
   await expect.poll(() => laterPageRequests).toBeGreaterThan(1)
   await expect(editor).toBeVisible()
-  await expect(rationale).toHaveValue('Keep this later-page draft during its revalidation.')
+  await expect(draftAdjustment).toHaveValue('60')
 })
 
 test('recommendation editor keeps its draft and blocks decisions when refresh fails', async ({ page, context }) => {
@@ -1148,8 +1145,8 @@ test('recommendation editor keeps its draft and blocks decisions when refresh fa
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
-  const rationale = editor.getByLabel('Controller rationale')
-  await rationale.fill('Keep this draft until a refresh can confirm it.')
+  const draftAdjustment = editor.getByLabel('Seconds').first()
+  await draftAdjustment.fill('60')
 
   const failedRefresh = page.waitForResponse(response =>
     new URL(response.url()).pathname === '/api/v1/planning/recommendations/pending' && response.status() === 503)
@@ -1157,14 +1154,14 @@ test('recommendation editor keeps its draft and blocks decisions when refresh fa
   await page.clock.fastForward(1000)
   await failedRefresh
   await expect(editor).toBeVisible()
-  await expect(rationale).toHaveValue('Keep this draft until a refresh can confirm it.')
+  await expect(draftAdjustment).toHaveValue('60')
   await expect(editor.getByRole('alert')).toContainText('Unable to confirm this recommendation is current')
   await expect(editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true })).toBeDisabled()
   await expect(page.locator('button').filter({ hasText: /^Approve recommendation$/ })).toBeDisabled()
 
   failRefresh = false
   await editor.getByRole('button', { name: 'Retry recommendation check', exact: true }).click()
-  await expect(rationale).toHaveValue('Keep this draft until a refresh can confirm it.')
+  await expect(draftAdjustment).toHaveValue('60')
   await expect(editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true })).toBeEnabled()
 })
 
@@ -1194,7 +1191,7 @@ test('recommendation editor remains during a poll and closes if its recommendati
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
-  await editor.getByLabel('Controller rationale').fill('Keep the saved draft only while current.')
+  await editor.getByLabel('Seconds').first().fill('60')
 
   removed = true
   await page.clock.fastForward(1000)
@@ -1234,7 +1231,7 @@ test('recommendation editor closes when the active simulation run changes', asyn
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
-  await editor.getByLabel('Controller rationale').fill('Only use this draft in the current run.')
+  await editor.getByLabel('Seconds').first().fill('60')
 
   runId = 'run-2'
   newRunPending = true
@@ -1267,8 +1264,8 @@ test('recommendation editor keeps its draft while simulation state is unavailabl
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
-  const rationale = editor.getByLabel('Controller rationale')
-  await rationale.fill('Keep this simulation draft until the run is verified.')
+  const draftAdjustment = editor.getByLabel('Seconds').first()
+  await draftAdjustment.fill('60')
 
   const checksBeforeRefresh = successfulChecks
   const failedRunCheck = page.waitForResponse(response =>
@@ -1277,14 +1274,14 @@ test('recommendation editor keeps its draft while simulation state is unavailabl
   await page.clock.fastForward(1000)
   await failedRunCheck
   await expect(editor).toBeVisible()
-  await expect(rationale).toHaveValue('Keep this simulation draft until the run is verified.')
+  await expect(draftAdjustment).toHaveValue('60')
   await expect(editor.getByRole('alert')).toContainText('Unable to confirm')
   await expect(editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true })).toBeDisabled()
 
   await editor.getByRole('button', { name: 'Retry recommendation check', exact: true }).click()
   await expect.poll(() => successfulChecks).toBeGreaterThan(checksBeforeRefresh)
   await expect(editor).toBeVisible()
-  await expect(rationale).toHaveValue('Keep this simulation draft until the run is verified.')
+  await expect(draftAdjustment).toHaveValue('60')
   await expect(editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true })).toBeEnabled()
 })
 
@@ -1538,12 +1535,13 @@ test('captain retries failed acknowledgement and keeps the persisted receipt aft
   await expect(display.getByText(/^Acknowledged /)).toHaveCount(0)
   await display.getByRole('button', { name: 'Acknowledge', exact: true }).click()
   await expect(display.getByText(/^Acknowledged /)).toBeVisible()
-  await expect(display.getByRole('timer', { name: 'Instruction time remaining' })).toBeVisible()
+  await expect(display.getByRole('timer', { name: 'Instruction time remaining' })).toContainText(/\d+:\d{2}/)
   await expect(display.getByRole('button', { name: 'Acknowledge', exact: true })).toHaveCount(0)
   await expect(display.getByRole('alert')).toHaveCount(0)
-  const before = (await display.getByRole('timer', { name: 'Instruction time remaining' }).innerText()).split(' ')[0]
+  const timer = display.getByRole('timer', { name: 'Instruction time remaining' })
+  const before = (await timer.innerText()).match(/\d+:\d{2}/)?.[0]
   await page.clock.fastForward(10_000)
-  await expect.poll(async () => (await display.getByRole('timer', { name: 'Instruction time remaining' }).innerText()).split(' ')[0])
+  await expect.poll(async () => (await timer.innerText()).match(/\d+:\d{2}/)?.[0])
     .not.toBe(before)
   const receipt = await display.getByText(/^Acknowledged /).innerText()
   await page.reload()

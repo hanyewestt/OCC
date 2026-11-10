@@ -29,9 +29,6 @@ public record RecommendationDecision(
             if (!legacyDecisionWithoutOverride && (overrideInstructions.isEmpty() || overrideInstructions.size() > 3)) {
                 throw new IllegalArgumentException("rejected decisions require 1..3 bus instructions");
             }
-            if (!legacyDecisionWithoutOverride && (controllerRationale == null || controllerRationale.isBlank())) {
-                throw new IllegalArgumentException("controllerRationale is required for rejected decisions");
-            }
             if (controllerRationale != null) controllerRationale = controllerRationale.trim();
             if (controllerRationale != null && controllerRationale.length() > 1000) {
                 throw new IllegalArgumentException("controllerRationale must be at most 1000 characters");
