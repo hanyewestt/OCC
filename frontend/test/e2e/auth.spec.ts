@@ -883,6 +883,7 @@ test('controller reviews an outcome for every bus in a four-bus group', async ({
   await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
   for (const bus of ['SAMPLE-BUS', 'BUS-2', 'BUS-3', 'BUS-4']) await expect(editor.getByLabel(`Action for ${bus}`)).toBeVisible()
+  await editor.getByLabel('Action for SAMPLE-BUS').selectOption('HOLD')
   await editor.getByLabel('Seconds').nth(0).fill('60')
   await editor.getByLabel('Action for BUS-3').selectOption('SKIP_STOP')
   await expect(editor.getByLabel('Seconds').nth(2)).toBeDisabled()
@@ -903,7 +904,7 @@ test('controller reviews an outcome for every bus in a four-bus group', async ({
 })
 
 test('refresh opens a new review with the changed group and its prediction gaps', async ({ page, context }) => {
-  const original = await mockDashboard(context)
+  const original = await mockDashboard(context, { affectedBusReferences: ['SAMPLE-BUS', 'BUS-2'] })
   const revision = { ...original, recommendationId: 'recommendation-2', revisionRawObservationId: 'snapshot-2',
     affectedBusReferences: ['BUS-2', 'BUS-3', 'BUS-4'], targetBusReference: 'BUS-4', currentPredictionGaps: [25, 35],
     confirmationGaps: [55, 60], adjustmentSeconds: 45, suggestedOutcomes: [
@@ -923,8 +924,14 @@ test('refresh opens a new review with the changed group and its prediction gaps'
   await context.route('**/api/v1/planning/recommendations/recommendation-2/decision', route => route.fulfill({ json: {} }))
   await login(page)
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await expect(page.getByText(/Current suggestions are unavailable/)).toBeVisible()
+  await expect(page.getByText('Hold for 120 seconds at stop B01.')).toHaveCount(0)
   await page.getByRole('button', { name: 'Refresh bus group' }).click()
+  await expect(page.getByText(/Current suggestions are unavailable/)).toHaveCount(0)
+  await expect(page.getByText('Expected headway', { exact: true })).toBeVisible()
   await expect(page.getByText('BUS-2 to BUS-3 · 25s')).toBeVisible()
+  await expect(page.getByText('45s projected')).toBeVisible()
+  await expect(page.getByText('50s projected')).toBeVisible()
   await expect(page.getByText('Historical confirmation gaps')).toBeVisible()
   await expect(page.getByText('Confirmation 1 · 55s')).toBeVisible()
   await expect(page.getByText('Hold for 20 seconds at stop B01.')).toBeVisible()
@@ -1065,7 +1072,7 @@ test('recommendation editor keeps edits on API failure and cannot close or submi
   await expect(page.getByRole('alertdialog')).toHaveCount(0)
   expect(attempts).toBe(1)
   releaseFirstRequest()
-  await expect(editor.getByRole('alert')).toContainText('Instruction delivery failed for SAMPLE-BUS.')
+  await expect(editor.getByRole('alert').filter({ hasText: 'Instruction delivery failed for SAMPLE-BUS.' })).toBeVisible()
   await expect(draftAdjustment).toHaveValue('60')
   await expect(save).toBeEnabled()
 
