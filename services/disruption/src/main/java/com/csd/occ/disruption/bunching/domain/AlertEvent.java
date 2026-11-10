@@ -47,6 +47,21 @@ public class AlertEvent {
                       UUID firstLeadingObservationId, UUID firstFollowingObservationId,
                       UUID secondLeadingObservationId, UUID secondFollowingObservationId,
                       String detectionRuleVersion) {
+        this(alertId, action, serviceId, stopCode, directionId, rawObservationId, pollRunId, fetchedAt, triggeredAt,
+                evidence, classification, demoRunId, leadingObservationId, followingObservationId,
+                expectedHeadwaySeconds, firstObservedHeadwaySeconds, secondObservedHeadwaySeconds, firstConfirmingAt,
+                secondConfirmingAt, firstLeadingObservationId, firstFollowingObservationId,
+                secondLeadingObservationId, secondFollowingObservationId, detectionRuleVersion, List.of());
+    }
+
+    public AlertEvent(UUID alertId, String action, String serviceId, String stopCode, int directionId,
+                      UUID rawObservationId, UUID pollRunId, Instant fetchedAt, Instant triggeredAt, String evidence,
+                      String classification, UUID demoRunId, UUID leadingObservationId, UUID followingObservationId,
+                      Integer expectedHeadwaySeconds, Integer firstObservedHeadwaySeconds,
+                      Integer secondObservedHeadwaySeconds, Instant firstConfirmingAt, Instant secondConfirmingAt,
+                      UUID firstLeadingObservationId, UUID firstFollowingObservationId,
+                      UUID secondLeadingObservationId, UUID secondFollowingObservationId,
+                      String detectionRuleVersion, List<UUID> affectedObservationIds) {
         id = UUID.randomUUID();
         this.alertId = alertId;
         this.kind = "BUNCHING";
@@ -73,6 +88,7 @@ public class AlertEvent {
         this.secondLeadingObservationId = secondLeadingObservationId;
         this.secondFollowingObservationId = secondFollowingObservationId;
         this.detectionRuleVersion = detectionRuleVersion;
+        this.affectedObservationIds = affectedObservationIds;
     }
 
     @Id private UUID id;
@@ -101,6 +117,7 @@ public class AlertEvent {
     private UUID secondLeadingObservationId;
     private UUID secondFollowingObservationId;
     private String detectionRuleVersion;
+    @JdbcTypeCode(SqlTypes.JSON) private List<UUID> affectedObservationIds = List.of();
 
     public UUID id() { return id; }
     public UUID alertId() { return alertId; }
@@ -128,6 +145,7 @@ public class AlertEvent {
     public UUID secondLeadingObservationId() { return secondLeadingObservationId; }
     public UUID secondFollowingObservationId() { return secondFollowingObservationId; }
     public String detectionRuleVersion() { return detectionRuleVersion; }
+    public List<UUID> affectedObservationIds() { return affectedObservationIds == null ? List.of() : affectedObservationIds; }
 
     public List<UUID> confirmingObservationIds() {
         return java.util.stream.Stream.of(firstLeadingObservationId, firstFollowingObservationId,

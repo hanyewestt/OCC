@@ -57,7 +57,7 @@ public class HttpBunchingControlAdapter implements BunchingControlPort {
         return page == null ? List.of() : page.alerts().stream()
                 .map(alert -> new DemoBunchingAlert(alert.eventId(), alert.bunchingEventId(), alert.action(), alert.serviceId(), alert.stopCode(),
                         alert.directionId(), alert.detectedAt(), alert.classification(),
-                        alert.leadingObservationId(), alert.followingObservationId(), alert.evidence())).toList();
+                        alert.leadingObservationId(), alert.followingObservationId(), alert.affectedObservationIds(), alert.evidence())).toList();
     }
 
     @Override
@@ -69,7 +69,7 @@ public class HttpBunchingControlAdapter implements BunchingControlPort {
             return new LiveBunchingAlertPage(response.items().stream().map(alert -> new LiveBunchingAlert(alert.eventId(),
                     alert.alertId(), alert.action(), alert.classification(), alert.serviceId(), alert.stopCode(),
                     alert.directionId(), alert.detectedAt(), alert.fetchedAt(), alert.rawObservationId(),
-                    alert.pollRunId(), alert.evidence())).toList(), response.page(), response.size(),
+                    alert.pollRunId(), alert.evidence(), alert.affectedObservationIds(), alert.demoRunId())).toList(), response.page(), response.size(),
                     response.totalItems(), response.totalPages());
         } catch (RestClientException exception) {
             throw new DemoBunchingUnavailableException();
@@ -81,12 +81,14 @@ public class HttpBunchingControlAdapter implements BunchingControlPort {
         private AlertPage { alerts = List.copyOf(alerts); }
     }
     private record AlertResponse(UUID eventId, UUID bunchingEventId, String action, String serviceId, String stopCode, int directionId,
-                                 Instant detectedAt, String evidence, String classification,
-                                 UUID leadingObservationId, UUID followingObservationId) {}
+                                 Instant detectedAt, String classification,
+                                 UUID leadingObservationId, UUID followingObservationId, List<UUID> affectedObservationIds,
+                                 String evidence) {}
     private record LiveAlertPage(List<LiveAlertResponse> items, int page, int size, long totalItems, int totalPages) {
         private LiveAlertPage { items = List.copyOf(items); }
     }
     private record LiveAlertResponse(UUID eventId, UUID alertId, String action, String classification,
                                      String serviceId, String stopCode, int directionId, Instant detectedAt,
-                                     Instant fetchedAt, UUID rawObservationId, UUID pollRunId, String evidence) {}
+                                     Instant fetchedAt, UUID rawObservationId, UUID pollRunId, String evidence,
+                                     List<UUID> affectedObservationIds, UUID demoRunId) {}
 }

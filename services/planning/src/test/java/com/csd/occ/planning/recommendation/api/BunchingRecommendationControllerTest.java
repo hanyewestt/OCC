@@ -245,18 +245,29 @@ class BunchingRecommendationControllerTest {
     }
 
     @Test
-    void rejectsReplacementWithoutControllerRationale() {
+    void dispatchesReplacementWithoutControllerRationale() {
+        Instant decidedAt = Instant.parse("2026-10-21T10:00:00Z");
+        var auditInstruction = java.util.List.of(new ControllerBusInstruction("DEMO-190-B", "HOLD FOR 60s at next stop"));
+        org.mockito.Mockito.when(decisions.findDecision(RECOMMENDATION_ID)).thenReturn(Optional.of(new RecommendationDecision(
+                RECOMMENDATION_ID, RecommendationDecisionAction.REJECTED, "controller-subject",
+                auditInstruction, null, decidedAt)));
+
         var response = mvc.post()
                 .uri("/api/v1/planning/recommendations/{id}/decision", RECOMMENDATION_ID)
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .content("""
-                        {"action":"REJECTED","replacementAction":"HOLD","adjustmentSeconds":60}
+                        {"action":"REJECTED","replacementInstructions":[
+                          {"busReference":"DEMO-190-B","action":"HOLD","adjustmentSeconds":60}]}
                         """)
                 .with(jwt().jwt(token -> token.subject("controller-subject"))
                         .authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
                 .exchange();
 
-        assertThat(response).hasStatus(400);
+        assertThat(response).hasStatus(200)
+                .bodyJson().extractingPath("action").isEqualTo("REJECTED");
+        verify(bunchingInstructions).rejectAndIssue(RECOMMENDATION_ID, "controller-subject",
+                java.util.List.of(new BunchingInstructionService.ReplacementBusInstruction(
+                        "DEMO-190-B", com.csd.occ.planning.recommendation.domain.MitigationType.HOLD, 60)), null);
     }
 
     @Test

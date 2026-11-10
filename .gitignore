@@ -62,6 +62,7 @@ frontend/coverage/
 test-results/
 
 .superpowers
+.DS_Store
 
 # Agent skills installed locally
 .agents/

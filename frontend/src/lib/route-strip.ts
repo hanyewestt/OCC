@@ -93,6 +93,49 @@ export function arrivalGaps(alert: BunchingAlert): { label: 'Bus 1–2' | 'Bus 2
   ]
 }
 
+export function bunchedArrivalGaps(alert: BunchingAlert): { leadingOrder: number; followingOrder: number; seconds: number }[] {
+  if (!alert.evidence) return []
+  try {
+    const value = JSON.parse(alert.evidence) as {
+      snapshot?: { arrivals?: Array<{ observationId?: string; visitOrder?: number; estimatedArrivalAt?: string }> }
+      groups?: Array<{ headways?: Array<{ leadingObservationId?: string; followingObservationId?: string; isBunched?: boolean }> }>
+    }
+    const arrivals = new Map((value.snapshot?.arrivals ?? [])
+      .filter(arrival => arrival.observationId).map(arrival => [arrival.observationId!, arrival]))
+    return (value.groups ?? []).flatMap(group => group.headways ?? []).flatMap(headway => {
+      if (!headway.isBunched || !headway.leadingObservationId || !headway.followingObservationId) return []
+      const leading = arrivals.get(headway.leadingObservationId)
+      const following = arrivals.get(headway.followingObservationId)
+      const seconds = leading?.estimatedArrivalAt && following?.estimatedArrivalAt
+        ? differenceSeconds(leading.estimatedArrivalAt, following.estimatedArrivalAt) : null
+      return leading?.visitOrder && following?.visitOrder && seconds !== null
+        ? [{ leadingOrder: leading.visitOrder, followingOrder: following.visitOrder, seconds }] : []
+    })
+  } catch { return [] }
+}
+
+export function adjacentBunchingGaps(alert: BunchingAlert): { leadingOrder: number; followingOrder: number; seconds: number | null; isBunched: boolean }[] {
+  if (!alert.evidence) return []
+  try {
+    const value = JSON.parse(alert.evidence) as {
+      snapshot?: { arrivals?: Array<{ observationId?: string; visitOrder?: number; estimatedArrivalAt?: string }> }
+      groups?: Array<{ headways?: Array<{ leadingObservationId?: string; followingObservationId?: string; isBunched?: boolean }> }>
+    }
+    const arrivals = new Map((value.snapshot?.arrivals ?? [])
+      .filter(arrival => arrival.observationId).map(arrival => [arrival.observationId!, arrival]))
+    return (value.groups ?? []).flatMap(group => group.headways ?? []).flatMap(headway => {
+      if (!headway.leadingObservationId || !headway.followingObservationId) return []
+      const leading = arrivals.get(headway.leadingObservationId)
+      const following = arrivals.get(headway.followingObservationId)
+      if (!leading?.visitOrder || !following?.visitOrder) return []
+      const isBunched = headway.isBunched === true
+      const seconds = isBunched && leading.estimatedArrivalAt && following.estimatedArrivalAt
+        ? differenceSeconds(leading.estimatedArrivalAt, following.estimatedArrivalAt) : null
+      return [{ leadingOrder: leading.visitOrder, followingOrder: following.visitOrder, seconds, isBunched }]
+    }).sort((first, second) => first.leadingOrder - second.leadingOrder)
+  } catch { return [] }
+}
+
 export function tightestArrivalGap(alert: BunchingAlert): number | null {
   const known = arrivalGaps(alert).flatMap(gap => gap.seconds === null ? [] : [gap.seconds])
   return known.length ? Math.min(...known) : null
