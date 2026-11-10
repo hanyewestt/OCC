@@ -48,11 +48,13 @@ public class SimulationBunchingGroupController {
                 new ResponseStatusException(HttpStatus.CONFLICT, "Current simulation bunching group unavailable"));
         return new CurrentGroupResponse(group.demoRunId(), group.bunchingEventId(), group.serviceId(), group.stopCode(),
                 group.directionId(), group.rawObservationId(), group.fetchedAt(), group.validUntil(), group.affectedBusReferences(),
-                group.adjacentGapSeconds());
+                group.adjacentGapSeconds(), group.consecutivePairs());
     }
 
     public record CurrentGroupResponse(UUID demoRunId, UUID bunchingEventId, String serviceId, String stopCode,
             int directionId, UUID rawObservationId, Instant fetchedAt, Instant validUntil, List<String> affectedBusReferences,
             @io.swagger.v3.oas.annotations.media.Schema(description = "Prediction gaps in seconds between successive affected buses, in the same order; other non-affected buses may lie between them")
-            List<Long> adjacentGapSeconds) {}
+            List<Long> adjacentGapSeconds,
+            @io.swagger.v3.oas.annotations.media.Schema(description = "Whether each gap connects consecutive buses in the full simulation snapshot")
+            List<Boolean> consecutivePairs) {}
 }

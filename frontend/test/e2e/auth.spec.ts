@@ -905,7 +905,12 @@ test('controller reviews an outcome for every bus in a four-bus group', async ({
 test('refresh opens a new review with the changed group and its prediction gaps', async ({ page, context }) => {
   const original = await mockDashboard(context)
   const revision = { ...original, recommendationId: 'recommendation-2', revisionRawObservationId: 'snapshot-2',
-    affectedBusReferences: ['BUS-2', 'BUS-3'], targetBusReference: 'BUS-3', currentPredictionGaps: [25], adjustmentSeconds: 45 }
+    affectedBusReferences: ['BUS-2', 'BUS-3', 'BUS-4'], targetBusReference: 'BUS-4', currentPredictionGaps: [25, 35],
+    confirmationGaps: [55, 60], adjustmentSeconds: 45, suggestedOutcomes: [
+      { busReference: 'BUS-2', mitigationType: null, adjustmentSeconds: 0, reason: 'No preceding gap in the reviewed group.' },
+      { busReference: 'BUS-3', mitigationType: 'HOLD', adjustmentSeconds: 20, reason: null },
+      { busReference: 'BUS-4', mitigationType: 'DWELL_ADJUSTMENT', adjustmentSeconds: 35, reason: null },
+    ] }
   let refreshed = false
   await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: {
     mode: 'DEMO', demoRunId: 'run-1', items: [refreshed ? revision : original], page: 0, totalItems: 1, totalPages: 1,
@@ -915,19 +920,35 @@ test('refresh opens a new review with the changed group and its prediction gaps'
     refreshed = true
     return route.fulfill({ json: revision })
   })
+  await context.route('**/api/v1/planning/recommendations/recommendation-2/decision', route => route.fulfill({ json: {} }))
   await login(page)
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   await page.getByRole('button', { name: 'Refresh bus group' }).click()
   await expect(page.getByText('BUS-2 to BUS-3 · 25s')).toBeVisible()
   await expect(page.getByText('Historical confirmation gaps')).toBeVisible()
+  await expect(page.getByText('Confirmation 1 · 55s')).toBeVisible()
+  await expect(page.getByText('Hold for 20 seconds at stop B01.')).toBeVisible()
+  await expect(page.getByText('Adjust dwell by 35 seconds at stop B01.')).toBeVisible()
+  await expect(page.getByText('No instruction. No preceding gap in the reviewed group.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toBeDisabled()
   await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
-  await expect(editor.getByLabel('Action for BUS-2')).toBeVisible()
-  await expect(editor.getByLabel('Action for BUS-3')).toBeVisible()
+  await expect(editor.getByLabel('Action for BUS-2')).toHaveValue('NONE')
+  await expect(editor.getByLabel('Reason no instruction is needed')).toHaveValue('No preceding gap in the reviewed group.')
+  await expect(editor.getByLabel('Action for BUS-3')).toHaveValue('HOLD')
+  await expect(editor.getByLabel('Seconds').nth(1)).toHaveValue('20')
+  await expect(editor.getByLabel('Action for BUS-4')).toHaveValue('DWELL_ADJUSTMENT')
+  await expect(editor.getByLabel('Seconds').nth(2)).toHaveValue('35')
   await expect(editor.getByLabel('Action for SAMPLE-BUS')).toHaveCount(0)
   await expect(editor.getByLabel('Action for BUS-2').locator('option[value="DWELL_ADJUSTMENT"]')).toHaveCount(0)
   await expect(editor.getByLabel('Action for BUS-3').locator('option[value="DWELL_ADJUSTMENT"]')).toHaveCount(1)
+  const posted = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/recommendation-2/decision'))
+  await editor.getByRole('button', { name: 'Save reviewed outcomes' }).click()
+  expect((await posted).postDataJSON().replacementInstructions).toEqual([
+    { busReference: 'BUS-2', action: 'NO_INSTRUCTION', adjustmentSeconds: null, noInstructionReason: 'No preceding gap in the reviewed group.' },
+    { busReference: 'BUS-3', action: 'HOLD', adjustmentSeconds: 20 },
+    { busReference: 'BUS-4', action: 'DWELL_ADJUSTMENT', adjustmentSeconds: 35 },
+  ])
 })
 
 test('controller handles conflicting decisions by retrieving the saved result', async ({ page, context }) => {
