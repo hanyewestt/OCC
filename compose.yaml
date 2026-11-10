@@ -20,6 +20,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       TZ: UTC
       PGTZ: UTC
+    # The image defaults to 128MB; this stack is read-heavy and does not need it.
+    command: ["postgres", "-c", "shared_buffers=${OCC_POSTGRES_SHARED_BUFFERS:-64MB}"]
     volumes:
       - occ_pgdata:/var/lib/postgresql
     networks: [database]
@@ -63,7 +65,8 @@ services:
     mem_limit: ${OCC_INGESTION_MEMORY_LIMIT:-640m}
     environment:
       <<: *supabase-environment
-      JAVA_TOOL_OPTIONS: ${OCC_INGESTION_JAVA_TOOL_OPTIONS:--Xms32m -Xmx192m -XX:+UseSerialGC -XX:ActiveProcessorCount=2 -XX:NativeMemoryTracking=summary}
+      JAVA_TOOL_OPTIONS: ${OCC_INGESTION_JAVA_TOOL_OPTIONS:--Xms32m -Xmx192m -XX:+UseSerialGC -XX:ActiveProcessorCount=2 -XX:TieredStopAtLevel=1}
+      MALLOC_ARENA_MAX: "2"
       OCC_INGESTION_INTERNAL_PORT: ${OCC_INGESTION_INTERNAL_PORT:-8001}
       OCC_INGESTION_DB_INTERNAL_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}
       OCC_INGESTION_DB_USERNAME: ${OCC_INGESTION_DB_USERNAME:-occ_ingestion}
@@ -103,7 +106,8 @@ services:
     mem_limit: ${OCC_DISRUPTION_MEMORY_LIMIT:-512m}
     environment:
       <<: *supabase-environment
-      JAVA_TOOL_OPTIONS: ${OCC_DISRUPTION_JAVA_TOOL_OPTIONS:--Xms32m -Xmx192m -XX:+UseSerialGC -XX:ActiveProcessorCount=2 -XX:NativeMemoryTracking=summary}
+      JAVA_TOOL_OPTIONS: ${OCC_DISRUPTION_JAVA_TOOL_OPTIONS:--Xms32m -Xmx192m -XX:+UseSerialGC -XX:ActiveProcessorCount=2 -XX:TieredStopAtLevel=1}
+      MALLOC_ARENA_MAX: "2"
       OCC_DISRUPTION_INTERNAL_PORT: ${OCC_DISRUPTION_INTERNAL_PORT:-8002}
       OCC_DISRUPTION_DB_INTERNAL_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}
       OCC_DISRUPTION_DB_USERNAME: ${OCC_DISRUPTION_DB_USERNAME:-occ_disruption}
@@ -133,7 +137,8 @@ services:
     mem_limit: ${OCC_PLANNING_MEMORY_LIMIT:-512m}
     environment:
       <<: *supabase-environment
-      JAVA_TOOL_OPTIONS: ${OCC_PLANNING_JAVA_TOOL_OPTIONS:--Xms32m -Xmx192m -XX:+UseSerialGC -XX:ActiveProcessorCount=2 -XX:NativeMemoryTracking=summary}
+      JAVA_TOOL_OPTIONS: ${OCC_PLANNING_JAVA_TOOL_OPTIONS:--Xms32m -Xmx192m -XX:+UseSerialGC -XX:ActiveProcessorCount=2 -XX:TieredStopAtLevel=1}
+      MALLOC_ARENA_MAX: "2"
       OCC_PLANNING_INTERNAL_PORT: ${OCC_PLANNING_INTERNAL_PORT:-8003}
       OCC_PLANNING_DB_INTERNAL_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-occ}
       OCC_PLANNING_DB_USERNAME: ${OCC_PLANNING_DB_USERNAME:-occ_planning}
