@@ -290,3 +290,65 @@ test('ControllerPlanning defaults to Today and shows Cleared on route when deep-
   expect(clearedHtml).toContain('Cleared on route')
   expect(clearedHtml).toMatch(/Stop\s*(<!-- -->)?\s*40999/)
 })
+
+
+test('ControllerPlanning renders supporting incident evidence with timing and distance for diagnosis', () => {
+  const requestWithEvidence: PlanningDiagnosisRequest = {
+    ...sampleCompletedRequest,
+    requestId: 'req-evidence-test',
+    likelyCause: 'Accident on road lane 1',
+    confidence: 0.88,
+    evidenceDetails: [
+      {
+        evidenceId: 'evi-road-1',
+        busPositionEvidenceId: 'evi-bus-pos-1',
+        incidentType: 'Roadwork / Traffic Delay',
+        message: 'Accident on Bukit Panjang Rd',
+        monitoredStopCode: '40201',
+        reportTime: '2026-11-10T08:00:00Z',
+        fetchedAt: '2026-11-10T08:01:00Z',
+        firstConfirmedAt: '2026-11-10T08:02:15Z',
+        distanceMetersFromSuppliedBusPosition: 250,
+        secondsBeforeFirstConfirmed: 135,
+      },
+    ],
+  }
+
+  const recommendations = mockPagedCollection<PendingRecommendation, Planning['recommendations']>([], {
+    items: [], page: 0, totalItems: 0, totalPages: 0, mode: 'LIVE', demoRunId: null,
+  })
+  const diagnosisPage: PlanningDiagnosisRequestPage = {
+    items: [requestWithEvidence], page: 0, totalItems: 1, totalPages: 1, mode: 'LIVE', demoRunId: null,
+  }
+  const diagnosisRequests = mockPagedCollection<PlanningDiagnosisRequest, PlanningDiagnosisRequestPage>(
+    [requestWithEvidence], diagnosisPage
+  )
+
+  const html = renderToString(
+    createElement(MemoryRouter, { initialEntries: ['/controller/planning?request=req-evidence-test'] },
+      createElement(ControllerPlanning, {
+        recommendations,
+        diagnosisRequests,
+        loading: false,
+        modeError: '',
+        mode: 'LIVE',
+        demoRunId: null,
+        token: 'test-token',
+        detectedAlerts: [sampleAlert],
+        routes: [sampleRoute],
+        nowMs: Date.now(),
+        onPendingChange: () => {},
+        onRefresh: () => {},
+        onSaved: () => {},
+      })
+    )
+  )
+
+  expect(html).toContain('Supporting incident evidence')
+  expect(html).toContain('Roadwork / Traffic Delay')
+  expect(html).toContain('Accident on Bukit Panjang Rd')
+  expect(html).toMatch(/Approx\.\s*(<!-- -->)?\s*250\s*(<!-- -->)?\s*m from the supplied bus position near stop\s*(<!-- -->)?\s*40201/)
+  expect(html).toContain('Reported 2:15 before first confirmed bunching irregularity.')
+  expect(html).toMatch(/Incident evidence:\s*(<!-- -->)?\s*evi-road-1/)
+  expect(html).toContain('Bus-position evidence: evi-bus-pos-1')
+})
