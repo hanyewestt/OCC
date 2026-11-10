@@ -216,7 +216,9 @@ class BunchingRecommendationControllerTest {
     void dispatchesPerBusControllerReplacementsAndReturnsItsAuditDecision() {
         Instant decidedAt = Instant.parse("2026-10-21T10:00:00Z");
         var auditInstruction = java.util.List.of(new ControllerBusInstruction("DEMO-190-B", "HOLD FOR 60s at next stop"),
-                new ControllerBusInstruction("DEMO-190-A", "HOLD FOR 45s at next stop"));
+                new ControllerBusInstruction("DEMO-190-A", "HOLD FOR 45s at next stop"),
+                new ControllerBusInstruction("DEMO-190-C", "HOLD FOR 30s at next stop"),
+                new ControllerBusInstruction("DEMO-190-D", "HOLD FOR 20s at next stop"));
         org.mockito.Mockito.when(decisions.findDecision(RECOMMENDATION_ID)).thenReturn(Optional.of(new RecommendationDecision(
                 RECOMMENDATION_ID, RecommendationDecisionAction.REJECTED, "controller-subject",
                 auditInstruction, "Widen the gap for the target bus.", decidedAt)));
@@ -227,7 +229,9 @@ class BunchingRecommendationControllerTest {
                 .content("""
                         {"action":"REJECTED","replacementInstructions":[
                           {"busReference":"DEMO-190-B","action":"HOLD","adjustmentSeconds":60},
-                          {"busReference":"DEMO-190-A","action":"HOLD","adjustmentSeconds":45}],
+                          {"busReference":"DEMO-190-A","action":"HOLD","adjustmentSeconds":45},
+                          {"busReference":"DEMO-190-C","action":"HOLD","adjustmentSeconds":30},
+                          {"busReference":"DEMO-190-D","action":"HOLD","adjustmentSeconds":20}],
                          "controllerRationale":"Widen the gap for the target bus."}
                         """)
                 .with(jwt().jwt(token -> token.subject("controller-subject"))
@@ -240,7 +244,11 @@ class BunchingRecommendationControllerTest {
                 java.util.List.of(new com.csd.occ.planning.advisory.domain.BunchingInstructionService.ReplacementBusInstruction(
                                 "DEMO-190-B", com.csd.occ.planning.recommendation.domain.MitigationType.HOLD, 60),
                         new com.csd.occ.planning.advisory.domain.BunchingInstructionService.ReplacementBusInstruction(
-                                "DEMO-190-A", com.csd.occ.planning.recommendation.domain.MitigationType.HOLD, 45)),
+                                "DEMO-190-A", com.csd.occ.planning.recommendation.domain.MitigationType.HOLD, 45),
+                        new com.csd.occ.planning.advisory.domain.BunchingInstructionService.ReplacementBusInstruction(
+                                "DEMO-190-C", com.csd.occ.planning.recommendation.domain.MitigationType.HOLD, 30),
+                        new com.csd.occ.planning.advisory.domain.BunchingInstructionService.ReplacementBusInstruction(
+                                "DEMO-190-D", com.csd.occ.planning.recommendation.domain.MitigationType.HOLD, 20)),
                 "Widen the gap for the target bus.");
     }
 
@@ -268,6 +276,37 @@ class BunchingRecommendationControllerTest {
         verify(bunchingInstructions).rejectAndIssue(RECOMMENDATION_ID, "controller-subject",
                 java.util.List.of(new BunchingInstructionService.ReplacementBusInstruction(
                         "DEMO-190-B", com.csd.occ.planning.recommendation.domain.MitigationType.HOLD, 60)), null);
+    }
+
+    @Test
+    void dispatchesNoInstructionOutcomeWithItsReason() {
+        var audit = List.of(new ControllerBusInstruction("DEMO-190-B", "NO INSTRUCTION: Already spaced"));
+        org.mockito.Mockito.when(decisions.findDecision(RECOMMENDATION_ID)).thenReturn(Optional.of(new RecommendationDecision(
+                RECOMMENDATION_ID, RecommendationDecisionAction.REJECTED, "controller-subject", audit, null,
+                Instant.parse("2026-10-21T10:00:00Z"))));
+        var response = mvc.post().uri("/api/v1/planning/recommendations/{id}/decision", RECOMMENDATION_ID)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("""
+                        {"action":"REJECTED","replacementInstructions":[{"busReference":"DEMO-190-B",
+                         "action":"NO_INSTRUCTION","noInstructionReason":"Already spaced"}]}
+                        """)
+                .with(jwt().jwt(token -> token.subject("controller-subject"))
+                        .authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"))).exchange();
+        assertThat(response).hasStatus(200);
+        verify(bunchingInstructions).rejectAndIssue(RECOMMENDATION_ID, "controller-subject",
+                List.of(new BunchingInstructionService.ReplacementBusInstruction("DEMO-190-B", null, 0, "Already spaced")), null);
+    }
+
+    @Test
+    void rejectsNoInstructionWithoutReason() {
+        var response = mvc.post().uri("/api/v1/planning/recommendations/{id}/decision", RECOMMENDATION_ID)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("""
+                        {"action":"REJECTED","replacementInstructions":[{"busReference":"DEMO-190-B","action":"NO_INSTRUCTION"}]}
+                        """)
+                .with(jwt().jwt(token -> token.subject("controller-subject"))
+                        .authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"))).exchange();
+        assertThat(response).hasStatus(400);
     }
 
     @Test
