@@ -37,6 +37,25 @@ and select the branch. GitHub requires a dispatchable workflow to exist on the
 default branch before its manual-run control is available. No workflow pushes
 code or deploys the app.
 
+## Commit triggers and the deployment path
+
+Commit classification follows [commit convention](commit-convention.md):
+classify by behavior, not file extension. Deployment-affecting commits —
+workflows, Dockerfiles and build tooling, runtime Compose/Nginx/CloudFront
+configuration, database setup/migrations and CD/lifecycle scripts — always run
+CI/CD on `main`, even with no service or frontend source edits. The automatic
+verify/release/deploy workflows introduced by the EC2 CD work consume this
+classification, so infrastructure-only or workflow-only changes reach the
+release path without service edits.
+
+Commits that are exclusively documentation, agent prose or local launchers
+keep the `[skip ci]` marker. GitHub suppresses push workflows for those
+commits; there is no privileged bypass. If a marker is used by mistake on a
+deployment-affecting commit, manually dispatch the verification workflow for
+that commit. If a docs-only skipped run leaves required checks pending on a
+pull request, add a normal non-skipped commit or validate manually according
+to branch protection.
+
 All system jobs reuse
 [`system-verification.yml`](../.github/workflows/system-verification.yml).
 Only the extended suite enables provider-backed workers and the fault proxy.
