@@ -68,11 +68,28 @@ public class BunchingRecommendationRefreshService {
                 || gaps.stream().anyMatch(gap -> gap == null || gap < 0 || gap > Integer.MAX_VALUE)) {
             throw new AdvisoryConflictException("Current bus identities or prediction gaps are unavailable");
         }
-        if (group.rawObservationId().equals(previous.revisionRawObservationId())) {
+        List<AdvisoryContextPort.Bus> fleet = List.of();
+        AdvisoryContextPort.Route route = null;
+        try {
+            var currentFleet = context.fleet(run);
+            if (currentFleet != null && run.equals(currentFleet.demoRunId())
+                    && List.of("RUNNING", "REPLAY_COMPLETE").contains(currentFleet.status())) {
+                fleet = currentFleet.items();
+                route = context.route(group.serviceId());
+            }
+        } catch (RuntimeException unavailable) {
+            // The policy records unavailable bus or stop evidence as no-instruction outcomes.
+        }
+        now = clock.instant();
+        if (!group.isFreshAt(now)) throw new AdvisoryConflictException("Current bunching evidence expired during review");
+        var policy = new BunchingRecommendationPolicy();
+        var suggestions = policy.suggestOutcomes(group, fleet, route, event.expectedHeadwaySeconds(), now);
+        if (group.rawObservationId().equals(previous.revisionRawObservationId())
+                && suggestions.equals(previous.recommendation().suggestedOutcomes())) {
             return previous;
         }
 
-        // The recommendation proposes a hold before arrival; issuance validates any controller dwell override.
+        // Preserve the single-target summary used by existing clients.
         var mitigation = new ValidatedMitigationContext(buses.getLast(), buses, group.stopCode(),
                 FollowingBusState.READY_TO_DEPART, BunchingRecommendationPolicy.SIMULATION_MAXIMUM_HOLD_SECONDS,
                 BunchingRecommendationPolicy.SIMULATION_MAXIMUM_DWELL_SECONDS, CrowdSafetyStatus.PASSED,
@@ -81,8 +98,8 @@ public class BunchingRecommendationRefreshService {
         var impact = new SimulatedImpactEstimate(gap,
                 gap + Math.max(0, Math.min(event.expectedHeadwaySeconds() - gap, mitigation.maximumHoldSeconds())), 0, 0, BigDecimal.ZERO, BigDecimal.ZERO);
         UUID revisionId = UUID.randomUUID();
-        var recommendation = new BunchingRecommendationPolicy().evaluate(revisionId, previous.classification(),
-                event, previous.diagnosis(), mitigation, impact)
+        var recommendation = policy.evaluate(revisionId, previous.classification(),
+                event, previous.diagnosis(), mitigation, impact, suggestions)
                 .orElseThrow(() -> new AdvisoryConflictException("Current predictions do not support a hold recommendation"));
         var replacement = new RecommendationRecord(revisionId, previous.requestHash(), previous.requestId(),
                 previous.classification(), event, previous.diagnosis(), mitigation, recommendation, now, group.rawObservationId());

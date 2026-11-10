@@ -65,13 +65,20 @@ public class CurrentSimulationBunchingGroupService {
         var gaps = java.util.stream.IntStream.range(1, ordered.size())
                 .mapToLong(index -> Duration.between(ordered.get(index - 1).getEstimatedArrivalAt(),
                         ordered.get(index).getEstimatedArrivalAt()).getSeconds()).boxed().toList();
+        var consecutivePairs = java.util.stream.IntStream.range(1, ordered.size())
+                .mapToObj(index -> ordered.get(index).getVisitOrder() == ordered.get(index - 1).getVisitOrder() + 1)
+                .toList();
         return Optional.of(new Group(runId, episodeId, evidence.serviceId(), evidence.stopCode(), evidence.directionId(),
-                evidence.rawObservationId(), evidence.fetchedAt(), evidence.validUntil(), references, gaps));
+                evidence.rawObservationId(), evidence.fetchedAt(), evidence.validUntil(), references, gaps, consecutivePairs));
     }
 
     public record Group(UUID demoRunId, UUID bunchingEventId, String serviceId, String stopCode, int directionId,
                         UUID rawObservationId, Instant fetchedAt, Instant validUntil, List<String> affectedBusReferences,
-                        List<Long> adjacentGapSeconds) {
-        public Group { affectedBusReferences = List.copyOf(affectedBusReferences); adjacentGapSeconds = List.copyOf(adjacentGapSeconds); }
+                        List<Long> adjacentGapSeconds, List<Boolean> consecutivePairs) {
+        public Group {
+            affectedBusReferences = List.copyOf(affectedBusReferences);
+            adjacentGapSeconds = List.copyOf(adjacentGapSeconds);
+            consecutivePairs = List.copyOf(consecutivePairs);
+        }
     }
 }

@@ -339,11 +339,24 @@ class IngestionStartupIT {
                 .andExpect(jsonPath("$.affectedBusReferences.length()").value(4))
                 .andExpect(jsonPath("$.affectedBusReferences[0]").value("demo-190-1"))
                 .andExpect(jsonPath("$.affectedBusReferences[3]").value("demo-190-4"))
+                .andExpect(jsonPath("$.consecutivePairs.length()").value(3))
+                .andExpect(jsonPath("$.consecutivePairs[0]").value(true))
+                .andExpect(jsonPath("$.consecutivePairs[1]").value(true))
+                .andExpect(jsonPath("$.consecutivePairs[2]").value(true))
                 .andExpect(jsonPath("$.adjacentGapSeconds.length()").value(3))
                 .andExpect(jsonPath("$.adjacentGapSeconds[0]").value(java.time.Duration.between(
                         current.get(0).estimatedArrivalAt(), current.get(1).estimatedArrivalAt()).getSeconds()));
         mvc.perform(get(currentPath).header("X-OCC-Peer-Token", "test-disruption-to-ingestion-token"))
                 .andExpect(status().isUnauthorized());
+        when(bunching.currentEvidence(started.id(), bunchingEventId)).thenReturn(java.util.Optional.of(
+                new BunchingControlPort.CurrentEvidence(started.id(), bunchingEventId, "190", "44251", 1, "BUNCHING",
+                        latestSnapshot.rawObservationId(), latestSnapshot.fetchedAt(), Instant.now().plusSeconds(60), true,
+                        List.of(currentIds.getFirst(), currentIds.get(2), currentIds.getLast()))));
+        mvc.perform(get(currentPath).header("X-OCC-Peer-Token", "test-planning-to-ingestion-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.consecutivePairs.length()").value(2))
+                .andExpect(jsonPath("$.consecutivePairs[0]").value(false))
+                .andExpect(jsonPath("$.consecutivePairs[1]").value(true));
         var oldSnapshot = simulationPage.items().get(1);
         when(bunching.currentEvidence(started.id(), bunchingEventId)).thenReturn(java.util.Optional.of(
                 new BunchingControlPort.CurrentEvidence(started.id(), bunchingEventId, "190", "44251", 1, "BUNCHING",

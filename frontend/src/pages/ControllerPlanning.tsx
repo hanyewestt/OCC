@@ -23,9 +23,10 @@ function seconds(value: number) {
   return minutes ? `${minutes}:${String(remainder).padStart(2, '0')}` : `${remainder}s`
 }
 
-function suggestedInstruction(recommendation: PendingRecommendation) {
-  if (recommendation.mitigationType === 'HOLD') return `Hold for ${recommendation.adjustmentSeconds} seconds at stop ${recommendation.controlStopCode}.`
-  if (recommendation.mitigationType === 'DWELL_ADJUSTMENT') return `Adjust dwell by ${recommendation.adjustmentSeconds} seconds at stop ${recommendation.controlStopCode}.`
+function suggestedInstruction(recommendation: PendingRecommendation,
+  { mitigationType, adjustmentSeconds }: { mitigationType: string | null; adjustmentSeconds: number } = recommendation) {
+  if (mitigationType === 'HOLD') return `Hold for ${adjustmentSeconds} seconds at stop ${recommendation.controlStopCode}.`
+  if (mitigationType === 'DWELL_ADJUSTMENT') return `Adjust dwell by ${adjustmentSeconds} seconds at stop ${recommendation.controlStopCode}.`
   return `Dispatch standby support for ${recommendation.targetBusReference} at stop ${recommendation.controlStopCode}.`
 }
 
@@ -65,7 +66,9 @@ function RecommendationBunchingGaps({ recommendation, alerts }: { recommendation
     <ul className="mt-1 space-y-1 font-medium tabular-nums">{predictionGaps.map((gap, index) =>
       <li key={buses[index + 1]}>{buses[index]} to {buses[index + 1]} · {seconds(gap)}</li>)}</ul>
   </div>}<p className="text-xs text-muted-foreground">{predictionGaps?.length ? 'Historical confirmation gaps' : 'Observed bunching gaps'}</p>
-    <ul className="mt-1 space-y-1 font-medium tabular-nums">{pairs.map(pair => <li key={`${pair.leadingOrder}-${pair.followingOrder}`}>Buses #{pair.leadingOrder}–{pair.followingOrder}: {pair.seconds === null ? 'NA' : seconds(pair.seconds)}</li>)}</ul>
+    <ul className="mt-1 space-y-1 font-medium tabular-nums">{predictionGaps?.length && recommendation.confirmationGaps?.length
+      ? recommendation.confirmationGaps.map((gap, index) => <li key={index}>Confirmation {index + 1} · {seconds(gap)}</li>)
+      : pairs.map(pair => <li key={`${pair.leadingOrder}-${pair.followingOrder}`}>Buses #{pair.leadingOrder}–{pair.followingOrder}: {pair.seconds === null ? 'NA' : seconds(pair.seconds)}</li>)}</ul>
   </div>
 }
 
@@ -92,11 +95,16 @@ function initialInstruction(recommendation: PendingRecommendation): ControllerRe
 }
 
 function initialBusInstructions(recommendation: PendingRecommendation): BusReplacement[] {
-  const references = recommendation.affectedBusReferences.length
-    ? recommendation.affectedBusReferences : [recommendation.targetBusReference]
-  return references.map(busReference => ({ busReference, ...initialInstruction(recommendation),
-    action: busReference === recommendation.targetBusReference && (references.length === 1 || recommendation.mitigationType === 'HOLD')
-      ? initialInstruction(recommendation).action : 'NONE' }))
+  const initial = initialInstruction(recommendation)
+  const buses = affectedBuses(recommendation)
+  return buses.map(busReference => {
+    const outcome = recommendation.suggestedOutcomes?.find(item => item.busReference === busReference)
+    if (outcome) return { busReference, action: outcome.mitigationType ?? 'NONE',
+      adjustmentSeconds: outcome.adjustmentSeconds, noInstructionReason: outcome.reason ?? '' }
+    return { busReference, ...initial,
+      action: busReference === recommendation.targetBusReference &&
+        (buses.length === 1 || recommendation.mitigationType === 'HOLD') ? initial.action : 'NONE' }
+  })
 }
 
 function RecommendationEvidenceList({ items }: { items: DiagnosisEvidenceDetail[] }) {
@@ -700,7 +708,8 @@ export function ControllerPlanning({
             <p className="text-xs text-muted-foreground">Affected buses · {affectedBuses(item).join(', ')}</p>
             <BunchedPairs alert={detectedAlerts.find(alert => alert.serviceId === item.serviceId && alert.directionId === item.directionId &&
               alert.stopCode === item.monitoredStopCode && alert.detectedAt === item.detectedAt)} />
-            <p className="text-xs text-muted-foreground">{item.mitigationType.replaceAll('_', ' ')} · Target: {item.targetBusReference}</p>
+            <p className="text-xs text-muted-foreground">{item.suggestedOutcomes?.length ? `Suggested outcomes for ${item.suggestedOutcomes.length} buses`
+              : `${item.mitigationType.replaceAll('_', ' ')} · Target: ${item.targetBusReference}`}</p>
           </button>)}
           {!visibleWithRetained.length && !visibleCorridors.length && (
             <div className="space-y-2 p-6 text-center text-sm text-muted-foreground">
@@ -931,6 +940,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
   const [message, setMessage] = useState('')
   const [editorOpen, setEditorOpen] = useState(false)
   const [discardOpen, setDiscardOpen] = useState(false)
+  const hasBusSuggestions = !!selected.suggestedOutcomes?.length
   const [instructions, setInstructions] = useState<BusReplacement[]>(() => initialBusInstructions(selected))
   const [rationale, setRationale] = useState('')
   const [openingDraft, setOpeningDraft] = useState<{ instructions: BusReplacement[]; rationale: string } | null>(null)
@@ -1094,7 +1104,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
                 <DialogFooter>
                   <DialogClose asChild><Button type="button" variant="outline" disabled={pending}>Close</Button></DialogClose>
                   <Button type="button" variant="outline" disabled={pending} onClick={requestClose}>Cancel</Button>
-                  <Button type="submit" disabled={pending || !isCurrent}>{pending ? 'Saving…' : 'Reject AI suggestion & save instructions'}</Button>
+                  <Button type="submit" disabled={pending || !isCurrent}>{pending ? 'Saving…' : hasBusSuggestions ? 'Save reviewed outcomes' : 'Reject AI suggestion & save instructions'}</Button>
                 </DialogFooter>
               </form>
             </DialogContent>
@@ -1123,19 +1133,25 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
           </div>
         </div>
 
-        <section aria-labelledby="affected-buses" className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 id="affected-buses" className="text-sm font-medium">Buses bunching</h3><span className="text-xs text-muted-foreground">Expected gap {seconds(selected.expectedImpact.headwayAfterSeconds)}</span></div>
+        <section aria-labelledby="affected-buses" className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 id="affected-buses" className="text-sm font-medium">Buses bunching</h3>{!hasBusSuggestions && <span className="text-xs text-muted-foreground">Expected gap {seconds(selected.expectedImpact.headwayAfterSeconds)}</span>}</div>
           <div className="divide-y rounded-lg border">{affectedBuses(selected).map(busReference => {
-            const isTarget = busReference === selected.targetBusReference
-            return <div key={busReference} className="grid gap-1 p-4 sm:grid-cols-[minmax(10rem,0.35fr)_1fr] sm:gap-4"><p className="font-medium">{busReference}</p><p className="text-sm text-muted-foreground">{isTarget ? suggestedInstruction(selected) : 'No individual instruction proposed.'}</p></div>
+            const outcome = selected.suggestedOutcomes?.find(item => item.busReference === busReference)
+            const instruction = outcome
+              ? outcome.mitigationType
+                ? suggestedInstruction(selected, outcome)
+                : `No instruction. ${outcome.reason ?? ''}`
+              : busReference === selected.targetBusReference && !hasBusSuggestions
+                ? suggestedInstruction(selected) : 'No individual instruction proposed.'
+            return <div key={busReference} className="grid gap-1 p-4 sm:grid-cols-[minmax(10rem,0.35fr)_1fr] sm:gap-4"><p className="font-medium">{busReference}</p><p className="text-sm text-muted-foreground">{instruction}</p></div>
           })}</div>
         </section>
 
-        <div className="grid gap-5 border-t pt-4 sm:grid-cols-2"><div><h3 className="text-sm font-medium">Why this action</h3><p className="mt-2 text-sm text-muted-foreground">{selected.explanation.rationale}</p></div><dl className="space-y-2 text-sm"><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Passenger minutes</dt><dd>{selected.expectedImpact.passengerMinutesBefore} → {selected.expectedImpact.passengerMinutesAfter}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Queue passengers</dt><dd>{selected.expectedImpact.queueBeforePassengers} → {selected.expectedImpact.queueAfterPassengers}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Adjustment</dt><dd>{selected.adjustmentSeconds} seconds</dd></div></dl></div>
+        {!hasBusSuggestions && <div className="grid gap-5 border-t pt-4 sm:grid-cols-2"><div><h3 className="text-sm font-medium">Why this action</h3><p className="mt-2 text-sm text-muted-foreground">{selected.explanation.rationale}</p></div><dl className="space-y-2 text-sm"><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Passenger minutes</dt><dd>{selected.expectedImpact.passengerMinutesBefore} → {selected.expectedImpact.passengerMinutesAfter}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Queue passengers</dt><dd>{selected.expectedImpact.queueBeforePassengers} → {selected.expectedImpact.queueAfterPassengers}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Adjustment</dt><dd>{selected.adjustmentSeconds} seconds</dd></div></dl></div>}
 
         <details className="border-t pt-4"><summary className="cursor-pointer text-sm font-medium">Evidence and limitations</summary>
           <div className="mt-4 space-y-4">
             {!!selected.explanation.evidenceDetails?.length && <div><h3 className="text-sm font-medium">Supporting incident evidence</h3><RecommendationEvidenceList items={selected.explanation.evidenceDetails} /></div>}
-            <div className="grid gap-5 sm:grid-cols-2"><div><h3 className="text-sm font-medium">Trade-offs</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.tradeOffs.map((item, index) => <li key={index}>{item}</li>)}</ul></div><div><h3 className="text-sm font-medium">Limitations</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.limitations.map((item, index) => <li key={index}>{item}</li>)}</ul></div></div>
+            <div className="grid gap-5 sm:grid-cols-2">{!hasBusSuggestions && <div><h3 className="text-sm font-medium">Trade-offs</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.tradeOffs.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}<div><h3 className="text-sm font-medium">Limitations</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.limitations.map((item, index) => <li key={index}>{item}</li>)}</ul></div></div>
           </div>
         </details>
 

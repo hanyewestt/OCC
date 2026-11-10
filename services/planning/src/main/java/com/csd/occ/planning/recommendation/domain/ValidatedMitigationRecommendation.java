@@ -14,7 +14,15 @@ public record ValidatedMitigationRecommendation(
         int adjustmentSeconds,
         RecommendationExplanation explanation,
         SimulatedImpactEstimate expectedImpact,
-        List<String> evidenceIds) {
+        List<String> evidenceIds,
+        List<SuggestedBusOutcome> suggestedOutcomes) {
+
+    public ValidatedMitigationRecommendation(UUID recommendationId, IncidentType incidentType, RecommendationStatus status,
+            MitigationType mitigationType, String targetBusReference, String controlStopCode, int adjustmentSeconds,
+            RecommendationExplanation explanation, SimulatedImpactEstimate expectedImpact, List<String> evidenceIds) {
+        this(recommendationId, incidentType, status, mitigationType, targetBusReference, controlStopCode,
+                adjustmentSeconds, explanation, expectedImpact, evidenceIds, List.of());
+    }
 
     public ValidatedMitigationRecommendation {
         Objects.requireNonNull(recommendationId, "recommendationId is required");
@@ -29,6 +37,7 @@ public record ValidatedMitigationRecommendation(
         Objects.requireNonNull(explanation, "explanation is required");
         Objects.requireNonNull(expectedImpact, "expectedImpact is required");
         evidenceIds = List.copyOf(evidenceIds);
+        suggestedOutcomes = suggestedOutcomes == null ? List.of() : List.copyOf(suggestedOutcomes);
         if (evidenceIds.isEmpty()) {
             throw new IllegalArgumentException("evidenceIds must not be empty");
         }
