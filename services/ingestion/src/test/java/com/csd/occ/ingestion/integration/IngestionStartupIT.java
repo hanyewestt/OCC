@@ -295,7 +295,8 @@ class IngestionStartupIT {
                         java.math.BigDecimal.ZERO))), "d".repeat(64));
         when(bunching.alerts(any(UUID.class))).thenReturn(List.of());
 
-        DemoRunDetails started = demoRuns.start();
+        DemoRunDetails started = demoRuns.start(new com.csd.occ.ingestion.domain.DemoRunConfiguration(
+                "190", 1, 4, java.time.Duration.ofSeconds(90), com.csd.occ.ingestion.domain.DemoScenario.BUNCHING));
         for (int step = 0; step < DemoReplayScenario.STEP_COUNT; step++) replay.replayNext();
         DemoRunDetails completed = demoRuns.status(started.id());
         var simulationPage = bunchingFeed.demoPage(started.id(), 0, 100);
@@ -305,6 +306,8 @@ class IngestionStartupIT {
         assertThat(demoMode.enabled()).isTrue();
         assertThat(completed.status()).isEqualTo("REPLAY_COMPLETE");
         assertThat(simulationPage.items()).hasSize(DemoReplayScenario.STEP_COUNT);
+        assertThat(simulationPage.items()).allSatisfy(snapshot -> assertThat(snapshot.arrivals())
+                .extracting(BunchingFeedService.Arrival::visitOrder).containsExactly(1, 2, 3, 4));
         assertThat(bunchingFeed.page(0, 100).items())
                 .noneMatch(snapshot -> simulationIds.contains(snapshot.rawObservationId()));
         assertThat(arrivals.findCurrent("44251", "190", null, "arrival", "asc", PageRequest.of(0, 50))
