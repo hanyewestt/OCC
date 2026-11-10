@@ -70,10 +70,10 @@ public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort
             INSERT INTO planning.recommendation (
                 recommendation_id, request_hash, bunching_event_id, direction_id,
                 adjustment_seconds, request_payload, mitigation_context,
-                response_payload, created_at
+                response_payload, created_at, revision_raw_observation_id
             ) VALUES (
                 ?, ?, ?, ?, ?, CAST(? AS JSONB), CAST(? AS JSONB),
-                CAST(? AS JSONB), ?
+                CAST(? AS JSONB), ?, ?
             )
             ON CONFLICT (recommendation_id) DO NOTHING
             """;
@@ -186,7 +186,8 @@ public class JdbcRecommendationRecordAdapter implements RecommendationRecordPort
                 json.writeValueAsString(request),
                 json.writeValueAsString(record.mitigationContext()),
                 json.writeValueAsString(recommendation),
-                Timestamp.from(record.createdAt()));
+                Timestamp.from(record.createdAt()),
+                record.revisionRawObservationId());
         return inserted == 1;
     }
 
