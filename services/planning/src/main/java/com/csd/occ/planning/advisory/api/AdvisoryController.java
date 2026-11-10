@@ -40,7 +40,7 @@ public class AdvisoryController {
 
     @PostMapping("/advisory-groups/decisions")
     @Operation(operationId = "decideAdvisoryGroup", summary = "Approve the reviewed service/direction recipients atomically",
-            description = "Controller/admin only. Submit all distinct proposal IDs from one reviewed group. The server revalidates run, membership, route, hazard evidence, downstream exposure, assignment and movement conflicts for each bus. Any failure rolls back every delivery. Identical retries return the original per-captain instructions. New recipients require a fresh review; this does not subscribe future buses.")
+            description = "CONTROLLER only. Submit all distinct proposal IDs from one reviewed group. The server revalidates run, membership, route, hazard evidence, downstream exposure, assignment and movement conflicts for each bus. Any failure rolls back every delivery. Identical retries return the original per-captain instructions. New recipients require a fresh review; this does not subscribe future buses.")
     @ApiResponse(responseCode = "200", description = "Individual deliveries or identical replay")
     @ApiResponse(responseCode = "400", description = "Invalid recipient list", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = org.springframework.http.ProblemDetail.class)))
     @ApiResponse(responseCode = "404", description = "Proposal not found", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = org.springframework.http.ProblemDetail.class)))
@@ -62,13 +62,13 @@ public class AdvisoryController {
         return new AdvisoryResponse.PageResponse(result.map(AdvisoryResponse::from).toList(), page, size, result.getTotalElements(), result.getTotalPages());
     }
     @PostMapping("/advisories/{id}/preview")
-    @Operation(operationId = "previewAdvisory", summary = "Validate and preview the exact OBU message", description = "Controller/admin only. Uses current evidence, assignment and the same message policy as issuance; does not issue an instruction.")
+    @Operation(operationId = "previewAdvisory", summary = "Validate and preview the exact OBU message", description = "CONTROLLER only. Uses current evidence, assignment and the same message policy as issuance; does not issue an instruction.")
     public java.util.Map<String, String> preview(@PathVariable UUID id, @RequestBody @Valid DecideAdvisoryRequest body) {
         return java.util.Map.of("message", instructions.preview(id, body.override()));
     }
     @PostMapping("/advisories/{id}/decisions")
     @Operation(operationId = "decideAdvisory", summary = "Approve or replace a structured advisory and issue it",
-            description = "Controller/admin only. Actor comes from JWT. Identical repeated decisions return the original instruction; "
+            description = "CONTROLLER only. Actor comes from JWT. Identical repeated decisions return the original instruction; "
                     + "conflicting decisions return 409. Overrides require a rationale. Explicit replaceInstructionId cancels a conflicting movement instruction atomically.")
     @ApiResponse(responseCode = "200", description = "Issued instruction or identical replay")
     @ApiResponse(responseCode = "400", description = "Invalid structured parameters", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = org.springframework.http.ProblemDetail.class)))
@@ -89,7 +89,7 @@ public class AdvisoryController {
                 result.getTotalElements(), result.getTotalPages(), clock.instant());
     }
     @PostMapping("/instructions/{id}/cancellations")
-    @Operation(operationId = "cancelInstruction", summary = "Cancel an instruction", description = "Controller/admin only; repeated cancellations are safe.")
+    @Operation(operationId = "cancelInstruction", summary = "Cancel an instruction", description = "CONTROLLER only; repeated cancellations are safe.")
     public InstructionResponse cancel(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) {
         return InstructionResponse.from(instructions.cancel(id, jwt.getSubject()));
     }

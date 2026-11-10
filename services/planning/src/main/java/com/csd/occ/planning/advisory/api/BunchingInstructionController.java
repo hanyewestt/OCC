@@ -18,7 +18,7 @@ public class BunchingInstructionController {
     public BunchingInstructionController(BunchingInstructionService instructions) { this.instructions = instructions; }
     @PostMapping("/{id}/obu-decisions")
     @Operation(operationId = "approveBunchingObuInstruction", summary = "Approve and issue a validated HOLD/DWELL instruction atomically",
-            description = "Controller/admin only. Optional body may identify replaceInstructionId; no free-text override. Revalidates existing safety rules, active run, unique recipient and upcoming control stop; repeated issuance returns the original instruction. Movement conflicts return 409.")
+            description = "CONTROLLER only. Optional body may identify replaceInstructionId; no free-text override. Revalidates existing safety rules, active run, unique recipient and upcoming control stop; repeated issuance returns the original instruction. Movement conflicts return 409.")
     public InstructionResponse approve(@PathVariable UUID id, @RequestBody(required = false) ReplaceInstructionRequest body,
                                         @AuthenticationPrincipal Jwt jwt) {
         return InstructionResponse.from(instructions.approveAndIssue(id, jwt.getSubject(), body == null ? null : body.replaceInstructionId()));

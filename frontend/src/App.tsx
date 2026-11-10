@@ -48,7 +48,7 @@ export function App() {
 
   if (pathname === '/notices') return <NoticeBoardPage key={search} />
   let content
-  if (pathname === '/404' || !['/', '/login', ...controllerPages.map(page => page.path), '/captain', '/401', '/403'].includes(pathname)) {
+  if (pathname === '/404' || !['/', '/login', ...controllerPages.map(page => page.path), '/admin', '/captain', '/401', '/403'].includes(pathname)) {
     content = <NotFoundPage />
   } else if (pathname === '/401') {
     content = <ErrorPage code={401} title="Sign-in required" description="Your session is missing or has expired. Sign in to continue.">
@@ -89,7 +89,11 @@ export function App() {
       controllerRefreshIntervalSeconds={publicConfig!.controllerRefreshIntervalSeconds}
       ingestionPollIntervalSeconds={publicConfig!.ingestionPollIntervalSeconds}
       routeIncidentGapToleranceSeconds={publicConfig!.routeIncidentGapToleranceSeconds} /></main>
-    content = <CaptainPage key={token} email={email} token={token!} refreshIntervalSeconds={publicConfig!.captainRefreshIntervalSeconds} />
+    if (home === '/admin') {
+      content = <div className="space-y-4"><h1 className="text-2xl font-semibold">Admin</h1>
+        <p className="text-sm text-muted-foreground">Signed in as {email}</p>
+        <Button variant="outline" onClick={() => void signOut()}>Sign out</Button></div>
+    } else content = <CaptainPage key={token} email={email} token={token!} refreshIntervalSeconds={publicConfig!.captainRefreshIntervalSeconds} />
   }
   return <main className="flex min-h-svh items-center justify-center px-5 py-12">{content}</main>
 }

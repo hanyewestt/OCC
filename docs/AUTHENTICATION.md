@@ -7,10 +7,11 @@ this starter app.
 
 ## Role pages
 
+- `ADMIN` can open `/admin` only.
 - `CONTROLLER` can open `/controller` only.
 - `CAPTAIN` is displayed as Captain and can open `/captain` only.
-- `ADMIN`, `UNASSIGNED` and unsupported claims receive an access message and
-  sign-out; ADMIN does not override these page permissions.
+- `UNASSIGNED` and unsupported claims receive an access message and sign-out.
+  No role overrides another role’s page permissions.
 
 React waits for Ingestion's session verification before rendering role content.
 Static HTML/JavaScript are public assets; route guards are not backend access
@@ -18,12 +19,13 @@ control. Each backend independently verifies token signature, issuer, audience,
 expiry and subject and normalizes the trusted top-level `occ_role` claim.
 
 `GET /api/v1/auth/session` returns `{subject, role}` for an authenticated token;
-missing/unrecognized roles normalize to `UNASSIGNED`. The controller/captain
+missing/unrecognized roles normalize to `UNASSIGNED`. The admin/controller/captain
 page check `GET /api/v1/auth/access/{page}` returns the same identity only for
 the matching role. Wrong roles receive 403, unsupported page names 404, and
 missing/invalid/expired tokens 401. Ingestion owns these routes and Nginx
-routes them directly. Existing business APIs still permit only
-ADMIN/CONTROLLER; CAPTAIN receives no new business API permissions.
+routes them directly. Operational reads permit ADMIN and CONTROLLER. Operational writes require
+CONTROLLER; the explicit admin namespaces require ADMIN. CAPTAIN retains only
+the owner-scoped route, instruction and acknowledgement permissions.
 
 ## Persistent browser sessions
 
@@ -38,7 +40,7 @@ protected content and offers retry rather than claiming logout succeeded.
 Browser storage contains session credentials and must never be committed or
 logged. Sessions use browser storage rather than HttpOnly cookies or server-side
 session storage. No OAuth redirects,
-MFA, registration, password recovery or administrator dashboard are added.
+MFA, registration or password recovery are added.
 
 ## Configuration
 
@@ -50,7 +52,8 @@ JWT validation uses the separate JWKS URL, allowed algorithms and audience.
 See [development guide](DEVELOPMENT.md) for builds, Vite proxy settings and
 browser tests. Nginx serves the React build. Simulation controls and
 recommendation decisions use the dashboard's verified persistent session;
-backend APIs independently enforce ADMIN/CONTROLLER access. The retired
+backend APIs independently enforce operational reads for ADMIN/CONTROLLER and
+operational writes for CONTROLLER. The retired
 `/demo.html`, `/auth.js` and `/auth-test` routes return 404.
 
 ## Verification

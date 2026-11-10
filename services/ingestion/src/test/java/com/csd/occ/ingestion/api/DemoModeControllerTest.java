@@ -42,7 +42,7 @@ class DemoModeControllerTest {
 
         mvc.perform(get("/api/v1/demo-mode").with(user("admin").roles("ADMIN")))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.enabled").value(false));
-        mvc.perform(put("/api/v1/demo-mode").with(user("admin").roles("ADMIN"))
+        mvc.perform(put("/api/v1/demo-mode").with(user("controller").roles("CONTROLLER"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"enabled\":true}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.enabled").value(true));
@@ -52,7 +52,7 @@ class DemoModeControllerTest {
 
     @Test
     void runtimeModeRejectsMissingEnabledValue() throws Exception {
-        mvc.perform(put("/api/v1/demo-mode").with(user("admin").roles("ADMIN"))
+        mvc.perform(put("/api/v1/demo-mode").with(user("controller").roles("CONTROLLER"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"enabled\":null}"))
                 .andExpect(status().isBadRequest());

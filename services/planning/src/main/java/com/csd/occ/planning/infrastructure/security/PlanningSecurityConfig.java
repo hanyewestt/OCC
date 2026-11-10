@@ -46,10 +46,45 @@ public class PlanningSecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/v1/planning/captain/instructions").hasRole("CAPTAIN")
                         .requestMatchers(HttpMethod.POST, "/api/v1/planning/captain/instructions/*/acknowledgements").hasRole("CAPTAIN")
                         .requestMatchers("/api/v1/planning/captain/**").denyAll()
-                        .requestMatchers("/api/v1/**").hasAnyRole("ADMIN", "CONTROLLER")
+                        .requestMatchers(HttpMethod.GET, "/api/v1/planning/admin/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/planning/admin/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/planning/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/api/v1/planning/admin/**").denyAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/planning/recommendations/*/decision",
+                                "/api/v1/planning/notices",
+                                "/api/v1/planning/recommendations/pending",
+                                "/api/v1/planning/recommendations/by-disruption-event/*",
+                                "/api/v1/planning/requests/*",
+                                "/api/v1/planning/requests/by-event/*",
+                                "/api/v1/planning/recommendations/decisions",
+                                "/api/v1/planning/instructions",
+                                "/api/v1/planning/diagnoses",
+                                "/api/v1/planning/diagnoses/*",
+                                "/api/v1/planning/diagnoses/hazard-requests",
+                                "/api/v1/planning/diagnoses/hazard-history",
+                                "/api/v1/planning/diagnoses/controller-suggestions",
+                                "/api/v1/planning/ai-audit-records",
+                                "/api/v1/planning/advisory-groups",
+                                "/api/v1/planning/advisories")
+                        .hasAnyRole("ADMIN", "CONTROLLER")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/planning/recommendations/*/decision",
+                                "/api/v1/planning/recommendations/*/obu-decisions",
+                                "/api/v1/planning/notices",
+                                "/api/v1/planning/notices/*/withdrawals",
+                                "/api/v1/planning/notices/*/suggestions",
+                                "/api/v1/planning/notices/*/replacements",
+                                "/api/v1/planning/notices/*/publications",
+                                "/api/v1/planning/instructions/*/cancellations",
+                                "/api/v1/planning/diagnoses/*/controller-suggestion",
+                                "/api/v1/planning/diagnoses/trigger",
+                                "/api/v1/planning/advisory-groups/decisions",
+                                "/api/v1/planning/advisories/*/preview",
+                                "/api/v1/planning/advisories/*/decisions")
+                        .hasRole("CONTROLLER")
+                        .requestMatchers("/api/v1/**").denyAll()
                         .requestMatchers("/v3/**", "/swagger-ui/**", "/swagger-ui.html", "/webjars/**")
                         .hasAnyRole("ADMIN", "CONTROLLER")
-                        .anyRequest().authenticated())
+                        .anyRequest().denyAll())
                 .oauth2ResourceServer(resourceServer -> resourceServer
                         .jwt(jwt -> jwt.decoder(jwtDecoder).jwtAuthenticationConverter(authenticationConverter)))
                 .addFilterBefore(new PeerCapabilityAuthenticationFilter(peerProperties), AuthorizationFilter.class)

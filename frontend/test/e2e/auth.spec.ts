@@ -125,7 +125,7 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
       return route.fulfill({ status: 503 })
     }
     const page = url.pathname.split('/').pop()
-    if (page !== 'session' && !((page === 'controller' && role === 'CONTROLLER') || (page === 'captain' && role === 'CAPTAIN'))) {
+    if (page !== 'session' && !((page === 'controller' && role === 'CONTROLLER') || (page === 'captain' && role === 'CAPTAIN') || (page === 'admin' && role === 'ADMIN'))) {
       return route.fulfill({ status: 403 })
     }
     return route.fulfill({ json: { subject: userId,
@@ -1363,7 +1363,7 @@ for (const [role, destination, title, other] of [
   })
 }
 
-for (const role of ['ADMIN', 'UNASSIGNED', 'DRIVER']) {
+for (const role of ['UNASSIGNED', 'DRIVER']) {
   test(`${role} receives no role page`, async ({ page, context }) => {
     await mockAuth(context, role)
     await login(page)
@@ -2808,3 +2808,28 @@ for (const size of [{ width: 1280, height: 720 }, { width: 800, height: 480 }]) 
   })
 }
 
+
+
+test('admin home is verified and cannot override controller or captain pages', async ({ page, context }) => {
+  await mockAuth(context, 'ADMIN')
+  await login(page)
+  await expect(page).toHaveURL(/\/admin$/)
+  await expect(page.getByRole('heading', { name: 'Admin', exact: true })).toBeVisible()
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Admin', exact: true })).toBeVisible()
+  for (const path of ['/controller', '/captain']) {
+    await page.goto(path)
+    await expect(page.getByRole('heading', { name: 'Access denied' })).toBeVisible()
+  }
+  await page.goto('/admin/accounts')
+  await expect(page.getByRole('heading', { name: 'Page not found' })).toBeVisible()
+})
+
+for (const role of ['CONTROLLER', 'CAPTAIN']) {
+  test(`${role} cannot open admin home`, async ({ page, context }) => {
+    await mockAuth(context, role)
+    await login(page)
+    await page.goto('/admin')
+    await expect(page.getByRole('heading', { name: 'Access denied' })).toBeVisible()
+  })
+}

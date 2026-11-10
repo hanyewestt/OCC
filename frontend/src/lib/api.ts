@@ -38,7 +38,7 @@ export async function identityRequest(path: string, token: string, signal: Abort
 }
 
 export function homeFor(role: Identity['role']): string | null {
-  return role === 'CONTROLLER' ? '/controller' : role === 'CAPTAIN' ? '/captain' : null
+  return role === 'ADMIN' ? '/admin' : role === 'CONTROLLER' ? '/controller' : role === 'CAPTAIN' ? '/captain' : null
 }
 
 export type HazardFeedHealth = { kind: string; source: string; scope: string; classification: string; demoRunId: string | null;

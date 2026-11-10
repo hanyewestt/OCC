@@ -16,7 +16,7 @@ public class PlanningOpenApiConfig {
         return new OpenAPI().info(new Info()
                 .title("OCC Planning API")
                 .version("1.0.0")
-                .description("Diagnosis and validated mitigation recommendations for operational disruptions."))
+                .description("Diagnosis and validated mitigation recommendations for operational disruptions. Operational reads require ADMIN or CONTROLLER; operational writes require CONTROLLER. Admin namespaces require ADMIN. Captain endpoints retain owner-only CAPTAIN access."))
                 .components(new Components()
                         .addSecuritySchemes("SupabaseJWT", new SecurityScheme()
                                 .type(SecurityScheme.Type.HTTP).scheme("bearer").bearerFormat("JWT"))
