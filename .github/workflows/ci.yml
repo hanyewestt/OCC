@@ -1,10 +1,11 @@
 name: Core CI
 
+# Reusable verification: pull requests and manual dispatches run it directly,
+# pushes to main run it through the Main verification caller (verify.yml).
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -564,7 +565,7 @@ jobs:
         if: always()
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ matrix.image }}
+          image-ref: occ-${{ matrix.service }}:ci
           version: v0.76.0
           format: cyclonedx
           output: ${{ runner.temp }}/sbom-${{ matrix.service }}.json
