@@ -33,6 +33,7 @@ import com.csd.occ.planning.infrastructure.security.PlanningSecurityConfig;
 import com.csd.occ.planning.infrastructure.security.SupabaseRoleConverter;
 
 @WebMvcTest(value = {BunchingRecommendationController.class, RecommendationDecisionController.class,
+        BunchingRecommendationRefreshController.class,
         com.csd.occ.planning.diagnosis.api.DiagnosisController.class}, properties = {
         "occ.security.supabase.project-url=https://example.supabase.co",
         "occ.security.supabase.jwks-url=https://example.supabase.co/auth/v1/.well-known/jwks.json",
@@ -65,6 +66,7 @@ class BunchingRecommendationControllerTest {
     @MockitoBean private AdvisoryProposalRepository proposals;
     @MockitoBean private IssuedInstructionRepository instructions;
     @MockitoBean private BunchingInstructionService bunchingInstructions;
+    @MockitoBean private com.csd.occ.planning.recommendation.domain.BunchingRecommendationRefreshService refreshes;
 
     @TestConfiguration(proxyBeanMethods = false)
     static class MeterConfiguration {
@@ -76,6 +78,17 @@ class BunchingRecommendationControllerTest {
 
     BunchingRecommendationControllerTest(MockMvcTester mvc) {
         this.mvc = mvc;
+    }
+
+    @Test
+    void refreshRequiresAController() {
+        String path = "/api/v1/planning/recommendations/" + RECOMMENDATION_ID + "/refresh";
+        org.mockito.Mockito.when(refreshes.refresh(RECOMMENDATION_ID))
+                .thenThrow(new RecommendationDecisionService.RecommendationNotFoundException(RECOMMENDATION_ID));
+        assertThat(mvc.post().uri(path).exchange()).hasStatus(401);
+        assertThat(mvc.post().uri(path).with(user("captain").roles("CAPTAIN")).exchange()).hasStatus(403);
+        assertThat(mvc.post().uri(path).with(user("admin").roles("ADMIN")).exchange()).hasStatus(403);
+        assertThat(mvc.post().uri(path).with(user("controller").roles("CONTROLLER")).exchange()).hasStatus(404);
     }
 
     @Test

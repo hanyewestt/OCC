@@ -132,11 +132,15 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
       role: ['CONTROLLER', 'CAPTAIN', 'ADMIN', 'UNASSIGNED'].includes(role) ? role : 'UNASSIGNED' } })
   })
 }
-async function login(page: Page) {
+async function login(page: Page, controllerPath?: string) {
   await page.goto('/login')
   await page.getByLabel('Email').fill('user@example.test')
   await page.getByLabel('Password', { exact: true }).fill('synthetic-password')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  if (controllerPath) {
+    await page.waitForURL('**/controller')
+    await page.goto(controllerPath)
+  }
 }
 
 async function expectAccessVerified(page: Page) {
@@ -255,6 +259,7 @@ async function mockDashboard(context: BrowserContext, options: { arrivalFailure?
     }
     return decision ? route.fulfill({ json: decision }) : route.fulfill({ status: 204 })
   })
+  return recommendation
 }
 
 function arrivalEvidence(classification: string, directionId: number, stopCode = 'B01') {
@@ -897,6 +902,34 @@ test('controller reviews an outcome for every bus in a four-bus group', async ({
   ])
 })
 
+test('refresh opens a new review with the changed group and its prediction gaps', async ({ page, context }) => {
+  const original = await mockDashboard(context)
+  const revision = { ...original, recommendationId: 'recommendation-2', revisionRawObservationId: 'snapshot-2',
+    affectedBusReferences: ['BUS-2', 'BUS-3'], targetBusReference: 'BUS-3', currentPredictionGaps: [25], adjustmentSeconds: 45 }
+  let refreshed = false
+  await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: {
+    mode: 'DEMO', demoRunId: 'run-1', items: [refreshed ? revision : original], page: 0, totalItems: 1, totalPages: 1,
+  } }))
+  await context.route('**/api/v1/planning/recommendations/recommendation-1/refresh', route => {
+    expect(route.request().method()).toBe('POST')
+    refreshed = true
+    return route.fulfill({ json: revision })
+  })
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await page.getByRole('button', { name: 'Refresh bus group' }).click()
+  await expect(page.getByText('BUS-2 to BUS-3 · 25s')).toBeVisible()
+  await expect(page.getByText('Historical confirmation gaps')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
+  await expect(editor.getByLabel('Action for BUS-2')).toBeVisible()
+  await expect(editor.getByLabel('Action for BUS-3')).toBeVisible()
+  await expect(editor.getByLabel('Action for SAMPLE-BUS')).toHaveCount(0)
+  await expect(editor.getByLabel('Action for BUS-2').locator('option[value="DWELL_ADJUSTMENT"]')).toHaveCount(0)
+  await expect(editor.getByLabel('Action for BUS-3').locator('option[value="DWELL_ADJUSTMENT"]')).toHaveCount(1)
+})
+
 test('controller handles conflicting decisions by retrieving the saved result', async ({ page, context }) => {
   await mockDashboard(context, { conflict: true })
   await login(page)
@@ -932,7 +965,7 @@ test('dirty controller recommendation editor confirms dismissal and discards onl
   await action.selectOption('DWELL_ADJUSTMENT')
   await adjustment.fill('0')
   await submit.click()
-  await expect(editor.getByRole('alert')).toContainText('1–120 second HOLD or DWELL action')
+  await expect(editor.getByRole('alert')).toContainText('1–120 second duration for each action')
   expect(decisionRequests).toBe(0)
   await adjustment.fill('65')
   await expect(editor.getByRole('alert')).toHaveCount(0)
@@ -990,7 +1023,7 @@ test('recommendation editor keeps edits on API failure and cannot close or submi
     if (attempts === 1) {
       signalRequestStarted()
       await new Promise<void>(resolve => { releaseFirstRequest = resolve })
-      return route.fulfill({ status: 503, json: { detail: 'Decision service is temporarily unavailable.' } })
+      return route.fulfill({ status: 503, json: { detail: 'Instruction delivery failed for SAMPLE-BUS. No bus outcomes were saved.' } })
     }
     return route.fulfill({ json: { recommendationId: 'recommendation-1', action: 'REJECTED', actorSubject: userId,
       overrideInstructions: [{ busReference: 'SAMPLE-BUS', instruction: 'Hold for 120 seconds at stop B01.' }],
@@ -1011,14 +1044,14 @@ test('recommendation editor keeps edits on API failure and cannot close or submi
   await expect(page.getByRole('alertdialog')).toHaveCount(0)
   expect(attempts).toBe(1)
   releaseFirstRequest()
-  await expect(editor.getByRole('alert')).toContainText('Unable to save the decision.')
+  await expect(editor.getByRole('alert')).toContainText('Instruction delivery failed for SAMPLE-BUS.')
   await expect(draftAdjustment).toHaveValue('60')
   await expect(save).toBeEnabled()
 
   await save.click()
   await expect.poll(() => attempts).toBe(2)
   await expect(editor).toHaveCount(0)
-  await expect(page.getByText('Replacement instructions issued to the affected captains.')).toBeVisible()
+  await expect(page.getByText('Bus outcomes saved and selected instructions issued.')).toBeVisible()
 })
 
 test('saving pauses polling and reconciles the decision after the response', async ({ page, context }) => {
@@ -1052,7 +1085,7 @@ test('saving pauses polling and reconciles the decision after the response', asy
   release()
   await expect.poll(() => pollsWhileSaving).toBe(1)
   await expect(editor).toHaveCount(0)
-  await expect(page.getByText('Replacement instructions issued to the affected captains.')).toBeVisible()
+  await expect(page.getByText('Bus outcomes saved and selected instructions issued.')).toBeVisible()
 })
 
 test('recommendation editor retains its draft during an unrelated refresh', async ({ page, context }) => {
@@ -1345,6 +1378,7 @@ test('controller narrow layout keeps navigation and tables within the viewport',
 test('captain cannot open any controller dashboard route', async ({ page, context }) => {
   await mockAuth(context, 'CAPTAIN')
   await login(page)
+  await page.waitForURL('**/captain')
   for (const route of ['/controller', '/controller/disruptions', '/controller/planning', '/controller/notices', '/controller/audit']) {
     await page.goto(route)
     await expect(page.getByRole('heading', { name: 'Access denied' })).toBeVisible()
@@ -1683,8 +1717,8 @@ test('controller reviews a service-direction broadcast and sends only the review
   await expect(advisories.getByRole('heading', { name: 'Service 190 · Direction 1', exact: true })).toHaveCount(0)
   await expect(advisories.getByRole('heading', { name: 'Service 190 · Direction 2', exact: true })).toBeVisible()
   await expect(advisories.getByRole('region', { name: 'Issued instructions', exact: true }).getByText(issued.message, { exact: true })).toHaveCount(2)
-  await expect(advisories.getByText('demo-190-b · ISSUED', { exact: true })).toBeVisible()
-  await expect(advisories.getByText('demo-190-c · ISSUED', { exact: true })).toBeVisible()
+  await expect(advisories.getByText(/^demo-190-b · ISSUED · Awaiting acknowledgement by/)).toBeVisible()
+  await expect(advisories.getByText(/^demo-190-c · ISSUED · Awaiting acknowledgement by/)).toBeVisible()
   expect(sent).toBe(true)
 })
 
@@ -1783,8 +1817,7 @@ test('public notice editor preserves its draft when saving fails', async ({ page
     page: 0, size: 100, totalElements: 1, feeds: [],
   } }))
   await context.route('**/api/v1/planning/notices', route => route.fulfill({ status: 503, json: { detail: 'Notice save unavailable.' } }))
-  await login(page)
-  await page.goto('/controller/notices')
+  await login(page, '/controller/notices')
   await page.getByRole('button', { name: 'Draft notice', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'New notice draft', exact: true })
   await editor.getByLabel('Source hazard', { exact: true }).selectOption('source-hazard')
@@ -1886,8 +1919,7 @@ test('changing notice source clears prior passenger scope and validates the new 
     saved.push(route.request().postDataJSON())
     return route.fulfill({ json: { ...saved.at(-1), status: 'DRAFT' } })
   })
-  await login(page)
-  await page.goto('/controller/notices')
+  await login(page, '/controller/notices')
   await page.getByRole('button', { name: 'Draft notice', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'New notice draft', exact: true })
   await editor.getByLabel('Source hazard', { exact: true }).selectOption(hazardA)
@@ -1934,8 +1966,7 @@ test('failed notice suggestions preserve manual wording and allow retry without 
     return failed ? route.fulfill({ status: 503, json: { detail: 'Wording suggestions are unavailable. Review the source and try again.' } })
       : route.fulfill({ json: { title: 'Passenger update', message: 'Water reported near Stop A.', services: ['190'], locations: ['Stop A'], generator: 'SOURCE_FACTS' } })
   })
-  await login(page)
-  await page.goto('/controller/notices')
+  await login(page, '/controller/notices')
   await page.getByRole('button', { name: 'Draft notice', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'New notice draft', exact: true })
   await editor.getByLabel('Source hazard', { exact: true }).selectOption(disruptionId)
@@ -1995,8 +2026,7 @@ test('controller publishes corrects and withdraws notices while the public board
     const visible = items.filter(item => item.status === 'PUBLISHED')
     return route.fulfill({ json: { items: visible, page: 0, totalItems: visible.length, totalPages: 1 } })
   })
-  await login(page)
-  await page.goto('/controller/notices')
+  await login(page, '/controller/notices')
   await page.getByRole('button', { name: 'Draft notice', exact: true }).click()
   const draft = page.getByRole('dialog', { name: 'New notice draft', exact: true })
   await draft.getByLabel('Source hazard', { exact: true }).selectOption(disruptionId)
@@ -2058,8 +2088,7 @@ test('notice history identifies each scope and copied simulation drafts keep the
       effectiveUntil: new Date(Date.now() - 60_000).toISOString(), status: 'DRAFT' },
   ]
   await context.route('**/api/v1/planning/notices?*', route => route.fulfill({ json: { items, page: 0, totalItems: items.length, totalPages: 1 } }))
-  await login(page)
-  await page.goto('/controller/notices')
+  await login(page, '/controller/notices')
   await expect(page.getByText('History includes Live notices and all Simulation runs. Copies keep their original source scope.', { exact: true })).toBeVisible()
   const history = page.getByRole('region', { name: 'Managed notices', exact: true })
   const runARecord = history.locator('[data-slot="card"]').filter({ has: page.getByRole('heading', { name: 'Run A draft history', exact: true }) })
@@ -2085,8 +2114,7 @@ test.describe('SGT correction scheduling', () => {
         effectiveFrom: '2030-01-01T15:00:00Z', effectiveUntil: '2030-01-01T16:05:00Z', publishedAt: '2026-10-31T04:00:00Z', withdrawnAt: null }],
       page: 0, totalItems: 1, totalPages: 1,
     } }))
-    await login(page)
-    await page.goto('/controller/notices')
+    await login(page, '/controller/notices')
     await expect(page.getByText('Live · Published · Scheduled', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Correct notice', exact: true }).click()
     const editor = page.getByRole('dialog', { name: 'Publish a correction', exact: true })
@@ -2112,8 +2140,7 @@ test('controller repairs a saved notice by copying it into a separate draft', as
     saved = route.request().postDataJSON()
     return route.fulfill({ json: { ...saved, status: 'DRAFT' } })
   })
-  await login(page)
-  await page.goto('/controller/notices')
+  await login(page, '/controller/notices')
   await page.getByRole('button', { name: 'Copy to new draft', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'New notice draft', exact: true })
   await expect(editor.getByLabel('Title', { exact: true })).toHaveValue(original.title)
@@ -2388,8 +2415,7 @@ test('controller names an empty filtered hazard list', async ({ page, context })
     return route.fulfill({ json: { items: matching, page: 0, size: 100, totalElements: matching.length, feeds: [] } })
   })
 
-  await login(page)
-  await page.goto('/controller/disruptions')
+  await login(page, '/controller/disruptions')
   await page.getByLabel('Hazard type', { exact: true }).selectOption('TRAFFIC_INCIDENT')
   await expect(page.getByText('No hazards found for the selected type.', { exact: true })).toBeVisible()
 })
@@ -2414,8 +2440,7 @@ test('controller filters hazard pages through the API with readable category nam
     const currentPage = Number(params.get('page'))
     return route.fulfill({ json: { items: matching.slice(currentPage, currentPage + 1), page: currentPage, size: 1, totalElements: matching.length, feeds: [] } })
   })
-  await login(page)
-  await page.goto('/controller/disruptions')
+  await login(page, '/controller/disruptions')
   const filter = page.getByLabel('Hazard type', { exact: true })
   await expect(filter.locator('option')).toHaveText(['All types', 'Traffic Incidents', 'Floods', 'Rail Disruptions', 'Roadworks'])
   const hazards = page.getByRole('region', { name: 'Hazard conditions', exact: true })
@@ -2459,8 +2484,7 @@ test('controller scrolls hazard conditions beyond the visible cards', async ({ p
     page: 0, size: 100, totalElements: 5, feeds: [],
   } }))
 
-  await login(page)
-  await page.goto('/controller/disruptions')
+  await login(page, '/controller/disruptions')
   const hazards = page.getByRole('region', { name: 'Hazard conditions', exact: true })
   const viewport = hazards.locator('[data-slot="scroll-area-viewport"]')
   await expect(hazards.getByRole('heading', { name: 'Hazard 5', exact: true })).toHaveCount(1)
@@ -2487,8 +2511,7 @@ test('controller can withdraw a published notice from managed notice history', a
     return route.fulfill({ status: 204 })
   })
 
-  await login(page)
-  await page.goto('/controller/audit')
+  await login(page, '/controller/audit')
   const history = page.getByRole('region', { name: 'Managed notices', exact: true })
   await expect(history.getByRole('heading', { name: 'Temporary service advisory', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Withdraw notice', exact: true }).click()

@@ -52,6 +52,7 @@ function RecommendationBunchingGaps({ recommendation, alerts }: { recommendation
   const alert = recommendationAlert(recommendation, alerts)
   const detectedPairs = alert ? adjacentBunchingGaps(alert) : []
   const buses = affectedBuses(recommendation)
+  const predictionGaps = recommendation.currentPredictionGaps
   const pairCount = Math.min(99, detectedPairs.reduce((count, pair) => Math.max(count, pair.followingOrder - 1), Math.max(1, buses.length - 1)))
   const pairs = Array.from({ length: pairCount }, (_, index) => {
     const leadingOrder = index + 1
@@ -59,7 +60,11 @@ function RecommendationBunchingGaps({ recommendation, alerts }: { recommendation
     const detected = detectedPairs.find(pair => pair.leadingOrder === leadingOrder && pair.followingOrder === followingOrder)
     return { leadingOrder, followingOrder, seconds: detected?.isBunched ? detected.seconds : null }
   })
-  return <div><p className="text-xs text-muted-foreground">Observed bunching gaps</p>
+  return <div>{!!predictionGaps?.length && <div className="mb-3">
+    <p className="text-xs text-muted-foreground">Reviewed prediction gaps</p>
+    <ul className="mt-1 space-y-1 font-medium tabular-nums">{predictionGaps.map((gap, index) =>
+      <li key={buses[index + 1]}>{buses[index]} to {buses[index + 1]} · {seconds(gap)}</li>)}</ul>
+  </div>}<p className="text-xs text-muted-foreground">{predictionGaps?.length ? 'Historical confirmation gaps' : 'Observed bunching gaps'}</p>
     <ul className="mt-1 space-y-1 font-medium tabular-nums">{pairs.map(pair => <li key={`${pair.leadingOrder}-${pair.followingOrder}`}>Buses #{pair.leadingOrder}–{pair.followingOrder}: {pair.seconds === null ? 'NA' : seconds(pair.seconds)}</li>)}</ul>
   </div>
 }
@@ -90,7 +95,8 @@ function initialBusInstructions(recommendation: PendingRecommendation): BusRepla
   const references = recommendation.affectedBusReferences.length
     ? recommendation.affectedBusReferences : [recommendation.targetBusReference]
   return references.map(busReference => ({ busReference, ...initialInstruction(recommendation),
-    action: busReference === recommendation.targetBusReference ? initialInstruction(recommendation).action : 'NONE' }))
+    action: busReference === recommendation.targetBusReference && (references.length === 1 || recommendation.mitigationType === 'HOLD')
+      ? initialInstruction(recommendation).action : 'NONE' }))
 }
 
 function RecommendationEvidenceList({ items }: { items: DiagnosisEvidenceDetail[] }) {
@@ -527,6 +533,7 @@ export function ControllerPlanning({
   }, [isRequestSelection, requestedId, requestedRequestId, requestedEventId, requestedIncident, selected, selectedRequest, setSearchParams])
 
   function select(recommendationId: string) {
+    setEditingRecommendation(null)
     setSelectedCorridorId(null)
     setSearchParams(prev => {
       const next = new URLSearchParams(prev)
@@ -539,6 +546,7 @@ export function ControllerPlanning({
   }
 
   function selectCorridor(group: CorridorDiagnosisGroup) {
+    setEditingRecommendation(null)
     setSelectedCorridorId(group.id)
     const rep = group.representativeRequest ?? group.requests[0]
     setSearchParams(prev => {
@@ -719,7 +727,12 @@ export function ControllerPlanning({
       {!selectedRequest && detailRecommendation && detailIdentity && <RecommendationDetail key={detailIdentity} selected={detailRecommendation} identity={detailIdentity}
         scopeIdentity={scopeIdentity} token={token} detectedAlerts={detectedAlerts} isCurrent={selectionIsCurrent} validationFailed={editorUnavailable}
         retryCurrentCheck={modeError ? onRefresh : recommendations.reload}
-        onSaved={onSaved} onMessage={setMessage} onEditorChange={setEditingRecommendation} />}
+        onSaved={onSaved} onMessage={setMessage} onEditorChange={setEditingRecommendation}
+        onRefreshed={item => {
+          select(item.recommendationId)
+          setEditingRecommendation({ identity: `${scopeIdentity}:${item.recommendationId}`, scopeIdentity, recommendation: item })
+          onSaved()
+        }} />}
       {selectedRequest && <DiagnosisRequestDetail request={selectedRequest}
         corridor={selectedCorridor}
         detectedBusReferences={detectedBusReferences(selectedRequest, detectedAlerts, selectedCorridor)}
@@ -907,11 +920,12 @@ function DiagnosisRequestDetail({ request, corridor, detectedBusReferences, gene
   </CardContent></Card>
 }
 
-function RecommendationDetail({ selected, identity, scopeIdentity, token, detectedAlerts, isCurrent, validationFailed, retryCurrentCheck, onSaved, onMessage, onEditorChange }: {
+function RecommendationDetail({ selected, identity, scopeIdentity, token, detectedAlerts, isCurrent, validationFailed, retryCurrentCheck, onSaved, onMessage, onEditorChange, onRefreshed }: {
   selected: PendingRecommendation; identity: string; scopeIdentity: string; token: string
   detectedAlerts: BunchingAlert[]
   isCurrent: boolean; validationFailed: boolean; retryCurrentCheck: () => void
   onSaved: () => void; onMessage: (message: string) => void; onEditorChange: Dispatch<SetStateAction<EditingRecommendation | null>>
+  onRefreshed: (item: PendingRecommendation) => void
 }) {
   const [pending, setPending] = useState(false)
   const [message, setMessage] = useState('')
@@ -965,6 +979,33 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
     setInstructions(items => items.map((item, itemIndex) => itemIndex === index ? { ...item, ...changes } : item))
   }
 
+  async function refresh() {
+    if (submitting.current || !isCurrent) return
+    submitting.current = true
+    setPending(true)
+    setMessage('')
+    onEditorChange({ identity, scopeIdentity, recommendation: selected, pending: true })
+    const controller = new AbortController()
+    mutationRef.current = controller
+    try {
+      const item = await apiRequest<PendingRecommendation>(
+        `/api/v1/planning/recommendations/${encodeURIComponent(selected.recommendationId)}/refresh`,
+        token, controller.signal, { method: 'POST' },
+      )
+      if (item && !controller.signal.aborted) onRefreshed(item)
+    } catch (error) {
+      if (controller.signal.aborted) return
+      if (error instanceof ApiError && error.status === 401) void signOut(error.message)
+      else setMessage(error instanceof ApiError ? error.message : 'Unable to refresh the recommendation.')
+    } finally {
+      submitting.current = false
+      if (!controller.signal.aborted) {
+        setPending(false)
+        onEditorChange(value => value?.identity === identity ? null : value)
+      }
+    }
+  }
+
   async function decide(action: Decision['action']) {
     if (submitting.current || !isCurrent) return
     if (action === 'REJECTED' && instructions.some(item => item.action === 'NONE'
@@ -1000,9 +1041,10 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
       if (controller.signal.aborted) return
       if (error instanceof ApiError && error.status === 401) void signOut(error.message)
       else if (error instanceof ApiError && error.status === 409) {
-        onMessage('This recommendation has changed or already has a decision. The latest state has been requested.')
+        onMessage(error.message === 'Unable to load or save this data. Try again.'
+          ? 'This recommendation has changed or already has a decision. The latest state has been requested.' : error.message)
         closeEditor(true)
-      } else setMessage(error instanceof ApiError && error.status === 403 ? 'You do not have permission to record this decision.' : 'Unable to save the decision. Check the instructions and try again.')
+      } else setMessage(error instanceof ApiError && error.status === 403 ? 'You do not have permission to record this decision.' : error instanceof ApiError && error.status === 503 ? `Unable to save the decision. ${error.message}` : 'Unable to save the decision. Check the instructions and try again.')
     } finally {
       submitting.current = false
       if (!controller.signal.aborted) {
@@ -1023,6 +1065,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
 
         <div className="flex flex-wrap justify-end gap-2 border-b pb-4">
           {affectedBuses(selected).length > 1 && <p className="w-full text-right text-xs text-muted-foreground">Review an outcome for every affected bus before saving.</p>}
+          <Button variant="outline" disabled={pending || !isCurrent} onClick={() => { void refresh() }}>Refresh bus group</Button>
           <Button disabled={pending || !isCurrent || affectedBuses(selected).length > 1} onClick={() => { void decide('APPROVED') }}>Approve recommendation</Button>
           <Dialog open={editorOpen} onOpenChange={changeEditorOpen}>
           <DialogTrigger asChild><Button variant="outline" disabled={pending}>Enter controller recommendation</Button></DialogTrigger>
@@ -1035,6 +1078,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
                 <DialogTitle>Enter controller recommendation</DialogTitle>
                 <DialogDescription>Choose hold, dwell, skip stop or no instruction for each affected bus. Timed actions can be adjusted by up to 120 seconds.</DialogDescription>
               </DialogHeader>
+              {affectedBuses(selected).length > 1 && <p className="text-sm text-muted-foreground">Dwell adjustment requires current boarding evidence for the bus.</p>}
               {!isCurrent && <div role="alert" className="rounded-lg border p-3 text-sm">
                 <p>{validationFailed ? 'Unable to confirm this recommendation is current. Your draft is preserved; decisions are paused.'
                   : 'Checking that this recommendation is still pending. Decisions are paused.'}</p>
@@ -1043,7 +1087,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
               {message && <p role="alert" className="rounded-lg border p-3 text-sm">{message}</p>}
               <form className="space-y-4" noValidate onSubmit={event => { event.preventDefault(); void decide('REJECTED') }}>
                 {instructions.map((item, index) => <div key={item.busReference} className="grid gap-3 rounded-lg border p-4 sm:grid-cols-[1fr_8rem]">
-                  <div className="space-y-2"><Label htmlFor={`bus-action-${index}`}>Action for {item.busReference}</Label><select ref={index === 0 ? firstAction : undefined} id={`bus-action-${index}`} value={item.action} onChange={event => updateInstruction(index, { action: event.target.value as ControllerReplacement['action'] })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"><option value="HOLD">Hold at next stop</option><option value="DWELL_ADJUSTMENT">Extend dwell at stop {selected.controlStopCode}</option><option value="SKIP_STOP">Skip stop {selected.controlStopCode}</option><option value="NONE">No instruction</option></select></div>
+                  <div className="space-y-2"><Label htmlFor={`bus-action-${index}`}>Action for {item.busReference}</Label><select ref={index === 0 ? firstAction : undefined} id={`bus-action-${index}`} value={item.action} onChange={event => updateInstruction(index, { action: event.target.value as ControllerReplacement['action'] })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"><option value="HOLD">Hold at next stop</option>{(affectedBuses(selected).length === 1 || index > 0) && <option value="DWELL_ADJUSTMENT">Extend dwell at stop {selected.controlStopCode}</option>}<option value="SKIP_STOP">Skip stop {selected.controlStopCode}</option><option value="NONE">No instruction</option></select></div>
                   <div className="space-y-2"><Label htmlFor={`bus-adjustment-${index}`}>Seconds</Label><Input id={`bus-adjustment-${index}`} type="number" min="1" max="120" step="1" value={item.adjustmentSeconds} onChange={event => updateInstruction(index, { adjustmentSeconds: Number(event.target.value) })} required={item.action === 'HOLD' || item.action === 'DWELL_ADJUSTMENT'} disabled={item.action === 'NONE' || item.action === 'SKIP_STOP'} /></div>
                   {item.action === 'NONE' && <div className="space-y-2 sm:col-span-2"><Label htmlFor={`bus-no-instruction-reason-${index}`}>Reason no instruction is needed</Label><Input id={`bus-no-instruction-reason-${index}`} maxLength={480} value={item.noInstructionReason} onChange={event => updateInstruction(index, { noInstructionReason: event.target.value })} required /></div>}
                 </div>)}
