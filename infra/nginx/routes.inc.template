@@ -49,6 +49,10 @@
         return 404;
     }
 
+    location = /swagger-ui.html {
+        return 404;
+    }
+
     location ^~ /swagger-ui/ {
         return 404;
     }

@@ -58,6 +58,9 @@
                 <directory>${maven.multiModuleProjectDirectory}/infra/swagger-ui</directory>
                 <targetPath>static/swagger-ui</targetPath>
                 <filtering>true</filtering>
+                <includes>
+                    <include>index.html</include>
+                </includes>
             </resource>
         </resources>
         <pluginManagement>
