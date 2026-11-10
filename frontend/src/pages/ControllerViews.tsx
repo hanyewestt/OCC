@@ -18,6 +18,7 @@ import {
   type LatLng,
   computeBusLatLngAlongPolyline,
   computePolylineDirectionArrows,
+  ensurePolylineFollowsRoute,
   getBundledRouteGeometry,
   loadRouteGeometry,
 } from '@/lib/route-geometry'
@@ -420,7 +421,7 @@ export function BunchingMap({
       if (!result[key]) {
         const bundled = getBundledRouteGeometry(route.serviceId, route.directionId)
         if (bundled) {
-          result[key] = bundled
+          result[key] = ensurePolylineFollowsRoute(bundled, route.stops)
         }
       }
     }
@@ -434,7 +435,8 @@ export function BunchingMap({
       if (!activeGeometries[key]) {
         loadRouteGeometry(route.serviceId, route.directionId).then(pts => {
           if (!cancelled && pts) {
-            setLoadedGeometries(prev => ({ ...prev, [key]: pts }))
+            const aligned = ensurePolylineFollowsRoute(pts, route.stops)
+            setLoadedGeometries(prev => ({ ...prev, [key]: aligned }))
           }
         }).catch(() => {})
       }
@@ -525,7 +527,7 @@ export function BunchingMap({
     const route = routes.find(candidate => candidate.serviceId === serviceId && candidate.directionId === directionId)
     if (!route) return []
     const key = `${serviceId}-${directionId}`
-    const geom = activeGeometries[key]
+    const geom = activeGeometries[key] ? ensurePolylineFollowsRoute(activeGeometries[key], route.stops) : null
     const coords = computeBusLatLng(route, bus.distanceAlongRouteM, routeLengthM, geom)
     if (!coords) return []
     return [{
@@ -768,7 +770,7 @@ export function BunchingMap({
 
   const routePolylines = activeRoutes.map(route => {
     const key = `${route.serviceId}-${route.directionId}`
-    const geom = activeGeometries[key]
+    const geom = activeGeometries[key] ? ensurePolylineFollowsRoute(activeGeometries[key], route.stops) : null
     const pts = (geom && geom.length > 1)
       ? geom.map(p => project(p.latitude, p.longitude))
       : route.stops
