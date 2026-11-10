@@ -4,6 +4,7 @@ import {
   decodePolyline,
   haversineDistanceM,
   computeBusLatLngAlongPolyline,
+  computePolylineDirectionArrows,
   getBundledRouteGeometry,
 } from '../../src/lib/route-geometry'
 import { computeBusLatLng } from '../../src/pages/ControllerViews'
@@ -113,4 +114,59 @@ test('computeBusLatLng prioritizes polyline coordinates over straight chords', (
   const withoutPolyline = computeBusLatLng(route, 1000, routeLengthM)
   expect(withoutPolyline).not.toBeNull()
   expect(withoutPolyline!.longitude).toBeCloseTo(103.81, 5)
+})
+test('computePolylineDirectionArrows returns empty array for short or invalid polylines', () => {
+  expect(computePolylineDirectionArrows([])).toEqual([])
+  expect(computePolylineDirectionArrows([{ x: 10, y: 10 }])).toEqual([])
+  expect(computePolylineDirectionArrows([{ x: 10, y: 10 }, { x: 10, y: 10 }])).toEqual([])
+  // Line of length 20px is below minDistancePx (35px)
+  expect(computePolylineDirectionArrows([{ x: 0, y: 0 }, { x: 20, y: 0 }])).toEqual([])
+})
+
+test('computePolylineDirectionArrows calculates accurate travel angles for cardinal directions', () => {
+  // Eastbound (angle 0)
+  const east = computePolylineDirectionArrows([{ x: 0, y: 50 }, { x: 150, y: 50 }], { spacingPx: 60 })
+  expect(east.length).toBeGreaterThan(0)
+  for (const arrow of east) {
+    expect(arrow.angle).toBeCloseTo(0, 1)
+    expect(arrow.y).toBeCloseTo(50, 1)
+  }
+
+  // Southbound (angle 90)
+  const south = computePolylineDirectionArrows([{ x: 50, y: 0 }, { x: 50, y: 150 }], { spacingPx: 60 })
+  expect(south.length).toBeGreaterThan(0)
+  for (const arrow of south) {
+    expect(arrow.angle).toBeCloseTo(90, 1)
+    expect(arrow.x).toBeCloseTo(50, 1)
+  }
+
+  // Westbound (angle 180 or -180)
+  const west = computePolylineDirectionArrows([{ x: 150, y: 50 }, { x: 0, y: 50 }], { spacingPx: 60 })
+  expect(west.length).toBeGreaterThan(0)
+  for (const arrow of west) {
+    expect(Math.abs(arrow.angle)).toBeCloseTo(180, 1)
+  }
+
+  // Northbound (angle -90)
+  const north = computePolylineDirectionArrows([{ x: 50, y: 150 }, { x: 50, y: 0 }], { spacingPx: 60 })
+  expect(north.length).toBeGreaterThan(0)
+  for (const arrow of north) {
+    expect(arrow.angle).toBeCloseTo(-90, 1)
+  }
+})
+
+test('computePolylineDirectionArrows places midpoint arrow on moderate lengths and filters by viewport', () => {
+  // Line of length 50px with spacingPx 75 -> places single midpoint arrow at distance 25
+  const mid = computePolylineDirectionArrows([{ x: 0, y: 0 }, { x: 50, y: 0 }], { spacingPx: 75, minDistancePx: 30 })
+  expect(mid).toHaveLength(1)
+  expect(mid[0].x).toBeCloseTo(25, 1)
+  expect(mid[0].angle).toBeCloseTo(0, 1)
+
+  // Viewport filtering excludes points beyond viewport margin
+  const withViewport = computePolylineDirectionArrows(
+    [{ x: 0, y: 50 }, { x: 500, y: 50 }],
+    { spacingPx: 50, viewport: { width: 100, height: 100, margin: 10 } }
+  )
+  expect(withViewport.every(a => a.x >= -10 && a.x <= 110)).toBe(true)
+  expect(withViewport.length).toBeLessThan(computePolylineDirectionArrows([{ x: 0, y: 50 }, { x: 500, y: 50 }], { spacingPx: 50 }).length)
 })
