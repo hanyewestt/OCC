@@ -11,8 +11,18 @@ public interface AdvisoryContextPort {
     Route route(String serviceId);
     Limits limits();
     BunchingGroup bunchingGroup(UUID demoRunId, UUID bunchingEventId);
+    CurrentBunchingGroup currentBunchingGroup(UUID demoRunId, UUID bunchingEventId);
     record BunchingGroup(UUID demoRunId, UUID bunchingEventId, String serviceId, int directionId, String stopCode,
                          List<String> affectedBusReferences, String followingBusReference) {}
+    record CurrentBunchingGroup(UUID demoRunId, UUID bunchingEventId, String serviceId, String stopCode, int directionId,
+                                UUID rawObservationId, Instant fetchedAt, Instant validUntil, List<String> affectedBusReferences,
+                                List<Long> adjacentGapSeconds) {
+        public CurrentBunchingGroup(UUID demoRunId, UUID bunchingEventId, String serviceId, String stopCode, int directionId,
+                UUID rawObservationId, Instant fetchedAt, Instant validUntil, List<String> affectedBusReferences) {
+            this(demoRunId, bunchingEventId, serviceId, stopCode, directionId, rawObservationId, fetchedAt, validUntil,
+                    affectedBusReferences, List.of());
+        }
+    }
     record Limits(int maxSpeedReductionKmh, int maxDurationSeconds, int maxSubsequentStops,
                   Duration acknowledgementWindow, Duration retention) {}
     record Hazard(UUID disruptionId, String kind, String status, String inactiveReason, String classification,

@@ -51,7 +51,9 @@ public class BunchingInstructionService {
     }
     private List<IssuedInstruction> issue(UUID id, String actor, RecommendationDecisionAction decisionAction,
             List<ReplacementBusInstruction> requested, String rationale, UUID replaceInstructionId) {
-        var record = recommendations.findByIdempotencyKey(id).orElseThrow(AdvisoryNotFoundException::new);
+        var record = recommendations.findByIdempotencyKeyForUpdate(id).orElseThrow(AdvisoryNotFoundException::new);
+        if (recommendations.findRevision(id).isPresent())
+            throw new AdvisoryConflictException("Recommendation has been superseded; review its replacement");
         var recommendation = record.recommendation();
         if (record.classification() != SourceClassification.SIMULATION || recommendation.status() != RecommendationStatus.RECOMMENDED
                 || !List.of(MitigationType.HOLD, MitigationType.DWELL_ADJUSTMENT).contains(recommendation.mitigationType()))
@@ -131,6 +133,38 @@ public class BunchingInstructionService {
                         && b.directionId() == record.bunchingEvent().directionId()
                         && (java.util.Objects.equals(b.busId(), reference) || java.util.Objects.equals(b.registrationNumber(), reference))).count() != 1))
             throw new AdvisoryConflictException("An affected bus is unavailable or ambiguous in the current fleet");
+        {
+            AdvisoryContextPort.CurrentBunchingGroup currentGroup;
+            try { currentGroup = context.currentBunchingGroup(run, record.bunchingEvent().bunchingEventId()); }
+            catch (RuntimeException unavailable) { throw new AdvisoryConflictException("Current bunching evidence unavailable; review again when it is available"); }
+            var now = clock.instant();
+            if (currentGroup == null || !run.equals(currentGroup.demoRunId())
+                    || !record.bunchingEvent().bunchingEventId().equals(currentGroup.bunchingEventId())
+                    || !record.bunchingEvent().serviceId().equals(currentGroup.serviceId())
+                    || record.bunchingEvent().directionId() != currentGroup.directionId()
+                    || !record.bunchingEvent().monitoredStopCode().equals(currentGroup.stopCode())
+                    || currentGroup.rawObservationId() == null || currentGroup.fetchedAt() == null
+                    || currentGroup.validUntil() == null || currentGroup.fetchedAt().isAfter(now)
+                    || !now.isBefore(currentGroup.validUntil()) || currentGroup.affectedBusReferences() == null)
+                throw new AdvisoryConflictException("Current bunching evidence unavailable or expired; review again");
+            var currentReferences = currentGroup.affectedBusReferences();
+            if (currentReferences.size() != allowedReferences.size()
+                    || currentReferences.stream().anyMatch(reference -> reference == null || reference.isBlank()
+                            || fleet.items().stream().filter(b -> b.serviceId().equals(record.bunchingEvent().serviceId())
+                                && b.directionId() == record.bunchingEvent().directionId()
+                                && (java.util.Objects.equals(b.busId(), reference) || java.util.Objects.equals(b.registrationNumber(), reference))).count() != 1))
+                throw new AdvisoryConflictException("Affected bus group changed; refresh and review it again");
+            var reviewedBusIds = allowedReferences.stream().map(reference -> fleet.items().stream().filter(b ->
+                    b.serviceId().equals(record.bunchingEvent().serviceId()) && b.directionId() == record.bunchingEvent().directionId()
+                    && (java.util.Objects.equals(b.busId(), reference) || java.util.Objects.equals(b.registrationNumber(), reference)))
+                    .findFirst().orElseThrow().busId()).toList();
+            var currentBusIds = currentReferences.stream().map(reference -> fleet.items().stream().filter(b ->
+                    b.serviceId().equals(record.bunchingEvent().serviceId()) && b.directionId() == record.bunchingEvent().directionId()
+                    && (java.util.Objects.equals(b.busId(), reference) || java.util.Objects.equals(b.registrationNumber(), reference)))
+                    .findFirst().orElseThrow().busId()).toList();
+            if (!reviewedBusIds.equals(currentBusIds) || currentBusIds.stream().distinct().count() != currentBusIds.size())
+                throw new AdvisoryConflictException("Affected bus group changed; refresh and review it again");
+        }
         if (replaceInstructionId != null) {
             var predecessor = instructions.findForUpdate(replaceInstructionId).orElseThrow(AdvisoryNotFoundException::new);
             boolean busMatches = fleet.items().stream().anyMatch(b -> b.serviceId().equals(record.bunchingEvent().serviceId())
