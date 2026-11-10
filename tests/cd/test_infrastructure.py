@@ -53,6 +53,22 @@ class CloudFormationContractTests(unittest.TestCase):
         self.assertIn("cloudfront.origin-facing", text)
         self.assertNotRegex(text, r"FromPort:\s*8080[\s\S]{0,200}CidrIp:\s*0\.0\.0\.0/0")
 
+    def test_egress_is_an_explicit_fail_closed_allow_list(self):
+        text = template_text()
+        # No unrestricted outbound range in either IP family.
+        self.assertNotIn("CidrIp: 0.0.0.0/0", text)
+        self.assertNotIn("CidrIpv6: ::/0", text)
+        self.assertIn("EgressAllowedPrefixListId:", text)
+        self.assertIn("DestinationPrefixListId: !Ref EgressAllowedPrefixListId", text)
+
+    def test_bootstrap_requires_the_egress_allow_list(self):
+        bootstrap = BOOTSTRAP_PS1.read_text(encoding="utf-8")
+        self.assertIn("occ-ec2-cd-egress", bootstrap)
+        self.assertIn("ParameterKey=EgressAllowedPrefixListId", bootstrap)
+        # An empty or reopened allow-list must fail before the change set.
+        self.assertIn("get-managed-prefix-list-entries", bootstrap)
+        self.assertIn('"0.0.0.0/0", "::/0"', bootstrap)
+
     def test_storage_is_encrypted_versioned_and_private(self):
         text = template_text()
         self.assertRegex(text, r"Encrypted:\s*true")
@@ -65,6 +81,23 @@ class CloudFormationContractTests(unittest.TestCase):
 
     def test_imdsv2_required(self):
         self.assertRegex(template_text(), r"HttpTokens:\s*required")
+
+    def test_release_bucket_uses_a_rotated_customer_managed_key(self):
+        text = template_text()
+        self.assertIn("AWS::KMS::Key", text)
+        self.assertRegex(text, r"EnableKeyRotation:\s*true")
+        self.assertRegex(text, r"KMSMasterKeyID:\s*!GetAtt OccReleaseKey\.Arn")
+        # The roles that read or write release objects must be delegated key
+        # use; the key policy keeps account administrative control.
+        self.assertIn("kms:Decrypt", text)
+        self.assertIn("kms:GenerateDataKey", text)
+        self.assertIn("AccountAdministration", text)
+
+    def test_cloudfront_is_fronted_by_a_waf_with_managed_rules(self):
+        text = template_text()
+        self.assertIn("AWS::WAFv2::WebACL", text)
+        self.assertIn("AWSManagedRulesCommonRuleSet", text)
+        self.assertRegex(text, r"WebACLId:\s*!GetAtt OccEdgeWebAcl\.Arn")
 
     def test_oidc_subjects_are_scoped_to_repository_and_environment(self):
         text = template_text()

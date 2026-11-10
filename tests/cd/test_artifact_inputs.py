@@ -284,6 +284,11 @@ class DockerfileContractTests(unittest.TestCase):
         self.assertNotIn("occ_tls", web)
         self.assertNotRegex(web, r"frontend/node_modules|\.env")
 
+    def test_web_image_runs_as_the_unprivileged_nginx_account(self):
+        # Compose already runs the edge as 101:101; the image itself must not
+        # fall back to root when the scanner or another runtime starts it.
+        self.assertIn("USER 101:101", self.read("web.Dockerfile"))
+
     def test_dockerignore_keeps_real_inputs_out_of_broad_contexts(self):
         ignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
         for required in (".env", "**/target", "**/node_modules", "frontend/dist"):

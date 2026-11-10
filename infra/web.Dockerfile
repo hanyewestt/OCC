@@ -8,4 +8,9 @@ FROM ${NGINX_IMAGE}
 COPY dist/ /usr/share/nginx/html/
 COPY templates/ /etc/nginx/templates/
 
+# Match the unprivileged runtime the Compose nginx service declares: uid/gid
+# 101 is the image's nginx account, and the writable paths it needs are
+# supplied as Compose tmpfs mounts.
+USER 101:101
+
 EXPOSE 8080 8443
