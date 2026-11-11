@@ -18,6 +18,7 @@ public class AdvisoryReconciliationService {
     @Transactional
     public void sourceCleared(UUID id, String reason) {
         instructions.cancelByDisruption(id, "SOURCE_WITHDRAWN");
+        proposals.expirePendingByDisruptionId(id);
         if (!"NO_LONGER_REPORTED".equals(reason)) notices.withdrawSource(id, clock.instant());
     }
 
