@@ -42,13 +42,13 @@ function Invoke-Aws {
     }
 }
 
-function Test-Stack {
+function Get-StackStatus {
     param([Parameter(Mandatory)][string]$Name)
     # list-stacks succeeds whether or not the name exists, so no expected
     # "not found" stderr can become a PowerShell NativeCommandError.
     $arguments = @(
         "cloudformation", "list-stacks",
-        "--query", "StackSummaries[?StackName=='$Name' && StackStatus!='DELETE_COMPLETE'].StackName",
+        "--query", "StackSummaries[?StackName=='$Name' && StackStatus!='DELETE_COMPLETE'].StackStatus",
         "--output", "text"
     )
     if ($Profile) { $arguments += @("--profile", $Profile) }
@@ -66,7 +66,38 @@ function Test-Stack {
         throw "aws cloudformation list-stacks failed with exit code $exitCode"
     }
     $text = (($result | ForEach-Object { "$_" }) -join "").Trim()
-    return ($text -ne "" -and $text -ne "None")
+    if ($text -eq "None") { return "" }
+    return $text
+}
+
+function Get-PendingCreateChangeSet {
+    param([Parameter(Mandatory)][string]$Name)
+    $result = Invoke-Aws @(
+        "cloudformation", "list-change-sets", "--stack-name", $Name,
+        "--query", "Summaries[?Status=='CREATE_COMPLETE' || Status=='CREATE_PENDING' || Status=='CREATE_IN_PROGRESS'].ChangeSetName",
+        "--output", "text"
+    )
+    $text = (($result | ForEach-Object { "$_" }) -join "`n").Trim()
+    if (-not $text -or $text -eq "None") { return "" }
+    return (($text -split "\s+") | Select-Object -First 1)
+}
+
+function Get-ChangeSetStatus {
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$ChangeSet)
+    $result = Invoke-Aws @(
+        "cloudformation", "describe-change-set", "--stack-name", $Name,
+        "--change-set-name", $ChangeSet, "--query", "Status", "--output", "text"
+    )
+    return (($result | ForEach-Object { "$_" }) -join "").Trim()
+}
+
+function Get-ChangeSetReason {
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$ChangeSet)
+    $result = Invoke-Aws @(
+        "cloudformation", "describe-change-set", "--stack-name", $Name,
+        "--change-set-name", $ChangeSet, "--query", "StatusReason", "--output", "text"
+    )
+    return (($result | ForEach-Object { "$_" }) -join "").Trim()
 }
 
 # Verify both identities before any mutation so a missing session fails fast
@@ -211,32 +242,67 @@ $parameters = @(
     "ParameterKey=CloudFrontOriginPrefixListId,ParameterValue=$prefixListId",
     "ParameterKey=EgressAllowedPrefixListId,ParameterValue=$egressPrefixListId"
 )
-Write-Output "Creating change set for stack $StackName..."
+$stackStatus = Get-StackStatus $StackName
+$stackExists = -not [string]::IsNullOrWhiteSpace($stackStatus)
 $changeSet = "occ-bootstrap-" + (Get-Date -Format "yyyyMMddHHmmss")
-$stackExists = Test-Stack $StackName
-$changeSetType = if ($stackExists) { "UPDATE" } else { "CREATE" }
 $templatePath = Join-Path $repoRoot "infra/aws/ec2-cd.yaml"
 $templateUri = "file://" + ($templatePath -replace '\\', '/')
-$changeSetArguments = @(
-    "cloudformation", "create-change-set", "--stack-name", $StackName,
-    "--change-set-name", $changeSet, "--change-set-type", $changeSetType,
-    "--template-body", $templateUri,
-    "--capabilities", "CAPABILITY_NAMED_IAM", "--parameters"
-) + $parameters
-Invoke-Aws $changeSetArguments
-Write-Output "Change set $changeSet ($changeSetType) created. Review it with:"
-Write-Output "  aws cloudformation describe-change-set --stack-name $StackName --change-set-name $changeSet"
-if (-not $ApplyChangeSet) {
-    Write-Output "Apply it with:  pwsh scripts/cd/bootstrap.ps1 -ApplyChangeSet"
-    exit 0
-}
-Invoke-Aws @("cloudformation", "execute-change-set", "--stack-name", $StackName, "--change-set-name", $changeSet)
-Write-Output "Executing change set $changeSet; waiting for the stack..."
-if ($stackExists) {
-    Invoke-Aws @("cloudformation", "wait", "stack-update-complete")
+
+if ($stackStatus -eq "REVIEW_IN_PROGRESS") {
+    # A previous review-only run created the CREATE change set but did not
+    # execute it. CloudFormation refuses UPDATE change sets in this state.
+    $changeSet = Get-PendingCreateChangeSet $StackName
+    if (-not $changeSet) {
+        throw "Stack $StackName is in REVIEW_IN_PROGRESS but has no pending CREATE change set; delete it with 'aws cloudformation delete-stack --stack-name $StackName' and rerun."
+    }
+    Write-Output "Stack $StackName is awaiting execution of change set $changeSet."
+    Write-Output "  Review: aws cloudformation describe-change-set --stack-name $StackName --change-set-name $changeSet"
+    if (-not $ApplyChangeSet) {
+        Write-Output "Apply it with:  pwsh scripts/cd/bootstrap.ps1 -ApplyChangeSet"
+        exit 0
+    }
+    Invoke-Aws @("cloudformation", "execute-change-set", "--stack-name", $StackName, "--change-set-name", $changeSet)
+    Write-Output "Executing change set $changeSet; waiting for the stack..."
+    Invoke-Aws @("cloudformation", "wait", "stack-create-complete")
 }
 else {
-    Invoke-Aws @("cloudformation", "wait", "stack-create-complete")
+    $changeSetType = if ($stackExists) { "UPDATE" } else { "CREATE" }
+    Write-Output "Creating $changeSetType change set for stack $StackName..."
+    $changeSetArguments = @(
+        "cloudformation", "create-change-set", "--stack-name", $StackName,
+        "--change-set-name", $changeSet, "--change-set-type", $changeSetType,
+        "--template-body", $templateUri,
+        "--capabilities", "CAPABILITY_NAMED_IAM", "--parameters"
+    ) + $parameters
+    Invoke-Aws $changeSetArguments
+
+    $changeSetStatus = Get-ChangeSetStatus $StackName $changeSet
+    if ($changeSetStatus -eq "FAILED") {
+        $reason = Get-ChangeSetReason $StackName $changeSet
+        if ($reason -like "*didn't contain changes*") {
+            Write-Output "No stack changes are required."
+            if (-not $ApplyChangeSet) { exit 0 }
+        }
+        else {
+            throw "Change set $changeSet failed: $reason"
+        }
+    }
+    else {
+        Write-Output "Change set $changeSet ($changeSetType) created. Review it with:"
+        Write-Output "  aws cloudformation describe-change-set --stack-name $StackName --change-set-name $changeSet"
+        if (-not $ApplyChangeSet) {
+            Write-Output "Apply it with:  pwsh scripts/cd/bootstrap.ps1 -ApplyChangeSet"
+            exit 0
+        }
+        Invoke-Aws @("cloudformation", "execute-change-set", "--stack-name", $StackName, "--change-set-name", $changeSet)
+        Write-Output "Executing change set $changeSet; waiting for the stack..."
+        if ($stackExists) {
+            Invoke-Aws @("cloudformation", "wait", "stack-update-complete")
+        }
+        else {
+            Invoke-Aws @("cloudformation", "wait", "stack-create-complete")
+        }
+    }
 }
 
 $stack = Invoke-Aws @("cloudformation", "describe-stacks", "--stack-name", $StackName) | ConvertFrom-Json

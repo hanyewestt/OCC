@@ -76,6 +76,7 @@ class CloudFormationContractTests(unittest.TestCase):
         self.assertIn("--change-set-type", bootstrap)
         self.assertIn('"CREATE"', bootstrap)
         self.assertIn("list-stacks", bootstrap)
+        self.assertIn("REVIEW_IN_PROGRESS", bootstrap)
         self.assertIn("stack-create-complete", bootstrap)
 
     def test_storage_is_encrypted_versioned_and_private(self):
