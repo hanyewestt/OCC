@@ -250,6 +250,15 @@ $unrestricted = $egressEntries | Where-Object { $_.Cidr -in @("0.0.0.0/0", "::/0
 if ($unrestricted) {
     throw "The occ-ec2-cd-egress prefix list contains an unrestricted entry; remove it and list only required destinations."
 }
+$quotas = (Invoke-Aws @("service-quotas", "list-service-quotas", "--service-code", "vpc") | ConvertFrom-Json).Quotas
+$ruleQuota = ($quotas | Where-Object { $_.QuotaName -eq "Inbound or outbound rules per security group" }).Value
+$groupQuota = ($quotas | Where-Object { $_.QuotaName -eq "Security groups per network interface" }).Value
+$egressCapacity = ($egressLists.PrefixLists | Where-Object { $_.PrefixListId -eq $egressPrefixListId }).MaxEntries
+& python (Join-Path $PSScriptRoot "egress-prefix-list.py") validate --max-entries $egressCapacity `
+    --rules-per-group $ruleQuota --groups-per-eni $groupQuota
+if ($LASTEXITCODE -ne 0) {
+    throw "Egress quota preflight failed; review both interacting quotas before creating a change set."
+}
 
 # Create (or reuse) the change set. Nothing is applied without -ApplyChangeSet.
 $dataAvailabilityZone = ""

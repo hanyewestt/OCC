@@ -35,6 +35,7 @@ function global:aws {
       "iam get-open-id-connect-provider" { '{"Url":"token.actions.githubusercontent.com"}' }
       "ec2 describe-managed-prefix-lists" { '{"PrefixLists":[{"PrefixListId":"pl-123456789","MaxEntries":1}]}' }
       "ec2 get-managed-prefix-list-entries" { '{"Entries":[{"Cidr":"10.0.0.0/8"}]}' }
+      "service-quotas list-service-quotas" { '{"Quotas":[{"QuotaName":"Inbound or outbound rules per security group","Value":60},{"QuotaName":"Security groups per network interface","Value":5}]}' }
       "cloudformation list-stacks" { 'None' }
       "cloudformation describe-change-set" { 'CREATE_COMPLETE' }
       "cloudformation describe-stacks" {
