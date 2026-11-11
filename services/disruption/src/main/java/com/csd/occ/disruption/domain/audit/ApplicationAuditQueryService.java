@@ -42,13 +42,21 @@ public class ApplicationAuditQueryService {
                 cb.greaterThanOrEqualTo(root.get("occurredAt"), cutoff),
                 cb.greaterThanOrEqualTo(root.get("occurredAt"), selectedFrom),
                 cb.lessThanOrEqualTo(root.get("occurredAt"), effectiveTo));
-        if (category != null && !category.isBlank()) spec = spec.and((root, query, cb) -> cb.equal(root.get("category"), category));
-        if (eventType != null && !eventType.isBlank()) spec = spec.and((root, query, cb) -> cb.equal(root.get("eventType"), eventType));
-        if (outcome != null && !outcome.isBlank()) spec = spec.and((root, query, cb) -> cb.equal(root.get("outcome"), outcome));
-        if (actorSubject != null && !actorSubject.isBlank()) spec = spec.and((root, query, cb) -> cb.equal(root.get("actorSubject"), actorSubject));
+        if (category != null && !category.isBlank()) spec = spec.and((root, query, cb) -> cb.like(cb.lower(root.get("category")), likePattern(category), '!'));
+        if (eventType != null && !eventType.isBlank()) spec = spec.and((root, query, cb) -> cb.or(
+                cb.like(cb.lower(root.get("eventType")), likePattern(eventType), '!'),
+                cb.like(cb.lower(root.get("category")), likePattern(eventType), '!')));
+        if (outcome != null && !outcome.isBlank()) spec = spec.and((root, query, cb) -> cb.like(cb.lower(root.get("outcome")), likePattern(outcome), '!'));
+        if (actorSubject != null && !actorSubject.isBlank()) spec = spec.and((root, query, cb) -> cb.like(cb.lower(root.get("actorSubject")), likePattern(actorSubject), '!'));
         if (runId != null) spec = spec.and((root, query, cb) -> cb.equal(root.get("runId"), runId));
-        if (entityId != null && !entityId.isBlank()) spec = spec.and((root, query, cb) -> cb.equal(root.get("entityId"), entityId));
+        if (entityId != null && !entityId.isBlank()) spec = spec.and((root, query, cb) -> cb.like(cb.lower(root.get("entityId")), likePattern(entityId), '!'));
         return events.findAll(spec, PageRequest.of(page, size, Sort.by(Sort.Order.desc("occurredAt"), Sort.Order.desc("id"))));
+    }
+
+    private static String likePattern(String value) {
+        String term = value.trim().toLowerCase(java.util.Locale.ROOT)
+                .replace("!", "!!").replace("%", "!%").replace("_", "!_");
+        return "%" + term + "%";
     }
 
     @Transactional(readOnly = true)

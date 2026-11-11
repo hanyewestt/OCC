@@ -121,6 +121,22 @@ class SupabaseIdentityProviderAdapterTest {
     }
 
     @Test
+    void liveProvider422ErrorCodesMapToSafeDomainReasons() throws Exception {
+        var adapter = adapter();
+        var request = new IdentityProviderPort.CreateUser(UUID.randomUUID(), "Name", "user@example.test", OccRole.CAPTAIN, "synthetic password");
+        for (var error : new String[]{
+                "{\"code\":422,\"error_code\":\"email_exists\",\"msg\":\"private duplicate email\"}",
+                "{\"code\":422,\"error_code\":\"weak_password\",\"msg\":\"private password\"}"}) {
+            server.expect(anything()).andRespond(withStatus(HttpStatus.UNPROCESSABLE_ENTITY)
+                    .contentType(MediaType.APPLICATION_JSON).body(error));
+        }
+        assertThatThrownBy(() -> adapter.createUser(request)).isInstanceOfSatisfying(IdentityProviderException.class,
+                failure -> assertThat(failure.reason()).isEqualTo(IdentityProviderException.Reason.DUPLICATE_EMAIL));
+        assertThatThrownBy(() -> adapter.createUser(request)).isInstanceOfSatisfying(IdentityProviderException.class,
+                failure -> assertThat(failure.reason()).isEqualTo(IdentityProviderException.Reason.PASSWORD_POLICY));
+    }
+
+    @Test
     void disabledAdapterNeverReadsSecretOrCallsProvider() {
         var settings = new IdentityProviderProperties(false, null, "", Duration.ofSeconds(5), Duration.ofMinutes(5), "");
         var adapter = new SupabaseIdentityProviderAdapter(RestClient.create(), settings, JsonMapper.builder().build(), Clock.systemUTC());

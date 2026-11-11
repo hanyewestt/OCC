@@ -12,7 +12,7 @@ public record ProvisioningRequest(String displayName, String email, OccRole role
         email = email.trim().toLowerCase(Locale.ROOT);
         int length = password.codePointCount(0, password.length());
         if (displayName.isBlank() || displayName.length() > 200 || email.length() > 254
-                || !EMAIL.matcher(email).matches() || length < 15 || length > 128
+                || !EMAIL.matcher(email).matches() || length < 8 || length > 128
                 || (role != OccRole.CONTROLLER && role != OccRole.CAPTAIN)) throw invalid();
     }
     private static IllegalArgumentException invalid() { return new IllegalArgumentException("One or more provisioning values are invalid"); }

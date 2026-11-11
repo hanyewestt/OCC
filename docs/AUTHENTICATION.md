@@ -3,8 +3,9 @@
 The React app is served by Nginx; the Java services host APIs only.
 Open `/login` using the configured Nginx host/port. Sign in with an existing
 Supabase email/password account. Public self-registration and password reset are outside
-this app. When the optional identity integration is enabled after its role migration,
-ADMIN can provision immediately usable CONTROLLER or CAPTAIN accounts through the backend.
+this app. The backend identity integration is enabled by default; after its role
+migration, ADMIN can provision immediately usable CONTROLLER or CAPTAIN accounts
+through the backend.
 
 ## Role pages
 
@@ -28,8 +29,8 @@ routes them directly. Operational reads permit ADMIN and CONTROLLER. Operational
 CONTROLLER; the explicit admin namespaces require ADMIN. CAPTAIN retains only
 the owner-scoped route, instruction and acknowledgement permissions.
 
-The Admin workspace provides `/admin/audit`, `/admin/accounts`,
-`/admin/accounts/new` and `/admin/assignments`. Controllers can also browse the
+The Admin workspace provides `/admin/audit`, `/admin/accounts` and
+`/admin/accounts/new`. Controllers can also browse the
 read-only `/controller/captains` directory; it contains every captain and does
 not apply controller ownership filters. Initial simulation setup keeps the
 existing `captainUserIds` request shape while selecting captains from this
@@ -45,7 +46,7 @@ not include infrastructure, provider authentication or deployment logs.
 required actor-scoped `Idempotency-Key` (1–200 characters). Name/email are trimmed,
 email is lowercased, and only CONTROLLER/CAPTAIN may be created. Name is limited
 to 200 characters and email to 254 after trimming. Password is preserved exactly
-and must contain 15–128 Unicode code points; no composition rules are added.
+and must contain 8–128 Unicode code points; no composition rules are added.
 Provider email confirmation makes a confirmed creation immediately usable.
 Passwords and password-derived values are never stored locally or audited.
 
@@ -90,12 +91,14 @@ Use root `.env.example` as the single inventory. Ingestion publishes only
 `GET /frontend-config`. Private/service-role keys must never reach the browser.
 JWT validation uses the separate JWKS URL, allowed algorithms and audience.
 
-The optional backend identity directory reads `OCC_IDENTITY_SECRET_KEY` from the
-ignored root `.env`, passed only to Ingestion by Compose. It also supports an
-Ingestion-only mounted Docker secret file using `infra/compose.identity.yaml`. It remains disabled until the existing trusted roles have
-been migrated to server-managed `app_metadata.occ_role` and the provider hook has
-been verified. See [identity rollout](../infra/supabase/README.md) before enabling
-it. Directory snapshots never grant permissions or replace JWT validation.
+The backend identity directory is enabled by default and reads
+`OCC_IDENTITY_SECRET_KEY` from the ignored root `.env`, passed only to Ingestion by
+Compose. It also supports an Ingestion-only mounted Docker secret file using
+`infra/compose.identity.yaml`. Do not deploy it until the existing trusted roles
+have been migrated to server-managed `app_metadata.occ_role` and the provider hook
+has been verified. Set `OCC_IDENTITY_ENABLED=false` to disable provider calls.
+See [identity rollout](../infra/supabase/README.md). Directory snapshots never
+grant permissions or replace JWT validation.
 `OCC_IDENTITY_SECRET_SOURCE_FILE` points to the host-side secret source, and
 `OCC_IDENTITY_SECRET_KEY_FILE` points to the fixed in-container mount. A nonblank
 `OCC_IDENTITY_SECRET_KEY` takes precedence over that file; clear it to use mounted

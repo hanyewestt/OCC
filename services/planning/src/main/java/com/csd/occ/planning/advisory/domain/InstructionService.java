@@ -63,8 +63,7 @@ public class InstructionService {
         var preview = proposals.findById(id).orElseThrow(AdvisoryNotFoundException::new);
         if (!"PENDING".equals(preview.status())) return replayDecision(preview, override, rationale, replaceInstructionId);
         var key = proposals.findKeyById(id).orElseThrow(AdvisoryNotFoundException::new);
-        var guard = guards.lock(key.getDemoRunId(), key.getBusId());
-        guards.requireAvailableForIssuance(List.of(guard));
+        guards.lock(key.getDemoRunId(), key.getBusId());
         var proposal = proposals.findForUpdate(id).orElseThrow(AdvisoryNotFoundException::new);
         entityManager.refresh(proposal);
         var chosen = override == null ? proposal.candidate() : override;
@@ -204,19 +203,6 @@ public class InstructionService {
             else refresh(instruction, bus.get());
         }
         return new PageImpl<>(locked, found.getPageable(), found.getTotalElements());
-    }
-
-    @Transactional
-    public List<Map<String, Object>> currentBlockersForAssignment(UUID runId, String busId, AdvisoryContextPort.Bus bus) {
-        var active = instructions.findActiveByDemoRunIdAndBusIdForUpdate(runId, busId);
-        var blocking = new java.util.ArrayList<Map<String, Object>>();
-        for (var instruction : active) {
-            entityManager.refresh(instruction);
-            refresh(instruction, bus);
-            if (instruction.isCurrent(clock.instant()))
-                blocking.add(Map.of("id", instruction.id().toString(), "status", instruction.status()));
-        }
-        return List.copyOf(blocking);
     }
 
     List<IssuedInstruction> activeForBusAfterGuard(UUID runId, AdvisoryContextPort.Bus bus) {

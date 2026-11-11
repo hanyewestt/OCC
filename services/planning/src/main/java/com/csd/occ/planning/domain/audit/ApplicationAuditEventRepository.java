@@ -15,12 +15,12 @@ public interface ApplicationAuditEventRepository extends JpaRepository<Applicati
     @Query("""
             select event from ApplicationAuditEvent event
              where event.occurredAt >= :from and event.occurredAt <= :to
-               and (:category is null or event.category = :category)
-               and (:eventType is null or event.eventType = :eventType)
-               and (:outcome is null or event.outcome = :outcome)
-               and (:actorSubject is null or event.actorSubject = :actorSubject)
+               and (:category is null or lower(event.category) like :category escape '!')
+               and (:eventType is null or (lower(event.eventType) like :eventType escape '!' or lower(event.category) like :eventType escape '!'))
+               and (:outcome is null or lower(event.outcome) like :outcome escape '!')
+               and (:actorSubject is null or lower(event.actorSubject) like :actorSubject escape '!')
                and (:runId is null or event.runId = :runId)
-               and (:entityId is null or event.entityId = :entityId)
+               and (:entityId is null or lower(event.entityId) like :entityId escape '!')
             """)
     Page<ApplicationAuditEvent> findForAdmin(@Param("from") Instant from, @Param("to") Instant to,
             @Param("category") String category, @Param("eventType") String eventType,

@@ -5,8 +5,6 @@ export type DirectoryUser = { id: string; displayName?: string | null; name?: st
 export type DirectoryPage = { items: DirectoryUser[]; page: number; size: number; totalItems: number; totalPages: number; directorySynchronizedAt: string | null }
 export type AuditEvent = { id: string; occurredAt: string; category: string; eventType: string; outcome: string; sourceService: string; actorSubject: string | null; actorType: string | null; entityType: string | null; entityId: string | null; runId: string | null; busId: string | null; captainId: string | null; summary: string | null; backfilled: boolean }
 export type AuditDetail = AuditEvent & { recordedAt: string; correlationId: string | null; details: Record<string, unknown> }
-export type ActiveAssignments = { runId: string | null; status: string | null; items: { busId: string; tripId: string; registrationNumber: string; serviceId: string; directionId: number; captainUserId: string | null; assignmentRevision: number; pendingOperation: { operationId: string; status: string } | null }[] }
-export type AssignmentOperation = { operationId: string; status: string; runId: string; busId: string; captainUserId: string | null; expectedVersion: number; createdAt: string; updatedAt: string; result: Record<string, unknown> | null }
 export type ProvisioningOperation = { id: string; status: string; email: string; displayName: string; role: string; failureCode: string | null; result: DirectoryUser | null }
 
 export function newIdempotencyKey(): string { return crypto.randomUUID() }

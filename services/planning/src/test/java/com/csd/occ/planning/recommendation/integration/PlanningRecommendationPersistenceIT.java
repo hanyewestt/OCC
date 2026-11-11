@@ -181,6 +181,19 @@ class PlanningRecommendationPersistenceIT {
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.collectionStartedAt").isNotEmpty());
         mvc.perform(get("/api/v1/planning/admin/audit-events" + filters + "&page=1&size=2").with(admin))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.items[0].id").value(oldest.toString()));
+
+        String partialFilters = "?category=ai_proc&eventType=filter&outcome=fail"
+                + "&actorSubject=ACTOR&runId=" + runId + "&entityId=ENT"
+                + "&from=2026-10-25T00:00:00Z&to=2026-10-25T02:00:00Z";
+        mvc.perform(get("/api/v1/planning/admin/audit-events" + partialFilters + "&page=0&size=2").with(admin))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.totalItems").value(3))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.items[0].id").value(newest.toString()));
+
+        String categoryThroughEventFilter = "?eventType=operations&from=2026-10-25T00:00:00Z&to=2026-10-25T02:00:00Z";
+        mvc.perform(get("/api/v1/planning/admin/audit-events" + categoryThroughEventFilter).with(admin))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.totalItems").value(1));
     }
 
     @Test

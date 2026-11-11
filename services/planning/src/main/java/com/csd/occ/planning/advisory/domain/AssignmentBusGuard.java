@@ -9,12 +9,8 @@ import java.util.UUID;
 @Table(name = "bus_assignment_guard", schema = "planning")
 public class AssignmentBusGuard {
     @EmbeddedId private AssignmentBusGuardId id;
-    private UUID pendingOperationId;
     protected AssignmentBusGuard() { }
     public AssignmentBusGuard(UUID runId, String busId) { id = new AssignmentBusGuardId(runId, busId); }
     public UUID demoRunId() { return id.demoRunId(); }
     public String busId() { return id.busId(); }
-    public UUID pendingOperationId() { return pendingOperationId; }
-    public void reserve(UUID operationId) { pendingOperationId = operationId; }
-    public void clear(UUID operationId) { if (operationId.equals(pendingOperationId)) pendingOperationId = null; }
 }

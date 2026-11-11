@@ -102,13 +102,14 @@ Fill in the settings described in `.env.example`:
 - `DATAMALL_API_KEY`, `OCC_PLANNING_GEMINI_API_KEY` and the intended Planning
   worker/model settings.
 - `OCC_AUDIT_RETENTION` controls application audit and retained evidence
-  independently from operational cleanup. Planning assignment recovery defaults
-  to `OCC_PLANNING_ASSIGNMENT_RECOVERY_INTERVAL=5s` and batch size `25`.
-- The optional identity adapter defaults off. Do not enable it until the
+  independently from operational cleanup.
+- The identity adapter is enabled by default and requires the modern Supabase
+  backend secret. Do not deploy it until the
   [Supabase role-hook rollout](../infra/supabase/README.md) is complete. Compose
   deployments can set `OCC_IDENTITY_SECRET_KEY` in the ignored root `.env`; Compose
   passes it only to Ingestion. Alternatively, use `OCC_IDENTITY_SECRET_SOURCE_FILE`
-  with `infra/compose.identity.yaml` for a mounted secret.
+  with `infra/compose.identity.yaml` for a mounted secret. Set
+  `OCC_IDENTITY_ENABLED=false` to disable provider calls.
 
 Keep one entry per environment-variable name. Duplicate example values later
 in `.env` can override real settings. Keep `.env` out of Git. The example file
@@ -117,7 +118,7 @@ contains placeholders, so copying it alone does not configure live providers.
 ## Existing admin-branch development databases
 
 The merge with main keeps main's migration versions and moves the admin migrations
-later: Ingestion V028–V033, Disruption V013, and Planning V022–V024. Fresh databases
+later: Ingestion V028ï¿½V033, Disruption V013, and Planning V022ï¿½V024. Fresh databases
 need only the normal setup. For a local database already migrated by the earlier
 admin branch, stop application services and apply
 `infra/postgres/reconcile-admin-branch-history.sql` with the database owner and
@@ -151,12 +152,12 @@ data. Node is not required for `start`. Start retains the containers' existing
 configuration, so use `up` to apply the Gemini recommendation flag or other `.env`
 changes. Both commands preserve database data.
 
-Enable the identity provider adapter only after completing its external role
-migration and hook checks. Set `OCC_IDENTITY_SECRET_KEY` to the modern Supabase
-backend secret in the ignored root `.env`, then set `OCC_IDENTITY_ENABLED=true`
-and run the normal app launcher with `up`. The key goes only to Ingestion.
-For a mounted secret, leave `OCC_IDENTITY_SECRET_KEY` empty, point
-`OCC_IDENTITY_SECRET_SOURCE_FILE` at its host-side file, and include
+The identity provider adapter is enabled by default. Complete its external role
+migration and hook checks first, then set `OCC_IDENTITY_SECRET_KEY` to the modern
+Supabase backend secret in the ignored root `.env` and run the normal app launcher
+with `up`. The key goes only to Ingestion. Set `OCC_IDENTITY_ENABLED=false` to
+disable provider calls. For a mounted secret, leave `OCC_IDENTITY_SECRET_KEY`
+empty, point `OCC_IDENTITY_SECRET_SOURCE_FILE` at its host-side file, and include
 `infra/compose.identity.yaml` with the regular Compose files. A nonblank
 environment key takes precedence over the mounted file.
 
@@ -353,14 +354,11 @@ access verification. Controllers can search every captain in the directory and
 select captains during initial simulation setup without changing the existing
 `captainUserIds` request property.
 
-The Admin workspace has Audit, Accounts, Provision account and Bus assignments
-routes. Audit history is queried from its owning service and retained for
+The Admin workspace has Audit, Accounts and Provision account routes. Audit
+history is queried from its owning service and retained for
 `OCC_AUDIT_RETENTION` (default `90d`), independently of operational cleanup.
-Assignments are only available for a running or replay-complete demo run;
-outstanding instructions block a change until a controller resolves them.
 Nginx explicitly allows these React routes and keeps its internal API routes
-hidden. API permissions remain
-enforced by the backend.
+hidden. API permissions remain enforced by the backend.
 
 Dashboard data loads on entry and manual Refresh. Its **Approximate Live Route
 Strip** shows one selected service and destination stop name at a time; the

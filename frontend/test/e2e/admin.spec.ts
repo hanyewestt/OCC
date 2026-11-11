@@ -3,7 +3,6 @@ import { auditFocus, auditPage } from './accessibility'
 
 const adminId = '90000000-0000-4000-8000-000000000001'
 const captainOne = '10000000-0000-4000-8000-000000000001'
-const captainTwo = '10000000-0000-4000-8000-000000000002'
 const runId = '20000000-0000-4000-8000-000000000001'
 const operationId = '30000000-0000-4000-8000-000000000001'
 const eventId = '40000000-0000-4000-8000-000000000001'
@@ -28,8 +27,6 @@ function account(id: string, role: string, name: string, email: string) {
 
 async function mockAdmin(context: BrowserContext, handlers: {
   provision?: (route: import('@playwright/test').Route) => Promise<void>
-  assignment?: (route: import('@playwright/test').Route) => Promise<void>
-  operation?: (route: import('@playwright/test').Route) => Promise<void>
 } = {}) {
   const createdAccounts = new Map<string, ReturnType<typeof account>>()
   await context.route('**/frontend-config', route => route.fulfill({ json: {
@@ -77,20 +74,6 @@ async function mockAdmin(context: BrowserContext, handlers: {
     return route.fulfill({ json: { items: [event], page: 0, size: 20, totalItems: 1, totalPages: 1,
       retentionSeconds: 7_776_000, collectionStartedAt: now } })
   })
-  await context.route('**/api/v1/ingestion/admin/demo-runs/active/assignments', async route => route.fulfill({ json: {
-    runId, status: 'RUNNING', items: [{ busId: 'bus-1', tripId: 'trip-1', registrationNumber: 'SG1001A',
-      serviceId: '190', directionId: 1, captainUserId: captainOne, assignmentRevision: 0,
-      pendingOperation: null }],
-  } }))
-  await context.route('**/api/v1/ingestion/captains?*', route => route.fulfill({ json: {
-    items: [account(captainOne, 'CAPTAIN', 'Captain One', 'captain1@example.test'),
-      account(captainTwo, 'CAPTAIN', 'Captain Two', 'captain2@example.test')],
-    page: 0, size: 100, totalItems: 2, totalPages: 1, directorySynchronizedAt: now,
-  } }))
-  await context.route('**/api/v1/planning/admin/demo-runs/*/buses/*/assignment', route =>
-    handlers.assignment?.(route) ?? route.fulfill({ status: 200, json: { operationId, status: 'SUCCEEDED' } }))
-  await context.route('**/api/v1/planning/admin/assignment-operations/*', route =>
-    handlers.operation?.(route) ?? route.fulfill({ json: { operationId, status: 'SUCCEEDED' } }))
 }
 
 async function signIn(page: Page) {
@@ -118,14 +101,14 @@ test('admin sidebar routes, searchable account directory, synchronization and de
   await expect(page).toHaveURL(/\/admin\/audit$/)
   await expect(page.getByRole('heading', { name: 'Audit', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Expand sidebar' }).click()
-  for (const label of ['Audit', 'Accounts', 'Provision account', 'Assignments']) {
+  for (const label of ['Audit', 'Accounts', 'Provision account']) {
     await expect(page.getByRole('link', { name: label, exact: true })).toBeVisible()
   }
   await page.getByRole('link', { name: 'Accounts', exact: true }).click()
   await expect(page.getByText('Account directory', { exact: true })).toBeVisible()
   await page.getByLabel('Search accounts').fill('Captain One')
   await expect.poll(() => queries.some(value => value.includes('search=Captain+One'))).toBe(true)
-  await page.getByRole('button', { name: 'Synchronize directory' }).click()
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
   await expect(page.getByRole('status').filter({ hasText: 'Directory synchronized' })).toBeVisible()
   expect(syncs).toBe(1)
   await page.getByRole('button', { name: 'View', exact: true }).click()
@@ -197,7 +180,7 @@ test('audit filters owning service and renders evidence as escaped text', async 
   await signIn(page)
   await page.goto('/admin/audit')
   await page.getByLabel('Service').selectOption('disruption')
-  await page.getByLabel('Event type').fill('MODEL_COMPLETED')
+  await page.getByLabel('Event').fill('MODEL_COMPLETED')
   await expect.poll(() => queries.some(value => value.includes('eventType=MODEL_COMPLETED'))).toBe(true)
   await expect(page.getByText(/Retention: 90 days/)).toBeVisible()
   await page.getByRole('button', { name: 'View', exact: true }).click()
@@ -206,84 +189,13 @@ test('audit filters owning service and renders evidence as escaped text', async 
   await expect(dialog.locator('img')).toHaveCount(0)
 })
 
-test('outstanding instructions block reassignment and include blocker identity and status', async ({ page, context }) => {
-  let mutations = 0
-  await mockAdmin(context, { assignment: async route => {
-    mutations++
-    return route.fulfill({ status: 409, contentType: 'application/problem+json', json: {
-      title: 'Conflict', status: 409, detail: 'Outstanding instructions block this assignment',
-      blockingInstructions: [{ id: 'instruction-1', status: 'ISSUED' }],
-    } })
-  } })
-  await signIn(page)
-  await page.goto('/admin/assignments')
-  await page.getByLabel('Captain for SG1001A').selectOption(captainTwo)
-  await page.getByRole('button', { name: 'Save', exact: true }).click()
-  await page.getByRole('button', { name: 'Confirm assignment' }).click()
-  await expect(page.getByRole('alert')).toContainText('instruction-1 (ISSUED)')
-  expect(mutations).toBe(1)
-})
-
-test('administrator unassignment sends explicit null for the nullable captain field', async ({ page, context }) => {
-  let captainUserId: string | null = captainOne
-  let mutationBody: Record<string, unknown> | null = null
-  await mockAdmin(context, { assignment: async route => {
-    mutationBody = route.request().postDataJSON() as Record<string, unknown>
-    captainUserId = null
-    return route.fulfill({ status: 200, json: { operationId, status: 'SUCCEEDED' } })
-  } })
-  await context.route('**/api/v1/ingestion/admin/demo-runs/active/assignments', route => route.fulfill({ json: {
-    runId, status: 'RUNNING', items: [{ busId: 'bus-1', tripId: 'trip-1', registrationNumber: 'SG1001A',
-      serviceId: '190', directionId: 1, captainUserId, assignmentRevision: captainUserId ? 0 : 1, pendingOperation: null }],
-  } }))
-  await signIn(page)
-  await page.goto('/admin/assignments')
-  await page.getByLabel('Captain for SG1001A').selectOption('')
-  await page.getByRole('button', { name: 'Save', exact: true }).click()
-  await page.getByRole('button', { name: 'Confirm assignment' }).click()
-  await expect(page.getByRole('status')).toContainText('Assignment succeeded')
-  await expect.poll(() => mutationBody?.captainUserId).toBeNull()
-})
-
-test('pending assignment remains visible and recovery confirms it without a second mutation', async ({ page, context }) => {
-  let currentCaptain = captainOne
-  let pending: { operationId: string; status: string } | null = null
-  let mutations = 0
-  let statusReads = 0
-  await mockAdmin(context, {
-    assignment: async route => {
-      mutations++
-      pending = { operationId, status: 'PENDING' }
-      return route.fulfill({ status: 202, json: { operationId, status: 'PENDING', runId, busId: 'bus-1', captainUserId: captainTwo, expectedVersion: 0 } })
-    },
-    operation: async route => {
-      statusReads++
-      if (statusReads > 1) { currentCaptain = captainTwo; pending = null }
-      return route.fulfill({ json: { operationId, status: statusReads > 1 ? 'SUCCEEDED' : 'PENDING' } })
-    },
-  })
-  await context.route('**/api/v1/ingestion/admin/demo-runs/active/assignments', route => route.fulfill({ json: {
-    runId, status: 'RUNNING', items: [{ busId: 'bus-1', tripId: 'trip-1', registrationNumber: 'SG1001A', serviceId: '190', directionId: 1,
-      captainUserId: currentCaptain, assignmentRevision: currentCaptain === captainOne ? 0 : 1, pendingOperation: pending }],
-  } }))
-  await signIn(page)
-  await page.goto('/admin/assignments')
-  await page.getByLabel('Captain for SG1001A').selectOption(captainTwo)
-  await page.getByRole('button', { name: 'Save', exact: true }).click()
-  await page.getByRole('button', { name: 'Confirm assignment' }).click()
-  await expect(page.getByText(/Pending ·/)).toBeVisible()
-  await expect(page.getByText(/Assignment succeeded/)).toBeVisible({ timeout: 10_000 })
-  await expect(page.getByLabel('Captain for SG1001A')).toHaveValue(captainTwo)
-  expect(mutations).toBe(1)
-})
-
 for (const size of [{ width: 1280, height: 720 }, { width: 800, height: 480 }]) {
   test(`admin workspace remains accessible at ${size.width}x${size.height}`, async ({ page, context }) => {
     test.setTimeout(120_000)
     await page.setViewportSize(size)
     await mockAdmin(context)
     await signIn(page)
-    for (const path of ['/admin/audit', '/admin/accounts', '/admin/accounts/new', '/admin/assignments']) {
+    for (const path of ['/admin/audit', '/admin/accounts', '/admin/accounts/new']) {
       await test.step(path, async () => {
         await page.goto(path)
         await page.waitForLoadState('networkidle')

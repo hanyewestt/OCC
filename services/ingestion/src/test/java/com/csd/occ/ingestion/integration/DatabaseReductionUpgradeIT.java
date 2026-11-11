@@ -118,7 +118,7 @@ assertThat(jdbc.queryForObject("select count(*) from information_schema.columns 
                         'retained V030 audit event', '{}'::jsonb, 'v030-audit-event')
                 """);
         assertThat(Flyway.configure().dataSource(source).defaultSchema("ingestion").schemas("ingestion")
-                .load().migrate().migrationsExecuted).isEqualTo(3);
+                .load().migrate().migrationsExecuted).isEqualTo(4);
         assertThat(jdbc.queryForObject("select summary from ingestion.application_audit_event where source_key='v030-audit-event'",
                 String.class)).isEqualTo("retained V030 audit event");
         for (String column : java.util.List.of("event_type", "outcome", "actor_subject", "run_id", "entity_id")) {

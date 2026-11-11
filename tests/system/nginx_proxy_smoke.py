@@ -71,12 +71,9 @@ http {
                 ("PUT", "/api/v1/ingestion/demo-mode?enabled=true", "18001", "/api/v1/demo-mode?enabled=true"),
                 ("GET", "/api/v1/ingestion/admin/users?page=0&size=20", "18001", "/api/v1/admin/users?page=0&size=20"),
                 ("GET", "/api/v1/ingestion/admin/audit-events?category=ACCOUNT&page=0", "18001", "/api/v1/admin/audit-events?category=ACCOUNT&page=0"),
-                ("GET", "/api/v1/ingestion/admin/demo-runs/active/assignments", "18001", "/api/v1/admin/demo-runs/active/assignments"),
                 ("GET", "/api/v1/ingestion/captains?available=true&size=100", "18001", "/api/v1/captains?available=true&size=100"),
                 ("GET", "/api/v1/disruption/bunching-alerts?size=1", "18002", "/api/v1/disruption/bunching-alerts?size=1"),
                 ("POST", "/api/v1/planning/advisory-groups/decisions", "18003", "/api/v1/planning/advisory-groups/decisions"),
-                ("PUT", "/api/v1/planning/admin/demo-runs/run-1/buses/bus-1/assignment", "18003", "/api/v1/planning/admin/demo-runs/run-1/buses/bus-1/assignment"),
-                ("GET", "/api/v1/planning/admin/assignment-operations/operation-1", "18003", "/api/v1/planning/admin/assignment-operations/operation-1"),
                 ("GET", "/api/v1/pacing-snapshots/stream?serviceId=190", "18001", "/api/v1/pacing-snapshots/stream?serviceId=190"),
                 ("GET", "/api/v1/ingestion/pacing-snapshots/stream?serviceId=190", "18001", "/api/v1/pacing-snapshots/stream?serviceId=190"),
             )

@@ -50,8 +50,6 @@ public class PlanningSecurityConfig {
                         .requestMatchers(HttpMethod.GET,
                                 "/internal/v1/planning/recommendations/by-disruption-event/*")
                         .hasAuthority(PeerCapabilityAuthenticationFilter.INGESTION_AUTHORITY)
-                        .requestMatchers(HttpMethod.GET, "/internal/v1/planning/demo-runs/*/pending-assignment-operations")
-                        .hasAuthority(PeerCapabilityAuthenticationFilter.INGESTION_AUTHORITY)
                         .requestMatchers("/internal/v1/**").denyAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/planning/public/notices").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/planning/captain/instructions").hasRole("CAPTAIN")

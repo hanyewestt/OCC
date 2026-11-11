@@ -3,6 +3,7 @@ package com.csd.occ.planning.domain.audit;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -38,8 +39,16 @@ public class ApplicationAuditQueryService {
         if (start.isBefore(cutoff)) start = cutoff;
         Instant end = to == null ? now : to;
         if (start.isAfter(end)) throw new IllegalArgumentException("Invalid time range");
-        return events.findForAdmin(start, end, category, eventType, outcome, actorSubject, runId, entityId,
+        return events.findForAdmin(start, end, likePattern(category), likePattern(eventType), likePattern(outcome),
+                likePattern(actorSubject), runId, likePattern(entityId),
                 PageRequest.of(page, size, Sort.by(Sort.Order.desc("occurredAt"), Sort.Order.desc("id"))));
+    }
+
+    private static String likePattern(String value) {
+        if (value == null || value.isBlank()) return null;
+        String term = value.trim().toLowerCase(Locale.ROOT)
+                .replace("!", "!!").replace("%", "!%").replace("_", "!_");
+        return "%" + term + "%";
     }
 
     public long retentionSeconds() { return retention.toSeconds(); }
