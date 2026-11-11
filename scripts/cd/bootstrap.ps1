@@ -44,13 +44,22 @@ function Invoke-Aws {
 
 function Test-Stack {
     param([Parameter(Mandatory)][string]$Name)
-    if ($Profile) {
-        & aws cloudformation describe-stacks --stack-name $Name --profile $Profile --region $Region 2>$null | Out-Null
+    # A missing stack makes the CLI write to stderr; PowerShell 5.1 turns that
+    # into a terminating NativeCommandError under ErrorActionPreference=Stop.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    try {
+        if ($Profile) {
+            $null = & aws cloudformation describe-stacks --stack-name $Name --profile $Profile --region $Region 2>&1
+        }
+        else {
+            $null = & aws cloudformation describe-stacks --stack-name $Name --region $Region 2>&1
+        }
+        return ($LASTEXITCODE -eq 0)
     }
-    else {
-        & aws cloudformation describe-stacks --stack-name $Name --region $Region 2>$null | Out-Null
+    finally {
+        $ErrorActionPreference = $previous
     }
-    return ($LASTEXITCODE -eq 0)
 }
 
 # Verify both identities before any mutation so a missing session fails fast
