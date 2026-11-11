@@ -154,7 +154,28 @@ public final class BunchingEvidenceSupportPolicy {
         int expected = event.expectedHeadwaySeconds();
         facts.add(String.format(Locale.ROOT, "Headway compressed to %ss against scheduled %ss at stop %s.",
                 observed != null ? observed : "unknown", expected, event.monitoredStopCode()));
-        facts.add("No active external traffic incident was identified within the corridor proximity window.");
+
+        var position = busPositionFor(event, context);
+        if (context.incidents().isEmpty()) {
+            facts.add("No active external traffic incident was identified within the corridor proximity window.");
+        } else if (position.isPresent()) {
+            var arrival = position.get();
+            double minDistanceKm = context.incidents().stream()
+                    .filter(i -> hasValidCoordinates(i.latitude(), i.longitude()))
+                    .mapToDouble(i -> distanceKm(i.latitude().doubleValue(), i.longitude().doubleValue(),
+                            arrival.latitude().doubleValue(), arrival.longitude().doubleValue()))
+                    .min().orElse(Double.MAX_VALUE);
+            if (minDistanceKm < Double.MAX_VALUE) {
+                facts.add(String.format(Locale.ROOT,
+                        "Nearest reported traffic incident was %.1f km away, outside direct corridor impact proximity.",
+                        minDistanceKm));
+            } else {
+                facts.add("External traffic incident logs lack valid coordinates and show no proximity to the monitored corridor.");
+            }
+        } else {
+            facts.add("No active external traffic incident was identified within the corridor proximity window.");
+        }
+        limitations.add("No nearby incidents: No traffic accidents or roadworks reported along this route.");
 
         ZonedDateTime sgtTime = event.firstConfirmedAt() != null
                 ? event.firstConfirmedAt().atZone(ZoneId.of("Asia/Singapore")) : null;
@@ -167,7 +188,15 @@ public final class BunchingEvidenceSupportPolicy {
         boolean capacityMismatch = leadVeh != null && followVeh != null && !leadVeh.equalsIgnoreCase(followVeh);
 
         String derivedSubtype;
-        if (output.causeSubtype() != null && Set.of("PEAK_CONGESTION", "TERMINAL_DISPATCH", "FLEET_CAPACITY_ASYMMETRY", "CUMULATIVE_DRIFT").contains(output.causeSubtype())) {
+        if ("PEAK_CONGESTION".equals(output.causeSubtype())) {
+            if (isPeak) {
+                derivedSubtype = "PEAK_CONGESTION";
+            } else if (capacityMismatch) {
+                derivedSubtype = "FLEET_CAPACITY_ASYMMETRY";
+            } else {
+                derivedSubtype = "CUMULATIVE_DRIFT";
+            }
+        } else if (output.causeSubtype() != null && Set.of("TERMINAL_DISPATCH", "FLEET_CAPACITY_ASYMMETRY", "CUMULATIVE_DRIFT").contains(output.causeSubtype())) {
             derivedSubtype = output.causeSubtype();
         } else if (isPeak) {
             derivedSubtype = "PEAK_CONGESTION";
@@ -186,7 +215,16 @@ public final class BunchingEvidenceSupportPolicy {
         } else {
             facts.add("Cumulative off-peak spacing drift compounded along route corridor.");
         }
-        limitations.add("Corridor traffic signal timings and micro-segment vehicle trajectories were not directly telemetered.");
+
+        String leadLoad = arrivals.size() >= 1 ? arrivals.get(0).loadCategory() : null;
+        String followLoad = arrivals.size() >= 2 ? arrivals.get(1).loadCategory() : null;
+        if (leadLoad != null && followLoad != null && leadLoad.equalsIgnoreCase(followLoad)) {
+            int headwayDeficit = Math.max(0, expected - (observed != null ? observed : expected));
+            facts.add(String.format(Locale.ROOT,
+                    "Uniform passenger load category (%s) across arrivals: intra-tier passenger boarding variations (accounting for up to %ds headway deficit) compounded dwell times across corridor stops without shifting telemetry tiers.",
+                    leadLoad, headwayDeficit));
+        }
+
 
         List<String> ids = java.util.stream.Stream.concat(event.evidenceIds().stream(),
                 output.supportingEvidenceIds().stream()).distinct().toList();

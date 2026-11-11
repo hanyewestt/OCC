@@ -8,13 +8,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
-import { ApiError, apiRequest, triggerDiagnosis, type BunchingAlert, type ControllerBusInstruction, type Decision, type DiagnosisEvidenceDetail, type EarlyControllerSuggestion, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RoutePositions, type RouteStop } from '@/lib/api'
+import { ApiError, apiRequest, triggerDiagnosis, type BunchingAlert, type ControllerBusInstruction, type Decision, type DiagnosisEvidenceDetail, type EarlyControllerSuggestion, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RoutePositions, type RouteStop, type TrafficIncident } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { bunchingArrivals } from '@/lib/bunching'
-import { groupRouteIncidents, type RouteIncident } from '@/lib/route-strip'
+import { groupRouteIncidents, linkIncidentToPosition, routeKey, type IncidentStripLink, type RouteIncident } from '@/lib/route-strip'
 import type { Planning } from './ControllerPage'
 import type { PagedCollection } from '@/lib/paged-collection'
-import { BunchingMap, DataMessage, timestamp, type PositionedIncident } from './ControllerViews'
+import { BunchingMap, DataMessage, distanceMeters, timestamp, validCoord, type MapHazard, type PositionedIncident } from './ControllerViews'
 import { adjacentBunchingGaps, bunchedArrivalGaps, formatGap } from '@/lib/route-strip'
 
 function seconds(value: number) {
@@ -142,12 +142,6 @@ type EditingRecommendation = { identity: string; scopeIdentity: string; recommen
 
 function extractBusOrders(references: string[], alert?: BunchingAlert): number[] {
   const orders = new Set<number>()
-  if (alert) {
-    for (const pair of bunchedArrivalGaps(alert)) {
-      orders.add(pair.leadingOrder)
-      orders.add(pair.followingOrder)
-    }
-  }
   for (const ref of references) {
     const hashMatch = ref.match(/#(\d+)/)
     if (hashMatch) {
@@ -159,6 +153,12 @@ function extractBusOrders(references: string[], alert?: BunchingAlert): number[]
     if (suffixMatch) {
       const num = Number(suffixMatch[1])
       if (Number.isInteger(num) && num > 0) orders.add(num)
+    }
+  }
+  if (!orders.size && alert) {
+    for (const pair of bunchedArrivalGaps(alert)) {
+      orders.add(pair.leadingOrder)
+      orders.add(pair.followingOrder)
     }
   }
   return [...orders].sort((a, b) => a - b)
@@ -174,9 +174,12 @@ export function PlanningCorridorMap({
   corridorStopCodes = [],
   mitigationType,
   busReferences = [],
+  corridorIncident,
   alert,
   title,
   subtitle,
+  evidenceDetails,
+  trafficIncidents = [],
 }: {
   routes: RouteDirection[]
   positions?: RoutePositions[]
@@ -187,9 +190,12 @@ export function PlanningCorridorMap({
   corridorStopCodes?: string[]
   mitigationType?: string | null
   busReferences?: string[]
+  corridorIncident?: PositionedIncident | null
   alert?: BunchingAlert
   title?: string
   subtitle?: React.ReactNode
+  evidenceDetails?: DiagnosisEvidenceDetail[]
+  trafficIncidents?: TrafficIncident[]
 }) {
   const [focusIncident, setFocusIncident] = useState(true)
 
@@ -225,21 +231,57 @@ export function PlanningCorridorMap({
       }))))
   }, [positions, corridorRoutes])
 
+  const computedStripLink = useMemo<IncidentStripLink | null>(() => {
+    if (corridorIncident?.stripLink) return corridorIncident.stripLink
+    const route = corridorRoutes.find(r => r.serviceId === serviceId && (directionId === null || r.directionId === directionId))
+    if (!route || !positions.length) return null
+    const snapshot = positions.find(s => s.serviceId === serviceId)
+    const direction = snapshot?.directions.find(d => d.directionId === route.directionId && d.operator === route.operator)
+    if (!snapshot || !direction) return null
+    const candidateIncident: RouteIncident = {
+      id: `planning-${serviceId}-${directionId ?? 1}-${targetStopCode}`,
+      serviceId,
+      directionId,
+      routeKey: routeKey(route),
+      stopCodes: [...affectedStopCodes],
+      stopNames: [targetStopName],
+      firstDetectedAt: alert?.detectedAt ?? new Date().toISOString(),
+      latestDetectedAt: alert?.detectedAt ?? new Date().toISOString(),
+      gapSeconds: null,
+      ageSeconds: 0,
+      latestStopIndex: Math.max(0, route.stops.findIndex(s => s.stopCode === monitoredStopCode)),
+      historical: false,
+      alerts: alert ? [alert] : [],
+    }
+    return linkIncidentToPosition(
+      candidateIncident,
+      route,
+      direction,
+      (snapshot.sourceObservedAt || snapshot.computedAt) ?? undefined,
+      snapshot.maxSourceAgeSeconds
+    )
+  }, [corridorIncident, corridorRoutes, serviceId, directionId, targetStopCode, affectedStopCodes, targetStopName, alert, monitoredStopCode, positions])
+
   const busOrders = useMemo(() => extractBusOrders(busReferences, alert), [busReferences, alert])
 
   const selectedBusKeys = useMemo(() => {
     const keys = new Set<string>()
+    if (computedStripLink) {
+      keys.add(`${serviceId}-${computedStripLink.frontOrder}`)
+      keys.add(`${serviceId}-${computedStripLink.followingOrder}`)
+      return keys
+    }
     for (const order of busOrders) {
       keys.add(`${serviceId}-${order}`)
     }
-    if (alert) {
+    if (!busOrders.length && alert) {
       for (const pair of bunchedArrivalGaps(alert)) {
         keys.add(`${serviceId}-${pair.leadingOrder}`)
         keys.add(`${serviceId}-${pair.followingOrder}`)
       }
     }
     return keys
-  }, [busOrders, alert, serviceId])
+  }, [computedStripLink, busOrders, alert, serviceId])
 
   const selectedIncident = useMemo<PositionedIncident>(() => ({
     id: `planning-${serviceId}-${directionId ?? 1}-${targetStopCode}`,
@@ -255,8 +297,49 @@ export function PlanningCorridorMap({
     latestStopIndex: 0,
     historical: false,
     alerts: alert ? [alert] : [],
-    stripLink: null,
-  }), [serviceId, directionId, targetStopCode, affectedStopCodes, targetStopName, alert])
+    stripLink: computedStripLink,
+  }), [serviceId, directionId, targetStopCode, affectedStopCodes, targetStopName, alert, computedStripLink])
+
+  const corridorHazards = useMemo<MapHazard[]>(() => {
+    const list: MapHazard[] = []
+    const seen = new Set<string>()
+
+    if (evidenceDetails) {
+      for (const d of evidenceDetails) {
+        if (validCoord(d.latitude, d.longitude) && !seen.has(d.evidenceId)) {
+          seen.add(d.evidenceId)
+          list.push({
+            id: d.evidenceId,
+            latitude: d.latitude!,
+            longitude: d.longitude!,
+            incidentType: d.incidentType,
+            message: d.message,
+          })
+        }
+      }
+    }
+
+    if (trafficIncidents.length) {
+      const stops = corridorRoutes.flatMap(r => r.stops).filter(s => validCoord(s.latitude, s.longitude))
+      for (const inc of trafficIncidents) {
+        if (validCoord(inc.latitude, inc.longitude) && !seen.has(inc.id)) {
+          const isNear = !stops.length || stops.some(s => distanceMeters(inc.latitude!, inc.longitude!, s.latitude!, s.longitude!) <= 2500)
+          if (isNear) {
+            seen.add(inc.id)
+            list.push({
+              id: inc.id,
+              latitude: inc.latitude!,
+              longitude: inc.longitude!,
+              incidentType: inc.incidentType,
+              message: inc.message,
+            })
+          }
+        }
+      }
+    }
+
+    return list
+  }, [evidenceDetails, trafficIncidents, corridorRoutes])
 
   if (!corridorRoutes.length) return null
 
@@ -285,6 +368,7 @@ export function PlanningCorridorMap({
         title={title ?? defaultTitle}
         subtitle={subtitle ?? defaultSubtitle}
         mapHeightClassName="h-60 sm:h-64"
+        hazards={corridorHazards}
       />
     </div>
   )
@@ -296,7 +380,7 @@ export type CorridorDiagnosisGroup = {
   directionId: number | null
   stopCodes: string[]
   stopNames: string[]
-  corridorIncident: RouteIncident | null
+  corridorIncident: PositionedIncident | null
   requests: PlanningDiagnosisRequest[]
   representativeRequest: PlanningDiagnosisRequest | null
   firstDetectedAt: string
@@ -308,7 +392,7 @@ export type CorridorDiagnosisGroup = {
 
 function buildCorridorGroups(
   requests: PlanningDiagnosisRequest[],
-  liveCorridors: RouteIncident[],
+  liveCorridors: PositionedIncident[],
   routes: RouteDirection[]
 ): CorridorDiagnosisGroup[] {
   const matchedRequestIds = new Set<string>()
@@ -422,6 +506,7 @@ export function ControllerPlanning({
   pollIntervalSeconds = 60,
   nowMs = 0,
   gapToleranceSeconds = 30,
+  trafficIncidents = [],
   onPendingChange,
   onRefresh,
   onSaved,
@@ -439,6 +524,7 @@ export function ControllerPlanning({
   pollIntervalSeconds?: number
   nowMs?: number
   gapToleranceSeconds?: number
+  trafficIncidents?: TrafficIncident[]
   onRefresh: () => void
   onSaved: () => void
   onPendingChange: (pending: boolean) => void
@@ -498,17 +584,42 @@ export function ControllerPlanning({
     return ids
   }, [requestedEventId, requestedIncident])
 
+  type PositionSnapshot = {
+    position: RoutePositions['directions'][number]
+    computedAt?: string
+    sourceObservedAt?: string | null
+    maxSourceAgeSeconds: number
+  }
+
+  const positionByRoute = useMemo(() => new Map<string, PositionSnapshot>(positions.flatMap(snapshot =>
+    snapshot.directions.map(direction => [
+      `${snapshot.serviceId}:${direction.operator}:${direction.directionId}`,
+      { position: direction, computedAt: snapshot.computedAt, sourceObservedAt: snapshot.sourceObservedAt,
+        maxSourceAgeSeconds: snapshot.maxSourceAgeSeconds },
+    ] as const))), [positions])
+
   // Live corridors computed with identical logic to Disruptions
   const liveCorridorIncidents = useMemo(() => {
     if (!detectedAlerts.length || !routes.length) return []
     return groupRouteIncidents(detectedAlerts, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds, mode === 'DEMO')
   }, [detectedAlerts, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds, mode])
 
+  const positionedLiveCorridors = useMemo<PositionedIncident[]>(() => liveCorridorIncidents.map(incident => {
+    const route = routes.find(candidate => routeKey(candidate) === incident.routeKey)
+    const snapshot = route ? positionByRoute.get(routeKey(route)) : undefined
+    return {
+      ...incident,
+      stripLink: route && snapshot
+        ? linkIncidentToPosition(incident, route, snapshot.position,
+          (snapshot.sourceObservedAt || snapshot.computedAt) ?? undefined, snapshot.maxSourceAgeSeconds) : null,
+    }
+  }), [liveCorridorIncidents, routes, positionByRoute])
+
   // Build corridor groups from diagnosis requests + live corridors
   const allCorridorGroups = useMemo(() => {
     if (diagnosisError || !diagnosisScopeMatches) return []
-    return buildCorridorGroups(diagnosisRequests.items, liveCorridorIncidents, routes)
-  }, [diagnosisError, diagnosisScopeMatches, diagnosisRequests.items, liveCorridorIncidents, routes])
+    return buildCorridorGroups(diagnosisRequests.items, positionedLiveCorridors, routes)
+  }, [diagnosisError, diagnosisScopeMatches, diagnosisRequests.items, positionedLiveCorridors, routes])
 
   // Locate matched corridor from deep-link parameters
   const matchedCorridor = useMemo(() => {
@@ -865,6 +976,11 @@ export function ControllerPlanning({
             <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
               <span className="font-semibold text-foreground">Corridor: {group.stopCodes.length} {group.stopCodes.length === 1 ? 'stop' : 'stops'}</span>
               {group.gapSeconds !== null && <span>· Gap {seconds(group.gapSeconds)}</span>}
+              {group.corridorIncident?.stripLink && (
+                <span className="rounded bg-sky-500/10 px-1.5 py-0.2 font-medium text-sky-700 dark:text-sky-300">
+                  Buses #{group.corridorIncident.stripLink.frontOrder} & #{group.corridorIncident.stripLink.followingOrder}
+                </span>
+              )}
             </div>
             {group.stopNames.length > 0 && (
               <p className="line-clamp-1 text-xs text-muted-foreground">
@@ -911,7 +1027,7 @@ export function ControllerPlanning({
       </Card>
 
       {!selectedRequest && detailRecommendation && detailIdentity && <RecommendationDetail key={detailIdentity} selected={detailRecommendation} identity={detailIdentity}
-        scopeIdentity={scopeIdentity} token={token} detectedAlerts={detectedAlerts} routes={routes} positions={positions} isCurrent={selectionIsCurrent} validationFailed={editorUnavailable}
+        scopeIdentity={scopeIdentity} token={token} detectedAlerts={detectedAlerts} routes={routes} positions={positions} trafficIncidents={trafficIncidents} isCurrent={selectionIsCurrent} validationFailed={editorUnavailable}
         retryCurrentCheck={modeError ? onRefresh : recommendations.reload}
         onSaved={onSaved} onMessage={setMessage} onEditorChange={setEditingRecommendation}
         onRefreshed={item => {
@@ -922,6 +1038,7 @@ export function ControllerPlanning({
       {selectedRequest && <DiagnosisRequestDetail request={selectedRequest}
         corridor={selectedCorridor}
         routes={routes} positions={positions} detectedAlerts={detectedAlerts}
+        trafficIncidents={trafficIncidents}
         detectedBusReferences={detectedBusReferences(selectedRequest, detectedAlerts, selectedCorridor)}
         generating={triggeringRequestId === selectedRequest.requestId} suggesting={suggestingRequestId === selectedRequest.requestId}
         token={token} onSuggestionPending={pending => setSuggestingRequestId(pending ? selectedRequest.requestId : null)}
@@ -952,6 +1069,10 @@ export function ControllerPlanning({
 }
 
 function detectedBusReferences(request: PlanningDiagnosisRequest | null, alerts: BunchingAlert[], corridor?: CorridorDiagnosisGroup | null) {
+  if (corridor?.corridorIncident?.stripLink) {
+    const { frontOrder, followingOrder } = corridor.corridorIncident.stripLink
+    return [`Bus #${frontOrder} (Leading)`, `Bus #${followingOrder} (Following)`]
+  }
   const corridorAlerts = corridor?.corridorIncident?.alerts ?? alerts
   const simulationReferences = corridorAlerts.flatMap(alert => {
     const match = !request || alert.eventId === request.eventId ||
@@ -988,9 +1109,9 @@ function detectedBusReferences(request: PlanningDiagnosisRequest | null, alerts:
   return []
 }
 
-function DiagnosisRequestDetail({ request, corridor, routes, positions, detectedAlerts, detectedBusReferences, generating, suggesting, token, onSuggestionPending, onSaved, onGenerate }: {
+function DiagnosisRequestDetail({ request, corridor, routes, positions, detectedAlerts, detectedBusReferences, generating, suggesting, token, trafficIncidents = [], onSuggestionPending, onSaved, onGenerate }: {
   request: PlanningDiagnosisRequest; corridor?: CorridorDiagnosisGroup | null; routes: RouteDirection[]; positions: RoutePositions[]; detectedAlerts: BunchingAlert[]; detectedBusReferences: string[]; generating: boolean; suggesting: boolean; token: string
-  onSuggestionPending: (pending: boolean) => void; onSaved: () => void; onGenerate: () => void
+  trafficIncidents?: TrafficIncident[]; onSuggestionPending: (pending: boolean) => void; onSaved: () => void; onGenerate: () => void
 }) {
   const retry = request.status.startsWith('FAILED')
   const processing = request.status === 'PROCESSING'
@@ -1045,10 +1166,17 @@ function DiagnosisRequestDetail({ request, corridor, routes, positions, detected
             </span>
           )}
         </div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {corridor && corridor.stopCodes.length > 1
-            ? `Lead stop ${request.stopCode ?? 'unknown'} (${corridor.stopCodes.length}-stop corridor) · detected ${timestamp(request.createdAt)}`
-            : `Stop ${request.stopCode ?? 'unknown'} · detected ${timestamp(request.createdAt)}`}
+        <p className="mt-1 text-xs text-muted-foreground flex flex-wrap items-center gap-1.5">
+          <span>
+            {corridor && corridor.stopCodes.length > 1
+              ? `Lead stop ${request.stopCode ?? 'unknown'} (${corridor.stopCodes.length}-stop corridor) · detected ${timestamp(request.createdAt)}`
+              : `Stop ${request.stopCode ?? 'unknown'} · detected ${timestamp(request.createdAt)}`}
+          </span>
+          {corridor?.corridorIncident?.stripLink && (
+            <span className="rounded bg-sky-500/10 px-1.5 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-300">
+              Buses #{corridor.corridorIncident.stripLink.frontOrder} & #{corridor.corridorIncident.stripLink.followingOrder}
+            </span>
+          )}
         </p>
       </div>
       <span className="text-xs text-muted-foreground">{request.requestId}</span>
@@ -1078,7 +1206,10 @@ function DiagnosisRequestDetail({ request, corridor, routes, positions, detected
       monitoredStopCode={request.stopCode ?? ''}
       corridorStopCodes={corridor?.stopCodes}
       busReferences={detectedBusReferences}
+      corridorIncident={corridor?.corridorIncident}
       alert={corridor?.corridorIncident?.alerts[0] ?? detectedAlerts.find(a => a.eventId === request.eventId || (a.serviceId === request.serviceId && a.stopCode === request.stopCode))}
+      evidenceDetails={request.evidenceDetails}
+      trafficIncidents={trafficIncidents}
     />
 
     <div><h3 className="text-sm font-medium">Bunching detection</h3>
@@ -1134,7 +1265,7 @@ function DiagnosisRequestDetail({ request, corridor, routes, positions, detected
   </CardContent></Card>
 }
 
-function RecommendationDetail({ selected, identity, scopeIdentity, token, detectedAlerts, routes, positions, isCurrent, validationFailed, retryCurrentCheck, onSaved, onMessage, onEditorChange, onRefreshed }: {
+function RecommendationDetail({ selected, identity, scopeIdentity, token, detectedAlerts, routes, positions, isCurrent, validationFailed, retryCurrentCheck, onSaved, onMessage, onEditorChange, onRefreshed, trafficIncidents = [] }: {
   selected: PendingRecommendation; identity: string; scopeIdentity: string; token: string
   detectedAlerts: BunchingAlert[]
   routes: RouteDirection[]
@@ -1142,6 +1273,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
   isCurrent: boolean; validationFailed: boolean; retryCurrentCheck: () => void
   onSaved: () => void; onMessage: (message: string) => void; onEditorChange: Dispatch<SetStateAction<EditingRecommendation | null>>
   onRefreshed: (item: PendingRecommendation) => void
+  trafficIncidents?: TrafficIncident[]
 }) {
   const [pending, setPending] = useState(false)
   const [message, setMessage] = useState('')
@@ -1428,6 +1560,8 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
           mitigationType={selected.mitigationType}
           busReferences={affectedBuses(selected)}
           alert={recommendationAlert(selected, detectedAlerts)}
+          evidenceDetails={selected.explanation.evidenceDetails}
+          trafficIncidents={trafficIncidents}
         />
 
         <section aria-labelledby="affected-buses" className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 id="affected-buses" className="text-sm font-medium">Buses bunching</h3>{showsLegacySuggestion && <span className="text-xs text-muted-foreground">Expected gap {seconds(selected.expectedImpact.headwayAfterSeconds)}</span>}</div>

@@ -1,3 +1,5 @@
+import { createElement } from 'react'
+import { renderToString } from 'react-dom/server'
 import { expect, test } from '@playwright/test'
 import type { BunchingAlert, RouteDirection } from '../../src/lib/api'
 import {
@@ -5,6 +7,7 @@ import {
   clusterProjectedBuses,
   computeBusLatLng,
   computeCorridorFit,
+  computeStopCodeLabelPositions,
   DEFAULT_CENTER,
   filterMapBuses,
   filterMapRoutes,
@@ -14,7 +17,11 @@ import {
   TILE_SIZE,
   validCoord,
   worldToLatLng,
-} from '../../src/pages/ControllerViews'
+  distanceMeters,
+  BunchingMap,
+  categorizeHazard,
+  type MapHazard,
+} from '../../src/pages/ControllerViews' 
 
 test('validCoord validates latitude and longitude ranges and excludes origin', () => {
   expect(validCoord(1.3521, 103.8198)).toBe(true)
@@ -146,6 +153,22 @@ test('computeCorridorFit accommodates custom padding when framing an incident co
   expect(generousFit.center.lat).toBeCloseTo((1.340 + 1.345) / 2, 4)
   // Generous padding requires equal or smaller zoom level to ensure margin clearance
   expect(generousFit.zoom).toBeLessThanOrEqual(standardFit.zoom)
+})
+
+test('stop-code labels avoid bunching markers and each other while retaining affected-stop labels', () => {
+  const protectedBusMarker = { x: 112, y: 52, width: 40, height: 16 }
+  const labels = computeStopCodeLabelPositions([
+    { stopCode: '44001', x: 50, y: 60, affected: false, selected: false },
+    { stopCode: '44002', x: 100, y: 60, affected: true, selected: false },
+    { stopCode: '44003', x: 170, y: 60, affected: false, selected: false },
+  ], 240, 120, [protectedBusMarker])
+
+  expect(labels.has('44002')).toBe(true)
+  const rects = [...labels.values()]
+  const overlaps = (a: typeof protectedBusMarker, b: typeof protectedBusMarker) =>
+    a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
+  expect(rects.every(rect => !overlaps(rect, protectedBusMarker))).toBe(true)
+  expect(rects.every((rect, index) => rects.slice(index + 1).every(other => !overlaps(rect, other)))).toBe(true)
 })
 
 test('computeBusLatLng returns null when route lacks valid coordinates', () => {
@@ -314,6 +337,72 @@ test('areBusesConfirmedBunched matches multi-bus bunching from alert gaps when s
   expect(areBusesConfirmedBunched(b2, b3, [incident], new Set())).toBe(true)
 })
 
+test('clusterProjectedBuses does not highlight unrelated buses when stripLink resolves to different bus orders', () => {
+  const alertAtStop = {
+    eventId: 'evt-44271',
+    action: 'OPENED',
+    classification: 'OBSERVATION_ONLY',
+    serviceId: '190',
+    stopCode: '44271',
+    directionId: 2,
+    detectedAt: '2026-11-11T14:06:05Z',
+    evidence: JSON.stringify({
+      snapshot: {
+        arrivals: [
+          { observationId: 'obs-lead', visitOrder: 1, estimatedArrivalAt: '2026-11-11T14:08:46Z' },
+          { observationId: 'obs-4', visitOrder: 2, estimatedArrivalAt: '2026-11-11T14:17:23Z' },
+          { observationId: 'obs-5', visitOrder: 3, estimatedArrivalAt: '2026-11-11T14:17:33Z' },
+        ],
+      },
+      groups: [
+        {
+          headways: [
+            { isBunched: false, leadingObservationId: 'obs-lead', followingObservationId: 'obs-4' },
+            { isBunched: true, leadingObservationId: 'obs-4', followingObservationId: 'obs-5' },
+          ],
+        },
+      ],
+    }),
+  } as unknown as BunchingAlert
+
+  const incident = {
+    id: 'inc-190-2',
+    serviceId: '190',
+    directionId: 2,
+    routeKey: '190:SMRT:2',
+    alerts: [alertAtStop],
+    stopCodes: ['44271'],
+    stopNames: ['Bet Blks 13/14'],
+    firstDetectedAt: '2026-11-11T14:06:05Z',
+    latestDetectedAt: '2026-11-11T14:06:05Z',
+    gapSeconds: 10,
+    ageSeconds: 0,
+    historical: false,
+    latestStopIndex: 31,
+    stripLink: { frontOrder: 4, followingOrder: 5, stopCode: '44271', match: 'evidence' as const },
+  }
+
+  const buses = [
+    { serviceId: '190', directionId: 2, order: 2, x: 100, y: 100, label: 'Bus 2', latitude: 1.35, longitude: 103.78 },
+    { serviceId: '190', directionId: 2, order: 3, x: 200, y: 200, label: 'Bus 3', latitude: 1.36, longitude: 103.77 },
+    { serviceId: '190', directionId: 2, order: 4, x: 300, y: 300, label: 'Bus 4', latitude: 1.37, longitude: 103.76 },
+    { serviceId: '190', directionId: 2, order: 5, x: 305, y: 305, label: 'Bus 5', latitude: 1.371, longitude: 103.761 },
+  ]
+
+  const clusters = clusterProjectedBuses(buses, new Set(), [incident], 28)
+
+  const bunched45 = clusters.find(c => c.text === '4 · 5')
+  expect(bunched45).toBeDefined()
+  expect(bunched45?.hasIncident).toBe(true)
+
+  const bus2 = clusters.find(c => c.text === '2')
+  const bus3 = clusters.find(c => c.text === '3')
+  expect(bus2).toBeDefined()
+  expect(bus2?.hasIncident).toBe(false)
+  expect(bus3).toBeDefined()
+  expect(bus3?.hasIncident).toBe(false)
+})
+
 test('filterMapBuses returns all fleet buses when viewing a single corridor', () => {
   const buses = [
     { serviceId: '190', directionId: 1, routeLengthM: 10000, bus: { order: 1, distanceAlongRouteM: 1000 } },
@@ -378,4 +467,155 @@ test('filterMapRoutes returns empty array in All Corridors when no routes are di
   ]
   const result = filterMapRoutes(routes, true, new Set())
   expect(result).toEqual([])
+})
+
+test('distanceMeters calculates accurate ground distance between Singapore coordinates', () => {
+  // Teck Whye Ave (1.380255, 103.755075) to Opp Phoenix Stn (1.378000, 103.758000)
+  const d = distanceMeters(1.380255, 103.755075, 1.378000, 103.758000)
+  expect(d).toBeGreaterThan(300)
+  expect(d).toBeLessThan(500)
+
+  // Same point
+  expect(distanceMeters(1.35, 103.8, 1.35, 103.8)).toBe(0)
+})
+
+test('categorizeHazard correctly categorizes incident types and messages', () => {
+  expect(categorizeHazard({ incidentType: 'Accident', message: 'Accident on PIE' })).toBe('accident')
+  expect(categorizeHazard({ incidentType: 'Vehicle Breakdown', message: 'Car breakdown on lane 3' })).toBe('breakdown')
+  expect(categorizeHazard({ incidentType: 'Roadwork', message: 'Road Works on BKE' })).toBe('roadwork')
+  expect(categorizeHazard({ incidentType: 'Heavy Traffic', message: 'Jam after Clementi' })).toBe('traffic')
+  expect(categorizeHazard({ incidentType: 'Flood', message: 'Flash flood at Dunearn' })).toBe('flood')
+  expect(categorizeHazard({ incidentType: 'Rail Disruption', message: 'BPL train disruption' })).toBe('rail')
+  expect(categorizeHazard({ incidentType: 'Obstacle', message: 'Debris on road' })).toBe('other')
+})
+
+test('BunchingMap renders differentiated hazard icons, layer toggles, and legend items', () => {
+  const routes: RouteDirection[] = [
+    {
+      serviceId: '190',
+      directionId: 1,
+      operator: 'SMRT',
+      stops: [
+        { stopCode: '44251', stopSequence: 1, latitude: 1.380255, longitude: 103.755075, description: 'Teck Whye Ave', roadName: 'Teck Whye Ave', distanceKm: 0 },
+        { stopCode: '44269', stopSequence: 2, latitude: 1.382000, longitude: 103.758000, description: 'Phoenix Stn', roadName: 'Choa Chu Kang Rd', distanceKm: 0.5 },
+      ],
+    },
+  ]
+
+  const hazards: MapHazard[] = [
+    {
+      id: 'haz-1',
+      latitude: 1.380255,
+      longitude: 103.755075,
+      incidentType: 'Vehicle Breakdown',
+      message: 'Breakdown on Teck Whye Ave',
+    },
+    {
+      id: 'haz-2',
+      latitude: 1.382000,
+      longitude: 103.758000,
+      incidentType: 'Roadwork',
+      message: 'Road Works on Choa Chu Kang Rd',
+    },
+    {
+      id: 'haz-invalid',
+      latitude: Number.NaN,
+      longitude: 103.755075,
+      incidentType: 'Roadwork',
+      message: 'Invalid coordinate hazard',
+    },
+  ]
+
+  const html = renderToString(
+    createElement(BunchingMap, {
+      routes,
+      affectedStopCodes: new Set(['44251']),
+      buses: [],
+      hazards,
+    })
+  )
+
+  // Map controls contain layer toggles
+  expect(html).toContain('Layers:')
+  expect(html).toContain('Stops')
+  expect(html).toContain('Buses')
+  expect(html).toContain('Hazards')
+
+  // Category filter toggles
+  expect(html).toContain('Breakdown')
+  expect(html).toContain('Roadwork')
+
+  // Differentiated legend items
+  expect(html).toContain('Vehicle breakdown')
+  expect(html).toContain('Roadwork')
+
+  // Valid hazard markers rendered with custom SVGs
+  expect(html).toContain('Hazard: Vehicle Breakdown - Breakdown on Teck Whye Ave')
+  expect(html).toContain('Hazard: Roadwork - Road Works on Choa Chu Kang Rd')
+
+  // Roadwork renders traffic cone with polygon
+  expect(html).toContain('polygon')
+
+  // Invalid hazard is filtered out
+  expect(html).not.toContain('Invalid coordinate hazard')
+})
+
+test('BunchingMap renders pulsing selection ring and floating hazard detail card when selectedHazardId is set', () => {
+  const routes: RouteDirection[] = [
+    {
+      serviceId: '190',
+      directionId: 1,
+      operator: 'SMRT',
+      stops: [
+        { stopCode: '44251', stopSequence: 1, latitude: 1.380255, longitude: 103.755075, description: 'Teck Whye Ave', roadName: 'Teck Whye Ave', distanceKm: 0 },
+        { stopCode: '44269', stopSequence: 2, latitude: 1.382000, longitude: 103.758000, description: 'Phoenix Stn', roadName: 'Choa Chu Kang Rd', distanceKm: 0.5 },
+      ],
+    },
+  ]
+
+  const hazards: MapHazard[] = [
+    {
+      id: 'haz-101',
+      disruptionId: 'disr-101',
+      latitude: 1.380255,
+      longitude: 103.755075,
+      incidentType: 'Roadwork',
+      message: 'Road Works on Teck Whye Ave near stop 44251',
+      distanceToCorridorM: 25,
+      updatedAt: '2026-11-12T01:30:00Z',
+    },
+    {
+      id: 'haz-102',
+      disruptionId: 'disr-102',
+      latitude: 1.385000,
+      longitude: 103.760000,
+      incidentType: 'Rail Disruption',
+      message: 'Train disruption along Bukit Panjang line',
+      distanceToCorridorM: 600,
+    },
+  ]
+
+  // Render with haz-101 selected
+  const html = renderToString(
+    createElement(BunchingMap, {
+      routes,
+      affectedStopCodes: new Set(['44251']),
+      buses: [],
+      hazards,
+      selectedHazardId: 'haz-101',
+    })
+  )
+
+  // Floating detail card
+  expect(html).toContain('role="region"')
+  expect(html).toContain('aria-label="Hazard details"')
+  expect(html).toContain('Road Works on Teck Whye Ave near stop 44251')
+  expect(html).toContain('Directly on route')
+  expect(html).toContain('Center on map')
+  expect(html).toContain('Locate in list ↓')
+
+  // Pulsing highlight ring on SVG marker
+  expect(html).toContain('animate-pulse')
+  expect(html).toContain('stroke="#f59e0b"')
+  expect(html).toContain('Hazard: Roadwork - Road Works on Teck Whye Ave near stop 44251 (Selected)')
 })

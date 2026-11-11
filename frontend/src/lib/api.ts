@@ -17,8 +17,9 @@ export type CaptainInstruction = { id: string; demoRunId: string; busId: string;
   parameters: InstructionParameters; message: string; busClassification: string; hazardClassification: string;
   status: string; issuedAt: string; acknowledgementDeadline: string; acknowledgedAt: string | null;
   applicableUntil: string | null; inactiveReason: string | null }
+export type HazardLocation = { latitude?: number | null; longitude?: number | null; description?: string | null; type?: string | null }
 export type Hazard = { disruptionId: string; kind: string; status: string; classification: string; demoRunId: string | null;
-  updatedAt: string; facts: { title: string; description: string; instruction: string | null; effectiveUntil: string | null };
+  updatedAt: string; facts: { title: string; description: string; instruction: string | null; effectiveUntil: string | null; locations?: HazardLocation[] };
   exposures: { busId: string; serviceId: string; stopCode: string; stopName: string; stopSequence: number; basis: string }[]; limitations: string[] }
 export type PublicNotice = { id: string; classification: string; title: string; message: string; services: string[];
   locations: string[]; effectiveFrom: string; effectiveUntil: string; publishedAt: string | null }
@@ -113,7 +114,23 @@ export type DiagnosisEvidenceDetail = {
   reportTime: string | null; fetchedAt: string | null; firstConfirmedAt: string | null
   secondsBeforeFirstConfirmed: number | null; distanceMetersFromSuppliedBusPosition: number | null
   busPositionEvidenceId: string | null; monitoredStopCode: string | null
+  latitude?: number | null; longitude?: number | null
 }
+export type TrafficIncident = {
+  id: string
+  disruptionId?: string | null
+  classification?: string
+  demoRunId?: string | null
+  incidentType: string
+  message: string
+  latitude: number | null
+  longitude: number | null
+  observedAt?: string | null
+  fetchedAt?: string | null
+  openedAt?: string | null
+  updatedAt?: string | null
+}
+export type TrafficIncidentPageResponse = PageResult<TrafficIncident>
 export type RecommendationImpact = {
   headwayBeforeSeconds: number; headwayAfterSeconds: number
   queueBeforePassengers: number; queueAfterPassengers: number
@@ -263,4 +280,7 @@ export type AdvisoryCandidate = { type: InstructionType; parameters: Instruction
 export type Advisory = { id: string; disruptionId: string; demoRunId: string; busId: string; status: string;
   candidate: AdvisoryCandidate; finalCandidate: AdvisoryCandidate | null; preview: string; hazardClassification: string; limitations: string[]; createdAt: string }
 export type AdvisoryGroup = { id: string; disruptionId: string; demoRunId: string; serviceId: string; directionId: number;
-  hazardTitle: string; hazardClassification: string; candidate: AdvisoryCandidate; preview: string; members: Advisory[] }
+  hazardTitle: string; hazardDescription?: string; hazardKind?: string; hazardClassification: string;
+  latitude?: number | null; longitude?: number | null; hazardLocation?: string | null;
+  affectedStopName?: string | null; affectedStopCode?: string | null;
+  candidate: AdvisoryCandidate; preview: string; members: Advisory[] }

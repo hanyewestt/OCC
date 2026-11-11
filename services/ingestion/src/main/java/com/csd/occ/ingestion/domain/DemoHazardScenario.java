@@ -13,17 +13,17 @@ public final class DemoHazardScenario {
     private DemoHazardScenario() {}
     public static List<HazardFeedPort.Fact> observations(int step, Instant startedAt, Instant now) {
         if (step < 0 || step >= DemoReplayScenario.STEP_COUNT) throw new IllegalArgumentException("Invalid scenario step");
-        var road = new HazardLocation("ROAD", "Teck Whye Ave", "Teck Whye Ave", null, null, null,
-                "ROAD_NAME", "PROVIDER_SUPPLIED");
-        var coverage = new HazardLocation("AREA", "demo-flood", "Teck Whye Ave", new BigDecimal("1.3802550"),
-                new BigDecimal("103.7550750"), new BigDecimal("0.5"), "BROADCAST_COVERAGE", "PROVIDER_SUPPLIED");
-        var station = new HazardLocation("STATION", "BP4", "Choa Chu Kang", null, null, null,
-                "STATION_REFERENCE", "PROVIDER_SUPPLIED");
+        var road = new HazardLocation("ROAD", "Bt Panjang Rd", "Bt Panjang Rd", new BigDecimal("1.3803000"),
+                new BigDecimal("103.7623000"), new BigDecimal("0.5"), "ROAD_NAME", "PROVIDER_SUPPLIED");
+        var coverage = new HazardLocation("AREA", "demo-flood", "Bt Panjang / Teck Whye", new BigDecimal("1.3802550"),
+                new BigDecimal("103.7550750"), new BigDecimal("1.0"), "BROADCAST_COVERAGE", "PROVIDER_SUPPLIED");
+        var station = new HazardLocation("STATION", "BP6", "Bukit Panjang", new BigDecimal("1.3786000"),
+                new BigDecimal("103.7618000"), new BigDecimal("0.5"), "STATION_REFERENCE", "PROVIDER_SUPPLIED");
         var expiresAt = startedAt.plusSeconds(3600);
         return List.of(
                 new HazardFeedPort.Fact(HazardKind.FLOOD, "demo-flood", "OBSERVED", now, null, expiresAt,
                         "DEMO: Flood alert",
-                        step == 0 ? "Synthetic flooding near Teck Whye Ave" : "Synthetic flood update",
+                        step == 0 ? "Synthetic flooding near Bt Panjang / Teck Whye" : "Synthetic flood update",
                         "Severe", "Avoid the affected area", List.of(), null, null, "Actual", null, List.of(coverage)),
                 new HazardFeedPort.Fact(HazardKind.RAIL_DISRUPTION, "BPL|Both", "OBSERVED",
                         now, null, null, "DEMO: BPL disruption", "Synthetic rail disruption near connecting bus services",

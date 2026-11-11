@@ -84,6 +84,8 @@ test('getBundledRouteGeometry provides road-following polylines for core service
   // Direction 2 runs from Kampong Bahru Ter (south) to Choa Chu Kang (north)
   expect(dir2_190![0].latitude).toBeLessThan(1.29)
   expect(dir2_190![dir2_190!.length - 1].latitude).toBeGreaterThan(1.35)
+  // The reverse trip follows a different stop pattern, not just the same line backwards.
+  expect(dir2_190).not.toEqual([...dir1_190!].reverse())
 
   const dir1_972 = getBundledRouteGeometry('972', 1)
   expect(dir1_972).not.toBeNull()
