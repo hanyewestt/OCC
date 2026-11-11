@@ -42,8 +42,6 @@ function global:aws {
       "iam list-open-id-connect-providers" { '{"OpenIDConnectProviderList":[{"Arn":"arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"}]}' }
       "iam get-open-id-connect-provider" { '{"Url":"token.actions.githubusercontent.com"}' }
       "ec2 describe-managed-prefix-lists" { '{"PrefixLists":[{"PrefixListId":"pl-123456789","MaxEntries":1}]}' }
-      "ec2 get-managed-prefix-list-entries" { '{"Entries":[{"Cidr":"10.0.0.0/8"}]}' }
-      "service-quotas list-service-quotas" { '{"Quotas":[{"QuotaName":"Inbound or outbound rules per security group","Value":60},{"QuotaName":"Security groups per network interface","Value":5}]}' }
       "cloudformation list-stacks" { 'None' }
       "cloudformation describe-change-set" { 'CREATE_COMPLETE' }
       "cloudformation describe-stacks" {
@@ -72,7 +70,7 @@ function global:gh {
 }
 function global:python {
     $a = @($args)
-    if ($a[0] -like "*egress-prefix-list.py" -or $a[0] -like "*deployment_env.py") {
+    if ($a[0] -like "*deployment_env.py") {
         & (Get-Command python -CommandType Application | Select-Object -First 1).Source @a
         return
     }
@@ -93,6 +91,11 @@ function global:python {
                                     encoding="utf-8", errors="replace", timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
             calls = [json.loads(line) for line in log.read_text(encoding="utf-8-sig").splitlines()]
+            aws_calls = [c['args'] for c in calls if c['tool'] == 'aws']
+            self.assertFalse(any(a[0] == 'service-quotas' or
+                                 a[:2] == ['ec2', 'get-managed-prefix-list-entries'] or
+                                 any('occ-ec2-cd-egress' in value or 'EgressAllowedPrefixListId' in value
+                                     for value in a) for a in aws_calls))
             waiters = [c["args"] for c in calls if c["tool"] == "aws" and c["args"][:2] == ["cloudformation", "wait"]]
             self.assertTrue(waiters)
             self.assertTrue(all("--stack-name" in a and "fixture-stack" in a for a in waiters))

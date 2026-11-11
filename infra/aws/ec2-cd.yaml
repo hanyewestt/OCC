@@ -58,15 +58,6 @@ Parameters:
     Description: >-
       ID of the AWS-managed prefix list com.amazonaws.global.cloudfront.origin-facing
       in this region; the bootstrap tool resolves it before applying the change set.
-  EgressAllowedPrefixListId:
-    Type: String
-    MinLength: 9
-    Description: >-
-      ID of the customer-managed prefix list holding the only outbound IPv4
-      destinations the host may reach on port 443. Populate it with the AWS
-      service ranges plus the Supabase, DataMall, Gemini, image-registry and
-      package-source ranges the deployment uses; an unrestricted entry must
-      never be added. The bootstrap tool resolves the occ-ec2-cd-egress list.
   OidcProviderArn:
     Type: String
     Description: >-
@@ -141,17 +132,13 @@ Resources:
           ToPort: 8080
           SourcePrefixListId: !Ref CloudFrontOriginPrefixListId
       SecurityGroupEgress:
-        # Outbound destinations are an explicit allow-list: AWS service
-        # endpoints plus the deployment's Supabase, DataMall, Gemini, image
-        # registry and package sources. The stack fails closed when the list is
-        # missing; no unrestricted entry is permitted.
-        - Description: HTTPS to the explicit egress allow-list
+        # Public APIs and registries change addresses. Restrict the transport
+        # instead of maintaining provider-wide IP inventories and quota changes.
+        - Description: HTTPS to external APIs and package registries
           IpProtocol: tcp
           FromPort: 443
           ToPort: 443
-          DestinationPrefixListId: !Ref EgressAllowedPrefixListId
-        # The VPC resolver is only reachable inside the VPC range, so DNS never
-        # widens the allow-list.
+          CidrIp: 0.0.0.0/0
         - Description: VPC DNS resolver
           IpProtocol: udp
           FromPort: 53

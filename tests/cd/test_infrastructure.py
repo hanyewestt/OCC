@@ -84,25 +84,32 @@ class CloudFormationContractTests(unittest.TestCase):
         self.assertIn("cloudfront.origin-facing", text)
         self.assertNotRegex(text, r"FromPort:\s*8080[\s\S]{0,200}CidrIp:\s*0\.0\.0\.0/0")
 
-    def test_egress_is_an_explicit_fail_closed_allow_list(self):
-        text = template_text()
-        # No unrestricted outbound range in either IP family.
-        self.assertNotIn("CidrIp: 0.0.0.0/0", text)
-        self.assertNotIn("CidrIpv6: ::/0", text)
-        self.assertIn("EgressAllowedPrefixListId:", text)
-        self.assertIn("DestinationPrefixListId: !Ref EgressAllowedPrefixListId", text)
+    def test_public_egress_allows_only_https_and_private_dns(self):
+        template = yaml.load(template_text(), Loader=yaml.BaseLoader)
+        rules = template['Resources']['OccOriginSecurityGroup']['Properties']['SecurityGroupEgress']
+        public = [r for r in rules if r.get('CidrIp') == '0.0.0.0/0']
+        self.assertEqual(len(public), 1)
+        self.assertEqual((public[0]['IpProtocol'], public[0]['FromPort'], public[0]['ToPort']),
+                         ('tcp', '443', '443'))
+        self.assertEqual(len(rules), 3)
+        for rule in rules:
+            if rule not in public:
+                self.assertEqual(rule['CidrIp'], 'VpcCidr')
+                self.assertEqual((rule['FromPort'], rule['ToPort']), ('53', '53'))
+                self.assertIn(rule['IpProtocol'], ('tcp', 'udp'))
+        self.assertNotIn('EgressAllowedPrefixListId', template['Parameters'])
 
     def test_security_group_rule_descriptions_are_ec2_safe(self):
         # EC2 rejects apostrophes in security-group rule descriptions.
         self.assertNotRegex(template_text(), r"Description:[^\n]*'")
 
-    def test_bootstrap_requires_the_egress_allow_list(self):
+    def test_bootstrap_requires_no_custom_egress_list_or_quota_change(self):
         bootstrap = BOOTSTRAP_PS1.read_text(encoding="utf-8")
-        self.assertIn("occ-ec2-cd-egress", bootstrap)
-        self.assertIn("ParameterKey=EgressAllowedPrefixListId", bootstrap)
-        # An empty or reopened allow-list must fail before the change set.
-        self.assertIn("get-managed-prefix-list-entries", bootstrap)
-        self.assertIn('"0.0.0.0/0", "::/0"', bootstrap)
+        self.assertNotIn("occ-ec2-cd-egress", bootstrap)
+        self.assertNotIn("EgressAllowedPrefixListId", bootstrap)
+        self.assertNotIn("get-managed-prefix-list-entries", bootstrap)
+        self.assertNotIn("service-quotas", bootstrap)
+        self.assertIn("com.amazonaws.global.cloudfront.origin-facing", bootstrap)
 
     def test_bootstrap_handles_first_install_with_a_create_change_set(self):
         bootstrap = BOOTSTRAP_PS1.read_text(encoding="utf-8")

@@ -157,7 +157,7 @@ $requiredNames = @(
     "OCC_INGESTION_TO_DISRUPTION_PEER_TOKEN", "OCC_INGESTION_TO_PLANNING_PEER_TOKEN",
     "OCC_DISRUPTION_TO_INGESTION_PEER_TOKEN", "OCC_DISRUPTION_TO_PLANNING_PEER_TOKEN",
     "OCC_PLANNING_TO_INGESTION_PEER_TOKEN", "OCC_PLANNING_TO_DISRUPTION_PEER_TOKEN",
-    "OCC_INGESTION_TO_DISRUPTION_PEER_TOKEN", "PGADMIN_DEFAULT_PASSWORD"
+    "PGADMIN_DEFAULT_PASSWORD"
 )
 $placeholderPattern = "^(change-?me|placeholder|synthetic|example|xxx+|<.*>)$"
 ${parsedEnvPath} = Join-Path ([System.IO.Path]::GetTempPath()) ("occ-env-" + [guid]::NewGuid().ToString("N") + ".json")
@@ -223,43 +223,6 @@ if (-not $prefixListId) {
     throw "The com.amazonaws.global.cloudfront.origin-facing managed prefix list was not found in $Region."
 }
 
-# Outbound destinations are an explicit, fail-closed allow-list. The list is
-# created once with the deployment's exact required ranges (see
-# docs/DEPLOYMENT.md); bootstrap refuses to build a change set without it.
-Write-Output "Resolving the deployment egress allow-list..."
-$egressLists = Invoke-Aws @("ec2", "describe-managed-prefix-lists", "--filters", "Name=prefix-list-name,Values=occ-ec2-cd-egress") | ConvertFrom-Json
-$egressPrefixListId = $egressLists.PrefixLists | Select-Object -First 1 -ExpandProperty PrefixListId
-if (-not $egressPrefixListId) {
-    throw "The customer-managed prefix list occ-ec2-cd-egress was not found in $Region; create it with the required outbound ranges (see docs/DEPLOYMENT.md) and rerun."
-}
-# Refuse an empty list or one that reintroduces unrestricted egress through the
-# back door: the prefix list, not the template, carries the destinations.
-$egressEntries = @()
-$nextToken = $null
-do {
-    $entryArguments = @("ec2", "get-managed-prefix-list-entries", "--prefix-list-id", $egressPrefixListId)
-    if ($nextToken) { $entryArguments += @("--next-token", $nextToken) }
-    $page = Invoke-Aws $entryArguments | ConvertFrom-Json
-    $egressEntries += $page.Entries
-    $nextToken = $page.NextToken
-} while ($nextToken)
-if (-not $egressEntries) {
-    throw "The occ-ec2-cd-egress prefix list has no entries; add the deployment's required outbound ranges and rerun."
-}
-$unrestricted = $egressEntries | Where-Object { $_.Cidr -in @("0.0.0.0/0", "::/0") }
-if ($unrestricted) {
-    throw "The occ-ec2-cd-egress prefix list contains an unrestricted entry; remove it and list only required destinations."
-}
-$quotas = (Invoke-Aws @("service-quotas", "list-service-quotas", "--service-code", "vpc") | ConvertFrom-Json).Quotas
-$ruleQuota = ($quotas | Where-Object { $_.QuotaName -eq "Inbound or outbound rules per security group" }).Value
-$groupQuota = ($quotas | Where-Object { $_.QuotaName -eq "Security groups per network interface" }).Value
-$egressCapacity = ($egressLists.PrefixLists | Where-Object { $_.PrefixListId -eq $egressPrefixListId }).MaxEntries
-& python (Join-Path $PSScriptRoot "egress-prefix-list.py") validate --max-entries $egressCapacity `
-    --rules-per-group $ruleQuota --groups-per-eni $groupQuota
-if ($LASTEXITCODE -ne 0) {
-    throw "Egress quota preflight failed; review both interacting quotas before creating a change set."
-}
-
 # Create (or reuse) the change set. Nothing is applied without -ApplyChangeSet.
 $dataAvailabilityZone = ""
 if ($ExistingDataVolumeId) {
@@ -278,8 +241,7 @@ $parameters = @(
     "ParameterKey=RepositoryName,ParameterValue=$Repository",
     "ParameterKey=InstanceType,ParameterValue=$InstanceType",
     "ParameterKey=OidcProviderArn,ParameterValue=$oidcArn",
-    "ParameterKey=CloudFrontOriginPrefixListId,ParameterValue=$prefixListId",
-    "ParameterKey=EgressAllowedPrefixListId,ParameterValue=$egressPrefixListId"
+    "ParameterKey=CloudFrontOriginPrefixListId,ParameterValue=$prefixListId"
 )
 $stackStatus = Get-StackStatus $StackName
 $stackExists = -not [string]::IsNullOrWhiteSpace($stackStatus)
