@@ -8,7 +8,7 @@
 #   pwsh scripts/cd/bootstrap.ps1 -Profile occ-admin -StackName occ-ec2-cd -Region us-east-1
 #   pwsh scripts/cd/bootstrap.ps1 -ApplyChangeSet
 #
-# Requirements: AWS CLI v2, gh CLI authenticated for hanyewestt/OCC, and the
+# Requirements: AWS CLI v2, gh CLI authenticated for pslimmm/OCC, and the
 # existing root .env with real settings. The local .env is never modified.
 
 [CmdletBinding()]
@@ -17,7 +17,7 @@ param(
     [string]$StackName = "occ-ec2-cd",
     [ValidateSet("us-east-1")]
     [string]$Region = "us-east-1",
-    [string]$Repository = "hanyewestt/OCC",
+    [string]$Repository = "pslimmm/OCC",
     [ValidateSet("t3.small")]
     [string]$InstanceType = "t3.small",
     [string]$EnvFile = ".env",
