@@ -13,24 +13,18 @@ Python 3.11+, AWS CLI v2 with authenticated deployment access, and authenticated
 `gh` access to the repository. Select the intended AWS CLI profile first if you
 use more than one account.
 
-### 1. Resolve the current AWS provisioning blockers
+### 1. Check the target account and stack
 
-The last verified `occ-ec2-cd` stack was `ROLLBACK_COMPLETE`. Inspect it with
-`aws cloudformation list-stack-resources --stack-name occ-ec2-cd --region us-east-1`.
-Only after confirming every old resource is `DELETE_COMPLETE`, remove that
-failed stack record with `aws cloudformation delete-stack`, followed by
-`aws cloudformation wait stack-delete-complete`, supplying the same stack name
-and region to both commands. Preserve unrelated EC2 instances, volumes, the OIDC
-provider and the customer-managed egress list.
+The failed `occ-ec2-cd` stack record has been removed after verifying all its
+resources were deleted. Bootstrap can now prepare a new CREATE change set.
+Preserve unrelated EC2 instances, volumes and the existing GitHub OIDC provider.
 
-Resolve the security-group quotas with AWS Support before recreating the stack.
-The existing egress list reserves 1,000 entries, which leaves no room for its
-two DNS rules. For this single-group design, a reviewed combination is prefix
-capacity **998**, rule quota **1,000**, and groups-per-ENI quota **1**. The quota
-change is regional/account-wide: check existing ENIs before accepting the
-one-group limit. Approval of the old 1,000-rule request alone does not solve it.
-Resize only the reviewed prefix list after the quotas permit it; preserve its
-entries. `bootstrap.ps1` checks the actual values and refuses an invalid fit.
+Outbound access uses HTTPS on port 443, plus VPC DNS. No customer-managed egress
+prefix list, provider IP refresh or security-group quota increase is required.
+The existing unused `occ-ec2-cd-egress` list is no longer referenced; it can be
+removed separately after confirming it still has no associations. Do not reduce
+the regional groups-per-interface quota for this deployment. The old 1,000-rule
+quota request is unnecessary; withdraw it through AWS Support if still pending.
 
 ### 2. Prepare settings and review the infrastructure change set
 
@@ -184,11 +178,9 @@ the full rule and for recovery when a skip marker is used by mistake.
 The November 2026 remediation passed local CD, Java, frontend, packaged-image
 system, backup/restore and vulnerability gates. Live Actions/OIDC, EC2 boot,
 CloudFront and t3.small capacity acceptance still require the reviewed rollout.
-The failed stack and networking quotas currently block that rollout: a prefix
-reserving 1,000 entries plus two DNS rules exceeds the per-ENI ceiling. For the
-single-group design, capacity 998, rule quota 1,000 and groups-per-ENI quota 1
-fit mathematically, but the account-wide quota tradeoff needs AWS Support and
-review of existing ENIs. Bootstrap configures GitHub settings after provisioning.
+The previous failed stack record has been removed. Bootstrap configures GitHub
+settings after provisioning. Standard security-group quotas accommodate this
+stack; the former provider IP allowlist and quota prerequisite have been removed.
 
 The deployment runs on one **t3.small (2 GiB)** in **us-east-1** behind a
 CloudFront distribution that serves browser HTTPS with the AWS-provided
@@ -252,48 +244,19 @@ Never delete the old disk/snapshot until row continuity has been demonstrated.
 Docker requires the correct `/var/lib/postgresql` mount, and a boot hook closes
 the traffic gate before old application containers can restart.
 
-### Host egress allow-list
+### Host outbound access
 
-The host has no unrestricted outbound rule. Its security group admits HTTPS
-(443) only to the customer-managed prefix list `occ-ec2-cd-egress`, plus DNS to
-the VPC resolver inside the VPC range. `bootstrap.ps1` refuses to create a
-change set unless that list exists, so the stack fails closed instead of
-falling back to open egress.
+The host security group allows outbound TCP **443** to public IPv4 destinations
+for AWS APIs, external providers and container/package registries, plus TCP/UDP
+**53** within the VPC for DNS. It has no public HTTP or all-protocol outbound
+rule. Provider IP changes therefore do not require allowlist maintenance or quota
+changes. HTTPS destinations are not restricted by domain; application TLS
+certificate validation and scoped AWS permissions remain in force.
 
-Create the list once per account/region from the deployment's actual
-destinations, and refresh it before bootstrap when provider ranges change:
-
-Use `python scripts/cd/egress-prefix-list.py plan` to generate a deterministic
-CIDR inventory from AWS, Cloudflare, Google and GitHub feeds. Add verified
-provider ranges with `--cidr` or explicitly observed DNS endpoints with
-`--provider-host`; observed addresses need refresh and are not permanent
-provider guarantees. `--source-file` supports an offline JSON inventory for
-review/tests. `create` and additive-only `update --prefix-list-id ...` are
-explicit AWS mutations, never side effects of plan. Review removals/resizing
-separately to avoid interrupting a running host.
-
-Bootstrap checks **MaxEntries + the two explicit DNS rules**, not populated
-entry count, and checks the rules-per-group × groups-per-ENI quota product
-against 1000. A 1000-capacity prefix does not fit a 1000-rule group once other
-rules are included. Large rule-quota changes can require an account-wide
-groups-per-ENI quota reduction; coordinate that impact rather than requesting
-1000 blindly. A nonempty list also does not prove endpoint connectivity.
-
-- AWS service endpoints (ECR, S3, Secrets Manager, SSM): the `us-east-1` and
-  `GLOBAL` prefixes in `https://ip-ranges.amazonaws.com/ip-ranges.json`.
-- Supabase (`*.supabase.co`), LTA DataMall (`datamall2.mytransport.sg`), Gemini
-  and the image/package sources (Docker Hub, GitHub, AL2023 repositories): each
-  provider's published ranges, or the Cloudflare/AWS ranges that front them.
-
-```bash
-aws ec2 create-managed-prefix-list \
-  --prefix-list-name occ-ec2-cd-egress --address-family IPv4 --max-entries 1000 \
-  --entries Cidr=203.0.113.0/24,Description=example-provider \
-            Cidr=198.51.100.0/24,Description=example-provider
-```
-
-Verify and refresh entries with `describe-managed-prefix-lists` and
-`modify-managed-prefix-list`. Never add `0.0.0.0/0` or `::/0`.
+Inbound access remains separate: only the AWS-managed CloudFront origin-facing
+prefix list can reach port 8080, with the origin secret checked at Nginx. Database
+and service ports are not publicly exposed. The template still needs the
+CloudFront-managed **inbound** prefix list, which bootstrap discovers automatically.
 
 ## Lifecycle controls: pause, start/resume and status
 
@@ -447,6 +410,6 @@ timeout (120s) is set above the measured local heartbeat gap, and real
 CloudFront rollout evidence for long-lived streams remains a
 deployment-time check.
 
-Actual provisioning requires verified AWS permissions, quota preflight and a
+Actual provisioning requires verified AWS permissions and a
 reviewed change set. Cost qualification is excluded from the current remediation
 acceptance at the user's request.

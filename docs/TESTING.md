@@ -88,13 +88,18 @@ digests. The post-verification pipeline publishes built OCI bytes with
 SBOM for each exact final digest. Failed, skipped or incomplete scan jobs block
 publication. Main's manual `refresh` is `none`, `rescan` or `rebuild`.
 
+Infrastructure checks use `cfn-lint infra/aws/ec2-cd.yaml` and
+`cfn-guard validate -d infra/aws/ec2-cd.yaml -r infra/aws/ec2-cd.guard`.
+Run the outbound-boundary mutation cases with
+`cfn-guard test -r infra/aws/ec2-cd.guard -t tests/cd/egress.guard-tests.yaml`.
+
 CD tests run on Linux; Windows also executes portable policy tests and the real
 PowerShell bootstrap CLI fixture. `python tests/cd/host_integration.py all`
 requires Docker and fails when it is unavailable. It exercises real isolated
 PostGIS backup/restore (spatial data, roles, ownership and grants) and Buildx
 OCI transfer/import, Linux lock exclusion, and terminal-failure quiescing of real
 containers while preserving PostgreSQL. Its S3 boundary is a local fixture; AWS IAM, EC2 boot,
-systemd, CloudFront and quota acceptance require a reviewed live rollout.
+systemd, CloudFront and provider connectivity require a reviewed live rollout.
 
 Publication has its own queue. Deploy, pause and resume share
 `occ-production-mutation`, `cancel-in-progress: false`, `queue: max`; status is

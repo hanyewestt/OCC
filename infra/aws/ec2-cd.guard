@@ -102,6 +102,31 @@ rule occ_origin_restricted_to_prefix_list {
   }
 }
 
+# Public outbound access is HTTPS only; provider IP inventories are unnecessary.
+rule occ_public_egress_is_https_only {
+  AWS::EC2::SecurityGroup {
+    Properties {
+      SecurityGroupEgress[*] {
+        CidrIp exists
+        when CidrIp == "0.0.0.0/0" {
+          IpProtocol == "tcp"
+          FromPort == 443
+          ToPort == 443
+        }
+        when CidrIp != "0.0.0.0/0" {
+          CidrIp {
+            Ref == "VpcCidr"
+          }
+          IpProtocol IN ["tcp", "udp"]
+          FromPort == 53
+          ToPort == 53
+        }
+        CidrIpv6 not exists
+      }
+    }
+  }
+}
+
 rule occ_bucket_versioned_and_private {
   AWS::S3::Bucket {
     Properties {

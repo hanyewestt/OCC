@@ -1,0 +1,90 @@
+# Run: cfn-guard test -r infra/aws/ec2-cd.guard -t tests/cd/egress.guard-tests.yaml
+- name: HTTPS and VPC DNS
+  input:
+    Resources:
+      OccOriginSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+          SecurityGroupEgress:
+          - &public_https
+            IpProtocol: tcp
+            FromPort: 443
+            ToPort: 443
+            CidrIp: 0.0.0.0/0
+          - &vpc_tcp_dns
+            IpProtocol: tcp
+            FromPort: 53
+            ToPort: 53
+            CidrIp:
+              Ref: VpcCidr
+          - &vpc_udp_dns
+            IpProtocol: udp
+            FromPort: 53
+            ToPort: 53
+            CidrIp:
+              Ref: VpcCidr
+  expectations:
+    rules:
+      occ_public_egress_is_https_only: PASS
+- name: Public HTTP
+  input:
+    Resources:
+      OccOriginSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+          SecurityGroupEgress:
+          - IpProtocol: tcp
+            FromPort: 80
+            ToPort: 80
+            CidrIp: 0.0.0.0/0
+          - *vpc_tcp_dns
+          - *vpc_udp_dns
+  expectations:
+    rules:
+      occ_public_egress_is_https_only: FAIL
+- name: All public protocols
+  input:
+    Resources:
+      OccOriginSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+          SecurityGroupEgress:
+          - IpProtocol: '-1'
+            FromPort: 443
+            ToPort: 443
+            CidrIp: 0.0.0.0/0
+          - *vpc_tcp_dns
+          - *vpc_udp_dns
+  expectations:
+    rules:
+      occ_public_egress_is_https_only: FAIL
+- name: Extra public SSH destination
+  input:
+    Resources:
+      OccOriginSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+          SecurityGroupEgress:
+          - *public_https
+          - *vpc_tcp_dns
+          - *vpc_udp_dns
+          - IpProtocol: tcp
+            FromPort: 22
+            ToPort: 22
+            CidrIp: 203.0.113.1/32
+  expectations:
+    rules:
+      occ_public_egress_is_https_only: FAIL
+- name: Destination omitted
+  input:
+    Resources:
+      OccOriginSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+          SecurityGroupEgress:
+          - IpProtocol: tcp
+            FromPort: 443
+            ToPort: 443
+  expectations:
+    rules:
+      occ_public_egress_is_https_only: FAIL
