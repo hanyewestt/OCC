@@ -1,8 +1,10 @@
 # Identity directory rollout
 
-The Ingestion identity adapter is disabled by default. Existing deployments need
-no private key or secret mount. The browser continues using only the existing
-`SUPABASE_PROJECT_URL` and public `SUPABASE_SB_PUBLISHABLE` configuration.
+The Ingestion identity adapter is enabled by default and requires the backend
+secret key or mounted secret file described below. The browser continues using
+only the existing `SUPABASE_PROJECT_URL` and public `SUPABASE_SB_PUBLISHABLE`
+configuration. Set `OCC_IDENTITY_ENABLED=false` to disable provider calls while
+retaining the local projection.
 
 ## Before enabling the adapter
 
@@ -43,26 +45,26 @@ no private key or secret mount. The browser continues using only the existing
    secret remains supported: leave the environment key empty and store the key
    in a backend-only file. Keep keys out of image layers, frontend configuration,
    logs and the repository.
-7. For the environment option, set `OCC_IDENTITY_ENABLED=true` after the hook
-   checks and use the normal app launcher. No identity overlay is needed.
-   For the mounted-file option, set `OCC_IDENTITY_SECRET_SOURCE_FILE` to the host-side secret file,
-   `OCC_IDENTITY_SECRET_KEY_FILE=/run/secrets/occ_supabase_identity_key`, and
-   `OCC_IDENTITY_ENABLED=true`. `SUPABASE_PROJECT_URL` keeps its existing name
-   and project. For Compose, include `infra/compose.identity.yaml` after the
-   regular local or production Compose files. This overlay mounts the Docker
-   secret into Ingestion only; the default stack does not require a secret file.
+7. Identity is enabled by default. For the environment option, configure the key
+   after the hook checks and use the normal app launcher. No identity overlay is
+   needed. For the mounted-file option, set `OCC_IDENTITY_SECRET_SOURCE_FILE` to
+   the host-side secret file and
+   `OCC_IDENTITY_SECRET_KEY_FILE=/run/secrets/occ_supabase_identity_key`.
+   `SUPABASE_PROJECT_URL` keeps its existing name and project. For Compose,
+   include `infra/compose.identity.yaml` after the regular local or production
+   Compose files. This overlay mounts the Docker secret into Ingestion only.
+   Set `OCC_IDENTITY_ENABLED=false` to disable provider calls.
 
 The configuration validates the origin, configured environment key or readable
 mounted path, and positive timing
-settings at startup when enabled. A nonblank environment key takes precedence over the file. With no environment
-key, the adapter reads the file at request time so
+settings at startup when enabled (the default). A nonblank environment key takes
+precedence over the file. With no environment key, the adapter reads the file at
+request time so
 mounted-key rotation does not require copying a credential into application
 configuration. It accepts modern secret keys in the `apikey` header only and
 does not send a bearer header. Timeout defaults to 5 seconds and full scans to
 5 minutes. Bounded operational overrides are `OCC_IDENTITY_TIMEOUT` and
-`OCC_IDENTITY_DIRECTORY_INTERVAL`; assignment recovery uses
-`OCC_PLANNING_ASSIGNMENT_RECOVERY_INTERVAL` and
-`OCC_PLANNING_ASSIGNMENT_RECOVERY_BATCH_SIZE`. Their safe defaults are listed in
+`OCC_IDENTITY_DIRECTORY_INTERVAL`. Their safe defaults are listed in
 `.env.example` and passed only to their owning services. Internal response limits
 remain in code.
 
@@ -111,7 +113,7 @@ metadata, retained claims, unknown roles and execution/column privileges:
 .\mvnw.cmd -pl services/ingestion test-compile failsafe:integration-test failsafe:verify '-Dit.test=SupabaseAccessTokenHookIT'
 ```
 
-Disable `OCC_IDENTITY_ENABLED` to stop provider calls while retaining the local
+Set `OCC_IDENTITY_ENABLED=false` to stop provider calls while retaining the local
 projection for reads. Revoke/rotate the mounted key separately if required.
 Restore the protected prior hook export only with the project operator's review;
 disabling the adapter does not roll back provider metadata or issued tokens.

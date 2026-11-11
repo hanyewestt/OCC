@@ -40,12 +40,6 @@ public class DemoVehicleAssignment {
     public String busId() { return busId; }
     public java.util.Optional<java.util.UUID> captainUserId() { return java.util.Optional.ofNullable(captainUserId); }
     public long assignmentRevision() { return assignmentRevision; }
-    public boolean assignCaptain(java.util.UUID captainId) {
-        if (java.util.Objects.equals(captainUserId, captainId)) return false;
-        captainUserId = captainId;
-        assignmentRevision++;
-        return true;
-    }
     public String serviceId() { return serviceId; }
     public int directionId() { return directionId; }
     public String operator() { return operator; }

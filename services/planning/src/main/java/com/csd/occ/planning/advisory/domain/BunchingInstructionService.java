@@ -82,8 +82,8 @@ public class BunchingInstructionService {
                     .noneMatch(bus -> bus.busId().equals(predecessorKey.getBusId())))
                 throw new AdvisoryConflictException("Replacement instruction belongs to another bus or run");
         }
-        guards.requireAvailableForIssuance(guards.lockAll(discoveredBuses.values().stream()
-                .map(bus -> new AssignmentBusGuards.Key(run, bus.busId())).toList()));
+        guards.lockAll(discoveredBuses.values().stream()
+                .map(bus -> new AssignmentBusGuards.Key(run, bus.busId())).toList());
         if (!run.equals(scopes.current().demoRunId())) throw new AdvisoryConflictException("Simulation scope changed");
         var record = recommendations.findByIdempotencyKeyForUpdate(id).orElseThrow(AdvisoryNotFoundException::new);
         if (recommendations.findRevision(id).isPresent())

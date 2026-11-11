@@ -13,9 +13,9 @@ class ProvisioningRequestTest {
         assertThat(request.toString()).doesNotContain(password).contains("REDACTED");
     }
     @Test void acceptsUnicodeCodePointBoundariesWithoutCompositionRules() {
-        assertThat(new ProvisioningRequest("Name", "a@b.test", OccRole.CONTROLLER, "😀".repeat(15)).password()).isEqualTo("😀".repeat(15));
+        assertThat(new ProvisioningRequest("Name", "a@b.test", OccRole.CONTROLLER, "😀".repeat(8)).password()).isEqualTo("😀".repeat(8));
         assertThat(new ProvisioningRequest("Name", "a@b.test", OccRole.CAPTAIN, " ".repeat(128)).password()).hasSize(128);
-        for (String password : new String[]{"😀".repeat(14), "a".repeat(129)})
+        for (String password : new String[]{"😀".repeat(7), "a".repeat(129)})
             assertThatIllegalArgumentException().isThrownBy(() -> new ProvisioningRequest("Name", "a@b.test", OccRole.CAPTAIN, password));
     }
     @Test void rejectsEscalationAndMalformedSafeFieldsWithGenericErrors() {

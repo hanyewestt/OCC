@@ -3,6 +3,7 @@ package com.csd.occ.ingestion.domain;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Locale;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -37,8 +38,9 @@ public class ApplicationAuditQueryService {
         Instant cutoff = now.minus(retentionPolicy.retention());
         Instant from = requestedFrom.isBefore(cutoff) ? cutoff : requestedFrom;
         var pageRequest = PageRequest.of(page, size);
-        var results = events.search(filter.category(), filter.eventType(), filter.outcome(), filter.actorSubject(),
-                filter.runId(), filter.entityId(), from, to, pageRequest);
+        var results = events.search(likePattern(filter.category()), likePattern(filter.eventType()),
+                likePattern(filter.outcome()), likePattern(filter.actorSubject()), filter.runId(),
+                likePattern(filter.entityId()), from, to, pageRequest);
         Instant collectionStartedAt = retention.collectionStartedAt();
         return new SearchResult(results, retentionPolicy.retention().toSeconds(), collectionStartedAt);
     }
@@ -46,6 +48,13 @@ public class ApplicationAuditQueryService {
     public java.util.Optional<ApplicationAuditEvent> detail(UUID id) {
         Instant cutoff = clock.instant().minus(retentionPolicy.retention());
         return events.findByIdAndOccurredAtGreaterThanEqual(id, cutoff);
+    }
+
+    private static String likePattern(String value) {
+        if (value == null || value.isBlank()) return null;
+        String term = value.trim().toLowerCase(Locale.ROOT)
+                .replace("!", "!!").replace("%", "!%").replace("_", "!_");
+        return "%" + term + "%";
     }
 
     public record AuditFilter(String category, String eventType, String outcome, String actorSubject,

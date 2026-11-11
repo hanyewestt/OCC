@@ -46,7 +46,7 @@ occ:
   audit:
     retention: ${OCC_AUDIT_RETENTION:90d}
   identity:
-    enabled: ${OCC_IDENTITY_ENABLED:false}
+    enabled: ${OCC_IDENTITY_ENABLED:true}
     project-url: ${SUPABASE_PROJECT_URL:}
     secret-key-file: ${OCC_IDENTITY_SECRET_KEY_FILE:}
     secret-key: ${OCC_IDENTITY_SECRET_KEY:}

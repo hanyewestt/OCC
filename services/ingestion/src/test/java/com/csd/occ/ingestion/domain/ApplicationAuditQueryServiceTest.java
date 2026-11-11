@@ -27,11 +27,11 @@ class ApplicationAuditQueryServiceTest {
 
     @Test
     void defaultsToLast24HoursAndRetainsFiltersAndPageMetadata() {
-        var filter = new ApplicationAuditQueryService.AuditFilter("OPERATIONS", "FEED_POLL_COMPLETED", "FAILURE",
-                "admin-subject", UUID.randomUUID(), "poll-1", null, null);
+        var filter = new ApplicationAuditQueryService.AuditFilter(" OPERATIONS ", "FEED_POLL_COMPLETED", "FAILURE",
+                "Admin-Subject", UUID.randomUUID(), "POLL-1", null, null);
         var pageable = PageRequest.of(2, 25);
-        when(events.search(filter.category(), filter.eventType(), filter.outcome(), filter.actorSubject(), filter.runId(),
-                filter.entityId(), NOW.minus(Duration.ofHours(24)), NOW, pageable))
+        when(events.search("%operations%", "%feed!_poll!_completed%", "%failure%", "%admin-subject%", filter.runId(),
+                "%poll-1%", NOW.minus(Duration.ofHours(24)), NOW, pageable))
                 .thenReturn(new PageImpl<>(java.util.List.of(), pageable, 0));
         when(retention.collectionStartedAt()).thenReturn(NOW.minus(Duration.ofDays(20)));
 
@@ -41,8 +41,8 @@ class ApplicationAuditQueryServiceTest {
         assertThat(result.page().getSize()).isEqualTo(25);
         assertThat(result.retentionSeconds()).isEqualTo(Duration.ofDays(90).toSeconds());
         assertThat(result.collectionStartedAt()).isEqualTo(NOW.minus(Duration.ofDays(20)));
-        verify(events).search(filter.category(), filter.eventType(), filter.outcome(), filter.actorSubject(), filter.runId(),
-                filter.entityId(), NOW.minus(Duration.ofHours(24)), NOW, pageable);
+        verify(events).search("%operations%", "%feed!_poll!_completed%", "%failure%", "%admin-subject%", filter.runId(),
+                "%poll-1%", NOW.minus(Duration.ofHours(24)), NOW, pageable);
     }
 
     @Test

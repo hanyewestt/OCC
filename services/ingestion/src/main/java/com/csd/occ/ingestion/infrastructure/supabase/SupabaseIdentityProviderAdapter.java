@@ -106,7 +106,8 @@ public class SupabaseIdentityProviderAdapter implements IdentityProviderPort {
                     // GoTrue can also return 422: recognize only safe, documented categories, never its message.
                     if (method == HttpMethod.POST && status == 422) {
                         JsonNode error = json.readTree(response.getBody().readNBytes(16_384));
-                        String code = error.path("code").asText("");
+                        // Supabase puts the stable reason in error_code; code is the HTTP status number.
+                        String code = error.path("error_code").asText(error.path("code").asText(""));
                         if (code.equals("email_exists") || code.equals("user_already_exists"))
                             throw new IdentityProviderException(IdentityProviderException.Reason.DUPLICATE_EMAIL);
                         if (code.equals("weak_password"))

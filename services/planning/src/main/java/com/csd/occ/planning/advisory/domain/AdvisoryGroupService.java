@@ -59,7 +59,7 @@ public class AdvisoryGroupService {
         var keys = proposalIds.stream().map(id -> proposals.findKeyById(id)
                 .map(key -> new AssignmentBusGuards.Key(key.getDemoRunId(), key.getBusId()))
                 .orElseThrow(AdvisoryNotFoundException::new)).toList();
-        guards.requireAvailableForIssuance(guards.lockAll(keys));
+        guards.lockAll(keys);
         var selected = proposalIds.stream().sorted().map(id -> proposals.findForUpdate(id)
                 .orElseThrow(AdvisoryNotFoundException::new)).toList();
         selected.forEach(entityManager::refresh);

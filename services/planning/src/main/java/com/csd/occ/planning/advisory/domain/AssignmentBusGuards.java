@@ -26,13 +26,5 @@ public class AssignmentBusGuards {
         return keys.stream().distinct().sorted(ORDER).map(key -> lock(key.runId(), key.busId())).toList();
     }
 
-    public void requireAvailableForIssuance(Collection<AssignmentBusGuard> lockedGuards) {
-        for (var guard : lockedGuards) {
-            if (guard.pendingOperationId() != null)
-                throw new AdvisoryConflictException("Bus assignment operation " + guard.pendingOperationId()
-                        + " is pending for " + guard.busId());
-        }
-    }
-
     public record Key(UUID runId, String busId) { }
 }

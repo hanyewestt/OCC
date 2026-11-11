@@ -6,6 +6,9 @@ spring:
     locations: classpath:db/migration
 
 occ:
+  # Tests replace the provider port with a mock and must not require a live key.
+  identity:
+    enabled: false
   ingestion:
     demo:
       disruption-internal-url: http://disruption.test
