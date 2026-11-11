@@ -9,6 +9,7 @@ from pathlib import Path
 import socket
 import ssl
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,7 +28,12 @@ def request_status(base_url: str, path: str, headers: dict[str, str] | None = No
 
 def assert_status(base_url: str, label: str, path: str, expected: int,
                   headers: dict[str, str] | None = None, method: str = "GET") -> None:
-    actual = request_status(base_url, path, headers, method)
+    for attempt in range(3):
+        actual = request_status(base_url, path, headers, method)
+        if actual == expected or expected != 200 or actual != 429 or attempt == 2:
+            break
+        # The preceding burst can transiently exhaust the edge rate-limit bucket.
+        time.sleep(1.1)
     if actual != expected:
         raise AssertionError(f"{label}: expected HTTP {expected}, got {actual}")
     print(f"PASS {label}: HTTP {actual}")
