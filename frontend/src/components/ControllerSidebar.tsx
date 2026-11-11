@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { ClipboardList, LayoutDashboard, ListChecks, LogOut, Newspaper, PanelLeft, TriangleAlert } from 'lucide-react'
+import { ClipboardList, LayoutDashboard, ListChecks, LogOut, Newspaper, PanelLeft, TriangleAlert, UsersRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { signOut } from '@/lib/auth'
@@ -11,6 +11,7 @@ export const controllerPages = [
   { path: '/controller/disruptions', title: 'Disruptions', icon: TriangleAlert },
   { path: '/controller/planning', title: 'Planning & mitigation', icon: ListChecks },
   { path: '/controller/notices', title: 'Public notices', icon: Newspaper },
+  { path: '/controller/captains', title: 'Captains', icon: UsersRound },
   { path: '/controller/audit', title: 'Audit log', icon: ClipboardList },
 ]
 

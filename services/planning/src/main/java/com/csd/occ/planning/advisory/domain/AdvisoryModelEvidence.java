@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.util.UUID;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
+import com.csd.occ.planning.domain.audit.AuditEvidenceSanitizer;
 
 /** Long-lived AI and controller decision evidence, independent from operational proposals. */
 @Entity
@@ -24,8 +25,8 @@ public class AdvisoryModelEvidence {
         sourceRevisionKey = proposal.sourceRevisionKey();
         candidateType = proposal.candidateType();
         model = proposal.model();
-        modelInput = proposal.modelInput();
-        modelOutput = proposal.modelOutput();
+        modelInput = AuditEvidenceSanitizer.sanitizeText(proposal.modelInput());
+        modelOutput = AuditEvidenceSanitizer.sanitizeText(proposal.modelOutput());
         candidate = proposal.candidate();
         createdAt = proposal.createdAt();
         if (proposal.decidedAt() != null)
@@ -64,6 +65,10 @@ public class AdvisoryModelEvidence {
     }
 
     public UUID proposalId() { return proposalId; }
+    public UUID eventId() { return eventId; }
+    public UUID disruptionId() { return disruptionId; }
+    public UUID demoRunId() { return demoRunId; }
+    public String busId() { return busId; }
     public String model() { return model; }
     public String modelInput() { return modelInput; }
     public String modelOutput() { return modelOutput; }

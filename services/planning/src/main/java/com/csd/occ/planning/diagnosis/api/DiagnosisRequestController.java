@@ -113,7 +113,7 @@ public class DiagnosisRequestController {
     @PostMapping("/api/v1/planning/diagnoses/{requestId}/controller-suggestion")
     @Operation(operationId = "suggestEarlyBunchingMitigation",
             summary = "Record controller mitigation suggestions before AI output is available",
-            description = "Controller/admin only. Records one to three bus-specific suggestions for a detected bunching incident in the active data selection. Identical retries return the original suggestion; a different replacement returns 409. This records controller intent and does not dispatch a bus instruction.")
+            description = "CONTROLLER only. Records one to three bus-specific suggestions for a detected bunching incident in the active data selection. Identical retries return the original suggestion; a different replacement returns 409. This records controller intent and does not dispatch a bus instruction.")
     @ApiResponse(responseCode = "200", description = "Suggestion stored or identical suggestion replayed")
     @ApiResponse(responseCode = "400", description = "A bus instruction or rationale is invalid")
     @ApiResponse(responseCode = "404", description = "Diagnosis request not found")

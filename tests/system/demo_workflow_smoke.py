@@ -58,10 +58,10 @@ def main() -> int:
     parser.add_argument("--result-file", type=Path)
     args = parser.parse_args()
     base_url = args.base_url.rstrip("/")
-    admin_token = (args.token_dir / "admin.jwt").read_text(encoding="utf-8").strip()
+    controller_token = (args.token_dir / "controller.jwt").read_text(encoding="utf-8").strip()
 
     started = time.perf_counter()
-    status, run = request(base_url, "/api/v1/demo-runs", admin_token, "POST")
+    status, run = request(base_url, "/api/v1/demo-runs", controller_token, "POST")
     start_response_ms = round((time.perf_counter() - started) * 1000)
     if status != 201 or not isinstance(run, dict) or not run.get("id"):
         raise AssertionError(f"start demo run: expected HTTP 201 and run id, got {status}: {run}")
@@ -72,7 +72,7 @@ def main() -> int:
     completed, simulation_ready_ms = wait_for(
         base_url,
         path,
-        admin_token,
+        controller_token,
         lambda payload: isinstance(payload, dict)
         and payload.get("status") == "REPLAY_COMPLETE"
         and any(
@@ -91,7 +91,7 @@ def main() -> int:
     recommendation, recommendation_ready_ms = wait_for(
         base_url,
         f"/api/v1/demo-runs/{run_id}/recommendation",
-        admin_token,
+        controller_token,
         lambda payload: isinstance(payload, dict)
         and bool(payload.get("recommendationId"))
         and payload.get("classification") == "SIMULATION"
@@ -107,7 +107,7 @@ def main() -> int:
     )
 
     started = time.perf_counter()
-    close_status, _ = request(base_url, f"/api/v1/demo-runs/{run_id}/close", admin_token, "POST")
+    close_status, _ = request(base_url, f"/api/v1/demo-runs/{run_id}/close", controller_token, "POST")
     close_response_ms = round((time.perf_counter() - started) * 1000)
     if close_status != 200:
         raise AssertionError(f"close demo run: expected HTTP 200, got {close_status}")

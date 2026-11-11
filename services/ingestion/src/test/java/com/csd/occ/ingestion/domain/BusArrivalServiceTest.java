@@ -28,9 +28,11 @@ class BusArrivalServiceTest {
     private final BusArrivalPort arrivals = mock(BusArrivalPort.class);
     private final ReferenceTopologyPort topology = mock(ReferenceTopologyPort.class);
     private final PollingConfigurationPort configuration = mock(PollingConfigurationPort.class);
+    private final ApplicationAuditEventRepository auditEvents = mock(ApplicationAuditEventRepository.class);
     private final Instant now = Instant.parse("2026-09-24T00:00:00Z");
     private final BusArrivalService service = new BusArrivalService(targets, runs, observations, normalized,
-            routeStops, feedStatuses, arrivals, topology, configuration, Clock.fixed(now, ZoneOffset.UTC));
+            routeStops, feedStatuses, arrivals, topology, configuration, Clock.fixed(now, ZoneOffset.UTC),
+            completionAudit(Clock.fixed(now, ZoneOffset.UTC)));
 
     @Test
     void successfulPollPreservesObservationAndMinuteBucket() {
@@ -55,6 +57,16 @@ class BusArrivalServiceTest {
         assertThat(run.getCompletedAt()).isEqualTo(now);
         assertThat(observation.getPollRunId()).isEqualTo(run.getId());
         assertThat(run.getRoutePositionPollCycleId()).isNotNull();
+        ArgumentCaptor<ApplicationAuditEvent> audit = ArgumentCaptor.forClass(ApplicationAuditEvent.class);
+        verify(auditEvents, times(2)).save(audit.capture());
+        var pollEvent = audit.getAllValues().getFirst();
+        assertThat(pollEvent.eventType()).isEqualTo("FEED_POLL_COMPLETED");
+        assertThat(pollEvent.outcome()).isEqualTo("SUCCESS");
+        assertThat(pollEvent.sourceKey()).isEqualTo("ingestion-poll:" + run.getId());
+        assertThat(pollEvent.details()).containsEntry("recordsReceived", 0)
+                .containsEntry("classification", "OBSERVATION_ONLY");
+        assertThat(audit.getAllValues()).extracting(ApplicationAuditEvent::eventType)
+                .containsExactly("FEED_POLL_COMPLETED", "FEED_HEALTH_CHANGED");
     }
 
     @Test
@@ -63,7 +75,7 @@ class BusArrivalServiceTest {
         Instant secondCycleStartedAt = Instant.parse("2026-09-24T00:01:40Z");
         MutableClock mutableClock = new MutableClock(firstCycleStartedAt);
         BusArrivalService crossingMinuteService = new BusArrivalService(targets, runs, observations, normalized,
-                routeStops, feedStatuses, arrivals, topology, configuration, mutableClock);
+                routeStops, feedStatuses, arrivals, topology, configuration, mutableClock, completionAudit(mutableClock));
         PollTarget firstTarget = target(true);
         PollTarget secondTarget = target(true);
         secondTarget.setScopeKey("stop:45009");
@@ -166,6 +178,47 @@ class BusArrivalServiceTest {
         verify(runs, times(2)).save(captured.capture());
         assertThat(captured.getValue().getOutcome()).isEqualTo("FAILED");
         assertThat(captured.getValue().getCompletedAt()).isEqualTo(now);
+        assertThat(captured.getValue().getErrorMessage()).isEqualTo("Bus arrival processing failed");
+        verify(auditEvents).save(argThat(event -> event.eventType().equals("FEED_POLL_COMPLETED")
+                && event.outcome().equals("FAILURE") && !event.details().toString().contains("synthetic failure")));
+        ArgumentCaptor<FeedStatus> status = ArgumentCaptor.forClass(FeedStatus.class);
+        verify(feedStatuses).save(status.capture());
+        assertThat(status.getValue().getMessage()).doesNotContain("synthetic failure");
+    }
+
+    @Test
+    void feedHealthAuditOnlyRecordsActualTransitionsIncludingRecovery() {
+        var mutableClock = new MutableClock(Instant.parse("2026-09-24T00:00:00Z"));
+        var status = new java.util.concurrent.atomic.AtomicReference<FeedStatus>();
+        when(targets.findAll()).thenReturn(List.of(target(true)));
+        when(topology.activeVersion()).thenReturn(Optional.of(
+                new ReferenceTopologyPort.ReferenceTopologyVersion(UUID.randomUUID(), "checksum")));
+        when(configuration.staleAfterSeconds()).thenReturn(180);
+        when(arrivals.arrivalsAt("44009", "190")).thenReturn(snapshot(),
+                new BusArrivalSnapshot(503, "{}", List.of(), List.of()),
+                new BusArrivalSnapshot(503, "{}", List.of(), List.of()),
+                new BusArrivalSnapshot(503, "{}", List.of(), List.of()), snapshot());
+        when(feedStatuses.findById(any(FeedStatusId.class))).thenAnswer(invocation -> Optional.ofNullable(status.get()));
+        when(feedStatuses.save(any(FeedStatus.class))).thenAnswer(invocation -> {
+            FeedStatus saved = invocation.getArgument(0);
+            status.set(saved);
+            return saved;
+        });
+        var crossingService = new BusArrivalService(targets, runs, observations, normalized, routeStops, feedStatuses,
+                arrivals, topology, configuration, mutableClock, completionAudit(mutableClock));
+
+        for (int minute = 0; minute < 5; minute++) {
+            mutableClock.set(Instant.parse("2026-09-24T00:00:00Z").plusSeconds(minute * 60L));
+            crossingService.poll();
+        }
+
+        ArgumentCaptor<ApplicationAuditEvent> events = ArgumentCaptor.forClass(ApplicationAuditEvent.class);
+        verify(auditEvents, times(9)).save(events.capture());
+        assertThat(events.getAllValues().stream().filter(event -> event.eventType().equals("FEED_HEALTH_CHANGED")))
+                .extracting(event -> event.details().get("current"))
+                .containsExactly("HEALTHY", "DEGRADED", "FAILED", "HEALTHY");
+        assertThat(events.getAllValues().stream().filter(event -> event.eventType().equals("FEED_POLL_COMPLETED")))
+                .hasSize(5);
     }
 
     @Test
@@ -220,7 +273,7 @@ class BusArrivalServiceTest {
         ArgumentCaptor<PollRun> run = ArgumentCaptor.forClass(PollRun.class);
         verify(runs, times(2)).save(run.capture());
         assertThat(run.getValue().getOutcome()).isEqualTo("PARTIAL");
-        assertThat(run.getValue().getErrorMessage()).isEqualTo("unparseable record");
+        assertThat(run.getValue().getErrorMessage()).isEqualTo("Some records could not be parsed");
         ArgumentCaptor<FeedStatus> status = ArgumentCaptor.forClass(FeedStatus.class);
         verify(feedStatuses).save(status.capture());
         assertThat(status.getValue().getStatus()).isEqualTo("HEALTHY");
@@ -334,6 +387,10 @@ class BusArrivalServiceTest {
 
     private BusArrivalSnapshot snapshot() {
         return new BusArrivalSnapshot(200, "{}", List.of(), List.of());
+    }
+
+    private PollCompletionAuditService completionAudit(Clock clock) {
+        return new PollCompletionAuditService(runs, feedStatuses, auditEvents, clock);
     }
 
     private BusArrivalPrediction prediction(String serviceId) {

@@ -49,6 +49,7 @@ public class AdvisoryProposal {
         finalCandidate = chosen; controllerSubject = subject; controllerRationale = rationale; decidedAt = now; status = "APPROVED";
         this.replacedInstructionId = replacedInstructionId;
     }
+    public void expire() { if ("PENDING".equals(status)) status = "EXPIRED"; }
     public UUID id() { return id; }
     public UUID eventId() { return eventId; }
     public UUID disruptionId() { return disruptionId; }

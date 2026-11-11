@@ -34,6 +34,8 @@ jobs:
         run: |
           npm ci
           npm run build
+      - name: Configure hosted runner DNS for image builds
+        run: bash .github/scripts/configure-ci-dns.sh
       - name: Start isolated application stack
         run: |
           set -euo pipefail
