@@ -95,6 +95,7 @@ class AdvisoryPersistenceIT {
 
     @BeforeEach
     void resetRowsAndExternalContext() {
+        jdbc.execute("TRUNCATE planning.application_audit_event");
         jdbc.execute("TRUNCATE planning.issued_instruction, planning.advisory_proposal, planning.advisory_model_evidence, planning.public_notice");
         jdbc.execute("TRUNCATE planning.recommendation_decision, planning.model_invocation_record, planning.recommendation");
         sources.clear();
@@ -826,12 +827,17 @@ class AdvisoryPersistenceIT {
         assertThat(issued.findById(instruction.id()).orElseThrow().status()).isEqualTo("CANCELLED");
         assertThat(publications.findById(notice.id()).orElseThrow().status()).isEqualTo("WITHDRAWN");
         assertThat(publications.findById(notice.id()).orElseThrow().withdrawnAt()).isEqualTo(NOW);
+        assertThat(jdbc.queryForObject("select count(*) from planning.application_audit_event where source_key=?", Integer.class,
+                "instruction-state:" + instruction.id() + ":CANCELLED:SOURCE_WITHDRAWN")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from planning.application_audit_event where source_key=?", Integer.class,
+                "public-notice:" + notice.id() + ":NOTICE_WITHDRAWN")).isEqualTo(1);
     }
 
     @Test
     void closedRunRetiresAcknowledgedStopInstructionButKeepsModelAndDecisionEvidence() {
         var proposal = proposal(InstructionType.SLOW_DOWN_NEAR_STOPS);
         var issuedInstruction = instructions.decide(proposal.id(), null, null, "controller", null);
+        var pendingProposal = proposal(InstructionType.BE_CAUTIOUS);
         instructions.acknowledge(issuedInstruction.id(), captain.toString());
         jdbc.update("UPDATE planning.issued_instruction SET issued_at=?, acknowledgement_deadline=?, acknowledged_at=? WHERE id=?",
                 Timestamp.from(NOW.minus(Duration.ofHours(13))),
@@ -843,9 +849,14 @@ class AdvisoryPersistenceIT {
 
         instructionRuns.reconcileClosedRuns();
         assertThat(issued.findById(issuedInstruction.id()).orElseThrow().status()).isEqualTo("CANCELLED");
+        assertThat(proposals.findById(pendingProposal.id()).orElseThrow().status()).isEqualTo("EXPIRED");
+        assertThat(jdbc.queryForObject("select details->>'reason' from planning.application_audit_event where source_key=?", String.class,
+                "advisory-proposal-state:" + pendingProposal.id() + ":EXPIRED")).isEqualTo("RUN_CLOSED");
         retention.purge(Duration.ofHours(12));
 
         assertThat(issued.existsById(issuedInstruction.id())).isFalse();
+        assertThat(jdbc.queryForObject("select details->>'reason' from planning.application_audit_event where source_key=?", String.class,
+                "instruction-state:" + issuedInstruction.id() + ":CANCELLED:RUN_CLOSED")).isEqualTo("RUN_CLOSED");
         assertThat(proposals.existsById(proposal.id())).isFalse();
         var evidence = modelEvidence.findById(proposal.id()).orElseThrow();
         assertThat(evidence.modelInput()).isEqualTo("captured input");
@@ -854,6 +865,37 @@ class AdvisoryPersistenceIT {
         assertThat(evidence.finalCandidate()).isEqualTo(proposal.candidate());
         assertThat(evidence.controllerSubject()).isEqualTo("controller");
         assertThat(evidence.decidedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void retentionExpiryAuditsInstructionTransitionBeforeOperationalDeletion() {
+        var proposal = proposal(InstructionType.SLOW_DOWN_NEAR_STOPS);
+        var instruction = instructions.decide(proposal.id(), null, null, "controller", null);
+        jdbc.update("UPDATE planning.issued_instruction SET issued_at=?, acknowledgement_deadline=? WHERE id=?",
+                Timestamp.from(NOW.minus(Duration.ofHours(13))), Timestamp.from(NOW.minusSeconds(1)), instruction.id());
+
+        retention.purge(Duration.ofHours(12));
+
+        assertThat(issued.existsById(instruction.id())).isFalse();
+        assertThat(jdbc.queryForObject("select details->>'reason' from planning.application_audit_event where source_key=?", String.class,
+                "instruction-state:" + instruction.id() + ":EXPIRED:VALIDITY_EXPIRED")).isEqualTo("VALIDITY_EXPIRED");
+        assertThat(jdbc.queryForObject("select details->>'instructionType' from planning.application_audit_event where source_key=?", String.class,
+                "instruction-state:" + instruction.id() + ":EXPIRED:VALIDITY_EXPIRED")).isEqualTo("SLOW_DOWN_NEAR_STOPS");
+    }
+
+    @Test
+    void retentionExpiryAuditsPendingProposalBeforeOperationalDeletion() {
+        var proposal = proposal(InstructionType.BE_CAUTIOUS);
+        jdbc.update("UPDATE planning.advisory_proposal SET created_at=? WHERE id=?",
+                Timestamp.from(NOW.minus(Duration.ofHours(13))), proposal.id());
+
+        retention.purge(Duration.ofHours(12));
+
+        assertThat(proposals.existsById(proposal.id())).isFalse();
+        assertThat(jdbc.queryForObject("select details->>'reason' from planning.application_audit_event where source_key=?", String.class,
+                "advisory-proposal-state:" + proposal.id() + ":EXPIRED:RETENTION_EXPIRED")).isEqualTo("RETENTION_EXPIRED");
+        assertThat(jdbc.queryForObject("select details->>'status' from planning.application_audit_event where source_key=?", String.class,
+                "advisory-proposal-state:" + proposal.id() + ":EXPIRED:RETENTION_EXPIRED")).isEqualTo("EXPIRED");
     }
 
     @Test
@@ -866,6 +908,16 @@ class AdvisoryPersistenceIT {
                 .andDo(org.springframework.test.web.servlet.result.MockMvcResultHandlers.print())
                 .andExpect(status().isOk()).andExpect(jsonPath("type").value("HOLD"));
         assertThat(issued.findById(predecessor.id()).orElseThrow().status()).isEqualTo("CANCELLED");
+        assertThat(jdbc.queryForObject("select count(*) from planning.application_audit_event where source_key=?", Integer.class,
+                "bunching-decision:" + id)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select bus_id from planning.application_audit_event where source_key=?", String.class,
+                "bunching-decision:" + id)).isEqualTo("SBS5898U");
+        assertThat(jdbc.queryForObject("select correlation_id from planning.application_audit_event where source_key=?", String.class,
+                "bunching-decision:" + id)).isEqualTo(id.toString());
+        assertThat(jdbc.queryForObject("select count(*) from planning.application_audit_event where source_key=?", Integer.class,
+                "instruction-state:" + predecessor.id() + ":CANCELLED:CONTROLLER_REPLACED")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from planning.application_audit_event where source_key=?", Integer.class,
+                "instruction-state:" + id + ":ISSUED:null")).isEqualTo(1);
         mvc.perform(post("/api/v1/planning/recommendations/" + id + "/obu-decisions")
                 .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
                 .contentType("application/json").content("{\"replaceInstructionId\":\"" + predecessor.id() + "\"}"))
@@ -909,7 +961,7 @@ class AdvisoryPersistenceIT {
             pool.shutdownNow();
         }
 
-        jdbc.execute("TRUNCATE planning.issued_instruction, planning.advisory_proposal, planning.advisory_model_evidence, planning.recommendation_decision, planning.model_invocation_record, planning.recommendation");
+        jdbc.execute("TRUNCATE planning.application_audit_event, planning.issued_instruction, planning.advisory_proposal, planning.advisory_model_evidence, planning.recommendation_decision, planning.model_invocation_record, planning.recommendation");
         var rollbackPredecessor = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, "controller", null);
         var rollbackId = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
         jdbc.execute("ALTER TABLE planning.issued_instruction ADD CONSTRAINT test_reject_bunching_instruction CHECK(false) NOT VALID");

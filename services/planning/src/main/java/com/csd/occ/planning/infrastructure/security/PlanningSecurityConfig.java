@@ -3,6 +3,7 @@ package com.csd.occ.planning.infrastructure.security;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -17,6 +18,8 @@ import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
 import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.web.BearerTokenAuthenticationEntryPoint;
+import org.springframework.security.oauth2.server.resource.web.access.BearerTokenAccessDeniedHandler;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.intercept.AuthorizationFilter;
 
@@ -26,7 +29,13 @@ import org.springframework.security.web.access.intercept.AuthorizationFilter;
 public class PlanningSecurityConfig {
     @Bean
     SecurityFilterChain planningSecurityFilterChain(HttpSecurity http, JwtDecoder jwtDecoder,
-            SupabaseRoleConverter roleConverter, PeerCapabilityProperties peerProperties) throws Exception {
+            SupabaseRoleConverter roleConverter, PeerCapabilityProperties peerProperties,
+            ObjectProvider<AuditedBearerFailureHandler> auditedFailureHandlers) throws Exception {
+        var auditedFailureHandler = auditedFailureHandlers.getIfAvailable();
+        var authenticationEntryPoint = auditedFailureHandler == null
+                ? new BearerTokenAuthenticationEntryPoint() : auditedFailureHandler;
+        var accessDeniedHandler = auditedFailureHandler == null
+                ? new BearerTokenAccessDeniedHandler() : auditedFailureHandler;
         JwtAuthenticationConverter authenticationConverter = new JwtAuthenticationConverter();
         authenticationConverter.setJwtGrantedAuthoritiesConverter(roleConverter);
 
@@ -86,6 +95,8 @@ public class PlanningSecurityConfig {
                         .hasAnyRole("ADMIN", "CONTROLLER")
                         .anyRequest().denyAll())
                 .oauth2ResourceServer(resourceServer -> resourceServer
+                        .authenticationEntryPoint(authenticationEntryPoint)
+                        .accessDeniedHandler(accessDeniedHandler)
                         .jwt(jwt -> jwt.decoder(jwtDecoder).jwtAuthenticationConverter(authenticationConverter)))
                 .addFilterBefore(new PeerCapabilityAuthenticationFilter(peerProperties), AuthorizationFilter.class)
                 .build();

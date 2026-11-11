@@ -7,6 +7,7 @@ import static org.mockito.Mockito.*;
 
 import com.csd.occ.planning.advisory.domain.AdvisoryContextPort;
 import com.csd.occ.planning.advisory.domain.HazardEventFacts;
+import com.csd.occ.planning.domain.audit.ApplicationAuditCapturePort;
 import com.csd.occ.planning.recommendation.infrastructure.config.RecommendationAiProperties;
 import com.csd.occ.planning.recommendation.infrastructure.config.RecommendationInputProperties;
 import java.time.Instant;
@@ -29,6 +30,7 @@ import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import tools.jackson.databind.json.JsonMapper;
 
 class GeminiAdvisoryDraftAdapterTest {
+    private final ApplicationAuditCapturePort audit = mock(ApplicationAuditCapturePort.class);
     private static final String VALID = """
             {"title":"Flood update","message":"Water reported. Use caution.","services":["190"],"locations":["Example Stop"]}
             """;
@@ -43,6 +45,8 @@ class GeminiAdvisoryDraftAdapterTest {
         assertThat(suggestion.locations()).containsExactly("Example Stop");
         assertThat(suggestion.generator()).isEqualTo("SOURCE_FACTS");
         verifyNoInteractions(model);
+        verify(audit).recordAi(eq("AI_NOTICE_SUGGESTION_FALLBACK"), eq("FALLBACK_NOT_ATTEMPTED"), any(), any(),
+                isNull(), eq("NOTICE_SUGGESTION"), eq("SOURCE_FACTS"), isNull(), anyString(), anyString());
     }
 
     @Test
@@ -95,6 +99,10 @@ class GeminiAdvisoryDraftAdapterTest {
     void malformedOrEmptyModelResponsesAreNotAccepted() {
         assertThatThrownBy(() -> adapter(modelReturning("{not-json"), true).suggestNotice(hazard(true, "Water reported.")))
                 .isInstanceOf(tools.jackson.core.JacksonException.class);
+        verify(audit).recordAi(eq("AI_NOTICE_SUGGESTION_OUTPUT"), eq("RESPONSE_RECEIVED"), any(), any(),
+                isNull(), eq("NOTICE_SUGGESTION"), eq("synthetic-model"), isNull(), anyString(), eq("{not-json"),
+                argThat(metrics -> "notice-prompt-v1".equals(metrics.get("promptVersion"))
+                        && metrics.containsKey("latencyMillis") && metrics.containsKey("promptTokens")));
         var model = mock(ChatModel.class);
         when(model.call(any(Prompt.class))).thenReturn(new ChatResponse(List.of()));
         assertThatThrownBy(() -> adapter(model, true).suggestNotice(hazard(true, "Water reported.")))
@@ -115,6 +123,11 @@ class GeminiAdvisoryDraftAdapterTest {
         when(model.call(any(Prompt.class))).thenThrow(new IllegalStateException("Synthetic provider unavailable"));
         assertThatThrownBy(() -> adapter(model, true).suggestNotice(hazard(true, "Water reported.")))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("provider unavailable");
+        verify(audit).recordAi(eq("AI_NOTICE_SUGGESTION_FAILURE"), eq("FAILURE"), any(), any(), isNull(),
+                eq("NOTICE_SUGGESTION"), isNull(), eq("IllegalStateException"), anyString(), isNull(),
+                argThat(metrics -> "notice-prompt-v1".equals(metrics.get("promptVersion"))
+                        && "notice-schema-v1".equals(metrics.get("schemaVersion"))
+                        && metrics.containsKey("latencyMillis") && !metrics.containsKey("promptTokens")));
     }
 
     private GeminiAdvisoryDraftAdapter adapter(ChatModel model, boolean enabled) {
@@ -124,7 +137,7 @@ class GeminiAdvisoryDraftAdapterTest {
             clients.addBean("model", ChatClient.create(model));
         }
         return new GeminiAdvisoryDraftAdapter(clients.getBeanProvider(ChatClient.class),
-                new RecommendationAiProperties(enabled), new RecommendationInputProperties(8192), JsonMapper.builder().build());
+                new RecommendationAiProperties(enabled), new RecommendationInputProperties(8192), JsonMapper.builder().build(), audit);
     }
 
     private ChatModel modelReturning(String output) {

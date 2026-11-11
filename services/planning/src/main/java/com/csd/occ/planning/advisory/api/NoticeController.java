@@ -72,7 +72,7 @@ public class NoticeController {
     @ApiResponse(responseCode = "401", description = "Missing or invalid token", content = @Content)
     @ApiResponse(responseCode = "403", description = "CONTROLLER role required", content = @Content)
     @ApiResponse(responseCode = "404", description = "Notice not found", content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = org.springframework.http.ProblemDetail.class)))
-    public NoticeResponse withdraw(@PathVariable UUID id) { return NoticeResponse.from(notices.withdraw(id)); }
+    public NoticeResponse withdraw(@PathVariable UUID id, @AuthenticationPrincipal Jwt jwt) { return NoticeResponse.from(notices.withdraw(id, jwt.getSubject())); }
     @PostMapping("/notices/{id}/replacements")
     @SecurityRequirement(name = "SupabaseJWT")
     @Operation(operationId = "replaceNotice", summary = "Publish a correction and withdraw the old notice atomically",

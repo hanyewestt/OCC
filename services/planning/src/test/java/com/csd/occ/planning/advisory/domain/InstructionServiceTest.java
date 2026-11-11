@@ -14,6 +14,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import com.csd.occ.planning.domain.audit.ApplicationAuditEventRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageImpl;
@@ -27,10 +28,11 @@ class InstructionServiceTest {
     private final AdvisoryProposalRepository proposals = mock(AdvisoryProposalRepository.class);
     private final IssuedInstructionRepository instructions = mock(IssuedInstructionRepository.class);
     private final AdvisoryModelEvidenceRepository evidence = mock(AdvisoryModelEvidenceRepository.class);
+    private final ApplicationAuditEventRepository auditEvents = mock(ApplicationAuditEventRepository.class);
     private final AdvisoryContextPort context = mock(AdvisoryContextPort.class);
     private final PlanningScopePort scopes = mock(PlanningScopePort.class);
     private final InstructionService service = new InstructionService(proposals, instructions, context, scopes,
-            evidence, Clock.fixed(NOW, ZoneOffset.UTC));
+            evidence, Clock.fixed(NOW, ZoneOffset.UTC), auditEvents);
     private final AdvisoryContextPort.Bus bus = new AdvisoryContextPort.Bus("demo-190-b", "demo-190-b", "SBS5898U",
             "190", 1, captain, "ASSIGNED", new AdvisoryContextPort.Progress("44241", 5, NOW, 30, List.of(5), List.of(300)));
     private final AdvisoryCandidate caution = new AdvisoryCandidate(InstructionType.BE_CAUTIOUS,
@@ -145,6 +147,9 @@ class InstructionServiceTest {
 
         assertThat(issued.status()).isEqualTo("ISSUED");
         verify(instructions).saveAndFlush(any());
+        verify(auditEvents).save(argThat(event -> event.eventType().equals("INSTRUCTION_ISSUED")
+                && event.actorSubject().equals("controller") && event.busId().equals(bus.busId())
+                && event.captainId().equals(captain)));
     }
 
     @Test
@@ -218,6 +223,23 @@ class InstructionServiceTest {
     }
 
     @Test
+    void historyAuditsRunCloseCancellationWithInstructionSnapshot() {
+        var active = issued(UUID.randomUUID(), bus, speed(), NOW);
+        when(instructions.findByDemoRunIdOrderByIssuedAtDesc(eq(runId), any())).thenReturn(new PageImpl<>(List.of(active)));
+        when(context.fleet(runId)).thenReturn(new AdvisoryContextPort.Fleet(runId, "CLOSED", List.of(), 0));
+
+        service.history(0, 20);
+
+        assertThat(active.status()).isEqualTo("CANCELLED");
+        var events = org.mockito.ArgumentCaptor.forClass(com.csd.occ.planning.domain.audit.ApplicationAuditEvent.class);
+        verify(auditEvents).save(events.capture());
+        assertThat(events.getValue().eventType()).isEqualTo("INSTRUCTION_CANCELLED");
+        assertThat(events.getValue().outcome()).isEqualTo("CANCELLED");
+        assertThat(events.getValue().details()).containsEntry("reason", "RUN_CLOSED");
+        assertThat(events.getValue().sourceKey()).isEqualTo("instruction-state:" + active.id() + ":CANCELLED:RUN_CLOSED");
+    }
+
+    @Test
     void anotherMovementInstructionRequiresExplicitReplacement() {
         var previous = issued(UUID.randomUUID(), bus, speed(), NOW);
         when(instructions.findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(eq(runId), eq(bus.busId()), anyList()))
@@ -238,6 +260,32 @@ class InstructionServiceTest {
         assertThat(previous.status()).isEqualTo("CANCELLED");
         assertThat(replacement.status()).isEqualTo("ISSUED");
         assertThat(replacement.id()).isEqualTo(proposal.id());
+        var events = org.mockito.ArgumentCaptor.forClass(com.csd.occ.planning.domain.audit.ApplicationAuditEvent.class);
+        verify(auditEvents, atLeastOnce()).save(events.capture());
+        var decision = events.getAllValues().stream().filter(event -> event.eventType().equals("ADVISORY_PROPOSAL_DECIDED"))
+                .findFirst().orElseThrow();
+        assertThat(decision.category()).isEqualTo("ADVISORIES");
+        assertThat(decision.actorSubject()).isEqualTo("controller");
+        assertThat(decision.details()).containsEntry("controllerRationale", "Controller replacement")
+                .containsEntry("replacedInstructionId", previous.id().toString());
+        assertThat(((java.util.Map<?, ?>) decision.details().get("chosenCandidate")).get("type")).isEqualTo("REDUCE_SPEED");
+        assertThat(decision.sourceKey()).isEqualTo("advisory-decision:" + proposal.id());
+    }
+
+    @Test
+    void controllerOverrideDecisionCapturesSanitizedRationaleAndFinalCandidate() {
+        var rationale = "api_key=private-token replacement rationale";
+        var override = new AdvisoryCandidate(InstructionType.REDUCE_SPEED,
+                new InstructionParameters(null, null, null, null, 5, 300), "Controller-selected safe action");
+        service.decide(proposal.id(), override, rationale, "authenticated-controller", null);
+
+        var events = org.mockito.ArgumentCaptor.forClass(com.csd.occ.planning.domain.audit.ApplicationAuditEvent.class);
+        verify(auditEvents, atLeastOnce()).save(events.capture());
+        var decision = events.getAllValues().stream().filter(event -> event.eventType().equals("ADVISORY_PROPOSAL_DECIDED"))
+                .findFirst().orElseThrow();
+        assertThat(decision.details()).containsEntry("controllerRationale", "api_key=[REDACTED] replacement rationale");
+        assertThat(((java.util.Map<?, ?>) decision.details().get("chosenCandidate")).get("type")).isEqualTo("REDUCE_SPEED");
+        assertThat(decision.actorSubject()).isEqualTo("authenticated-controller");
     }
 
     private AdvisoryContextPort.Bus withCaptain(UUID captainUserId) {

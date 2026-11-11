@@ -10,6 +10,7 @@ import com.csd.occ.planning.recommendation.domain.ModelInvocationOutcome;
 import com.csd.occ.planning.recommendation.domain.ModelInvocationProvider;
 import com.csd.occ.planning.recommendation.domain.ModelInvocationRecord;
 import com.csd.occ.planning.recommendation.domain.ModelInvocationRecordPort;
+import com.csd.occ.planning.domain.audit.ApplicationAuditCapturePort;
 import com.csd.occ.planning.recommendation.domain.MitigationCandidate;
 import com.csd.occ.planning.recommendation.domain.ModelTokenUsage;
 import com.csd.occ.planning.recommendation.infrastructure.config.RecommendationAiProperties;
@@ -76,6 +77,7 @@ class PlanningRecommendationPersistenceIT {
     @Autowired private MockMvc mvc;
     @Autowired private PlanningRecommendationAdapter planningRecommendations;
     @Autowired private ModelInvocationRecordPort modelInvocations;
+    @Autowired private ApplicationAuditCapturePort auditCapture;
     @Autowired private RecommendationAiProperties aiProperties;
     @Autowired private RecommendationGeminiProperties geminiProperties;
     @Autowired private JsonMapper json;
@@ -144,6 +146,7 @@ class PlanningRecommendationPersistenceIT {
 
     @BeforeEach
     void clearPlanningRecommendationRows() {
+        jdbc.update("DELETE FROM planning.application_audit_event");
         jdbc.update("DELETE FROM planning.model_invocation_record");
         jdbc.update("DELETE FROM planning.recommendation");
     }
@@ -265,6 +268,31 @@ class PlanningRecommendationPersistenceIT {
                 .isEqualTo(IDEMPOTENCY_KEY);
         assertThat(jdbc.queryForObject("SELECT recommendation_id FROM planning.model_invocation_record", UUID.class))
                 .isNull();
+    }
+
+    @Test
+    void modelInvocationAndItsAuditEventSurviveOuterRollbackAndAuditReplayIsIdempotent() {
+        var invocation = acceptedModelInvocation();
+        var metadata = invocation.metadata();
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+        transaction.executeWithoutResult(status -> {
+            modelInvocations.save(invocation);
+            auditCapture.recordRecommendationAttempt(metadata.invocationId(), metadata.completedAt(),
+                    invocation.recommendationId(), UUID.fromString(IDEMPOTENCY_KEY), invocation.outcome().name(),
+                    java.util.Map.of("provider", metadata.provider().name(), "model", metadata.model(),
+                            "input", "api_key=synthetic-secret", "output", "safe output"));
+            auditCapture.recordRecommendationAttempt(metadata.invocationId(), metadata.completedAt(),
+                    invocation.recommendationId(), UUID.fromString(IDEMPOTENCY_KEY), invocation.outcome().name(),
+                    java.util.Map.of("provider", metadata.provider().name(), "model", metadata.model(),
+                            "input", "api_key=synthetic-secret", "output", "safe output"));
+            status.setRollbackOnly();
+        });
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM planning.model_invocation_record", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM planning.application_audit_event WHERE source_key=?", Integer.class,
+                "model-invocation:" + metadata.invocationId())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT details::text FROM planning.application_audit_event WHERE source_key=?", String.class,
+                "model-invocation:" + metadata.invocationId())).contains("[REDACTED]").doesNotContain("synthetic-secret");
     }
 
     @Test

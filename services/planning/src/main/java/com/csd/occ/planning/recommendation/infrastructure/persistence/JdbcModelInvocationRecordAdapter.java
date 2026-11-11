@@ -3,6 +3,7 @@ package com.csd.occ.planning.recommendation.infrastructure.persistence;
 import com.csd.occ.planning.recommendation.domain.ModelInvocationRecord;
 import com.csd.occ.planning.recommendation.domain.ModelInvocationRecordPort;
 import com.csd.occ.planning.recommendation.domain.ModelTokenUsage;
+import com.csd.occ.planning.domain.audit.AuditEvidenceSanitizer;
 import java.sql.Timestamp;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -46,7 +47,7 @@ public class JdbcModelInvocationRecordAdapter implements ModelInvocationRecordPo
                 record.metadata().outputSchemaVersion(),
                 record.metadata().providerResponseId().orElse(null),
                 record.outcome().name(),
-                record.candidate().map(json::writeValueAsString).orElse(null),
+                record.candidate().map(json::writeValueAsString).map(AuditEvidenceSanitizer::sanitizeText).orElse(null),
                 record.rejectionReason().map(Enum::name).orElse(null),
                 record.failureCategory().map(Enum::name).orElse(null),
                 record.deterministicFallbackUsed(),
@@ -56,7 +57,8 @@ public class JdbcModelInvocationRecordAdapter implements ModelInvocationRecordPo
                 Timestamp.from(record.metadata().startedAt()),
                 Timestamp.from(record.metadata().completedAt()),
                 record.metadata().latencyMilliseconds(),
-                record.metadata().inputSnapshot(), record.metadata().generatedResponse());
+                AuditEvidenceSanitizer.sanitizeText(record.metadata().inputSnapshot()),
+                AuditEvidenceSanitizer.sanitizeText(record.metadata().generatedResponse()));
     }
 
     @Override

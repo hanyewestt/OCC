@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import com.csd.occ.planning.diagnosis.domain.PlanningScope;
 import com.csd.occ.planning.diagnosis.domain.PlanningScopePort;
+import com.csd.occ.planning.domain.audit.ApplicationAuditEventRepository;
 import com.csd.occ.planning.recommendation.domain.*;
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -67,6 +68,7 @@ class BunchingInstructionServiceTest {
         var current = mock(InstructionService.class);
         var context = mock(AdvisoryContextPort.class);
         var scopes = mock(PlanningScopePort.class);
+        var auditEvents = mock(ApplicationAuditEventRepository.class);
         var bus = new AdvisoryContextPort.Bus("demo-bus-2", "trip-2", "SBS5898U", "190", 1, CAPTAIN,
                 "ASSIGNED", new AdvisoryContextPort.Progress("44241", 1, NOW, 30, List.of(), List.of()));
         var hazard = new AdvisoryContextPort.Hazard(ID, "BUNCHING", "ACTIVE", null, "SIMULATION", RUN,
@@ -87,7 +89,7 @@ class BunchingInstructionServiceTest {
         when(instructions.saveAndFlush(any())).thenAnswer(call -> call.getArgument(0));
 
         var service = new BunchingInstructionService(records, decisions, instructions, current, context,
-                scopes, Clock.fixed(NOW, ZoneOffset.UTC));
+                scopes, Clock.fixed(NOW, ZoneOffset.UTC), auditEvents);
         var issued = rejected
                 ? service.rejectAndIssue(ID, "controller-subject", type, 60, "Use a shorter hold.")
                 : service.approveAndIssue(ID, "controller-subject");
@@ -97,6 +99,15 @@ class BunchingInstructionServiceTest {
         assertThat(issued.type().name()).isEqualTo(type.name());
         assertThat(issued.message()).isEqualTo(expectedMessage);
         assertThat(issued.status()).isEqualTo("ISSUED");
+        var events = org.mockito.ArgumentCaptor.forClass(com.csd.occ.planning.domain.audit.ApplicationAuditEvent.class);
+        verify(auditEvents).save(events.capture());
+        assertThat(events.getAllValues()).extracting(com.csd.occ.planning.domain.audit.ApplicationAuditEvent::eventType)
+                .containsExactly("RECOMMENDATION_DECIDED");
+        verify(current).recordTransition(issued, "INSTRUCTION_ISSUED", "controller-subject");
+        var decision = events.getAllValues().stream().filter(value -> value.eventType().equals("RECOMMENDATION_DECIDED"))
+                .findFirst().orElseThrow();
+        assertThat(decision.actorSubject()).isEqualTo("controller-subject");
+        assertThat(decision.category()).isEqualTo("ADVISORIES");
         if (rejected) verify(decisions).decide(ID, RecommendationDecisionAction.REJECTED, "controller-subject",
                 List.of(new ControllerBusInstruction("SBS5898U", "HOLD FOR 60s at next stop")), "Use a shorter hold.");
         else verify(decisions).decide(ID, RecommendationDecisionAction.APPROVED, "controller-subject", List.of(), null);

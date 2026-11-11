@@ -9,6 +9,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.csd.occ.planning.domain.audit.ApplicationAuditEvent;
+import com.csd.occ.planning.domain.audit.ApplicationAuditEventRepository;
 
 @Service
 public class InstructionService {
@@ -18,11 +20,13 @@ public class InstructionService {
     private final PlanningScopePort scopes;
     private final AdvisoryModelEvidenceRepository evidence;
     private final Clock clock;
+    private final ApplicationAuditEventRepository auditEvents;
     private final InstructionPolicy policy = new InstructionPolicy();
     public InstructionService(AdvisoryProposalRepository proposals, IssuedInstructionRepository instructions,
-            AdvisoryContextPort context, PlanningScopePort scopes, AdvisoryModelEvidenceRepository evidence, Clock clock) {
+            AdvisoryContextPort context, PlanningScopePort scopes, AdvisoryModelEvidenceRepository evidence, Clock clock,
+            ApplicationAuditEventRepository auditEvents) {
         this.proposals = proposals; this.instructions = instructions; this.context = context; this.scopes = scopes;
-        this.evidence = evidence; this.clock = clock;
+        this.evidence = evidence; this.clock = clock; this.auditEvents = auditEvents;
     }
     public Page<AdvisoryProposal> proposals(int page, int size) {
         return proposals(page, size, false);
@@ -75,7 +79,9 @@ public class InstructionService {
         for (var current : instructions.findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(runId, bus.busId(), List.of("ISSUED","ACKNOWLEDGED"))) {
             refresh(current, bus);
             if (!current.isCurrent(clock.instant())) continue;
-            if (replaceInstructionId != null && current.id().equals(replaceInstructionId)) current.cancel("CONTROLLER_REPLACED");
+            if (replaceInstructionId != null && current.id().equals(replaceInstructionId)) {
+                current.cancel("CONTROLLER_REPLACED"); recordInstruction(current, "INSTRUCTION_REPLACED", actor);
+            }
             else if (current.type() != InstructionType.BE_CAUTIOUS && chosen.type() != InstructionType.BE_CAUTIOUS)
                 throw new AdvisoryConflictException("Active movement instruction " + current.id() + " must be explicitly replaced");
         }
@@ -86,7 +92,22 @@ public class InstructionService {
         proposal.decide(chosen, actor, rationale, replaceInstructionId, decidedAt);
         evidence.findById(proposal.id()).orElseGet(() -> evidence.save(new AdvisoryModelEvidence(proposal)))
                 .decide(chosen, actor, rationale, replaceInstructionId, decidedAt);
-        return instructions.saveAndFlush(issued);
+        var saved = instructions.saveAndFlush(issued);
+        var decisionDetails = new java.util.LinkedHashMap<String, Object>();
+        decisionDetails.put("originalCandidate", candidateSnapshot(proposal.candidate()));
+        decisionDetails.put("chosenCandidate", candidateSnapshot(chosen));
+        decisionDetails.put("finalCandidate", candidateSnapshot(proposal.finalCandidate()));
+        decisionDetails.put("controllerRationale", rationale);
+        decisionDetails.put("replacedInstructionId", replaceInstructionId == null ? null : replaceInstructionId.toString());
+        decisionDetails.put("decidedAt", decidedAt.toString());
+        auditEvents.save(new ApplicationAuditEvent(UUID.nameUUIDFromBytes(("advisory-decision:" + proposal.id())
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8)), decidedAt, clock.instant(), "ADVISORIES",
+                "ADVISORY_PROPOSAL_DECIDED", "APPROVED", actor, "CONTROLLER", "ADVISORY_PROPOSAL",
+                proposal.id().toString(), runId, bus.busId(), bus.captainUserId(),
+                proposal.eventId() == null ? null : proposal.eventId().toString(), "Advisory proposal decided",
+                decisionDetails, "advisory-decision:" + proposal.id()));
+        recordInstruction(saved, "INSTRUCTION_ISSUED", actor);
+        return saved;
     }
     @Transactional
     public List<IssuedInstruction> captain(String subject) {
@@ -111,12 +132,17 @@ public class InstructionService {
         if (!bus.captainUserId().toString().equals(subject)) throw new AdvisoryNotFoundException();
         refresh(instruction, bus);
         instruction.acknowledge(subject, clock.instant());
+        recordInstruction(instruction, "INSTRUCTION_ACKNOWLEDGED", subject);
         return instruction;
     }
     @Transactional
     public IssuedInstruction cancel(UUID id, String actor) {
         var instruction = instructions.findForUpdate(id).orElseThrow(AdvisoryNotFoundException::new);
-        instruction.cancel("CONTROLLER_CANCELLED"); return instruction;
+        if (!"CANCELLED".equals(instruction.status())) {
+            instruction.cancel("CONTROLLER_CANCELLED");
+            recordInstruction(instruction, "INSTRUCTION_CANCELLED", actor);
+        }
+        return instruction;
     }
     @Transactional
     public Page<IssuedInstruction> history(int page, int size) {
@@ -128,7 +154,10 @@ public class InstructionService {
         for (var instruction : found) {
             if (!List.of("ISSUED", "ACKNOWLEDGED").contains(instruction.status())) continue;
             var bus = fleet.items().stream().filter(b -> b.busId().equals(instruction.busId())).findFirst();
-            if (!List.of("RUNNING", "REPLAY_COMPLETE").contains(fleet.status()) || bus.isEmpty()) instruction.cancel("RUN_CLOSED");
+            if (!List.of("RUNNING", "REPLAY_COMPLETE").contains(fleet.status()) || bus.isEmpty()) {
+                instruction.cancel("RUN_CLOSED");
+                recordInstruction(instruction, "INSTRUCTION_CANCELLED", null);
+            }
             else refresh(instruction, bus.get());
         }
         return found;
@@ -140,13 +169,55 @@ public class InstructionService {
                 .findFirst().orElseThrow(() -> new AdvisoryConflictException("Captain assignment unavailable"));
     }
     private void refresh(IssuedInstruction instruction, AdvisoryContextPort.Bus bus) {
-        if (!instruction.isCurrent(clock.instant())) { instruction.expire("VALIDITY_EXPIRED"); return; }
-        var hazard = context.hazard(instruction.disruptionId());
-        if ("CLEARED".equals(hazard.status())) { instruction.cancel("SOURCE_WITHDRAWN"); return; }
-        var p = instruction.parameters();
-        if (p.stopSequence() != null && bus.progress() != null
-                && bus.progress().stopSequence() > p.stopSequence() + (p.subsequentStopCount() == null ? 0 : p.subsequentStopCount()))
-            instruction.expire("STOP_RANGE_PASSED");
+        String previous = instruction.status();
+        if (!instruction.isCurrent(clock.instant())) instruction.expire("VALIDITY_EXPIRED");
+        else {
+            var hazard = context.hazard(instruction.disruptionId());
+            if ("CLEARED".equals(hazard.status())) instruction.cancel("SOURCE_WITHDRAWN");
+            else {
+                var p = instruction.parameters();
+                if (p.stopSequence() != null && bus.progress() != null
+                        && bus.progress().stopSequence() > p.stopSequence() + (p.subsequentStopCount() == null ? 0 : p.subsequentStopCount()))
+                    instruction.expire("STOP_RANGE_PASSED");
+            }
+        }
+        if (!previous.equals(instruction.status())) recordInstruction(instruction,
+                "EXPIRED".equals(instruction.status()) ? "INSTRUCTION_EXPIRED" : "INSTRUCTION_CANCELLED", null);
+    }
+
+    void recordTransition(IssuedInstruction instruction, String type, String actor) {
+        var now = clock.instant();
+        var details = new java.util.LinkedHashMap<String, Object>();
+        details.put("status", instruction.status()); details.put("instructionType", instruction.type().name());
+        details.put("reason", instruction.inactiveReason());
+        details.put("parameters", parameterSnapshot(instruction.parameters())); details.put("message", instruction.message());
+        details.put("issuedAt", instruction.issuedAt().toString());
+        details.put("acknowledgedAt", instruction.acknowledgedAt() == null ? null : instruction.acknowledgedAt().toString());
+        details.put("applicableUntil", instruction.applicableUntil() == null ? null : instruction.applicableUntil().toString());
+        details.put("replacedInstructionId", instruction.replacedInstructionId() == null ? null : instruction.replacedInstructionId().toString());
+        auditEvents.save(new ApplicationAuditEvent(UUID.randomUUID(), now, now, "ADVISORIES", type,
+                instruction.status(), actor, actor == null ? "SYSTEM" : type.equals("INSTRUCTION_ACKNOWLEDGED") ? "CAPTAIN" : "CONTROLLER", "INSTRUCTION",
+                instruction.id().toString(), instruction.demoRunId(), instruction.busId(), instruction.captainUserId(),
+                null, "Instruction state changed", details,
+                "instruction-state:" + instruction.id() + ":" + instruction.status() + ":" + instruction.inactiveReason()));
+    }
+    private void recordInstruction(IssuedInstruction instruction, String type, String actor) {
+        recordTransition(instruction, type, actor);
+    }
+    java.util.Map<String, Object> candidateSnapshot(AdvisoryCandidate candidate) {
+        if (candidate == null) return null;
+        var result = new java.util.LinkedHashMap<String, Object>();
+        result.put("type", candidate.type().name()); result.put("parameters", parameterSnapshot(candidate.parameters()));
+        result.put("rationale", candidate.rationale());
+        return result;
+    }
+    private java.util.Map<String, Object> parameterSnapshot(InstructionParameters parameters) {
+        if (parameters == null) return null;
+        var result = new java.util.LinkedHashMap<String, Object>();
+        result.put("stopCode", parameters.stopCode()); result.put("stopName", parameters.stopName());
+        result.put("stopSequence", parameters.stopSequence()); result.put("subsequentStopCount", parameters.subsequentStopCount());
+        result.put("speedReductionKmh", parameters.speedReductionKmh()); result.put("durationSeconds", parameters.durationSeconds());
+        return result;
     }
     private void validatePage(int page, int size) { if (page < 0 || size < 1 || size > 100) throw new IllegalArgumentException("Invalid page or size"); }
 }

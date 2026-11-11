@@ -1,6 +1,8 @@
 package com.csd.occ.planning.advisory.domain;
 
 import com.csd.occ.planning.diagnosis.domain.PlanningScopePort;
+import com.csd.occ.planning.domain.audit.ApplicationAuditEvent;
+import com.csd.occ.planning.domain.audit.ApplicationAuditEventRepository;
 import com.csd.occ.planning.recommendation.domain.*;
 import java.time.Clock;
 import java.util.List;
@@ -18,11 +20,13 @@ public class BunchingInstructionService {
     private final AdvisoryContextPort context;
     private final PlanningScopePort scopes;
     private final Clock clock;
+    private final ApplicationAuditEventRepository auditEvents;
     public BunchingInstructionService(RecommendationRecordPort recommendations, RecommendationDecisionService decisions,
             IssuedInstructionRepository instructions, InstructionService currentInstructions, AdvisoryContextPort context,
-            PlanningScopePort scopes, Clock clock) {
+            PlanningScopePort scopes, Clock clock, ApplicationAuditEventRepository auditEvents) {
         this.recommendations = recommendations; this.decisions = decisions; this.instructions = instructions;
         this.currentInstructions = currentInstructions; this.context = context; this.scopes = scopes; this.clock = clock;
+        this.auditEvents = auditEvents;
     }
     @Transactional
     public IssuedInstruction approveAndIssue(UUID id, String actor) { return approveAndIssue(id, actor, null); }
@@ -88,6 +92,23 @@ public class BunchingInstructionService {
                         : "EXTEND DWELL BY " + action.seconds() + "s at stop " + recommendation.controlStopCode())).toList();
         decisions.decide(id, decisionAction, actor,
                 decisionAction == RecommendationDecisionAction.APPROVED ? List.of() : auditInstructions, rationale);
+        String decisionSourceKey = "bunching-decision:" + id;
+        if (!auditEvents.existsBySourceKey(decisionSourceKey)) {
+            var details = new java.util.LinkedHashMap<String, Object>();
+            details.put("decision", decisionAction.name());
+            details.put("bunchingEventId", record.bunchingEvent().bunchingEventId().toString());
+            details.put("instructions", auditInstructions.stream().map(item -> java.util.Map.of(
+                    "busReference", item.busReference(), "instruction", item.instruction())).toList());
+            details.put("rationale", rationale);
+            details.put("candidate", java.util.Map.of("type", candidate.mitigationType().name(),
+                    "targetBusReference", candidate.targetBusReference(), "controlStopCode", candidate.controlStopCode(),
+                    "durationSeconds", candidate.requestedAdjustmentSeconds(), "rationale", candidate.rationale()));
+            auditEvents.save(new ApplicationAuditEvent(UUID.nameUUIDFromBytes(decisionSourceKey.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                    clock.instant(), clock.instant(), "ADVISORIES", "RECOMMENDATION_DECIDED", decisionAction.name(),
+                    actor, "CONTROLLER", "BUNCHING_RECOMMENDATION", id.toString(), scopes.current().demoRunId(),
+                    target, null, record.bunchingEvent().bunchingEventId().toString(),
+                    "Bunching recommendation decided", details, decisionSourceKey));
+        }
         var existing = instructions.findByProposalIdForUpdate(id);
         if (!existing.isEmpty()) {
             if (existing.size() != actions.size() || existing.stream().anyMatch(item -> !java.util.Objects.equals(item.replacedInstructionId(), replaceInstructionId)))
@@ -117,6 +138,7 @@ public class BunchingInstructionService {
                 throw new AdvisoryConflictException("Replacement instruction is not an active movement instruction");
             }
             predecessor.cancel("CONTROLLER_REPLACED");
+            currentInstructions.recordTransition(predecessor, "INSTRUCTION_REPLACED", actor);
             instructions.flush();
         }
         var issued = new java.util.ArrayList<IssuedInstruction>();
@@ -146,6 +168,7 @@ public class BunchingInstructionService {
             issued.add(instructions.saveAndFlush(new IssuedInstruction(instructionId, id, replaceInstructionId,
                     hazard.disruptionId(), run, bus, new AdvisoryCandidate(instructionType, parameters, candidate.rationale()),
                     message, "SIMULATION", actor, clock.instant(), context.limits().acknowledgementWindow())));
+            currentInstructions.recordTransition(issued.getLast(), "INSTRUCTION_ISSUED", actor);
         }
         return List.copyOf(issued);
     }

@@ -2,6 +2,7 @@ package com.csd.occ.ingestion.api;
 
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -17,6 +18,8 @@ import com.csd.occ.ingestion.domain.DemoRecommendationDetails;
 import com.csd.occ.ingestion.domain.DemoRecommendationImpact;
 import com.csd.occ.ingestion.domain.DemoRunService;
 import com.csd.occ.ingestion.domain.DemoVehicleDetails;
+import com.csd.occ.ingestion.infrastructure.security.IngestionSecurityConfig;
+import com.csd.occ.ingestion.infrastructure.security.SupabaseRoleConverter;
 import java.time.Instant;
 import java.math.BigDecimal;
 import java.util.List;
@@ -24,21 +27,34 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.http.MediaType;
 
-@WebMvcTest(DemoRunController.class)
+@WebMvcTest(value = DemoRunController.class, properties = {
+        "occ.security.supabase.project-url=https://issuer.test",
+        "occ.security.supabase.jwks-url=https://issuer.test/jwks",
+        "occ.security.supabase.audience=authenticated",
+        "occ.security.supabase.clock-skew=30s",
+        "occ.security.supabase.allowed-algorithms=ES256",
+        "occ.security.peer.disruption-to-ingestion-token=synthetic-disruption-to-ingestion",
+        "occ.security.peer.planning-to-ingestion-token=synthetic-planning-to-ingestion"})
+@Import({IngestionSecurityConfig.class, SupabaseRoleConverter.class})
+@WithMockUser(username = "controller", roles = "CONTROLLER")
 class DemoRunControllerTest {
     @Autowired MockMvc mvc;
     @MockitoBean DemoRunService runs;
+    @MockitoBean JwtDecoder decoder;
 
     @Test
     void startCreatesOneRunAndReturnsItsId() throws Exception {
         UUID runId = UUID.randomUUID();
-        when(runs.start()).thenReturn(new DemoRunDetails(runId, "RUNNING", 0, List.of()));
+        when(runs.start("controller")).thenReturn(new DemoRunDetails(runId, "RUNNING", 0, List.of()));
 
-        mvc.perform(post("/api/v1/demo-runs"))
+        mvc.perform(post("/api/v1/demo-runs").with(user("controller").roles("CONTROLLER")))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(runId.toString()))
                 .andExpect(jsonPath("$.status").value("RUNNING"));
@@ -47,9 +63,10 @@ class DemoRunControllerTest {
     @Test
     void startWithEmptyJsonBodyUsesDefaults() throws Exception {
         UUID runId = UUID.randomUUID();
-        when(runs.start()).thenReturn(new DemoRunDetails(runId, "RUNNING", 0, List.of()));
+        when(runs.start("controller")).thenReturn(new DemoRunDetails(runId, "RUNNING", 0, List.of()));
 
-        mvc.perform(post("/api/v1/demo-runs").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(post("/api/v1/demo-runs").with(user("controller").roles("CONTROLLER"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(runId.toString()))
                 .andExpect(jsonPath("$.status").value("RUNNING"));
@@ -64,9 +81,11 @@ class DemoRunControllerTest {
                 List.of(UUID.fromString("10000000-0000-4000-8000-000000000001"),
                         UUID.fromString("10000000-0000-4000-8000-000000000002"),
                         UUID.fromString("10000000-0000-4000-8000-000000000003")));
-        when(runs.start(eq(configuration))).thenReturn(new DemoRunDetails(runId, "RUNNING", 0, configuration, List.of()));
+        when(runs.start(eq(configuration), eq("controller")))
+                .thenReturn(new DemoRunDetails(runId, "RUNNING", 0, configuration, List.of()));
 
-        mvc.perform(post("/api/v1/demo-runs").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/v1/demo-runs").with(user("controller").roles("CONTROLLER"))
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"serviceId\":\"972\",\"directionId\":1,\"busCount\":3,\"dispatchGapSeconds\":120,\"busGapsSeconds\":[120,150],\"monitoredStopCode\":\"44251\",\"scenario\":\"NORMAL\",\"captainUserIds\":[\"10000000-0000-4000-8000-000000000001\",\"10000000-0000-4000-8000-000000000002\",\"10000000-0000-4000-8000-000000000003\"]}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.serviceId").value("972"))
@@ -80,7 +99,8 @@ class DemoRunControllerTest {
 
     @Test
     void startRejectsAnInvalidFleetConfiguration() throws Exception {
-        mvc.perform(post("/api/v1/demo-runs").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/v1/demo-runs").with(user("controller").roles("CONTROLLER"))
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"serviceId\":\"190\",\"directionId\":1,\"busCount\":1,\"dispatchGapSeconds\":90,\"scenario\":\"NORMAL\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"));
@@ -96,7 +116,7 @@ class DemoRunControllerTest {
                 "{\"snapshot\":{\"arrivals\":[{\"visitOrder\":1,\"estimatedArrivalAt\":\"2026-09-26T05:02:00Z\"}]}}");
         when(runs.status(runId)).thenReturn(new DemoRunDetails(runId, "REPLAY_COMPLETE", 3, List.of(alert)));
 
-        mvc.perform(get("/api/v1/demo-runs/{id}", runId))
+        mvc.perform(get("/api/v1/demo-runs/{id}", runId).with(user("controller").roles("CONTROLLER")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.alerts.length()").value(1))
                 .andExpect(jsonPath("$.alerts[0].classification").value("SIMULATION"))
@@ -117,9 +137,9 @@ class DemoRunControllerTest {
     @Test
     void closeReturnsTheClosedRun() throws Exception {
         UUID runId = UUID.randomUUID();
-        when(runs.close(runId)).thenReturn(new DemoRunDetails(runId, "CLOSED", 3, List.of()));
+        when(runs.close(runId, "controller")).thenReturn(new DemoRunDetails(runId, "CLOSED", 3, List.of()));
 
-        mvc.perform(post("/api/v1/demo-runs/{id}/close", runId))
+        mvc.perform(post("/api/v1/demo-runs/{id}/close", runId).with(user("controller").roles("CONTROLLER")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(runId.toString()))
                 .andExpect(jsonPath("$.status").value("CLOSED"));
@@ -134,7 +154,7 @@ class DemoRunControllerTest {
                 List.of("Additional delay."), List.of(), new DemoRecommendationImpact(45, 165, 38, 24,
                 new BigDecimal("190"), new BigDecimal("128")))));
 
-        mvc.perform(get("/api/v1/demo-runs/{id}/recommendation", runId))
+        mvc.perform(get("/api/v1/demo-runs/{id}/recommendation", runId).with(user("controller").roles("CONTROLLER")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.classification").value("SIMULATION"))
                 .andExpect(jsonPath("$.mitigationType").value("HOLD"))
@@ -144,9 +164,9 @@ class DemoRunControllerTest {
     @Test
     void duplicateStartReturnsConflictWithTheActiveRunId() throws Exception {
         UUID activeRunId = UUID.randomUUID();
-        when(runs.start()).thenThrow(new DemoRunAlreadyActiveException(activeRunId));
+        when(runs.start("controller")).thenThrow(new DemoRunAlreadyActiveException(activeRunId));
 
-        mvc.perform(post("/api/v1/demo-runs"))
+        mvc.perform(post("/api/v1/demo-runs").with(user("controller").roles("CONTROLLER")))
                 .andExpect(status().isConflict())
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
                 .andExpect(jsonPath("$.activeRunId").value(activeRunId.toString()));
@@ -157,16 +177,16 @@ class DemoRunControllerTest {
         UUID missingRunId = UUID.randomUUID();
         when(runs.status(missingRunId)).thenThrow(new DemoRunNotFoundException(missingRunId));
 
-        mvc.perform(get("/api/v1/demo-runs/{id}", missingRunId))
+        mvc.perform(get("/api/v1/demo-runs/{id}", missingRunId).with(user("controller").roles("CONTROLLER")))
                 .andExpect(status().isNotFound())
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"));
     }
 
     @Test
     void unavailableBunchingControlReturnsServiceUnavailableProblem() throws Exception {
-        when(runs.start()).thenThrow(new DemoBunchingUnavailableException());
+        when(runs.start("controller")).thenThrow(new DemoBunchingUnavailableException());
 
-        mvc.perform(post("/api/v1/demo-runs"))
+        mvc.perform(post("/api/v1/demo-runs").with(user("controller").roles("CONTROLLER")))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"));
     }
@@ -174,9 +194,9 @@ class DemoRunControllerTest {
     @Test
     void unavailableBunchingControlDuringCloseKeepsRetryableServiceUnavailableResponse() throws Exception {
         UUID runId = UUID.randomUUID();
-        when(runs.close(runId)).thenThrow(new DemoBunchingUnavailableException());
+        when(runs.close(runId, "controller")).thenThrow(new DemoBunchingUnavailableException());
 
-        mvc.perform(post("/api/v1/demo-runs/{id}/close", runId))
+        mvc.perform(post("/api/v1/demo-runs/{id}/close", runId).with(user("controller").roles("CONTROLLER")))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(content().contentTypeCompatibleWith("application/problem+json"));
     }

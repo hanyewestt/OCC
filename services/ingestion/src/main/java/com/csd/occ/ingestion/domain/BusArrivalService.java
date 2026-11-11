@@ -30,11 +30,12 @@ public class BusArrivalService {
     private final ReferenceTopologyPort topology;
     private final PollingConfigurationPort configuration;
     private final Clock clock;
+    private final PollCompletionAuditService completionAudit;
 
     public BusArrivalService(PollTargetRepository targets, PollRunRepository runs,
             RawObservationRepository observations, BusArrivalObservationRepository normalizedObservations,
             BusRouteStopRepository routeStops, FeedStatusRepository feedStatuses, BusArrivalPort arrivals, ReferenceTopologyPort topology,
-            PollingConfigurationPort configuration, Clock clock) {
+            PollingConfigurationPort configuration, Clock clock, PollCompletionAuditService completionAudit) {
         this.targets = targets;
         this.runs = runs;
         this.observations = observations;
@@ -45,6 +46,7 @@ public class BusArrivalService {
         this.topology = topology;
         this.configuration = configuration;
         this.clock = clock;
+        this.completionAudit = completionAudit;
     }
 
     public void poll() {
@@ -82,6 +84,7 @@ public class BusArrivalService {
             run.setRecordsReceived(0);
             run.setClassification("OBSERVATION_ONLY");
             runs.save(run);
+            FeedHealthUpdate healthUpdate = null;
             try {
                 BusArrivalSnapshot response = arrivals.arrivalsAt(target.getStopCode(), target.getServiceId());
                 run.setHttpStatus(response.httpStatus());
@@ -105,21 +108,27 @@ public class BusArrivalService {
                     normalizedObservations.saveAll(normalized);
                     run.setOutcome(response.parseErrors().isEmpty() ? "SUCCESS" : "PARTIAL");
                     run.setRecordsReceived(normalized.size());
-                    if (!response.parseErrors().isEmpty()) run.setErrorMessage(bounded(String.join("; ", response.parseErrors())));
-                    updateFeedStatus(target, now, true, response.parseErrors().isEmpty() ? null : "Some records could not be parsed");
+                    if (!response.parseErrors().isEmpty()) {
+                        run.setErrorCode("partial_parse");
+                        run.setErrorMessage("Some records could not be parsed");
+                    }
+                    healthUpdate = updateFeedStatus(target, now, true,
+                            response.parseErrors().isEmpty() ? null : "Some records could not be parsed");
                 } else {
                     run.setOutcome("FAILED");
                     run.setErrorCode(String.valueOf(response.httpStatus()));
-                    updateFeedStatus(target, now, false, "HTTP " + response.httpStatus());
+                    healthUpdate = updateFeedStatus(target, now, false, "HTTP " + response.httpStatus());
                 }
             } catch (Exception exception) {
-                log.error("Failed to poll target {}", target.getScopeKey(), exception);
+                log.error("Failed to process bus-arrival poll for {} ({})", target.getScopeKey(), exception.getClass().getSimpleName());
                 run.setOutcome("FAILED");
-                run.setErrorMessage(bounded(exception.getMessage()));
-                updateFeedStatus(target, now, false, exception.getMessage());
+                run.setErrorCode("poll_failed");
+                run.setErrorMessage("Bus arrival processing failed");
+                healthUpdate = updateFeedStatus(target, now, false, "Bus arrival processing failed");
             } finally {
                 run.setCompletedAt(Instant.now(clock));
-                runs.save(run);
+                completionAudit.complete(run, healthUpdate == null ? null : healthUpdate.status(),
+                        healthUpdate == null ? null : healthUpdate.previousStatus());
             }
         }
         log.info("Finished Bus Arrival polling loop.");
@@ -210,7 +219,7 @@ public class BusArrivalService {
         return false;
     }
 
-    private void updateFeedStatus(PollTarget target, Instant now, boolean success, String message) {
+    private FeedHealthUpdate updateFeedStatus(PollTarget target, Instant now, boolean success, String message) {
         FeedStatusId id = new FeedStatusId(target.getSource(), target.getScopeKey());
         FeedStatus status = feedStatuses.findById(id).orElseGet(() -> {
             FeedStatus created = new FeedStatus();
@@ -219,6 +228,7 @@ public class BusArrivalService {
             created.setConsecutiveFailures(0);
             return created;
         });
+        String previousHealth = status.getStatus() == null ? "UNKNOWN" : status.getStatus();
         status.setLastAttemptAt(now);
         status.setStaleAfterSeconds(configuration.staleAfterSeconds());
         status.setUpdatedAt(now);
@@ -228,12 +238,14 @@ public class BusArrivalService {
             status.setLastSuccessAt(now);
             status.setConsecutiveFailures(0);
         } else {
-            int failures = status.getConsecutiveFailures() + 1;
+            int failures = (status.getConsecutiveFailures() == null ? 0 : status.getConsecutiveFailures()) + 1;
             status.setConsecutiveFailures(failures);
             status.setStatus(failures == 1 ? "DEGRADED" : "FAILED");
         }
-        feedStatuses.save(status);
+        return new FeedHealthUpdate(status, previousHealth);
     }
+
+    private record FeedHealthUpdate(FeedStatus status, String previousStatus) { }
 
     private String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
