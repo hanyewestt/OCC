@@ -147,7 +147,7 @@ PostgreSQL must be running before the app starts. To start the shared local data
 bash scripts/app.sh up
 ```
 
-This starts the shared PostgreSQL service and Phase 1 application stack. See the [local stack setup](../../docs/LOCAL-DEVELOPMENT.md).
+This starts the shared PostgreSQL service and Phase 1 application stack. See the [local stack setup](../../docs/DEVELOPMENT.md).
 
 ## IDE and deployment
 
@@ -399,8 +399,7 @@ purged data. AI evidence is snapshotted in planning before operational input exp
 
 V015 retires ingestion's obsolete cross-schema bunching views; V016 removes child
 import timestamps; V017 records topology retirement. `current_bus_arrival` stays.
-Existing deployments must use the administrator-only reserved-schema procedure
-in [the reduction verification document](../../docs/plans/database-reduction-verification.md).
+Existing deployments require an administrator-only reserved-schema migration procedure.
 
 ### Live and simulation Planning evidence
 
