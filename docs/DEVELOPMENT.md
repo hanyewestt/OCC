@@ -72,9 +72,6 @@ the workload, then run `VM.native_memory summary.diff scale=MB`. Keep the helper
 JDK version aligned with `BUILD_IMAGE` in `infra/java.Dockerfile`. NMT supplements
 health checks; it does not expose a network management endpoint.
 
-See [the measured memory comparison](PERFORMANCE.md) for the workload, before/after
-results, native-memory breakdown and limits of the measurement.
-
 ## First-time configuration
 
 Create the ignored root `.env` only if it does not already exist:
@@ -101,10 +98,32 @@ Fill in the settings described in `.env.example`:
   accounts and `occ_role` hook.
 - `DATAMALL_API_KEY`, `OCC_PLANNING_GEMINI_API_KEY` and the intended Planning
   worker/model settings.
+- `OCC_AUDIT_RETENTION` controls application audit and retained evidence
+  independently from operational cleanup.
+- The identity adapter is enabled by default and requires the modern Supabase
+  backend secret. Do not deploy it until the
+  [Supabase role-hook rollout](../infra/supabase/README.md) is complete. Compose
+  deployments can set `OCC_IDENTITY_SECRET_KEY` in the ignored root `.env`; Compose
+  passes it only to Ingestion. Alternatively, use `OCC_IDENTITY_SECRET_SOURCE_FILE`
+  with `infra/compose.identity.yaml` for a mounted secret. Set
+  `OCC_IDENTITY_ENABLED=false` to disable provider calls.
 
 Keep one entry per environment-variable name. Duplicate example values later
 in `.env` can override real settings. Keep `.env` out of Git. The example file
 contains placeholders, so copying it alone does not configure live providers.
+
+## Existing admin-branch development databases
+
+The merge with main keeps main's migration versions and moves the admin migrations
+later: Ingestion V028�V033, Disruption V013, and Planning V022�V024. Fresh databases
+need only the normal setup. For a local database already migrated by the earlier
+admin branch, stop application services and apply
+`infra/postgres/reconcile-admin-branch-history.sql` with the database owner and
+`ON_ERROR_STOP=1`. This changes only matching Flyway history filenames/versions;
+it preserves checksums and application data. Run the merged `db-setup` image once
+with `FLYWAY_OUT_OF_ORDER=true` to apply main's newly incorporated earlier
+migrations, then use the normal app launcher. Do not run Flyway repair or reset
+the database to resolve these version collisions.
 
 ## App commands
 
@@ -129,6 +148,15 @@ resume existing containers; it skips npm and Docker builds and preserves databas
 data. Node is not required for `start`. Start retains the containers' existing
 configuration, so use `up` to apply the Gemini recommendation flag or other `.env`
 changes. Both commands preserve database data.
+
+The identity provider adapter is enabled by default. Complete its external role
+migration and hook checks first, then set `OCC_IDENTITY_SECRET_KEY` to the modern
+Supabase backend secret in the ignored root `.env` and run the normal app launcher
+with `up`. The key goes only to Ingestion. Set `OCC_IDENTITY_ENABLED=false` to
+disable provider calls. For a mounted secret, leave `OCC_IDENTITY_SECRET_KEY`
+empty, point `OCC_IDENTITY_SECRET_SOURCE_FILE` at its host-side file, and include
+`infra/compose.identity.yaml` with the regular Compose files. A nonblank
+environment key takes precedence over the mounted file.
 
 **Reset and clear permanently delete the selected project's database and pgAdmin data.**
 Reset requires typing `RESET`, then rebuilds and starts the app. Clear requires
@@ -235,7 +263,7 @@ cd ..
 
 Rebuild after frontend source changes when testing through Nginx. Node and Vite
 do not run in the deployed app. Deployment must stage the complete `dist/`
-artifact; see [deployment](DEPLOYMENT.md) for the production Compose setup.
+artifact; see [the production Compose configuration](../infra/compose.production.yaml) for the production Compose setup.
 
 ### Routes and error handling
 
@@ -309,17 +337,25 @@ separately from the normal app and remove their containers afterward.
 ## Open the app
 
 Open [the login page](http://localhost/login) using an existing Supabase account.
-CONTROLLER opens `/controller`; CAPTAIN opens `/captain`. Other roles receive
-an access message. Sessions persist across reloads using the Supabase SDK;
+ADMIN opens `/admin/audit`, CONTROLLER opens `/controller`, and CAPTAIN opens
+`/captain`. Other roles receive an access message. Sessions persist across reloads using the Supabase SDK;
 Ingestion verifies session and role before protected content appears. Set
 `OCC_NGINX_PORT` if port 80 is unavailable. Retired `/demo.html`, `/auth.js`,
 `/auth-test` and `/obu-pacing.html` routes return 404.
 
-The controller dashboard has four routes: `/controller` (overview),
-`/controller/disruptions`, `/controller/planning`, and `/controller/audit`.
-Nginx explicitly allows each route; unknown controller paths still return 404.
-All four share the controller access verification. API permissions remain
-enforced by the backend.
+The controller dashboard has six routes: `/controller` (overview),
+`/controller/disruptions`, `/controller/planning`, `/controller/notices`,
+`/controller/captains` and `/controller/audit`. Nginx explicitly allows each
+route; unknown controller paths still return 404. They share the controller
+access verification. Controllers can search every captain in the directory and
+select captains during initial simulation setup without changing the existing
+`captainUserIds` request property.
+
+The Admin workspace has Audit, Accounts and Provision account routes. Audit
+history is queried from its owning service and retained for
+`OCC_AUDIT_RETENTION` (default `90d`), independently of operational cleanup.
+Nginx explicitly allows these React routes and keeps its internal API routes
+hidden. API permissions remain enforced by the backend.
 
 Dashboard data loads on entry and manual Refresh. Its **Approximate Live Route
 Strip** shows one selected service and destination stop name at a time; the
@@ -500,7 +536,6 @@ See [testing](TESTING.md) for system tests and CI.
 
 - [Authentication](AUTHENTICATION.md): public configuration, roles and sessions.
 - [Testing](TESTING.md): service tests, browser tests and CI.
-- [Deployment](DEPLOYMENT.md): container topology and production HTTPS.
 - [Frontend conventions](frontend-convention.md) and [service conventions](CONVENTIONS.md).
 
 ### Captain live-auth test configuration

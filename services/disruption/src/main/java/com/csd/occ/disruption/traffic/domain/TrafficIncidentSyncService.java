@@ -4,6 +4,7 @@ import com.csd.occ.disruption.bunching.domain.DisruptionRepository;
 import com.csd.occ.disruption.bunching.domain.DiagnosisOutbox;
 import com.csd.occ.disruption.bunching.domain.DiagnosisOutboxRepository;
 import com.csd.occ.disruption.bunching.domain.PlanningEventSubmissionPort;
+import com.csd.occ.disruption.domain.audit.ApplicationAuditRecorder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -31,14 +32,15 @@ public class TrafficIncidentSyncService {
     private final PlanningEventSubmissionPort planningSubmissions;
     private final TrafficIncidentEvidencePort evidenceCodec;
     private final Clock clock;
+    private final ApplicationAuditRecorder audit;
 
     public TrafficIncidentSyncService(TrafficPollCheckpointRepository checkpoints, TrafficIncidentStateRepository states,
             TrafficIncidentEventRepository events, EventEvidenceRepository evidence, DisruptionRepository disruptions,
             DiagnosisOutboxRepository planningOutbox, PlanningEventSubmissionPort planningSubmissions,
-            TrafficIncidentEvidencePort evidenceCodec, Clock clock) {
+            TrafficIncidentEvidencePort evidenceCodec, Clock clock, ApplicationAuditRecorder audit) {
         this.checkpoints = checkpoints; this.states = states; this.events = events; this.evidence = evidence;
         this.disruptions = disruptions; this.planningOutbox = planningOutbox;
-        this.planningSubmissions = planningSubmissions; this.evidenceCodec = evidenceCodec; this.clock = clock;
+        this.planningSubmissions = planningSubmissions; this.evidenceCodec = evidenceCodec; this.clock = clock; this.audit = audit;
     }
 
     @Transactional(readOnly = true)
@@ -72,6 +74,7 @@ public class TrafficIncidentSyncService {
         // The cursor tracks feed consumption, including failed or stale polls. Only complete, fresh polls
         // are allowed to change incident state or count toward an absence-based clear.
         checkpoint.advance(poll.completedAt(), poll.pollRunId());
+        audit.feedPoll(poll.pollRunId(), KIND, poll.demoRunId(), poll.completedAt(), poll.outcome(), poll.complete());
     }
 
     private void processCompletePoll(TrafficIncidentPollPort.TrafficIncidentPoll poll, int clearAfterAbsences,
@@ -150,6 +153,8 @@ public class TrafficIncidentSyncService {
                 TrafficIncidentPlanningSnapshot.of(eventId, disruptionId, action, poll, snapshot));
         planningOutbox.save(new DiagnosisOutbox(eventId, eventId, submission.payloadJson(),
                 submission.payloadFingerprint(), submission.schemaVersion(), poll.completedAt()));
+        audit.disruptionTransition(eventId, disruptionId, poll.demoRunId(), poll.completedAt(), KIND, action,
+                "CLEARED".equals(action) ? CLEARED : ACTIVE);
     }
 
     private java.util.Optional<TrafficIncidentState> findState(

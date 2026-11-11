@@ -11,11 +11,12 @@ public class PageAccessPolicy {
     }
 
     public boolean recognizes(String page) {
-        return page.equals("controller") || page.equals("captain");
+        return page.equals("admin") || page.equals("controller") || page.equals("captain");
     }
 
     public boolean permits(String page, String role) {
-        return (page.equals("controller") && role.equals("CONTROLLER"))
+        return (page.equals("admin") && role.equals("ADMIN"))
+                || (page.equals("controller") && role.equals("CONTROLLER"))
                 || (page.equals("captain") && role.equals("CAPTAIN"));
     }
 }

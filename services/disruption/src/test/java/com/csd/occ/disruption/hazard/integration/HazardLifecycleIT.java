@@ -5,8 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import com.csd.occ.disruption.bunching.domain.ConsumerSelectionService;
+import com.csd.occ.disruption.bunching.domain.DiagnosisOutboxService;
 import com.csd.occ.disruption.bunching.domain.PlanningEventSubmissionPort;
 import com.csd.occ.disruption.bunching.infrastructure.scheduling.BunchingRetentionService;
+import com.csd.occ.disruption.domain.audit.ApplicationAuditRetentionService;
+import com.csd.occ.disruption.domain.audit.ApplicationAuditFailureRecorder;
+import com.csd.occ.disruption.infrastructure.audit.ApplicationAuditBackfill;
+import com.csd.occ.disruption.infrastructure.security.AuthorizationFailureAuditCapture;
 import com.csd.occ.disruption.hazard.domain.HazardPollPort;
 import com.csd.occ.disruption.hazard.domain.HazardReadService;
 import com.csd.occ.disruption.hazard.domain.HazardCheckpoint;
@@ -22,6 +27,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,8 +37,14 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
+import org.springframework.boot.DefaultApplicationArguments;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -44,7 +56,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE, properties = {
         "OCC_DISRUPTION_INTERNAL_PORT=8002", "OCC_DISRUPTION_CONSUMER_ENABLED=false",
         "OCC_DISRUPTION_PLANNING_WORKER_ENABLED=false", "OCC_DISRUPTION_HAZARD_ENABLED=false",
-        "OCC_DISRUPTION_HAZARD_STATE_RETENTION=30d"
+        "OCC_DISRUPTION_HAZARD_STATE_RETENTION=30d", "OCC_AUDIT_RETENTION=90d"
 })
 @ActiveProfiles("test")
 @Import(HazardLifecycleIT.Time.class)
@@ -71,10 +83,16 @@ class HazardLifecycleIT {
     @Autowired TestClock clock;
     @Autowired HazardStateRepository hazards;
     @Autowired BunchingRetentionService retention;
+    @Autowired ApplicationAuditRetentionService auditRetention;
+    @Autowired ApplicationAuditFailureRecorder auditFailures;
+    @Autowired ApplicationAuditBackfill auditBackfill;
+    @Autowired AuthorizationFailureAuditCapture authorizationAudit;
+    @Autowired PlatformTransactionManager transactions;
     @Autowired HazardReadService hazardReads;
     @Autowired HazardReassessmentService reassessment;
     @Autowired ConsumerSelectionService selections;
     @Autowired TrafficIncidentSyncService trafficSynchronization;
+    @Autowired DiagnosisOutboxService outboxService;
     @MockitoBean HazardTransitPort transit;
 
     @Test
@@ -125,7 +143,7 @@ class HazardLifecycleIT {
     void resetRows() {
         clock.set(NOW);
         jdbc.update("UPDATE disruption.consumer_state SET mode='LIVE', demo_run_id=NULL WHERE id=1");
-        jdbc.execute("TRUNCATE disruption.planning_outbox, disruption.bunching_diagnosis_link, "
+        jdbc.execute("TRUNCATE disruption.application_audit_event, disruption.planning_outbox, disruption.bunching_diagnosis_link, "
                 + "disruption.bunching_diagnosis_correlation, "
                 + "disruption.event_evidence, disruption.disruption_event, "
                 + "disruption.hazard_state, disruption.hazard_feed_health, disruption.traffic_incident_state, "
@@ -163,6 +181,153 @@ class HazardLifecycleIT {
                 && feed.classification().equals("OBSERVATION_ONLY")).singleElement()
                 .extracting(HazardCheckpoint.FeedHealth::status).isEqualTo("STALE");
         assertThat(hazards.findAll().getFirst().status()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void hazardTransitionsAndFeedOutcomesProduceSafeDurableAuditSnapshots() {
+        var observation = fact("FLOOD", "source-secret-token=must-not-leak", "OBSERVED", null, null, List.of());
+        var opened = poll("FLOOD", NOW, "SUCCESS", true, null, List.of(observation));
+        process("FLOOD", opened);
+        process("FLOOD", opened);
+        UUID outboxId = jdbc.queryForObject("SELECT id FROM disruption.planning_outbox", UUID.class);
+        outboxService.claimDue(1, Duration.ofSeconds(30));
+        outboxService.delivered(outboxId, 202);
+
+        assertThat(jdbc.queryForList("SELECT event_type FROM disruption.application_audit_event ORDER BY event_type", String.class))
+                .containsExactlyInAnyOrder("DISRUPTION_TRANSITION", "FEED_POLL_COMPLETED", "FEED_HEALTH_CHANGED",
+                        "PLANNING_SUBMISSION_DELIVERED");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM disruption.application_audit_event", Integer.class)).isEqualTo(4);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM disruption.application_audit_event WHERE details::text LIKE '%must-not-leak%'", Integer.class))
+                .isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM disruption.application_audit_event WHERE source_key LIKE 'disruption:%'", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM disruption.application_audit_event WHERE event_type='PLANNING_SUBMISSION_DELIVERED' AND details->>'attempt'='1'", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM disruption.application_audit_event WHERE backfilled", Integer.class)).isZero();
+    }
+
+    @Test
+    void auditRetentionIsIndependentAndKeepsItsCollectionStart() {
+        Instant cutoff = NOW.minus(Duration.ofDays(90));
+        insertAudit(UUID.randomUUID(), cutoff.minusSeconds(1), "audit:expired");
+        insertAudit(UUID.randomUUID(), cutoff, "audit:boundary");
+        insertAudit(UUID.randomUUID(), cutoff.plusSeconds(1), "audit:recent");
+        Instant startedAt = auditRetention.collectionStartedAt();
+
+        assertThat(auditRetention.purgeExpired(Duration.ofDays(90))).isEqualTo(1);
+        assertThat(jdbc.queryForList("SELECT source_key FROM disruption.application_audit_event ORDER BY occurred_at", String.class))
+                .containsExactly("audit:boundary", "audit:recent");
+        assertThat(auditRetention.collectionStartedAt()).isEqualTo(startedAt);
+    }
+
+    @Test
+    void processingFailureIsCapturedAfterTheOperationalTransactionRollsBack() {
+        UUID pollId = UUID.randomUUID();
+        var transaction = new TransactionTemplate(transactions);
+        assertThatThrownBy(() -> transaction.executeWithoutResult(status -> {
+            auditFailures.processingFailure("HAZARD_POLL", "FLOOD", pollId);
+            auditFailures.processingFailure("HAZARD_POLL", "FLOOD", pollId);
+            throw new IllegalStateException("synthetic failure with password=never-persist");
+        })).isInstanceOf(RuntimeException.class);
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM disruption.application_audit_event WHERE event_type='PROCESSING_FAILURE'", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT details::text FROM disruption.application_audit_event", String.class))
+                .contains("FLOOD", "HAZARD_POLL").doesNotContain("never-persist", "password");
+    }
+
+    @Test
+    void retainedTransitionBackfillIsConcurrentAndIdempotentWithTheLiveSourceKey() {
+        process("FLOOD", poll("FLOOD", NOW, "SUCCESS", true, null,
+                List.of(fact("FLOOD", "backfill-source", "OBSERVED", null, null, List.of()))));
+        UUID eventId = jdbc.queryForObject("SELECT id FROM disruption.disruption_event", UUID.class);
+        String sourceKey = "disruption:" + eventId;
+        jdbc.update("DELETE FROM disruption.application_audit_event WHERE source_key=?", sourceKey);
+
+        var first = java.util.concurrent.CompletableFuture.runAsync(() -> auditBackfill.run(new DefaultApplicationArguments()));
+        var second = java.util.concurrent.CompletableFuture.runAsync(() -> auditBackfill.run(new DefaultApplicationArguments()));
+        first.join();
+        second.join();
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM disruption.application_audit_event WHERE source_key=?", Integer.class, sourceKey))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT backfilled FROM disruption.application_audit_event WHERE source_key=?", Boolean.class, sourceKey))
+                .isTrue();
+        assertThat(jdbc.queryForObject("SELECT details::text FROM disruption.application_audit_event WHERE source_key=?", String.class, sourceKey))
+                .contains("OPENED", "FLOOD").doesNotContain("backfill-source");
+    }
+
+    @Test
+    void transitionBackfillPagesPastTwoHundredRowsAndRemainsIdempotent() {
+        process("FLOOD", poll("FLOOD", NOW, "SUCCESS", true, null,
+                List.of(fact("FLOOD", "paged-backfill", "OBSERVED", null, null, List.of()))));
+        jdbc.update("""
+                INSERT INTO disruption.disruption_event
+                    (id, disruption_id, kind, action, classification, fetched_at, triggered_at, evidence,
+                     source_observation_id, poll_run_id)
+                SELECT gen_random_uuid(), disruption_id, kind, action, classification, fetched_at, triggered_at, evidence,
+                       source_observation_id, poll_run_id
+                FROM disruption.disruption_event CROSS JOIN generate_series(1, 200)
+                """);
+        jdbc.update("DELETE FROM disruption.application_audit_event");
+
+        auditBackfill.run(new DefaultApplicationArguments());
+        auditBackfill.run(new DefaultApplicationArguments());
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM disruption.application_audit_event WHERE backfilled", Integer.class))
+                .isEqualTo(201);
+    }
+
+    @Test
+    void transitionBackfillRetainsTheNinetyDayBoundaryAndExcludesNinetyOneDayRows() {
+        process("FLOOD", poll("FLOOD", NOW, "SUCCESS", true, null,
+                List.of(fact("FLOOD", "boundary-source", "OBSERVED", null, null, List.of()))));
+        process("ROADWORKS", poll("ROADWORKS", NOW, "SUCCESS", true, null,
+                List.of(fact("ROADWORKS", "old-source", "OBSERVED", null, null, List.of()))));
+        var transitionIds = jdbc.query("SELECT id, kind FROM disruption.disruption_event ORDER BY kind",
+                (rs, row) -> Map.entry(rs.getString("kind"), rs.getObject("id", UUID.class)));
+        UUID boundaryId = transitionIds.stream().filter(entry -> entry.getKey().equals("FLOOD")).findFirst().orElseThrow().getValue();
+        UUID oldId = transitionIds.stream().filter(entry -> entry.getKey().equals("ROADWORKS")).findFirst().orElseThrow().getValue();
+        String boundaryKey = "disruption:" + boundaryId;
+        String oldKey = "disruption:" + oldId;
+        jdbc.update("DELETE FROM disruption.application_audit_event WHERE source_key IN (?, ?)", boundaryKey, oldKey);
+        jdbc.update("UPDATE disruption.disruption_event SET triggered_at=? WHERE id=?",
+                java.sql.Timestamp.from(NOW.minus(Duration.ofDays(90))), boundaryId);
+        jdbc.update("UPDATE disruption.disruption_event SET triggered_at=? WHERE id=?",
+                java.sql.Timestamp.from(NOW.minus(Duration.ofDays(91))), oldId);
+
+        auditBackfill.run(new DefaultApplicationArguments());
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM disruption.application_audit_event WHERE source_key=?", Integer.class, boundaryKey))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM disruption.application_audit_event WHERE source_key=?", Integer.class, oldKey))
+                .isZero();
+    }
+
+    @Test
+    void authorizationFailureStoresOnlyVerifiedActorAndBoundedRouteLabel() {
+        var request = new MockHttpServletRequest("GET", "/api/v1/disruption/admin/audit-events/private-user-id");
+        var identity = UsernamePasswordAuthenticationToken.authenticated("verified-subject", "N/A",
+                List.of(new SimpleGrantedAuthority("ROLE_CONTROLLER")));
+        authorizationAudit.record(request, "ROLE_NOT_PERMITTED", identity);
+        authorizationAudit.record(request, "ROLE_NOT_PERMITTED", identity);
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM disruption.application_audit_event WHERE event_type='AUTHORIZATION_DENIED'", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT actor_subject FROM disruption.application_audit_event WHERE event_type='AUTHORIZATION_DENIED'", String.class))
+                .isEqualTo("verified-subject");
+        assertThat(jdbc.queryForObject("SELECT entity_id FROM disruption.application_audit_event WHERE event_type='AUTHORIZATION_DENIED'", String.class))
+                .isEqualTo("ADMIN_AUDIT_DETAIL");
+        assertThat(jdbc.queryForObject("SELECT details::text FROM disruption.application_audit_event WHERE event_type='AUTHORIZATION_DENIED'", String.class))
+                .contains("ADMIN_AUDIT_DETAIL", "ROLE_NOT_PERMITTED").doesNotContain("private-user-id");
+    }
+
+    private void insertAudit(UUID id, Instant occurredAt, String sourceKey) {
+        jdbc.update("""
+                INSERT INTO disruption.application_audit_event
+                    (id, occurred_at, recorded_at, category, event_type, outcome, actor_type, entity_type, entity_id, summary, source_key)
+                VALUES (?, ?, ?, 'OPERATIONS', 'TEST_EVENT', 'SUCCESS', 'SYSTEM', 'TEST', ?, 'Test event', ?)
+                """, id, java.sql.Timestamp.from(occurredAt), java.sql.Timestamp.from(NOW), id.toString(), sourceKey);
     }
 
     @Test
@@ -293,12 +458,14 @@ class HazardLifecycleIT {
         assertThat(count("disruption")).isZero();
         assertThat(count("disruption_event")).isZero();
         assertThat(count("planning_outbox")).isZero();
+        assertThat(count("application_audit_event")).isZero();
         assertThat(synchronization.cursor("FLOOD").completedAt()).isNull();
         process("FLOOD", input);
         process("FLOOD", input);
         assertThat(count("hazard_state")).isEqualTo(1);
         assertThat(count("disruption_event")).isEqualTo(1);
         assertThat(count("planning_outbox")).isEqualTo(1);
+        assertThat(count("application_audit_event")).isEqualTo(3);
         assertThat(synchronization.cursor("FLOOD").pollRunId()).isEqualTo(input.pollRunId());
     }
 

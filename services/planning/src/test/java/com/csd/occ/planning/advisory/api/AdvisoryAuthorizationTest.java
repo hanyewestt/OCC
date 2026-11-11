@@ -46,7 +46,7 @@ class AdvisoryAuthorizationTest {
     @MockitoBean IssuedInstructionRepository issuedInstructions;
 
     @Test
-    void controllersAndAdminsSaveReviewedDraftsWithOnlyTheVerifiedActor() {
+    void controllersSaveReviewedDraftsWithOnlyTheVerifiedActor() {
         UUID id = UUID.randomUUID();
         UUID sourceId = UUID.randomUUID();
         Instant from = Instant.parse("2026-10-31T04:00:00Z");
@@ -60,14 +60,12 @@ class AdvisoryAuthorizationTest {
                 {"id":"%s","disruptionId":"%s","title":"Flood update","message":"Use caution.",
                 "services":["190"],"locations":["School"],"effectiveFrom":"%s","effectiveUntil":"%s"}
                 """.formatted(id, sourceId, from, until);
-        for (String role : List.of("CONTROLLER", "ADMIN")) {
-            assertThat(mvc.post().uri("/api/v1/planning/notices")
-                    .with(jwt().jwt(token -> token.subject("verified-controller"))
-                            .authorities(new SimpleGrantedAuthority("ROLE_" + role)))
-                    .header("X-Actor-Subject", "forged-controller").contentType(MediaType.APPLICATION_JSON).content(body).exchange())
-                    .hasStatusOk().bodyJson().extractingPath("$.status").isEqualTo("DRAFT");
-        }
-        verify(notices, times(2)).draft(id, sourceId, "Flood update", "Use caution.", List.of("190"), List.of("School"),
+        assertThat(mvc.post().uri("/api/v1/planning/notices")
+                .with(jwt().jwt(token -> token.subject("verified-controller"))
+                        .authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                .header("X-Actor-Subject", "forged-controller").contentType(MediaType.APPLICATION_JSON).content(body).exchange())
+                .hasStatusOk().bodyJson().extractingPath("$.status").isEqualTo("DRAFT");
+        verify(notices).draft(id, sourceId, "Flood update", "Use caution.", List.of("190"), List.of("School"),
                 from, until, "verified-controller");
         verify(notices, never()).publish(any(), any());
     }
@@ -127,6 +125,18 @@ class AdvisoryAuthorizationTest {
     }
 
     @Test
+    void adminsCannotSaveOrPublishOperationalNotices() {
+        var principal = jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN"));
+        assertThat(mvc.post().uri("/api/v1/planning/notices").with(principal)
+                .contentType(MediaType.APPLICATION_JSON).content("{}").exchange()).hasStatus(403);
+        for (String action : List.of("publications", "withdrawals", "replacements", "suggestions")) {
+            assertThat(mvc.post().uri("/api/v1/planning/notices/{id}/" + action, UUID.randomUUID())
+                    .with(principal).contentType(MediaType.APPLICATION_JSON).content("{}").exchange()).hasStatus(403);
+        }
+        verifyNoInteractions(notices);
+    }
+
+    @Test
     void controllerAndAdminCanReviewButCannotActAsCaptains() {
         UUID sourceId = UUID.randomUUID();
         when(instructions.proposals(0, 20, false)).thenReturn(Page.empty());
@@ -139,9 +149,13 @@ class AdvisoryAuthorizationTest {
             assertThat(mvc.get().uri("/api/v1/planning/advisories").with(principal).exchange()).hasStatusOk();
             assertThat(mvc.get().uri("/api/v1/planning/advisories?pendingOnly=true").with(principal).exchange()).hasStatusOk();
             assertThat(mvc.get().uri("/api/v1/planning/notices").with(principal).exchange()).hasStatusOk();
-            assertThat(mvc.post().uri("/api/v1/planning/notices/{id}/suggestions", sourceId)
-                    .with(principal).exchange()).hasStatusOk().bodyJson()
-                    .extractingPath("$.generator").isEqualTo("SOURCE_FACTS");
+            var suggestion = mvc.post().uri("/api/v1/planning/notices/{id}/suggestions", sourceId)
+                    .with(principal).exchange();
+            if (role.equals("CONTROLLER")) {
+                assertThat(suggestion).hasStatusOk().bodyJson().extractingPath("$.generator").isEqualTo("SOURCE_FACTS");
+            } else {
+                assertThat(suggestion).hasStatus(403);
+            }
             assertThat(mvc.get().uri("/api/v1/planning/captain/instructions").with(principal).exchange()).hasStatus(403);
             assertThat(mvc.post().uri("/api/v1/planning/captain/instructions/{id}/acknowledgements", UUID.randomUUID())
                     .with(principal).exchange()).hasStatus(403);
@@ -151,7 +165,7 @@ class AdvisoryAuthorizationTest {
     }
 
     @Test
-    void controllersAndAdminsCanPublishReplaceAndWithdrawUsingVerifiedSubjects() {
+    void controllersCanPublishReplaceAndWithdrawUsingVerifiedSubjects() {
         UUID previous = UUID.randomUUID();
         UUID next = UUID.randomUUID();
         UUID source = UUID.randomUUID();
@@ -160,26 +174,24 @@ class AdvisoryAuthorizationTest {
         var notice = mock(PublicNotice.class);
         when(notice.id()).thenReturn(next);
         when(notices.publish(previous, "verified-controller")).thenReturn(notice);
-        when(notices.withdraw(previous)).thenReturn(notice);
+        when(notices.withdraw(previous, "verified-controller")).thenReturn(notice);
         when(notices.replace(previous, next, source, "Correction", "Reviewed message", List.of(), List.of(), from, until,
                 "verified-controller")).thenReturn(notice);
         String body = """
                 {"id":"%s","disruptionId":"%s","title":"Correction","message":"Reviewed message",
                 "services":[],"locations":[],"effectiveFrom":"%s","effectiveUntil":"%s"}
                 """.formatted(next, source, from, until);
-        for (String role : List.of("CONTROLLER", "ADMIN")) {
-            var principal = jwt().jwt(token -> token.subject("verified-controller"))
-                    .authorities(new SimpleGrantedAuthority("ROLE_" + role));
-            for (String action : List.of("publications", "withdrawals", "replacements")) {
-                assertThat(mvc.post().uri("/api/v1/planning/notices/{id}/" + action, previous)
-                        .with(principal).header("X-Actor-Subject", "forged-controller")
-                        .contentType(MediaType.APPLICATION_JSON).content(body).exchange()).hasStatusOk();
-            }
+        var principal = jwt().jwt(token -> token.subject("verified-controller"))
+                .authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"));
+        for (String action : List.of("publications", "withdrawals", "replacements")) {
+            assertThat(mvc.post().uri("/api/v1/planning/notices/{id}/" + action, previous)
+                    .with(principal).header("X-Actor-Subject", "forged-controller")
+                    .contentType(MediaType.APPLICATION_JSON).content(body).exchange()).hasStatusOk();
         }
-        verify(notices, times(2)).publish(previous, "verified-controller");
-        verify(notices, times(2)).replace(previous, next, source, "Correction", "Reviewed message", List.of(), List.of(), from, until,
+        verify(notices).publish(previous, "verified-controller");
+        verify(notices).replace(previous, next, source, "Correction", "Reviewed message", List.of(), List.of(), from, until,
                 "verified-controller");
-        verify(notices, times(2)).withdraw(previous);
+        verify(notices).withdraw(previous, "verified-controller");
     }
 
     @Test
@@ -187,8 +199,9 @@ class AdvisoryAuthorizationTest {
         String subject = UUID.randomUUID().toString();
         UUID id = UUID.randomUUID();
         var issued = instruction(id, UUID.fromString(subject));
-        when(instructions.captain(subject)).thenReturn(List.of(issued));
-        when(instructions.acknowledge(id, subject)).thenReturn(issued);
+        var captainActor = new PlanningActor(subject, PlanningActor.Role.CAPTAIN);
+        when(instructions.captain(captainActor)).thenReturn(List.of(issued));
+        when(instructions.acknowledge(id, captainActor)).thenReturn(issued);
         when(clock.instant()).thenReturn(Instant.parse("2026-10-25T02:00:00Z"));
         var principal = jwt().jwt(token -> token.subject(subject)).authorities(new SimpleGrantedAuthority("ROLE_CAPTAIN"));
         var page = mvc.get().uri("/api/v1/planning/captain/instructions").with(principal).exchange();
@@ -197,21 +210,21 @@ class AdvisoryAuthorizationTest {
         assertThat(mvc.post().uri("/api/v1/planning/captain/instructions/{id}/acknowledgements", id)
                 .with(principal).header("X-Actor-Subject", "forged-captain")
                 .contentType(MediaType.APPLICATION_JSON).content("{\"subject\":\"forged-captain\"}").exchange()).hasStatusOk();
-        verify(instructions).acknowledge(id, subject);
-        verify(instructions, never()).acknowledge(id, "forged-captain");
+        verify(instructions).acknowledge(id, captainActor);
     }
 
     @Test
     void decisionsReceiveOnlyTheVerifiedControllerSubject() {
         UUID id = UUID.randomUUID();
-        when(instructions.decide(eq(id), isNull(), isNull(), eq("verified-controller"), isNull()))
+        var controllerActor = new PlanningActor("verified-controller", PlanningActor.Role.CONTROLLER);
+        when(instructions.decide(eq(id), isNull(), isNull(), eq(controllerActor), isNull()))
                 .thenReturn(instruction(id, UUID.randomUUID()));
         assertThat(mvc.post().uri("/api/v1/planning/advisories/{id}/decisions", id)
                 .with(jwt().jwt(token -> token.subject("verified-controller"))
                         .authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
                 .header("X-Actor-Subject", "forged-controller")
                 .contentType(MediaType.APPLICATION_JSON).content("{}").exchange()).hasStatusOk();
-        verify(instructions).decide(id, null, null, "verified-controller", null);
+        verify(instructions).decide(id, null, null, controllerActor, null);
     }
 
     @Test
@@ -228,7 +241,7 @@ class AdvisoryAuthorizationTest {
                 runId, "demo-190-b", List.of("ISSUED", "ACKNOWLEDGED"))).thenReturn(List.of(winner));
         when(winner.type()).thenReturn(InstructionType.REDUCE_SPEED);
         when(winner.id()).thenReturn(winnerId);
-        when(instructions.decide(eq(proposalId), isNull(), isNull(), anyString(), isNull()))
+        when(instructions.decide(eq(proposalId), isNull(), isNull(), any(PlanningActor.class), isNull()))
                 .thenThrow(new DataIntegrityViolationException("movement conflict",
                         new org.hibernate.exception.ConstraintViolationException("duplicate movement", null,
                                 "uq_issued_instruction_movement")));

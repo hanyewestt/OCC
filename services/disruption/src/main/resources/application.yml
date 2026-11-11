@@ -38,6 +38,8 @@ management:
         readiness:
           include: readinessState,db
 occ:
+  audit:
+    retention: ${OCC_AUDIT_RETENTION:90d}
   security:
     supabase:
       project-url: ${SUPABASE_PROJECT_URL}

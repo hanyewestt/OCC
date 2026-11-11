@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import com.csd.occ.planning.domain.audit.ApplicationAuditEventRepository;
 
 class AdvisoryProposalServiceTest {
     @Test
@@ -27,8 +28,10 @@ class AdvisoryProposalServiceTest {
         when(requests.findById(requestId)).thenReturn(Optional.of(request));
         var proposals = mock(AdvisoryProposalRepository.class);
         var evidence = mock(AdvisoryModelEvidenceRepository.class);
+        var auditEvents = mock(ApplicationAuditEventRepository.class);
+        var guards = mock(AssignmentBusGuards.class);
         var service = new AdvisoryProposalService(proposals, requests, evidence,
-                Clock.fixed(Instant.parse("2026-10-25T04:00:00Z"), ZoneOffset.UTC));
+                Clock.fixed(Instant.parse("2026-10-25T04:00:00Z"), ZoneOffset.UTC), auditEvents, guards);
         var candidate = new AdvisoryCandidate(InstructionType.BE_CAUTIOUS,
                 new InstructionParameters("44251", "School", 3, null, null, null), "Reported incident");
         var hazard = new AdvisoryContextPort.Hazard(UUID.randomUUID(), "TRAFFIC_INCIDENT", "ACTIVE", null,
@@ -45,5 +48,8 @@ class AdvisoryProposalServiceTest {
         service.record(requestId, List.of(proposal));
 
         verify(evidence).save(any(AdvisoryModelEvidence.class));
+        verify(auditEvents).save(org.mockito.ArgumentMatchers.argThat(event ->
+                event.eventType().equals("ADVISORY_PROPOSAL_GENERATED") && event.runId().equals(proposal.demoRunId())
+                        && event.details().get("output").equals("captured output")));
     }
 }

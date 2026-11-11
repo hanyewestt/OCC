@@ -14,12 +14,14 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import com.csd.occ.planning.domain.audit.ApplicationAuditEventRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageImpl;
 
 class InstructionServiceTest {
     private static final Instant NOW = Instant.parse("2026-10-25T04:00:00Z");
+    private static final PlanningActor CONTROLLER = new PlanningActor("controller", PlanningActor.Role.CONTROLLER);
     private final UUID runId = UUID.randomUUID();
     private final UUID captain = UUID.randomUUID();
     private final UUID disruptionId = UUID.randomUUID();
@@ -27,10 +29,12 @@ class InstructionServiceTest {
     private final AdvisoryProposalRepository proposals = mock(AdvisoryProposalRepository.class);
     private final IssuedInstructionRepository instructions = mock(IssuedInstructionRepository.class);
     private final AdvisoryModelEvidenceRepository evidence = mock(AdvisoryModelEvidenceRepository.class);
+    private final ApplicationAuditEventRepository auditEvents = mock(ApplicationAuditEventRepository.class);
     private final AdvisoryContextPort context = mock(AdvisoryContextPort.class);
     private final PlanningScopePort scopes = mock(PlanningScopePort.class);
+    private final AssignmentBusGuards guards = mock(AssignmentBusGuards.class);
     private final InstructionService service = new InstructionService(proposals, instructions, context, scopes,
-            evidence, Clock.fixed(NOW, ZoneOffset.UTC));
+            evidence, Clock.fixed(NOW, ZoneOffset.UTC), auditEvents, guards, mock(jakarta.persistence.EntityManager.class));
     private final AdvisoryContextPort.Bus bus = new AdvisoryContextPort.Bus("demo-190-b", "demo-190-b", "SBS5898U",
             "190", 1, captain, "ASSIGNED", new AdvisoryContextPort.Progress("44241", 5, NOW, 30, List.of(5), List.of(300)));
     private final AdvisoryCandidate caution = new AdvisoryCandidate(InstructionType.BE_CAUTIOUS,
@@ -45,8 +49,14 @@ class InstructionServiceTest {
         proposal = new AdvisoryProposal(UUID.randomUUID(), runId, hazard, bus,
                 new AdvisoryDraftPort.Result(caution, "synthetic", "{}", "{}"), "Disruption near Example Stop. Be cautious.", NOW);
         when(proposals.findForUpdate(proposal.id())).thenReturn(Optional.of(proposal));
+        when(proposals.findById(proposal.id())).thenReturn(Optional.of(proposal));
+        var proposalKey = mock(AdvisoryProposalRepository.ProposalKey.class);
+        when(proposalKey.getDemoRunId()).thenReturn(runId);
+        when(proposalKey.getBusId()).thenReturn(bus.busId());
+        when(proposals.findKeyById(proposal.id())).thenReturn(Optional.of(proposalKey));
         when(scopes.current()).thenReturn(new PlanningScope("DEMO", runId));
         when(context.fleet(runId)).thenReturn(new AdvisoryContextPort.Fleet(runId, "RUNNING", List.of(bus), 1));
+        when(guards.lock(runId, bus.busId())).thenReturn(new AssignmentBusGuard(runId, bus.busId()));
         when(context.hazard(disruptionId)).thenReturn(hazard);
         when(context.limits()).thenReturn(new AdvisoryContextPort.Limits(10, 600, 5, Duration.ofMinutes(5), Duration.ofHours(12)));
         when(evidence.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -60,7 +70,7 @@ class InstructionServiceTest {
         var issued = issued(UUID.randomUUID(), otherBus, caution, NOW);
         when(instructions.findForUpdate(issued.id())).thenReturn(Optional.of(issued));
 
-        assertThatThrownBy(() -> service.acknowledge(issued.id(), captain.toString()))
+        assertThatThrownBy(() -> service.acknowledge(issued.id(), new PlanningActor(captain.toString(), PlanningActor.Role.CAPTAIN)))
                 .isInstanceOf(AdvisoryNotFoundException.class);
         assertThat(issued.acknowledgedAt()).isNull();
         verifyNoInteractions(context, scopes);
@@ -71,22 +81,21 @@ class InstructionServiceTest {
         var mine = issued(UUID.randomUUID(), bus, caution, NOW);
         // Issued before the bus was reassigned to this captain; still addressed to the previous captain.
         var previousCaptains = issued(UUID.randomUUID(), withCaptain(UUID.randomUUID()), caution, NOW);
-        when(instructions.findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(runId, bus.busId(),
-                List.of("ISSUED", "ACKNOWLEDGED"))).thenReturn(List.of(previousCaptains, mine));
+        when(instructions.findActiveByDemoRunIdAndBusIdForUpdate(runId, bus.busId())).thenReturn(List.of(previousCaptains, mine));
 
-        assertThat(service.captain(captain.toString())).containsExactly(mine);
+        assertThat(service.captain(new PlanningActor(captain.toString(), PlanningActor.Role.CAPTAIN))).containsExactly(mine);
     }
 
     @Test
     void captainWithoutACurrentAssignmentReadsNothing() {
-        assertThat(service.captain(UUID.randomUUID().toString())).isEmpty();
-        assertThat(service.captain("not-a-captain-subject")).isEmpty();
+        assertThat(service.captain(new PlanningActor(UUID.randomUUID().toString(), PlanningActor.Role.CAPTAIN))).isEmpty();
+        assertThat(service.captain(new PlanningActor("not-a-captain-subject", PlanningActor.Role.CAPTAIN))).isEmpty();
 
         when(context.fleet(runId)).thenReturn(new AdvisoryContextPort.Fleet(runId, "CLOSED", List.of(bus), 1));
-        assertThat(service.captain(captain.toString())).isEmpty();
+        assertThat(service.captain(new PlanningActor(captain.toString(), PlanningActor.Role.CAPTAIN))).isEmpty();
 
         when(scopes.current()).thenReturn(new PlanningScope("LIVE", null));
-        assertThat(service.captain(captain.toString())).isEmpty();
+        assertThat(service.captain(new PlanningActor(captain.toString(), PlanningActor.Role.CAPTAIN))).isEmpty();
         verify(instructions, never()).findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(any(), any(), anyList());
     }
 
@@ -97,23 +106,23 @@ class InstructionServiceTest {
         UUID replacement = UUID.randomUUID();
         when(context.fleet(runId)).thenReturn(new AdvisoryContextPort.Fleet(runId, "RUNNING", List.of(withCaptain(replacement)), 1));
 
-        assertThatThrownBy(() -> service.acknowledge(issued.id(), captain.toString()))
+        assertThatThrownBy(() -> service.acknowledge(issued.id(), new PlanningActor(captain.toString(), PlanningActor.Role.CAPTAIN)))
                 .isInstanceOf(AdvisoryNotFoundException.class);
-        assertThatThrownBy(() -> service.acknowledge(issued.id(), replacement.toString()))
+        assertThatThrownBy(() -> service.acknowledge(issued.id(), new PlanningActor(replacement.toString(), PlanningActor.Role.CAPTAIN)))
                 .isInstanceOf(AdvisoryNotFoundException.class);
         assertThat(issued.acknowledgedAt()).isNull();
     }
 
     @Test
     void unknownInstructionIsNotFound() {
-        assertThatThrownBy(() -> service.acknowledge(UUID.randomUUID(), captain.toString()))
+        assertThatThrownBy(() -> service.acknowledge(UUID.randomUUID(), new PlanningActor(captain.toString(), PlanningActor.Role.CAPTAIN)))
                 .isInstanceOf(AdvisoryNotFoundException.class);
     }
 
     @Test
     void proposalOutsideTheCurrentRunCannotIssue() {
         when(scopes.current()).thenReturn(new PlanningScope("DEMO", UUID.randomUUID()));
-        assertThatThrownBy(() -> service.decide(proposal.id(), null, null, "controller", null))
+        assertThatThrownBy(() -> service.decide(proposal.id(), null, null, CONTROLLER, null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("outside the active simulation");
         verify(instructions, never()).saveAndFlush(any());
     }
@@ -123,7 +132,7 @@ class InstructionServiceTest {
         var unassigned = new AdvisoryContextPort.Bus(bus.busId(), bus.tripId(), bus.registrationNumber(), bus.serviceId(),
                 bus.directionId(), null, "CAPTAIN_ASSIGNMENT_UNAVAILABLE", bus.progress());
         when(context.fleet(runId)).thenReturn(new AdvisoryContextPort.Fleet(runId, "RUNNING", List.of(unassigned), 1));
-        assertThatThrownBy(() -> service.decide(proposal.id(), null, null, "controller", null))
+        assertThatThrownBy(() -> service.decide(proposal.id(), null, null, CONTROLLER, null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("assignment unavailable");
         verify(instructions, never()).saveAndFlush(any());
     }
@@ -131,7 +140,7 @@ class InstructionServiceTest {
     @Test
     void sourceRevisionChangesRequireReviewingANewProposal() {
         when(context.hazard(disruptionId)).thenReturn(hazard(UUID.randomUUID(), 2L, hazard.exposures()));
-        assertThatThrownBy(() -> service.decide(proposal.id(), null, null, "controller", null))
+        assertThatThrownBy(() -> service.decide(proposal.id(), null, null, CONTROLLER, null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("evidence changed");
         verify(instructions, never()).saveAndFlush(any());
     }
@@ -141,10 +150,13 @@ class InstructionServiceTest {
         var refreshed = hazard(UUID.randomUUID(), 1L, hazard.exposures());
         when(context.hazard(disruptionId)).thenReturn(refreshed);
 
-        var issued = service.decide(proposal.id(), null, null, "controller", null);
+        var issued = service.decide(proposal.id(), null, null, CONTROLLER, null);
 
         assertThat(issued.status()).isEqualTo("ISSUED");
         verify(instructions).saveAndFlush(any());
+        verify(auditEvents).save(argThat(event -> event.eventType().equals("INSTRUCTION_ISSUED")
+                && event.actorSubject().equals("controller") && event.busId().equals(bus.busId())
+                && event.captainId().equals(captain)));
     }
 
     @Test
@@ -169,9 +181,9 @@ class InstructionServiceTest {
 
     @Test
     void repeatedIdenticalDecisionReturnsTheOriginalInstructionWithoutIssuingAgain() {
-        var first = service.decide(proposal.id(), null, null, "controller", null);
+        var first = service.decide(proposal.id(), null, null, CONTROLLER, null);
         when(instructions.findById(proposal.id())).thenReturn(Optional.of(first));
-        var replay = service.decide(proposal.id(), null, null, "controller", null);
+        var replay = service.decide(proposal.id(), null, null, CONTROLLER, null);
         assertThat(replay).isSameAs(first);
         assertThat(replay.issuedAt()).isEqualTo(NOW);
         assertThat(replay.message()).isEqualTo(proposal.preview());
@@ -181,7 +193,7 @@ class InstructionServiceTest {
     @Test
     void staleSpeedProposalCannotIssueAfterDownstreamExposureDisappears() {
         when(context.hazard(disruptionId)).thenReturn(hazard(sourceObservationId, List.of()));
-        assertThatThrownBy(() -> service.decide(proposal.id(), speed(), "Controller replacement", "controller", null))
+        assertThatThrownBy(() -> service.decide(proposal.id(), speed(), "Controller replacement", CONTROLLER, null))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("no current downstream exposure");
         verify(instructions, never()).saveAndFlush(any());
     }
@@ -190,8 +202,8 @@ class InstructionServiceTest {
     void acknowledgementReplayKeepsTheOriginalTimeAndSpeedWindow() {
         var issued = issued(UUID.randomUUID(), bus, speed(), NOW);
         when(instructions.findForUpdate(issued.id())).thenReturn(Optional.of(issued));
-        var first = service.acknowledge(issued.id(), captain.toString());
-        var replay = service.acknowledge(issued.id(), captain.toString());
+        var first = service.acknowledge(issued.id(), new PlanningActor(captain.toString(), PlanningActor.Role.CAPTAIN));
+        var replay = service.acknowledge(issued.id(), new PlanningActor(captain.toString(), PlanningActor.Role.CAPTAIN));
         assertThat(replay).isSameAs(first);
         assertThat(replay.acknowledgedAt()).isEqualTo(NOW);
         assertThat(replay.applicableUntil()).isEqualTo(NOW.plusSeconds(300));
@@ -202,7 +214,7 @@ class InstructionServiceTest {
     void firstAcknowledgementAtItsDeadlineIsRejected() {
         var issued = issued(UUID.randomUUID(), bus, speed(), NOW.minusSeconds(300));
         when(instructions.findForUpdate(issued.id())).thenReturn(Optional.of(issued));
-        assertThatThrownBy(() -> service.acknowledge(issued.id(), captain.toString()))
+        assertThatThrownBy(() -> service.acknowledge(issued.id(), new PlanningActor(captain.toString(), PlanningActor.Role.CAPTAIN)))
                 .isInstanceOf(AdvisoryConflictException.class);
         assertThat(issued.acknowledgedAt()).isNull();
     }
@@ -211,18 +223,35 @@ class InstructionServiceTest {
     void historyRefreshesAnExpiredWindowWithoutWaitingForCaptainPolling() {
         var issued = issued(UUID.randomUUID(), bus, speed(), NOW.minusSeconds(300));
         when(instructions.findByDemoRunIdOrderByIssuedAtDesc(eq(runId), any())).thenReturn(new PageImpl<>(List.of(issued)));
-        var result = service.history(0, 20);
+        var result = service.history(0, 20, CONTROLLER);
         assertThat(result.getContent().getFirst().status()).isEqualTo("EXPIRED");
         assertThat(result.getContent().getFirst().inactiveReason()).isEqualTo("VALIDITY_EXPIRED");
         verify(context, never()).hazard(any());
     }
 
     @Test
+    void historyAuditsRunCloseCancellationWithInstructionSnapshot() {
+        var active = issued(UUID.randomUUID(), bus, speed(), NOW);
+        when(instructions.findByDemoRunIdOrderByIssuedAtDesc(eq(runId), any())).thenReturn(new PageImpl<>(List.of(active)));
+        when(context.fleet(runId)).thenReturn(new AdvisoryContextPort.Fleet(runId, "CLOSED", List.of(), 0));
+
+        service.history(0, 20, CONTROLLER);
+
+        assertThat(active.status()).isEqualTo("CANCELLED");
+        var events = org.mockito.ArgumentCaptor.forClass(com.csd.occ.planning.domain.audit.ApplicationAuditEvent.class);
+        verify(auditEvents).save(events.capture());
+        assertThat(events.getValue().eventType()).isEqualTo("INSTRUCTION_CANCELLED");
+        assertThat(events.getValue().outcome()).isEqualTo("CANCELLED");
+        assertThat(events.getValue().details()).containsEntry("reason", "RUN_CLOSED");
+        assertThat(events.getValue().sourceKey()).isEqualTo("instruction-state:" + active.id() + ":CANCELLED:RUN_CLOSED");
+    }
+
+    @Test
     void anotherMovementInstructionRequiresExplicitReplacement() {
         var previous = issued(UUID.randomUUID(), bus, speed(), NOW);
-        when(instructions.findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(eq(runId), eq(bus.busId()), anyList()))
+        when(instructions.findActiveByDemoRunIdAndBusIdForUpdate(eq(runId), eq(bus.busId())))
                 .thenReturn(List.of(previous));
-        assertThatThrownBy(() -> service.decide(proposal.id(), speed(), "Controller replacement", "controller", null))
+        assertThatThrownBy(() -> service.decide(proposal.id(), speed(), "Controller replacement", CONTROLLER, null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining(previous.id().toString());
         assertThat(previous.status()).isEqualTo("ISSUED");
         verify(instructions, never()).saveAndFlush(any());
@@ -232,12 +261,39 @@ class InstructionServiceTest {
     void explicitReplacementCancelsThePreviousMovementInstruction() {
         var previous = issued(UUID.randomUUID(), bus, speed(), NOW);
         when(instructions.findForUpdate(previous.id())).thenReturn(Optional.of(previous));
-        when(instructions.findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(eq(runId), eq(bus.busId()), anyList()))
+        when(instructions.findActiveByDemoRunIdAndBusIdForUpdate(eq(runId), eq(bus.busId())))
                 .thenReturn(List.of(previous));
-        var replacement = service.decide(proposal.id(), speed(), "Controller replacement", "controller", previous.id());
+        var replacement = service.decide(proposal.id(), speed(), "Controller replacement", CONTROLLER, previous.id());
         assertThat(previous.status()).isEqualTo("CANCELLED");
         assertThat(replacement.status()).isEqualTo("ISSUED");
         assertThat(replacement.id()).isEqualTo(proposal.id());
+        var events = org.mockito.ArgumentCaptor.forClass(com.csd.occ.planning.domain.audit.ApplicationAuditEvent.class);
+        verify(auditEvents, atLeastOnce()).save(events.capture());
+        var decision = events.getAllValues().stream().filter(event -> event.eventType().equals("ADVISORY_PROPOSAL_DECIDED"))
+                .findFirst().orElseThrow();
+        assertThat(decision.category()).isEqualTo("ADVISORIES");
+        assertThat(decision.actorSubject()).isEqualTo("controller");
+        assertThat(decision.details()).containsEntry("controllerRationale", "Controller replacement")
+                .containsEntry("replacedInstructionId", previous.id().toString());
+        assertThat(((java.util.Map<?, ?>) decision.details().get("chosenCandidate")).get("type")).isEqualTo("REDUCE_SPEED");
+        assertThat(decision.sourceKey()).isEqualTo("advisory-decision:" + proposal.id());
+    }
+
+    @Test
+    void controllerOverrideDecisionCapturesSanitizedRationaleAndFinalCandidate() {
+        var rationale = "api_key=private-token replacement rationale";
+        var override = new AdvisoryCandidate(InstructionType.REDUCE_SPEED,
+                new InstructionParameters(null, null, null, null, 5, 300), "Controller-selected safe action");
+        service.decide(proposal.id(), override, rationale,
+                new PlanningActor("authenticated-controller", PlanningActor.Role.CONTROLLER), null);
+
+        var events = org.mockito.ArgumentCaptor.forClass(com.csd.occ.planning.domain.audit.ApplicationAuditEvent.class);
+        verify(auditEvents, atLeastOnce()).save(events.capture());
+        var decision = events.getAllValues().stream().filter(event -> event.eventType().equals("ADVISORY_PROPOSAL_DECIDED"))
+                .findFirst().orElseThrow();
+        assertThat(decision.details()).containsEntry("controllerRationale", "api_key=[REDACTED] replacement rationale");
+        assertThat(((java.util.Map<?, ?>) decision.details().get("chosenCandidate")).get("type")).isEqualTo("REDUCE_SPEED");
+        assertThat(decision.actorSubject()).isEqualTo("authenticated-controller");
     }
 
     private AdvisoryContextPort.Bus withCaptain(UUID captainUserId) {
@@ -251,8 +307,16 @@ class InstructionServiceTest {
     }
 
     private IssuedInstruction issued(UUID id, AdvisoryContextPort.Bus target, AdvisoryCandidate candidate, Instant at) {
-        return new IssuedInstruction(id, disruptionId, runId, target, candidate, "Approved instruction", "SIMULATION",
+        var value = new IssuedInstruction(id, disruptionId, runId, target, candidate, "Approved instruction", "SIMULATION",
                 "controller", at, Duration.ofMinutes(5));
+        var key = mock(IssuedInstructionRepository.InstructionKey.class);
+        when(key.getDemoRunId()).thenReturn(runId);
+        when(key.getBusId()).thenReturn(target.busId());
+        when(key.getCaptainUserId()).thenReturn(target.captainUserId());
+        when(instructions.findKeyById(id)).thenReturn(Optional.of(key));
+        when(instructions.findForUpdate(id)).thenReturn(Optional.of(value));
+        when(instructions.findById(id)).thenReturn(Optional.of(value));
+        return value;
     }
 
     private AdvisoryContextPort.Hazard hazard(UUID observation, List<AdvisoryContextPort.Exposure> exposure) {

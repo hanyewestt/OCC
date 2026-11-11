@@ -21,7 +21,8 @@ class InstructionRunReconciliationServiceTest {
         when(context.fleet(closedRun)).thenReturn(new Fleet(closedRun, "CLOSED", List.of(), 0));
         when(context.fleet(activeRun)).thenReturn(new Fleet(activeRun, "RUNNING", List.of(), 0));
         var reconciliation = mock(AdvisoryReconciliationService.class);
-        var service = new InstructionRunReconciliationService(instructions, context, reconciliation);
+        var service = new InstructionRunReconciliationService(instructions, context, reconciliation,
+                mock(AdvisoryProposalRepository.class));
 
         service.reconcileClosedRuns();
 

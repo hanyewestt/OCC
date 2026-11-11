@@ -14,6 +14,7 @@ import com.csd.occ.disruption.bunching.domain.DisruptionRepository;
 import com.csd.occ.disruption.bunching.domain.BunchingAlertPolicy;
 import com.csd.occ.disruption.bunching.domain.BunchingAlertPort;
 import com.csd.occ.disruption.bunching.domain.BunchingEvaluation;
+import com.csd.occ.disruption.domain.audit.ApplicationAuditRecorder;
 import com.csd.occ.disruption.bunching.domain.BunchingEvidencePort;
 import com.csd.occ.disruption.bunching.infrastructure.config.BunchingConfirmationProperties;
 import java.time.Clock;
@@ -40,6 +41,7 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
     private final DisruptionRepository disruptions;
     private final BunchingConfirmationProperties confirmation;
     private final com.csd.occ.disruption.bunching.infrastructure.config.BunchingProperties properties;
+    private final ApplicationAuditRecorder audit;
     private final BunchingAlertPolicy policy = new BunchingAlertPolicy();
     private final BunchingDiagnosisCorrelationPolicy diagnosisCorrelation = new BunchingDiagnosisCorrelationPolicy();
 
@@ -49,7 +51,8 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
                                    BunchingDiagnosisLinkPort diagnosisLinks,
                                    PlanningEventSubmissionPort planningSubmissions,
                                    BunchingConfirmationProperties confirmation, DisruptionRepository disruptions,
-                                   com.csd.occ.disruption.bunching.infrastructure.config.BunchingProperties properties) {
+                                   com.csd.occ.disruption.bunching.infrastructure.config.BunchingProperties properties,
+                                   ApplicationAuditRecorder audit) {
         this.states = states;
         this.events = events;
         this.evidence = evidence;
@@ -60,6 +63,7 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
         this.planningSubmissions = planningSubmissions;
         this.confirmation = confirmation; this.properties = properties;
         this.disruptions = disruptions;
+        this.audit = audit;
     }
 
     @Override
@@ -199,7 +203,10 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
         disruptions.recordBunchingTransition(event.alertId(), "SIMULATION".equals(event.classification())
                         ? "SIMULATION" : "OBSERVATION_ONLY", event.demoRunId(), cleared ? "CLEARED" : "ACTIVE",
                 event.triggeredAt(), event.triggeredAt(), cleared ? event.triggeredAt() : null);
-        return events.saveAndFlush(event);
+        AlertEvent saved = events.saveAndFlush(event);
+        audit.disruptionTransition(saved.id(), saved.alertId(), saved.demoRunId(), saved.triggeredAt(),
+                "BUNCHING", saved.action(), cleared ? "CLEARED" : "ACTIVE");
+        return saved;
     }
 
     private java.util.List<UUID> affectedIds(BunchingEvaluation.GroupEvaluation result) {

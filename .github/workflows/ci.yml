@@ -150,6 +150,11 @@ jobs:
         run: |
           docker compose --env-file .env.example config -q
           docker compose --env-file .env.example -f compose.yaml -f infra/compose.production.yaml config -q
+          secret_source=$(mktemp)
+          trap 'rm -f "$secret_source"' EXIT
+          printf 'synthetic-invalid-provider-key' > "$secret_source"
+          OCC_IDENTITY_ENABLED=true OCC_IDENTITY_SECRET_SOURCE_FILE="$secret_source" \
+            docker compose --env-file .env.example -f compose.yaml -f infra/compose.identity.yaml config -q
       - name: Validate generated contracts and source-to-target migration map
         shell: bash
         env:
@@ -340,6 +345,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Configure hosted runner DNS for image builds
+        run: bash .github/scripts/configure-ci-dns.sh
       - name: Build shared Java application image
         if: ${{ !matrix.migration_source }}
         run: >-

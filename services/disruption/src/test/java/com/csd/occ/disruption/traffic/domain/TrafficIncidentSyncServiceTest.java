@@ -11,6 +11,7 @@ import com.csd.occ.disruption.bunching.domain.DisruptionRepository;
 import com.csd.occ.disruption.bunching.domain.DiagnosisOutboxRepository;
 import com.csd.occ.disruption.bunching.domain.EncodedPlanningEventSubmission;
 import com.csd.occ.disruption.bunching.domain.PlanningEventSubmissionPort;
+import com.csd.occ.disruption.domain.audit.ApplicationAuditRecorder;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
@@ -41,6 +42,7 @@ class TrafficIncidentSyncServiceTest {
     @Mock private DiagnosisOutboxRepository planningOutbox;
     @Mock private PlanningEventSubmissionPort planningSubmissions;
     @Mock private TrafficIncidentEvidencePort evidenceCodec;
+    @Mock private ApplicationAuditRecorder audit;
 
     private TrafficPollCheckpoint checkpoint;
     private TrafficIncidentSyncService service;
@@ -80,6 +82,10 @@ class TrafficIncidentSyncServiceTest {
 
         verify(events, times(1)).save(any(TrafficIncidentEvent.class));
         verify(planningOutbox, times(1)).save(any());
+        verify(audit, times(1)).feedPoll(firstPoll.pollRunId(), "TRAFFIC_INCIDENT", demoRun,
+                firstPoll.completedAt(), "SUCCESS", true);
+        verify(audit, times(1)).disruptionTransition(any(), any(), eq(demoRun), eq(firstAt),
+                eq("TRAFFIC_INCIDENT"), eq("OPENED"), eq("ACTIVE"));
         assertThat(saved.isActive()).isTrue();
         assertThat(saved.absenceCount()).isZero();
         assertThat(saved.message()).isEqualTo("blocked lane");
@@ -168,7 +174,7 @@ class TrafficIncidentSyncServiceTest {
 
     private TrafficIncidentSyncService serviceAt(Instant instant) {
         return new TrafficIncidentSyncService(checkpoints, states, events, evidence, disruptions, planningOutbox,
-                planningSubmissions, evidenceCodec, Clock.fixed(instant, ZoneOffset.UTC));
+                planningSubmissions, evidenceCodec, Clock.fixed(instant, ZoneOffset.UTC), audit);
     }
 
     private TrafficIncidentPollPort.TrafficIncidentPoll poll(UUID id, Instant completedAt, String classification,

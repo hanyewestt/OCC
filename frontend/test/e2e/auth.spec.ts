@@ -103,6 +103,16 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
   await context.route('**/api/v1/disruption/traffic-incidents?*', route => route.fulfill({ json: {
     items: [], page: 0, size: 100, totalItems: 0, totalPages: 0,
   } }))
+  await context.route('**/api/v1/ingestion/captains?*', route => route.fulfill({ json: {
+    items: [], page: 0, size: 100, totalItems: 0, totalPages: 0,
+  } }))
+  await context.route('**/api/v1/ingestion/admin/audit-events?*', route => route.fulfill({ json: {
+    items: [], page: 0, size: 20, totalItems: 0, totalPages: 0, retentionSeconds: 7_776_000,
+    collectionStartedAt: '2026-01-01T00:00:00Z',
+  } }))
+  await context.route('**/api/v1/ingestion/admin/users?*', route => route.fulfill({ json: {
+    items: [], page: 0, size: 20, totalItems: 0, totalPages: 0, directorySynchronizedAt: null,
+  } }))
   for (const endpoint of ['planning/advisories', 'planning/advisory-groups', 'planning/instructions', 'planning/notices', 'planning/diagnoses/hazard-requests', 'planning/diagnoses/hazard-history', 'planning/diagnoses/controller-suggestions', 'planning/ai-audit-records', 'planning/captain/instructions']) {
     await context.route(`**/api/v1/${endpoint}?*`, route => route.fulfill({ json: { items: [], page: 0, size: 100, totalItems: 0, totalPages: 0 } }))
   }
@@ -128,7 +138,7 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
       return route.fulfill({ status: 503 })
     }
     const page = url.pathname.split('/').pop()
-    if (page !== 'session' && !((page === 'controller' && role === 'CONTROLLER') || (page === 'captain' && role === 'CAPTAIN'))) {
+    if (page !== 'session' && !((page === 'controller' && role === 'CONTROLLER') || (page === 'captain' && role === 'CAPTAIN') || (page === 'admin' && role === 'ADMIN'))) {
       return route.fulfill({ status: 403 })
     }
     return route.fulfill({ json: { subject: userId,
@@ -752,6 +762,16 @@ test('controller switches the shared backend mode from the dashboard without lea
   let active = false
   let starts = 0
   let closes = 0
+  const captainIds = ['10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000003', '10000000-0000-4000-8000-000000000004']
+  const captains = captainIds.map((id, index) => ({ id, displayName: `Captain ${index + 1}`, email: `captain${index + 1}@example.com`, role: 'CAPTAIN', available: true, createdAt: '2026-10-22T01:00:00Z', lastSignInAt: null, synchronizedAt: '2026-10-22T01:00:00Z', currentAssignment: index === 0 ? { demoRunId: 'run-1', busId: 'bus-1', vehicleRegistrationNumber: 'SG1001A', serviceId: '190', directionId: 1 } : null }))
+  await context.route('**/api/v1/ingestion/captains?*', route => {
+    const url = new URL(route.request().url())
+    const available = url.searchParams.get('available') === 'true'
+    const search = url.searchParams.get('search')?.toLowerCase() ?? ''
+    const items = captains.filter(person => (!available || person.available) &&
+      (!search || person.displayName.toLowerCase().includes(search) || person.email.includes(search)))
+    return route.fulfill({ json: { items, page: Number(url.searchParams.get('page') ?? 0), size: Number(url.searchParams.get('size') ?? 20), totalItems: items.length, totalPages: items.length ? 1 : 0, directorySynchronizedAt: '2026-10-22T01:00:00Z' } })
+  })
   await context.route('**/api/v1/demo-runs/active', route => active ? route.fulfill({ json: simulation }) : route.fulfill({ status: 204 }))
   await context.route('**/api/v1/demo-runs', route => {
     expect(route.request().method()).toBe('POST')
@@ -774,8 +794,9 @@ test('controller switches the shared backend mode from the dashboard without lea
   await login(page)
   await page.getByRole('button', { name: 'Start simulation', exact: true }).click()
   await page.getByLabel('Buses in this injection').fill('4')
-  for (const [index, userId] of ['10000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000003', '10000000-0000-4000-8000-000000000004'].entries()) {
-    await page.getByLabel(`Bus ${index + 1} captain user ID`).fill(userId)
+  await page.getByLabel('Search available captains').fill('Captain')
+  for (let index = 0; index < captainIds.length; index++) {
+    await page.getByLabel(`Bus ${index + 1} captain`).selectOption(captainIds[index])
   }
   await page.getByRole('dialog').getByRole('button', { name: 'Start simulation', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Return to live', exact: true })).toBeEnabled()
@@ -790,6 +811,10 @@ test('controller switches the shared backend mode from the dashboard without lea
   await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toHaveCount(0)
   await expect(page).toHaveURL(/\/controller\/planning/)
   expect(starts).toBe(1); expect(closes).toBe(1)
+  await page.getByRole('link', { name: 'Captains', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Captains', exact: true })).toBeVisible()
+  await expect(page.getByRole('cell', { name: 'captain1@example.com' })).toBeVisible()
+  await expect(page.getByRole('cell', { name: 'SG1001A' })).toBeVisible()
 })
 
 test('failed mode changes keep the verified mode and show a useful error', async ({ page, context }) => {
@@ -890,8 +915,7 @@ test('controller reviews an outcome for every bus in a four-bus group', async ({
   await editor.getByLabel('Seconds').nth(0).fill('60')
   await editor.getByLabel('Action for BUS-3').selectOption('SKIP_STOP')
   await expect(editor.getByLabel('Seconds').nth(2)).toBeDisabled()
-  await editor.getByLabel('Reason no instruction is needed').nth(0).fill('')
-  await editor.getByLabel('Reason no instruction is needed').nth(1).fill('')
+  for (const reason of await editor.getByLabel('Reason no instruction is needed').all()) await reason.fill('')
   await editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true }).click()
   await expect(editor.getByRole('alert')).toContainText('Enter a reason for each bus with no instruction')
   await editor.getByLabel('Reason no instruction is needed').nth(0).fill('Already spaced')
@@ -1113,6 +1137,7 @@ test('recommendation editor keeps edits on API failure and cannot close or submi
 
 test('saving pauses polling and reconciles the decision after the response', async ({ page, context }) => {
   await page.clock.install()
+  await page.clock.pauseAt(new Date(Date.now() + 1000))
   await mockDashboard(context)
   let saving = false
   let pollsWhileSaving = 0
@@ -1326,6 +1351,10 @@ test('recommendation editor closes when the active simulation run changes', asyn
     controllerRefreshIntervalSeconds: 1, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20, captainRefreshIntervalSeconds: 5, publicNoticeRefreshIntervalSeconds: 30,
   } }))
   let runId = 'run-1'
+  await context.route('**/api/v1/demo-runs/run-2/route-positions', route => route.fulfill({ json: {
+    serviceId: '190', computedAt: '2026-10-23T04:00:00Z', refreshIntervalSeconds: 60,
+    maxSourceAgeSeconds: 120, directions: [],
+  } }))
   let signalNewRun!: () => void
   const newRunLoaded = new Promise<void>(resolve => { signalNewRun = resolve })
   await context.route('**/api/v1/demo-runs/active', route => {
@@ -1482,7 +1511,7 @@ for (const [role, destination, title, other] of [
   })
 }
 
-for (const role of ['ADMIN', 'UNASSIGNED', 'DRIVER']) {
+for (const role of ['UNASSIGNED', 'DRIVER']) {
   test(`${role} receives no role page`, async ({ page, context }) => {
     await mockAuth(context, role)
     await login(page)
@@ -1877,9 +1906,9 @@ test('controller manages public notices on a dedicated page below planning', asy
   await expect(page.getByRole('link', { name: 'Public notice board', exact: true })).toHaveCount(0)
   expect(noticeReads).toBe(0)
   const navigation = page.getByRole('navigation', { name: 'Controller navigation' })
-  await expect(navigation.getByRole('link')).toHaveCount(5)
+  await expect(navigation.getByRole('link')).toHaveCount(6)
   expect(await navigation.getByRole('link').evaluateAll(links => links.map(link => link.getAttribute('href'))))
-    .toEqual(['/controller', '/controller/disruptions', '/controller/planning', '/controller/notices', '/controller/audit'])
+    .toEqual(['/controller', '/controller/disruptions', '/controller/planning', '/controller/notices', '/controller/captains', '/controller/audit'])
   await page.getByRole('link', { name: 'Public notices', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Public notices', level: 1, exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Public notices', exact: true })).toHaveAttribute('aria-current', 'page')
@@ -3022,3 +3051,29 @@ for (const size of [{ width: 1280, height: 720 }, { width: 800, height: 480 }]) 
   })
 }
 
+
+
+test('admin home is verified and cannot override controller or captain pages', async ({ page, context }) => {
+  await mockAuth(context, 'ADMIN')
+  await login(page)
+  await expect(page).toHaveURL(/\/admin\/audit$/)
+  await expect(page.getByRole('heading', { name: 'Audit', exact: true })).toBeVisible()
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Audit', exact: true })).toBeVisible()
+  for (const path of ['/controller', '/captain']) {
+    await page.goto(path)
+    await expect(page.getByRole('heading', { name: 'Access denied' })).toBeVisible()
+  }
+  await page.goto('/admin/accounts')
+  await expect(page.getByText('Account directory', { exact: true })).toBeVisible()
+})
+
+for (const role of ['CONTROLLER', 'CAPTAIN']) {
+  test(`${role} cannot open admin home`, async ({ page, context }) => {
+    await mockAuth(context, role)
+    await login(page)
+    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
+    await page.goto('/admin')
+    await expect(page.getByRole('heading', { name: 'Access denied' })).toBeVisible()
+  })
+}
