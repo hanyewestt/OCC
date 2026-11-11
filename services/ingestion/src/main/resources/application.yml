@@ -43,6 +43,15 @@ springdoc:
     version: OPENAPI_3_1
 
 occ:
+  audit:
+    retention: ${OCC_AUDIT_RETENTION:90d}
+  identity:
+    enabled: ${OCC_IDENTITY_ENABLED:true}
+    project-url: ${SUPABASE_PROJECT_URL:}
+    secret-key-file: ${OCC_IDENTITY_SECRET_KEY_FILE:}
+    secret-key: ${OCC_IDENTITY_SECRET_KEY:}
+    timeout: ${OCC_IDENTITY_TIMEOUT:5s}
+    directory-interval: ${OCC_IDENTITY_DIRECTORY_INTERVAL:5m}
   frontend:
     project-url: ${occ.security.supabase.project-url}
     publishable-key: ${SUPABASE_SB_PUBLISHABLE:}

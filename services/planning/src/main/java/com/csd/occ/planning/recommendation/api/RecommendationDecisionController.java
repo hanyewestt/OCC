@@ -18,6 +18,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.core.Authentication;
+import com.csd.occ.planning.advisory.api.PlanningActorResolver;
+import com.csd.occ.planning.advisory.domain.PlanningActor;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -54,11 +57,12 @@ public class RecommendationDecisionController {
     public RecommendationDecisionResponse decide(
             @PathVariable UUID recommendationId,
             @Valid @RequestBody RecommendationDecisionRequest request,
-            @AuthenticationPrincipal Jwt jwt) {
+            @AuthenticationPrincipal Jwt jwt, Authentication authentication) {
+        PlanningActor actor = PlanningActorResolver.from(jwt, authentication);
         try {
             var decision = request.action() == com.csd.occ.planning.recommendation.domain.RecommendationDecisionAction.REJECTED
-                    ? issueReplacement(recommendationId, jwt.getSubject(), request)
-                    : issueApproval(recommendationId, jwt.getSubject());
+                    ? issueReplacement(recommendationId, actor, request)
+                    : issueApproval(recommendationId, actor);
             metrics.counter("occ.planning.recommendation.decision", "action", request.action().name(),
                     "result", "accepted_or_replayed").increment();
             log.info("Recommendation decision recorded: recommendationId={} action={}",
@@ -72,7 +76,7 @@ public class RecommendationDecisionController {
     }
 
     private com.csd.occ.planning.recommendation.domain.RecommendationDecision issueReplacement(
-            UUID recommendationId, String actor, RecommendationDecisionRequest request) {
+            UUID recommendationId, PlanningActor actor, RecommendationDecisionRequest request) {
         var replacements = request.normalizedReplacements().stream()
                 .map(item -> new BunchingInstructionService.ReplacementBusInstruction(item.busReference(),
                         item.action().mitigationType(), item.adjustmentSeconds() == null ? 0 : item.adjustmentSeconds(),
@@ -81,7 +85,7 @@ public class RecommendationDecisionController {
         return decisions.findDecision(recommendationId).orElseThrow();
     }
 
-    private com.csd.occ.planning.recommendation.domain.RecommendationDecision issueApproval(UUID recommendationId, String actor) {
+    private com.csd.occ.planning.recommendation.domain.RecommendationDecision issueApproval(UUID recommendationId, PlanningActor actor) {
         instructions.approveSuggestedAndIssue(recommendationId, actor);
         return decisions.findDecision(recommendationId).orElseThrow();
     }

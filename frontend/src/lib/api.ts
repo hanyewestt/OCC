@@ -1,5 +1,15 @@
 export type Identity = { subject: string; role: 'CONTROLLER' | 'CAPTAIN' | 'ADMIN' | 'UNASSIGNED' }
 
+export type DirectoryAssignment = { demoRunId: string; busId: string; vehicleRegistrationNumber: string; serviceId: string; directionId: number }
+export type DirectoryUser = { id: string; displayName?: string | null; name?: string | null; email: string; role: string; available: boolean; createdAt: string; lastSignInAt: string | null; synchronizedAt: string; currentAssignment: DirectoryAssignment | null }
+export type DirectoryPage = { items: DirectoryUser[]; page: number; size: number; totalItems: number; totalPages: number; directorySynchronizedAt: string | null }
+export type AuditEvent = { id: string; occurredAt: string; category: string; eventType: string; outcome: string; sourceService: string; actorSubject: string | null; actorType: string | null; entityType: string | null; entityId: string | null; runId: string | null; busId: string | null; captainId: string | null; summary: string | null; backfilled: boolean }
+export type AuditDetail = AuditEvent & { recordedAt: string; correlationId: string | null; details: Record<string, unknown> }
+export type ProvisioningOperation = { id: string; status: string; email: string; displayName: string; role: string; failureCode: string | null; result: DirectoryUser | null }
+
+export function newIdempotencyKey(): string { return crypto.randomUUID() }
+export function ingestionAdminPath(path: string): string { return `/api/v1/ingestion/${path.replace(/^\//, '')}` }
+
 export type InstructionType = 'BE_CAUTIOUS' | 'REDUCE_SPEED' | 'SLOW_DOWN_NEAR_STOPS' | 'HOLD' | 'DWELL_ADJUSTMENT' | 'SKIP_STOP'
 export type InstructionParameters = { stopCode: string | null; stopName: string | null; stopSequence: number | null;
   subsequentStopCount: number | null; speedReductionKmh: number | null; durationSeconds: number | null }
@@ -17,7 +27,7 @@ export type ManagedNotice = PublicNotice & { disruptionId: string; demoRunId: st
 export type NoticeSuggestion = { title: string; message: string; services: string[]; locations: string[]; generator: string }
 
 export class ApiError extends Error {
-  constructor(public status: number, detail?: string) {
+  constructor(public status: number, detail?: string, public extensions: Record<string, unknown> = {}) {
     super(status === 401 ? 'Your session has expired. Sign in again.' :
       status === 403 ? 'Access is not available for this role.' : detail ?? 'Unable to load or save this data. Try again.')
   }
@@ -39,7 +49,7 @@ export async function identityRequest(path: string, token: string, signal: Abort
 }
 
 export function homeFor(role: Identity['role']): string | null {
-  return role === 'CONTROLLER' ? '/controller' : role === 'CAPTAIN' ? '/captain' : null
+  return role === 'ADMIN' ? '/admin' : role === 'CONTROLLER' ? '/controller' : role === 'CAPTAIN' ? '/captain' : null
 }
 
 export type HazardFeedHealth = { kind: string; source: string; scope: string; classification: string; demoRunId: string | null;
@@ -176,18 +186,19 @@ export type PacingGap = { headwaySeconds: number; state: 'TOO_CLOSE' | 'ON_TARGE
 // All dashboard requests stay on the same origin. Null represents a documented
 // empty response, never a failed request or an assumed count of zero.
 export async function apiRequest<T>(path: string, token: string | undefined, signal: AbortSignal,
-  options?: { method: 'POST'; body?: unknown }): Promise<T | null> {
+  options?: { method: 'POST' | 'PUT'; body?: unknown; headers?: Record<string, string> }): Promise<T | null> {
   if (!path.startsWith('/api/v1/')) throw new Error('Invalid API request.')
   if (!token && !path.startsWith('/api/v1/planning/public/notices')) throw new Error('Authentication required.')
   const response = await fetch(path, {
     method: options?.method ?? 'GET',
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(options?.body ? { 'Content-Type': 'application/json' } : {}) },
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(options?.body ? { 'Content-Type': 'application/json' } : {}), ...options?.headers },
     body: options?.body ? JSON.stringify(options.body) : undefined,
     cache: 'no-store', redirect: 'error', signal,
   })
   if (!response.ok) {
-    const problem = await response.json().catch(() => null) as { detail?: string } | null
-    throw new ApiError(response.status, typeof problem?.detail === 'string' ? problem.detail : undefined)
+    const problem = await response.json().catch(() => null) as Record<string, unknown> | null
+    const { detail, ...extensions } = problem ?? {}
+    throw new ApiError(response.status, typeof detail === 'string' ? detail : undefined, extensions)
   }
   return response.status === 204 ? null : await response.json() as T
 }

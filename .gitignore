@@ -23,6 +23,7 @@
 hs_err_pid*
 replay_pid*
 infra/local/.env
+infra/secrets/
 
 # Local Gradle and IDE files
 **/.gradle/
@@ -48,8 +49,6 @@ docs/*
 !docs/AUTHENTICATION.md
 !docs/TESTING.md
 !docs/DEVELOPMENT.md
-!docs/PERFORMANCE.md
-!docs/performance-memory-results.json
 !docs/frontend-convention.md
 
 

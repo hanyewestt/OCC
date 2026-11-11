@@ -69,11 +69,16 @@
     location = / { try_files /index.html =404; }
     location = /index.html { try_files $uri =404; }
     location = /login { try_files /index.html =404; }
+    location = /admin { try_files /index.html =404; }
+    location = /admin/audit { try_files /index.html =404; }
+    location = /admin/accounts { try_files /index.html =404; }
+    location = /admin/accounts/new { try_files /index.html =404; }
     location = /controller { try_files /index.html =404; }
     location = /controller/disruptions { try_files /index.html =404; }
     location = /controller/planning { try_files /index.html =404; }
     location = /controller/notices { try_files /index.html =404; }
     location = /controller/audit { try_files /index.html =404; }
+    location = /controller/captains { try_files /index.html =404; }
     location = /captain { try_files /index.html =404; }
     location = /notices { try_files /index.html =404; }
     location = /401 { try_files /index.html =404; }

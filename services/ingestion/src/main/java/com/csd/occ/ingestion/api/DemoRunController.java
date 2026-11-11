@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.core.Authentication;
 
 @RestController
 @RequestMapping(value = "/api/v1/demo-runs", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -40,13 +41,13 @@ public class DemoRunController {
             @ApiResponse(responseCode = "409", description = "A demo run is already active"),
             @ApiResponse(responseCode = "503", description = "Bunching control is unavailable")})
     public DemoRunResponse start(@Valid @RequestBody(required = false) StartDemoRunRequest request,
-                                 org.springframework.validation.BindingResult bindingResult)
+                                 org.springframework.validation.BindingResult bindingResult, Authentication authentication)
             throws org.springframework.validation.BindException {
-        if (request == null || request.isEmpty()) return response(runs.start());
+        if (request == null || request.isEmpty()) return response(runs.start(authentication.getName()));
         if (bindingResult.hasErrors()) {
             throw new org.springframework.validation.BindException(bindingResult);
         }
-        return response(runs.start(request.configuration()));
+        return response(runs.start(request.configuration(), authentication.getName()));
     }
 
     @GetMapping("/active")
@@ -82,7 +83,7 @@ public class DemoRunController {
     @ApiResponses({@ApiResponse(responseCode = "200", description = "Run closed and live consumption resumed"),
             @ApiResponse(responseCode = "404", description = "Demo run not found"),
             @ApiResponse(responseCode = "503", description = "Bunching control is unavailable")})
-    public DemoRunResponse close(@PathVariable UUID id) { return response(runs.close(id)); }
+    public DemoRunResponse close(@PathVariable UUID id, Authentication authentication) { return response(runs.close(id, authentication.getName())); }
 
     private static DemoRunResponse response(DemoRunDetails run) {
         var configuration = run.configuration();
