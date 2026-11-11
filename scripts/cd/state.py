@@ -103,3 +103,21 @@ def verified_manifest(bucket: str, reference: dict, region: str) -> dict:
     if any(manifest.get(key) != reference[key] for key in ("releaseId", "revision")):
         raise StateError("InvalidReference", "manifest identity does not match the pointer")
     return manifest
+
+
+def initialize_control(bucket: str, region: str) -> None:
+    """Bootstrap pauses only a new environment; never overwrite operator intent."""
+    current = read_json(bucket, "state/control.json", region)
+    if current["value"] is None:
+        compare_and_set_json(bucket, "state/control.json",
+                             {"desiredMode": "paused", "phase": "uninitialized", "result": None},
+                             None, region)
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Initialize a new environment paused, without overwriting existing control")
+    parser.add_argument("--bucket", required=True)
+    parser.add_argument("--region", required=True)
+    args = parser.parse_args()
+    initialize_control(args.bucket, args.region)

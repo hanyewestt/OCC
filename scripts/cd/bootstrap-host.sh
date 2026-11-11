@@ -14,7 +14,7 @@
 
 set -eu
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 OCC_DATA_VOLUME_ID="${OCC_DATA_VOLUME_ID:?set OCC_DATA_VOLUME_ID from the stack output}"
 DATA_DEVICE=$(python3 "$SCRIPT_DIR/volume.py" resolve "$OCC_DATA_VOLUME_ID")
 DATA_MOUNT_POINT=/var/lib/postgresql
@@ -23,6 +23,8 @@ ENV_DIR=/opt/occ
 
 [ -b "$DATA_DEVICE" ] || { echo "error: designated EBS device is absent" >&2; exit 1; }
 # The authoritative filesystem UUID survives root-disk replacement on the EBS tag.
+# JMESPath uses literal backticks, not shell substitution.
+# shellcheck disable=SC2016
 EXPECTED_UUID=$(aws ec2 describe-volumes --volume-ids "$OCC_DATA_VOLUME_ID" \
     --query 'Volumes[0].Tags[?Key==`occ:filesystem-uuid`].Value | [0]' --output text)
 [ "$EXPECTED_UUID" != "None" ] || EXPECTED_UUID=""
@@ -161,5 +163,38 @@ chmod 0600 "$ENV_DIR/runtime/nginx-gate/gate-token"
 
 echo "Logging in to ECR..."
 aws ecr get-login-password | docker login --username AWS --password-stdin "${OCC_ACCOUNT_ID:?set OCC_ACCOUNT_ID}.dkr.ecr.${OCC_REGION:?set OCC_REGION}.amazonaws.com"
+
+# A local timer never starts EC2. Explicit resume catches missed backups too.
+mkdir -p /opt/occ/state /opt/occ/backups
+cat > /etc/occ/backup-run.sh <<'SH'
+#!/bin/sh
+set -eu
+[ -f /opt/occ/state/active-release.json ] || exit 0
+. /opt/occ/env.rendered
+release=$(python3 -c 'import json; print(json.load(open("/opt/occ/state/active-release.json"))["releaseId"])')
+exec python3 "/opt/occ/releases/$release/bundle/scripts/backup.py" overdue
+SH
+chmod 0700 /etc/occ/backup-run.sh
+cat > /etc/systemd/system/occ-backup.service <<'UNIT'
+[Unit]
+Description=OCC daily database backup
+After=docker.service var-lib-postgresql.mount
+RequiresMountsFor=/var/lib/postgresql
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/usr/bin/flock -w 60 /opt/occ/state/deploy.lock /bin/sh /etc/occ/backup-run.sh
+UNIT
+cat > /etc/systemd/system/occ-backup.timer <<'UNIT'
+[Unit]
+Description=Back up OCC daily while the host runs
+[Timer]
+OnCalendar=daily
+Persistent=true
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now occ-backup.timer
 
 echo "Host bootstrap complete."

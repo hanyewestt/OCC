@@ -229,6 +229,39 @@ sample in [PERFORMANCE.md](PERFORMANCE.md) is not capacity evidence.
 
 ## Cleanup and security refresh
 
+Database backups use `scripts/cd/backup.sh backup|overdue|restore <key>`.
+The daily `occ-backup.timer` runs only on a running host; it cannot wake EC2.
+Explicit resume checks for a successful backup within the last 24 hours before
+setup or application writers start. `OCC_BACKUP_RETAIN` defaults to seven.
+Local `backups/status.json` records attempts, the latest successful key/checksum
+and failures, including retention failures; inspect it and
+`journalctl -u occ-backup.service` when a timer fails.
+
+An archive contains a consistent custom-format PostgreSQL dump, role definitions
+without passwords, and checksums. It preserves ownership, grants, default ACLs
+and migration history. Uploads are create-only with S3 SHA-256 checksums and the
+bucket's KMS encryption. Structured paginated listings retain the newest seven
+current backups; local archives are bounded too. Retired versions expire after
+seven days and expired delete markers are removed by the bucket lifecycle.
+Failed uploads are removed locally; failures never delete the new successful
+backup. Older `.sql.gz` archives are preserved for manual inspection and are
+not accepted as this verified archive format.
+
+Restore drills use a uniquely created PostGIS container on `--network none`,
+with no host data mount or published ports. Roles load before the custom dump;
+the target is created from `template0`, avoiding PostGIS schema collisions.
+Temporary dump/role files and the owned container are removed on all normal
+failure paths. Role passwords must be reinjected/rotated before any recovered
+database serves applications. The command performs an isolated drill; it does
+not replace production data.
+
+Release/application rollback is separate from database restore. The remote
+driver selects a pinned current/previous reference under durable operation
+ownership. A changed setup fingerprint requires reviewed compatibility evidence
+covering the actual baseline and exact setup-input range in the candidate's
+original immutable manifest. A rollback never rewrites an old manifest to grant
+itself permission or reruns setup against the newer database.
+
 Release cleanup retains the active, previous and any queued/paused release
 references and the newest database backups; disk or cleanup failures are
 reported and can never erase retained data. A security refresh (base image
@@ -258,6 +291,6 @@ timeout (120s) is set above the measured local heartbeat gap, and real
 CloudFront rollout evidence for long-lived streams remains a
 deployment-time check.
 
-Actual provisioning requires verified AWS permissions, current cost review
-and explicit authorization; nothing in this repository creates cloud
-resources on its own.
+Actual provisioning requires verified AWS permissions, quota preflight and a
+reviewed change set. Cost qualification is excluded from the current remediation
+acceptance at the user's request.

@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      refresh:
+        type: string
+        default: none
 
 permissions:
   contents: read
@@ -30,6 +34,23 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install CD test dependencies
+        run: python -m pip install -r tests/cd/requirements.txt
+      - name: Verify CD contracts on Linux
+        if: runner.os == 'Linux'
+        run: python -m unittest discover -s tests/cd -p "test_*.py"
+      - name: Exercise real PostGIS restore and OCI transfer on Linux
+        if: runner.os == 'Linux'
+        run: python tests/cd/host_integration.py all
+      - name: Verify portable CD contracts on Windows
+        if: runner.os == 'Windows'
+        # Shell/container host checks run on Linux above; Windows exercises the
+        # real PowerShell bootstrap CLI plus pure release/state/volume policy.
+        run: |
+          python -m unittest discover -s tests/cd -p test_bootstrap_cli.py
+          python -m unittest discover -s tests/cd -p test_release.py
+          python -m unittest discover -s tests/cd -p test_state.py
+          python -m unittest discover -s tests/cd -p test_volume.py
       - name: Verify launchers and setup failure handling without live resources
         run: python -m unittest discover -s tests/system -p "test_*.py"
 
@@ -239,11 +260,41 @@ jobs:
     name: Package and save verified release images
     runs-on: ubuntu-24.04
     needs: [verify, frontend]
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      OCC_REGION: ${{ vars.OCC_REGION }}
+      OCC_RELEASE_BUCKET: ${{ vars.OCC_RELEASE_BUCKET }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Assume read-only verification role on trusted main
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.OCC_VERIFY_ROLE_ARN }}
+          aws-region: ${{ vars.OCC_REGION }}
+      - name: Snapshot the candidate plan before integration testing
+        env:
+          REFRESH_MODE: ${{ inputs.refresh || 'none' }}
+        run: |
+          set -euo pipefail
+          trusted=()
+          if [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_EVENT_NAME" != pull_request ]]; then
+            trusted=(--trusted)
+          fi
+          python3 scripts/cd/pipeline.py plan --directory "$RUNNER_TEMP"             --refresh "$REFRESH_MODE" "${trusted[@]}"
+      - name: Restore component build caches
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/cache-*
+          key: oci-amd64-${{ runner.os }}-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: oci-amd64-${{ runner.os }}-
       - name: Download the verified build artifacts
         env:
           GH_TOKEN: ${{ github.token }}
@@ -258,7 +309,7 @@ jobs:
       - name: Verify the artifact bundle against this run and SHA
         run: >-
           python3 scripts/cd/stage.py verify-bundle --bundle "$RUNNER_TEMP/bundle"
-          --revision "$GITHUB_SHA" --max-age-hours 24
+          --revision "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --max-age-hours 24
       - name: Stage narrow build contexts
         run: |
           python3 scripts/cd/stage.py runtime-context --bundle "$RUNNER_TEMP/bundle" \
@@ -269,28 +320,18 @@ jobs:
             --service planning --output "$RUNNER_TEMP/context-planning"
           python3 scripts/cd/stage.py web-context --bundle "$RUNNER_TEMP/bundle" \
             --output "$RUNNER_TEMP/context-web"
-      - name: Build release images from staged contexts
-        run: |
-          docker build --pull --file infra/java-runtime.Dockerfile \
-            --build-arg OCC_SERVICE_INTERNAL_PORT=8001 \
-            --tag occ-ingestion:ci "$RUNNER_TEMP/context-ingestion"
-          docker build --pull --file infra/java-runtime.Dockerfile \
-            --build-arg OCC_SERVICE_INTERNAL_PORT=8002 \
-            --tag occ-disruption:ci "$RUNNER_TEMP/context-disruption"
-          docker build --pull --file infra/java-runtime.Dockerfile \
-            --build-arg OCC_SERVICE_INTERNAL_PORT=8003 \
-            --tag occ-planning:ci "$RUNNER_TEMP/context-planning"
-          docker build --pull --file infra/web.Dockerfile \
-            --tag occ-web:ci "$RUNNER_TEMP/context-web"
-          docker build --pull --file infra/flyway.Dockerfile --tag occ-db-setup:ci .
-      - name: Save digest-preserving image archives with recorded IDs
+      - name: Package changed owners and import the complete candidate
         run: |
           set -euo pipefail
-          for component in ingestion disruption planning db-setup web; do
-            docker save "occ-${component}:ci" -o "$RUNNER_TEMP/occ-image-${component}.tar"
-            docker image inspect --format '{{.Id}}' "occ-${component}:ci" \
-              > "$RUNNER_TEMP/occ-image-${component}.id"
-          done
+          docker buildx create --use --driver docker-container
+          python3 scripts/cd/pipeline.py package --directory "$RUNNER_TEMP"
+      - name: Upload the frozen run-bound candidate plan
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: occ-candidate
+          path: ${{ runner.temp }}/candidate.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Upload the ingestion image archive
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -298,6 +339,7 @@ jobs:
           path: |
             ${{ runner.temp }}/occ-image-ingestion.tar
             ${{ runner.temp }}/occ-image-ingestion.id
+            ${{ runner.temp }}/occ-image-ingestion.oci.tar
           if-no-files-found: error
           retention-days: 7
       - name: Upload the disruption image archive
@@ -307,6 +349,7 @@ jobs:
           path: |
             ${{ runner.temp }}/occ-image-disruption.tar
             ${{ runner.temp }}/occ-image-disruption.id
+            ${{ runner.temp }}/occ-image-disruption.oci.tar
           if-no-files-found: error
           retention-days: 7
       - name: Upload the planning image archive
@@ -316,6 +359,7 @@ jobs:
           path: |
             ${{ runner.temp }}/occ-image-planning.tar
             ${{ runner.temp }}/occ-image-planning.id
+            ${{ runner.temp }}/occ-image-planning.oci.tar
           if-no-files-found: error
           retention-days: 7
       - name: Upload the db-setup image archive
@@ -325,6 +369,7 @@ jobs:
           path: |
             ${{ runner.temp }}/occ-image-db-setup.tar
             ${{ runner.temp }}/occ-image-db-setup.id
+            ${{ runner.temp }}/occ-image-db-setup.oci.tar
           if-no-files-found: error
           retention-days: 7
       - name: Upload the web image archive
@@ -334,6 +379,7 @@ jobs:
           path: |
             ${{ runner.temp }}/occ-image-web.tar
             ${{ runner.temp }}/occ-image-web.id
+            ${{ runner.temp }}/occ-image-web.oci.tar
           if-no-files-found: error
           retention-days: 7
 
@@ -530,6 +576,14 @@ jobs:
       suite: contracts
       artifact-run-id: ${{ github.run_id }}
 
+  candidate-workflows:
+    name: Candidate workflows and recovery
+    needs: package-images
+    uses: ./.github/workflows/system-verification.yml
+    with:
+      suite: extended
+      artifact-run-id: ${{ github.run_id }}
+
   container-scan:
     name: Scan packaged ${{ matrix.service }} image
     runs-on: ubuntu-24.04
@@ -542,6 +596,7 @@ jobs:
           - service: disruption
           - service: planning
           - service: db-setup
+          - service: web
     steps:
       - name: Download the packaged image artifact
         env:

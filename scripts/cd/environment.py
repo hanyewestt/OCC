@@ -136,7 +136,7 @@ def do_start(region, instance_id, bucket, operation_id):
         operation = dict(operation, reference=reference)
         remote._save_operation(bucket, region, operation)
         remote.dispatch_operation(region, instance_id, bucket, operation,
-                                  remote.remote_command(bucket, reference, operation_id, region))
+                                  remote.remote_command(bucket, reference, operation_id, region, check_backup=True))
     except (RuntimeError, state.StateError) as error:
         latest = read_control(bucket, region)
         if (latest["value"] or {}).get("operationId") == operation_id:
@@ -155,7 +155,7 @@ def do_start(region, instance_id, bucket, operation_id):
 
 
 def do_status(region, instance_id, bucket, operation_id):
-    control = read_control(bucket, region)["value"] or {"desiredMode": "running", "phase": "idle"}
+    control = read_control(bucket, region)["value"] or {"desiredMode": "paused", "phase": "uninitialized"}
     print(f'desired mode: {control.get("desiredMode")}')
     print(f'instance state: {instance_state(region, instance_id)}')
     for label,key in (("published", "state/latest-published.json"), ("deployed", "state/last-deployed.json")):

@@ -37,7 +37,7 @@ def aws(arguments: list[str], region: str, check: bool = True, capture: bool = T
 
 def read_control_mode(bucket: str, region: str) -> str:
     control = state.read_json(bucket, "state/control.json", region)["value"]
-    mode = (control or {}).get("desiredMode", "running")
+    mode = (control or {}).get("desiredMode", "paused")
     if mode not in ("running", "paused"):
         raise RemoteError("invalid desiredMode in control state")
     return mode
@@ -145,7 +145,7 @@ def begin_operation(region: str, instance_id: str, bucket: str, operation_id: st
 
 
 def remote_command(bucket: str, reference: dict, operation_id: str, region: str,
-                   action: str = "apply") -> list[str]:
+                   action: str = "apply", *, check_backup: bool = False) -> list[str]:
     state.validate_reference(reference)
     # This trusted driver verifies downloaded bytes BEFORE executing bundled code.
     verifier = '''import hashlib,json,pathlib,subprocess,sys
@@ -177,6 +177,7 @@ for line in (bundle/'checksums.txt').read_text().splitlines():
         "export OCC_HOME=/opt/occ OCC_DATA_MOUNT=/var/lib/postgresql"
         " OCC_DEPLOYMENT_ENV=/opt/occ/env.rendered OCC_GATE_DIR=/opt/occ/runtime/nginx-gate"
         f" OCC_RELEASE_BUCKET={shlex.quote(bucket)} AWS_DEFAULT_REGION={shlex.quote(region)}"
+        f" OCC_CHECK_OVERDUE_BACKUP={'true' if check_backup else 'false'}"
         f" OCC_OPERATION_ID={shlex.quote(operation_id)} OCC_RELEASE_REFERENCE_FILE={shlex.quote(root + '/reference.json')}",
         "python3 -c " + shlex.quote(verifier) + " " + shlex.quote(bucket) + " " +
         shlex.quote(json.dumps(reference)) + " " + shlex.quote(root),

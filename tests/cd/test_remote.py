@@ -27,6 +27,12 @@ class DeployRemoteTests(unittest.TestCase):
         patch.object(remote.release, "is_ancestor", side_effect=lambda repo,a,b: b == "origin/main" or a <= b).start()
         patch.object(remote.time, "sleep").start()
         self.reference = self.cloud.publish()
+        self.cloud.seed("state/control.json", {"desiredMode": "running"})
+
+    def test_absent_control_defers_until_explicit_resume(self):
+        self.cloud.objects.pop("state/control.json")
+        self.assertEqual(remote.run_deploy("us-east-1", "i-test", "bucket", "rel-b", "deploy-1", 7), 0)
+        self.assertEqual(self.cloud.commands, [])
 
     def test_paused_mode_defers_without_remote_mutation(self):
         self.cloud.seed("state/control.json", {"desiredMode":"paused"})
@@ -104,14 +110,14 @@ class PipelineContractTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: false", text)
 
     def test_publish_verifies_ecr_digests_before_the_pointer(self):
-        text = CD_YML.read_text(encoding="utf-8")
-        describe_position = text.find("ecr describe-images")
-        pointer_position = text.rfind("state/latest-published.json")
-        self.assertGreater(describe_position, 0)
-        # The digest check happens in the release job; the published record
-        # is advanced afterwards in the publish job.
-        self.assertGreater(text.find("Advance the published manifest"), describe_position)
-        self.assertGreater(pointer_position, describe_position)
+        import yaml
+        jobs = yaml.safe_load(CD_YML.read_text())["jobs"]
+        self.assertEqual(jobs["scan"]["needs"], "release")
+        self.assertEqual(set(jobs["publish"]["needs"]), {"release", "scan"})
+        self.assertEqual(jobs["deploy"]["needs"], "publish")
+        pipeline = (ROOT/"scripts/cd/pipeline.py").read_text()
+        self.assertIn("if not available(reference, region)", pipeline)
+        self.assertIn("state.compare_and_set_json", pipeline)
 
     def test_docs_record_the_required_check_migration(self):
         testing = (ROOT / "docs" / "TESTING.md").read_text(encoding="utf-8")
@@ -125,27 +131,14 @@ class PipelineContractTests(unittest.TestCase):
             self.assertRegex(text, r"actions:\s*read", str(path.name))
 
     def test_publish_job_advances_the_full_manifest_not_a_bare_pointer(self):
-        text = CD_YML.read_text(encoding="utf-8")
-        manifest_position = text.find("new-manifest.json")
-        self.assertGreater(manifest_position, 0)
-        # The full manifest (with inputHashes and images) is built before the
-        # published record is written, and the candidate record is that
-        # manifest rather than a pointer-only shape.
-        self.assertGreater(manifest_position, text.find("release.py manifest"))
-        self.assertIn("published-manifest.json", text)
-        self.assertGreater(text.find("published-manifest.json"),
-                           text.find("release.py manifest"))
+        pipeline = (ROOT/"scripts/cd/pipeline.py").read_text()
+        self.assertIn("dict(manifest, **reference)", pipeline)
+        self.assertIn("state.verified_manifest", pipeline)
 
     def test_first_release_does_not_pass_an_empty_previous_record(self):
-        text = CD_YML.read_text(encoding="utf-8")
-        manifest_position = text.find("scripts/cd/release.py manifest")
-        self.assertGreater(manifest_position, 0)
-        window = text[max(0, manifest_position - 800):manifest_position]
-        # The download fallback is `{}` when nothing has been published yet;
-        # passing that as --previous makes build_manifest reject the first
-        # release for having no revision.
-        self.assertIn("previous_args", window)
-        self.assertIn('get("revision")', window)
+        pipeline = (ROOT/"scripts/cd/pipeline.py").read_text()
+        self.assertIn("previous = None", pipeline)
+        self.assertNotIn("except state.StateError", pipeline)
 
     def test_bootstrap_renders_the_env_path_the_remote_commands_source(self):
         bootstrap = (ROOT / "scripts" / "cd" / "bootstrap-host.sh").read_text(
@@ -161,28 +154,19 @@ class PipelineContractTests(unittest.TestCase):
             self.assertIn("OCC_DEPLOYMENT_ENV=/opt/occ/env.rendered", text, name)
 
     def test_release_bundle_carries_the_cloudfront_server_block(self):
-        text = CD_YML.read_text(encoding="utf-8")
-        # The web image bakes only the shared routes include; the overlay
-        # mounts the CloudFront server block from the bundle root.
-        self.assertIn("infra/nginx/cloudfront.conf.template", text)
-        self.assertIn("release-bundle/infra/nginx", text)
-        # The retained-volume bind mount ships with the bundle too.
-        self.assertIn("infra/compose.host-data.yaml", text)
+        pipeline = (ROOT/"scripts/cd/pipeline.py").read_text()
+        self.assertIn("infra/nginx/cloudfront.conf.template", pipeline)
+        self.assertIn("infra/compose.host-data.yaml", pipeline)
 
     def test_release_bundle_uploads_under_the_bundle_prefix(self):
-        text = CD_YML.read_text(encoding="utf-8")
-        # The host runs <release>/bundle/scripts/deploy.sh and validates
-        # <release>/bundle/manifest.json.
-        self.assertIn("releases/$release_id/bundle/", text)
+        pipeline = (ROOT/"scripts/cd/pipeline.py").read_text()
+        self.assertIn("prefix+'/bundle/'", pipeline)
+        self.assertIn("state.write_immutable", pipeline)
 
     def test_first_release_plan_uses_a_conservative_root_commit_base(self):
-        text = CD_YML.read_text(encoding="utf-8")
-        plan_position = text.find('scripts/cd/release.py "${args[@]}"')
-        self.assertGreater(plan_position, 0)
-        window = text[max(0, plan_position - 900):plan_position]
-        # Without a published record the planner still needs a baseline.
-        self.assertIn("--base", window)
-        self.assertIn("rev-list --max-parents=0", window)
+        pipeline = (ROOT/"scripts/cd/pipeline.py").read_text()
+        self.assertIn("'--max-parents=0'", pipeline)
+        self.assertIn("None, True, rebuild=True", pipeline)
 
     def test_recover_subcommand_is_documented(self):
         deployment = (ROOT / "docs" / "DEPLOYMENT.md").read_text(encoding="utf-8")

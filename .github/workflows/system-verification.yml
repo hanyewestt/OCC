@@ -43,6 +43,7 @@ jobs:
             gh run download "$ARTIFACT_RUN_ID" --repo "$GITHUB_REPOSITORY" \
               --name "occ-image-${component}" --dir "$RUNNER_TEMP/occ-candidates"
             docker load --input "$RUNNER_TEMP/occ-candidates/occ-image-${component}.tar"
+            test "$(docker image inspect --format '{{.Id}}' "occ-${component}:ci")" =               "$(cat "$RUNNER_TEMP/occ-candidates/occ-image-${component}.id")"
             docker tag "occ-${component}:ci" "occ-${component}:local"
           done
           gh run download "$ARTIFACT_RUN_ID" --repo "$GITHUB_REPOSITORY" \
@@ -144,6 +145,13 @@ jobs:
             -out "$RUNNER_TEMP/occ-edge-test.crt" \
             -subj "/CN=localhost"
           chmod 644 "$RUNNER_TEMP/occ-edge-test.key" "$RUNNER_TEMP/occ-edge-test.crt"
+          web_image=occ-web:ci
+          web_mounts=()
+          if [[ -z "$OCC_CANDIDATE_ARTIFACTS" ]]; then
+            web_image=nginx:1.30.6-alpine-slim@sha256:f65ed258206d1eb6c4eb6141111715a2cf94ac0a4ec9675fc2da186f7aadb163
+            web_mounts+=(--mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/routes.inc.template,target=/etc/nginx/templates/routes.inc.template,readonly"
+                         --mount "type=bind,source=$GITHUB_WORKSPACE/frontend/dist,target=/usr/share/nginx/html,readonly")
+          fi
           docker run --detach --name occ-edge-ci-nginx \
             --user 101:101 --read-only --security-opt no-new-privileges --cap-drop ALL \
             --tmpfs /etc/nginx/conf.d:uid=101,gid=101,mode=1777 \
@@ -163,13 +171,12 @@ jobs:
             --env OCC_NGINX_PROXY_CONNECT_TIMEOUT=5s \
             --env OCC_NGINX_PROXY_READ_TIMEOUT=30s \
             --env OCC_NGINX_PROXY_SEND_TIMEOUT=30s \
-            --mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/routes.inc.template,target=/etc/nginx/templates/routes.inc.template,readonly" \
-            --mount "type=bind,source=$GITHUB_WORKSPACE/frontend/dist,target=/usr/share/nginx/html,readonly" \
+            "${web_mounts[@]}" \
             --mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/default.conf.template,target=/etc/nginx/templates/default.conf.template,readonly" \
             --mount "type=bind,source=$RUNNER_TEMP/occ-edge-nginx.conf,target=/etc/nginx/nginx.conf,readonly" \
             --mount "type=bind,source=$RUNNER_TEMP/occ-edge-test.crt,target=/run/secrets/occ_tls_certificate,readonly" \
             --mount "type=bind,source=$RUNNER_TEMP/occ-edge-test.key,target=/run/secrets/occ_tls_private_key,readonly" \
-            nginx:1.30.6-alpine-slim@sha256:f65ed258206d1eb6c4eb6141111715a2cf94ac0a4ec9675fc2da186f7aadb163
+            "$web_image"
           for attempt in $(seq 1 30); do
             status=$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' \
               https://127.0.0.1:18443/_occ_edge_health || true)
@@ -266,6 +273,13 @@ jobs:
             > "$RUNNER_TEMP/occ-edge-gate/traffic-gate.inc"
           chmod 755 "$RUNNER_TEMP/occ-edge-gate"
           chmod 644 "$RUNNER_TEMP/occ-edge-gate/traffic-gate.inc"
+          web_image=occ-web:ci
+          web_mounts=()
+          if [[ -z "$OCC_CANDIDATE_ARTIFACTS" ]]; then
+            web_image=nginx:1.30.6-alpine-slim@sha256:f65ed258206d1eb6c4eb6141111715a2cf94ac0a4ec9675fc2da186f7aadb163
+            web_mounts+=(--mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/routes.inc.template,target=/etc/nginx/templates/routes.inc.template,readonly"
+                         --mount "type=bind,source=$GITHUB_WORKSPACE/frontend/dist,target=/usr/share/nginx/html,readonly")
+          fi
           docker run --detach --name occ-edge-ci-cfnginx \
             --user 101:101 --read-only --security-opt no-new-privileges --cap-drop ALL \
             --tmpfs /etc/nginx/conf.d:uid=101,gid=101,mode=1777 \
@@ -279,12 +293,11 @@ jobs:
             --env OCC_PLANNING_INTERNAL_URL=http://planning:8003 \
             --env OCC_NGINX_HTTP_INTERNAL_PORT=18080 \
             --env OCC_ORIGIN_SECRET=synthetic-origin-secret \
-            --mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/routes.inc.template,target=/etc/nginx/templates/routes.inc.template,readonly" \
+            "${web_mounts[@]}" \
             --mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/cloudfront.conf.template,target=/etc/nginx/templates/cloudfront.conf.template,readonly" \
-            --mount "type=bind,source=$GITHUB_WORKSPACE/frontend/dist,target=/usr/share/nginx/html,readonly" \
             --mount "type=bind,source=$RUNNER_TEMP/occ-edge-nginx.conf,target=/etc/nginx/nginx.conf,readonly" \
             --mount "type=bind,source=$RUNNER_TEMP/occ-edge-gate,target=/etc/nginx/gate,readonly" \
-            nginx:1.30.6-alpine-slim@sha256:f65ed258206d1eb6c4eb6141111715a2cf94ac0a4ec9675fc2da186f7aadb163
+            "$web_image"
           for attempt in $(seq 1 30); do
             status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
               --header 'X-OCC-Origin-Secret: synthetic-origin-secret' \
