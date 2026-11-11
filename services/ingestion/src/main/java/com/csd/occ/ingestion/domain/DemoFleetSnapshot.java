@@ -9,7 +9,7 @@ public record DemoFleetSnapshot(UUID demoRunId, String status, List<Vehicle> ite
                                 int page, int size) {
     public record Vehicle(String busId, String tripId, String registrationNumber, String serviceId,
                           int directionId, Optional<UUID> captainUserId, String assignmentStatus,
-                          Optional<Progress> progress) {}
+                          Optional<Progress> progress, long assignmentRevision) {}
     public record Progress(String stopCode, int stopSequence, Instant observedAt,
                            int assumedSpeedKmh, List<Integer> allowedSpeedReductionsKmh,
                            List<Integer> allowedDurationsSeconds) {}

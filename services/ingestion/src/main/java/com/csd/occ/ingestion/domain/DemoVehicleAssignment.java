@@ -1,5 +1,6 @@
 package com.csd.occ.ingestion.domain;
 import jakarta.persistence.EmbeddedId;
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
 
@@ -17,6 +18,8 @@ public class DemoVehicleAssignment {
     private String busId;
     // Null means this synthetic bus has no authenticated captain assignment.
     private java.util.UUID captainUserId;
+    @Column(name = "assignment_revision", nullable = false)
+    private long assignmentRevision;
     public DemoVehicleAssignment(DemoVehicleAssignmentId id, String registration, String operator,
                                  String vehicleType, String captain) {
         this(id, "190", 1, registration, operator, vehicleType, captain);
@@ -36,6 +39,13 @@ public class DemoVehicleAssignment {
     public DemoVehicleAssignmentId id() { return id; }
     public String busId() { return busId; }
     public java.util.Optional<java.util.UUID> captainUserId() { return java.util.Optional.ofNullable(captainUserId); }
+    public long assignmentRevision() { return assignmentRevision; }
+    public boolean assignCaptain(java.util.UUID captainId) {
+        if (java.util.Objects.equals(captainUserId, captainId)) return false;
+        captainUserId = captainId;
+        assignmentRevision++;
+        return true;
+    }
     public String serviceId() { return serviceId; }
     public int directionId() { return directionId; }
     public String operator() { return operator; }

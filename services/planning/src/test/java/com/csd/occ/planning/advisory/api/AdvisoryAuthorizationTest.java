@@ -199,8 +199,9 @@ class AdvisoryAuthorizationTest {
         String subject = UUID.randomUUID().toString();
         UUID id = UUID.randomUUID();
         var issued = instruction(id, UUID.fromString(subject));
-        when(instructions.captain(subject)).thenReturn(List.of(issued));
-        when(instructions.acknowledge(id, subject)).thenReturn(issued);
+        var captainActor = new PlanningActor(subject, PlanningActor.Role.CAPTAIN);
+        when(instructions.captain(captainActor)).thenReturn(List.of(issued));
+        when(instructions.acknowledge(id, captainActor)).thenReturn(issued);
         when(clock.instant()).thenReturn(Instant.parse("2026-10-25T02:00:00Z"));
         var principal = jwt().jwt(token -> token.subject(subject)).authorities(new SimpleGrantedAuthority("ROLE_CAPTAIN"));
         var page = mvc.get().uri("/api/v1/planning/captain/instructions").with(principal).exchange();
@@ -209,21 +210,21 @@ class AdvisoryAuthorizationTest {
         assertThat(mvc.post().uri("/api/v1/planning/captain/instructions/{id}/acknowledgements", id)
                 .with(principal).header("X-Actor-Subject", "forged-captain")
                 .contentType(MediaType.APPLICATION_JSON).content("{\"subject\":\"forged-captain\"}").exchange()).hasStatusOk();
-        verify(instructions).acknowledge(id, subject);
-        verify(instructions, never()).acknowledge(id, "forged-captain");
+        verify(instructions).acknowledge(id, captainActor);
     }
 
     @Test
     void decisionsReceiveOnlyTheVerifiedControllerSubject() {
         UUID id = UUID.randomUUID();
-        when(instructions.decide(eq(id), isNull(), isNull(), eq("verified-controller"), isNull()))
+        var controllerActor = new PlanningActor("verified-controller", PlanningActor.Role.CONTROLLER);
+        when(instructions.decide(eq(id), isNull(), isNull(), eq(controllerActor), isNull()))
                 .thenReturn(instruction(id, UUID.randomUUID()));
         assertThat(mvc.post().uri("/api/v1/planning/advisories/{id}/decisions", id)
                 .with(jwt().jwt(token -> token.subject("verified-controller"))
                         .authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
                 .header("X-Actor-Subject", "forged-controller")
                 .contentType(MediaType.APPLICATION_JSON).content("{}").exchange()).hasStatusOk();
-        verify(instructions).decide(id, null, null, "verified-controller", null);
+        verify(instructions).decide(id, null, null, controllerActor, null);
     }
 
     @Test
@@ -240,7 +241,7 @@ class AdvisoryAuthorizationTest {
                 runId, "demo-190-b", List.of("ISSUED", "ACKNOWLEDGED"))).thenReturn(List.of(winner));
         when(winner.type()).thenReturn(InstructionType.REDUCE_SPEED);
         when(winner.id()).thenReturn(winnerId);
-        when(instructions.decide(eq(proposalId), isNull(), isNull(), anyString(), isNull()))
+        when(instructions.decide(eq(proposalId), isNull(), isNull(), any(PlanningActor.class), isNull()))
                 .thenThrow(new DataIntegrityViolationException("movement conflict",
                         new org.hibernate.exception.ConstraintViolationException("duplicate movement", null,
                                 "uq_issued_instruction_movement")));

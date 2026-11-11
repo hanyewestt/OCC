@@ -43,6 +43,12 @@ class AuthorizationBoundaryTest {
     }
 
     @ParameterizedTest
+    @CsvSource({"ADMIN,403", "CONTROLLER,200", "CAPTAIN,403", "UNASSIGNED,403"})
+    void startingDemoRunsIsControllerOnly(String role, int expected) throws Exception {
+        perform("POST", "/api/v1/demo-runs", role, expected);
+    }
+
+    @ParameterizedTest
     @CsvSource({"GET,ADMIN,200", "POST,ADMIN,200", "PUT,ADMIN,200", "PATCH,ADMIN,403", "DELETE,ADMIN,403", "HEAD,ADMIN,403",
             "GET,CONTROLLER,403", "POST,CONTROLLER,403", "PUT,CONTROLLER,403", "PATCH,CONTROLLER,403", "DELETE,CONTROLLER,403",
             "GET,CAPTAIN,403", "POST,CAPTAIN,403", "GET,UNASSIGNED,403"})
@@ -73,7 +79,7 @@ class AuthorizationBoundaryTest {
 
     @RestController
     static class Probe {
-        @RequestMapping({"/api/v1/demo-mode", "/api/v1/admin/probe", "/api/v1/captains"})
+        @RequestMapping({"/api/v1/demo-mode", "/api/v1/demo-runs", "/api/v1/admin/probe", "/api/v1/captains"})
         String respond() { return "allowed"; }
     }
 }

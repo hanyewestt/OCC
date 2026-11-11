@@ -13,6 +13,9 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class DemoReplayService {
@@ -29,18 +32,31 @@ public class DemoReplayService {
     private final DemoReplayConfiguration settings;
     private final DemoHazardReplayService hazards;
     private final ApplicationAuditEventRepository auditEvents;
+    private final IdentityProviderPort identities;
     private final ObjectMapper json = new ObjectMapper();
 
+    @Autowired
     public DemoReplayService(DemoRunRepository runs, DemoVehicleAssignmentRepository assignments,
             PollRunRepository pollRuns, RawObservationRepository rawObservations,
             BusArrivalObservationRepository arrivals, TrafficIncidentObservationRepository incidents,
             ReferenceTopologyPort topology, Clock clock, DemoModeService mode, DemoReplayConfiguration settings,
-            DemoHazardReplayService hazards, ApplicationAuditEventRepository auditEvents) {
+            DemoHazardReplayService hazards, ApplicationAuditEventRepository auditEvents, IdentityProviderPort identities) {
         this.runs = runs; this.assignments = assignments; this.pollRuns = pollRuns; this.rawObservations = rawObservations;
         this.arrivals = arrivals; this.incidents = incidents; this.topology = topology; this.clock = clock;
         this.mode = mode; this.settings = settings;
         this.hazards = hazards;
         this.auditEvents = auditEvents;
+        this.identities = identities;
+    }
+
+    /** Compatibility constructor for focused domain tests that do not assign authenticated captains. */
+    public DemoReplayService(DemoRunRepository runs, DemoVehicleAssignmentRepository assignments,
+            PollRunRepository pollRuns, RawObservationRepository rawObservations,
+            BusArrivalObservationRepository arrivals, TrafficIncidentObservationRepository incidents,
+            ReferenceTopologyPort topology, Clock clock, DemoModeService mode, DemoReplayConfiguration settings,
+            DemoHazardReplayService hazards, ApplicationAuditEventRepository auditEvents) {
+        this(runs, assignments, pollRuns, rawObservations, arrivals, incidents, topology, clock, mode, settings,
+                hazards, auditEvents, null);
     }
 
     @Transactional
@@ -55,6 +71,7 @@ public class DemoReplayService {
         if (configuration.scenario() == DemoScenario.NORMAL
                 && configuration.busGaps().stream().anyMatch(gap -> gap.compareTo(settings.bunchingThreshold()) <= 0))
             throw new IllegalArgumentException("Normal operation needs a dispatch gap above the bunching threshold");
+        validateInitialCaptains(configuration);
         var version = topology.activeVersion().orElseThrow(() -> new IllegalStateException("Demo requires active bus topology"));
         var route = topology.busRoute(version.id(), configuration.serviceId()).orElseThrow(() -> new IllegalArgumentException("Selected bus service is unavailable"));
         if (route.operators().stream().flatMap(operator -> operator.directions().stream())
@@ -72,7 +89,8 @@ public class DemoReplayService {
     @Transactional
     public void replayNext() {
         if (!mode.enabled()) return;
-        runs.findActive().filter(run -> "RUNNING".equals(run.status())).ifPresent(this::emit);
+        runs.findActiveId().flatMap(runs::findByIdForUpdate)
+                .filter(run -> "RUNNING".equals(run.status())).ifPresent(this::emit);
     }
 
     @Transactional
@@ -80,7 +98,7 @@ public class DemoReplayService {
 
     @Transactional
     public void activate(UUID runId, String actorSubject) {
-        DemoRun run = runs.findById(runId).orElseThrow(() -> new IllegalStateException("Demo run not found"));
+        DemoRun run = runs.findByIdForUpdate(runId).orElseThrow(() -> new IllegalStateException("Demo run not found"));
         run.startReplay();
         recordRunEvent(run, "SIMULATION_ACTIVATED", "SUCCESS", "Simulation run activated", actorSubject);
     }
@@ -90,7 +108,7 @@ public class DemoReplayService {
 
     @Transactional
     public void fail(UUID runId, String reason, String actorSubject) {
-        runs.findById(runId).ifPresent(run -> {
+        runs.findByIdForUpdate(runId).ifPresent(run -> {
             if ("FAILED".equals(run.status())) return;
             run.fail(reason);
             recordRunEvent(run, "SIMULATION_FAILED", "FAILURE", "Simulation run failed", actorSubject);
@@ -102,11 +120,28 @@ public class DemoReplayService {
 
     @Transactional
     public void close(UUID runId, Instant now, String actorSubject) {
-        runs.findById(runId).ifPresent(run -> {
+        runs.findByIdForUpdate(runId).ifPresent(run -> {
             if ("CLOSED".equals(run.status())) return;
             run.close(now);
             recordRunEvent(run, "SIMULATION_CLOSED", "SUCCESS", "Simulation run closed", actorSubject);
         });
+    }
+
+    private void validateInitialCaptains(DemoRunConfiguration configuration) {
+        var ids = configuration.captainUserIds().isEmpty()
+                ? settings.captainUserId().stream().toList() : configuration.captainUserIds().stream().filter(java.util.Objects::nonNull).toList();
+        if (ids.isEmpty()) return;
+        if (identities == null) throw new IdentityProviderException(IdentityProviderException.Reason.UNAVAILABLE);
+        for (UUID id : ids) {
+            IdentityProviderPort.User user;
+            try {
+                user = identities.get(id).orElse(null);
+            } catch (RuntimeException unavailable) {
+                throw new IdentityProviderException(IdentityProviderException.Reason.UNAVAILABLE);
+            }
+            if (user == null || !user.available() || user.role() != OccRole.CAPTAIN)
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "An initial demo captain is not eligible");
+        }
     }
 
     private void recordRunEvent(DemoRun run, String type, String outcome, String summary, String actorSubject) {

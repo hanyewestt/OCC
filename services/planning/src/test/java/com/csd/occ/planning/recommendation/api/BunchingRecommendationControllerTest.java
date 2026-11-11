@@ -11,6 +11,7 @@ import com.csd.occ.planning.recommendation.domain.ControllerBusInstruction;
 import com.csd.occ.planning.advisory.domain.AdvisoryProposalRepository;
 import com.csd.occ.planning.advisory.domain.IssuedInstructionRepository;
 import com.csd.occ.planning.advisory.domain.BunchingInstructionService;
+import com.csd.occ.planning.advisory.domain.PlanningActor;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.math.BigDecimal;
@@ -209,7 +210,8 @@ class BunchingRecommendationControllerTest {
 
         assertThat(response).hasStatus(200)
                 .bodyJson().extractingPath("action").isEqualTo("APPROVED");
-        verify(bunchingInstructions).approveAndIssue(RECOMMENDATION_ID, "controller-subject");
+        verify(bunchingInstructions).approveAndIssue(RECOMMENDATION_ID,
+                new PlanningActor("controller-subject", PlanningActor.Role.CONTROLLER));
     }
 
     @Test
@@ -236,7 +238,8 @@ class BunchingRecommendationControllerTest {
 
         assertThat(response).hasStatus(200)
                 .bodyJson().extractingPath("overrideInstructions[1].instruction").isEqualTo("HOLD FOR 45s at next stop");
-        verify(bunchingInstructions).rejectAndIssue(RECOMMENDATION_ID, "controller-subject",
+        verify(bunchingInstructions).rejectAndIssue(RECOMMENDATION_ID,
+                new PlanningActor("controller-subject", PlanningActor.Role.CONTROLLER),
                 java.util.List.of(new com.csd.occ.planning.advisory.domain.BunchingInstructionService.ReplacementBusInstruction(
                                 "DEMO-190-B", com.csd.occ.planning.recommendation.domain.MitigationType.HOLD, 60),
                         new com.csd.occ.planning.advisory.domain.BunchingInstructionService.ReplacementBusInstruction(
@@ -265,7 +268,8 @@ class BunchingRecommendationControllerTest {
 
         assertThat(response).hasStatus(200)
                 .bodyJson().extractingPath("action").isEqualTo("REJECTED");
-        verify(bunchingInstructions).rejectAndIssue(RECOMMENDATION_ID, "controller-subject",
+        verify(bunchingInstructions).rejectAndIssue(RECOMMENDATION_ID,
+                new PlanningActor("controller-subject", PlanningActor.Role.CONTROLLER),
                 java.util.List.of(new BunchingInstructionService.ReplacementBusInstruction(
                         "DEMO-190-B", com.csd.occ.planning.recommendation.domain.MitigationType.HOLD, 60)), null);
     }

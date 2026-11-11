@@ -3,14 +3,17 @@ package com.csd.occ.planning.advisory.domain;
 import com.csd.occ.planning.diagnosis.domain.PlanningScopePort;
 import java.time.Clock;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.csd.occ.planning.domain.audit.ApplicationAuditEvent;
 import com.csd.occ.planning.domain.audit.ApplicationAuditEventRepository;
+import jakarta.persistence.EntityManager;
 
 @Service
 public class InstructionService {
@@ -21,12 +24,15 @@ public class InstructionService {
     private final AdvisoryModelEvidenceRepository evidence;
     private final Clock clock;
     private final ApplicationAuditEventRepository auditEvents;
+    private final AssignmentBusGuards guards;
+    private final EntityManager entityManager;
     private final InstructionPolicy policy = new InstructionPolicy();
     public InstructionService(AdvisoryProposalRepository proposals, IssuedInstructionRepository instructions,
             AdvisoryContextPort context, PlanningScopePort scopes, AdvisoryModelEvidenceRepository evidence, Clock clock,
-            ApplicationAuditEventRepository auditEvents) {
+            ApplicationAuditEventRepository auditEvents, AssignmentBusGuards guards, EntityManager entityManager) {
         this.proposals = proposals; this.instructions = instructions; this.context = context; this.scopes = scopes;
         this.evidence = evidence; this.clock = clock; this.auditEvents = auditEvents;
+        this.guards = guards; this.entityManager = entityManager;
     }
     public Page<AdvisoryProposal> proposals(int page, int size) {
         return proposals(page, size, false);
@@ -52,19 +58,24 @@ public class InstructionService {
                 assignedBus(proposal.demoRunId(), proposal.busId()), hazard.exposures(), hazard.facts().instruction(), context.limits());
     }
     @Transactional
-    public IssuedInstruction decide(UUID id, AdvisoryCandidate override, String rationale, String actor, UUID replaceInstructionId) {
+    public IssuedInstruction decide(UUID id, AdvisoryCandidate override, String rationale, PlanningActor actor, UUID replaceInstructionId) {
+        actor.require(PlanningActor.Role.CONTROLLER);
+        var preview = proposals.findById(id).orElseThrow(AdvisoryNotFoundException::new);
+        if (!"PENDING".equals(preview.status())) return replayDecision(preview, override, rationale, replaceInstructionId);
+        var key = proposals.findKeyById(id).orElseThrow(AdvisoryNotFoundException::new);
+        var guard = guards.lock(key.getDemoRunId(), key.getBusId());
+        guards.requireAvailableForIssuance(List.of(guard));
         var proposal = proposals.findForUpdate(id).orElseThrow(AdvisoryNotFoundException::new);
+        entityManager.refresh(proposal);
         var chosen = override == null ? proposal.candidate() : override;
         if (override != null && (rationale == null || rationale.isBlank())) throw new IllegalArgumentException("Replacement rationale required");
-        if (!"PENDING".equals(proposal.status())) {
-            if (chosen.equals(proposal.finalCandidate()) && Objects.equals(rationale, proposal.controllerRationale())
-                    && Objects.equals(replaceInstructionId, proposal.replacedInstructionId()))
-                return instructions.findById(id).orElseThrow(AdvisoryNotFoundException::new);
-            throw new AdvisoryConflictException("Proposal already has a different decision");
-        }
+        if (!"PENDING".equals(proposal.status())) return replayDecision(proposal, override, rationale, replaceInstructionId);
         UUID runId = scopes.current().demoRunId();
         if (!proposal.demoRunId().equals(runId)) throw new AdvisoryConflictException("Proposal is outside the active simulation");
-        var bus = assignedBus(runId, proposal.busId());
+        var fleet = context.fleet(runId);
+        if (!List.of("RUNNING", "REPLAY_COMPLETE").contains(fleet.status())) throw new AdvisoryConflictException("Run is closed");
+        var bus = fleet.items().stream().filter(item -> item.busId().equals(proposal.busId()) && item.captainUserId() != null)
+                .findFirst().orElseThrow(() -> new AdvisoryConflictException("Captain assignment unavailable"));
         if (!bus.serviceId().equals(proposal.bus().serviceId()) || bus.directionId() != proposal.bus().directionId())
             throw new AdvisoryConflictException("Bus route changed; review a current advisory for its service and direction");
         var hazard = context.hazard(proposal.disruptionId());
@@ -72,26 +83,29 @@ public class InstructionService {
             throw new AdvisoryConflictException("Hazard evidence changed or is no longer active; review a current proposal");
         String message = policy.message(chosen, bus, hazard.exposures(), hazard.facts().instruction(), context.limits());
         if (replaceInstructionId != null) {
-            var previous = instructions.findForUpdate(replaceInstructionId).orElseThrow(AdvisoryNotFoundException::new);
-            if (!previous.demoRunId().equals(runId) || !previous.busId().equals(bus.busId()))
+            var predecessorKey = instructions.findKeyById(replaceInstructionId).orElseThrow(AdvisoryNotFoundException::new);
+            if (!runId.equals(predecessorKey.getDemoRunId()) || !bus.busId().equals(predecessorKey.getBusId()))
                 throw new AdvisoryConflictException("Replacement instruction belongs to another bus or run");
         }
-        for (var current : instructions.findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(runId, bus.busId(), List.of("ISSUED","ACKNOWLEDGED"))) {
+        var previous = replaceInstructionId == null ? null
+                : instructions.findForUpdate(replaceInstructionId).orElseThrow(AdvisoryNotFoundException::new);
+        if (previous != null) entityManager.refresh(previous);
+        for (var current : instructions.findActiveByDemoRunIdAndBusIdForUpdate(runId, bus.busId())) {
+            entityManager.refresh(current);
             refresh(current, bus);
             if (!current.isCurrent(clock.instant())) continue;
             if (replaceInstructionId != null && current.id().equals(replaceInstructionId)) {
-                current.cancel("CONTROLLER_REPLACED"); recordInstruction(current, "INSTRUCTION_REPLACED", actor);
-            }
-            else if (current.type() != InstructionType.BE_CAUTIOUS && chosen.type() != InstructionType.BE_CAUTIOUS)
+                current.cancel("CONTROLLER_REPLACED"); recordInstruction(current, "INSTRUCTION_REPLACED", actor.subject());
+            } else if (current.type() != InstructionType.BE_CAUTIOUS && chosen.type() != InstructionType.BE_CAUTIOUS)
                 throw new AdvisoryConflictException("Active movement instruction " + current.id() + " must be explicitly replaced");
         }
         instructions.flush();
         var issued = new IssuedInstruction(id, proposal.disruptionId(), runId, bus, chosen, message,
-                hazard.classification(), actor, clock.instant(), context.limits().acknowledgementWindow());
+                hazard.classification(), actor.subject(), clock.instant(), context.limits().acknowledgementWindow());
         var decidedAt = clock.instant();
-        proposal.decide(chosen, actor, rationale, replaceInstructionId, decidedAt);
+        proposal.decide(chosen, actor.subject(), rationale, replaceInstructionId, decidedAt);
         evidence.findById(proposal.id()).orElseGet(() -> evidence.save(new AdvisoryModelEvidence(proposal)))
-                .decide(chosen, actor, rationale, replaceInstructionId, decidedAt);
+                .decide(chosen, actor.subject(), rationale, replaceInstructionId, decidedAt);
         var saved = instructions.saveAndFlush(issued);
         var decisionDetails = new java.util.LinkedHashMap<String, Object>();
         decisionDetails.put("originalCandidate", candidateSnapshot(proposal.candidate()));
@@ -102,29 +116,50 @@ public class InstructionService {
         decisionDetails.put("decidedAt", decidedAt.toString());
         auditEvents.save(new ApplicationAuditEvent(UUID.nameUUIDFromBytes(("advisory-decision:" + proposal.id())
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8)), decidedAt, clock.instant(), "ADVISORIES",
-                "ADVISORY_PROPOSAL_DECIDED", "APPROVED", actor, "CONTROLLER", "ADVISORY_PROPOSAL",
+                "ADVISORY_PROPOSAL_DECIDED", "APPROVED", actor.subject(), "CONTROLLER", "ADVISORY_PROPOSAL",
                 proposal.id().toString(), runId, bus.busId(), bus.captainUserId(),
                 proposal.eventId() == null ? null : proposal.eventId().toString(), "Advisory proposal decided",
                 decisionDetails, "advisory-decision:" + proposal.id()));
-        recordInstruction(saved, "INSTRUCTION_ISSUED", actor);
+        recordInstruction(saved, "INSTRUCTION_ISSUED", actor.subject());
         return saved;
     }
+
+    private IssuedInstruction replayDecision(AdvisoryProposal proposal, AdvisoryCandidate override, String rationale,
+            UUID replaceInstructionId) {
+        var chosen = override == null ? proposal.finalCandidate() : override;
+        if (chosen != null && chosen.equals(proposal.finalCandidate()) && Objects.equals(rationale, proposal.controllerRationale())
+                && Objects.equals(replaceInstructionId, proposal.replacedInstructionId()))
+            return instructions.findById(proposal.id()).orElseThrow(AdvisoryNotFoundException::new);
+        throw new AdvisoryConflictException("Proposal already has a different decision");
+    }
     @Transactional
-    public List<IssuedInstruction> captain(String subject) {
+    public List<IssuedInstruction> captain(PlanningActor actor) {
+        actor.require(PlanningActor.Role.CAPTAIN);
+        String subject = actor.subject();
         UUID runId = scopes.current().demoRunId();
         if (runId == null) return List.of();
         var fleet = context.fleet(runId);
         if (!List.of("RUNNING", "REPLAY_COMPLETE").contains(fleet.status())) return List.of();
         var assigned = fleet.items().stream().filter(bus -> bus.captainUserId() != null && bus.captainUserId().toString().equals(subject)).findFirst();
         if (assigned.isEmpty()) return List.of();
-        var bus = assigned.get();
-        var found = instructions.findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(runId, bus.busId(), List.of("ISSUED","ACKNOWLEDGED"));
-        found.forEach(instruction -> refresh(instruction, bus));
+        guards.lock(runId, assigned.get().busId());
+        var refreshedFleet = context.fleet(runId);
+        if (!List.of("RUNNING", "REPLAY_COMPLETE").contains(refreshedFleet.status())) return List.of();
+        var bus = refreshedFleet.items().stream().filter(item -> item.busId().equals(assigned.get().busId())
+                && item.captainUserId() != null && item.captainUserId().toString().equals(subject)).findFirst();
+        if (bus.isEmpty()) return List.of();
+        var found = instructions.findActiveByDemoRunIdAndBusIdForUpdate(runId, bus.get().busId());
+        found.forEach(instruction -> refresh(instruction, bus.get()));
         return found.stream().filter(i -> i.captainUserId().toString().equals(subject) && i.isCurrent(clock.instant())).toList();
     }
     @Transactional
-    public IssuedInstruction acknowledge(UUID id, String subject) {
+    public IssuedInstruction acknowledge(UUID id, PlanningActor actor) {
+        actor.require(PlanningActor.Role.CAPTAIN);
+        var key = instructions.findKeyById(id).orElseThrow(AdvisoryNotFoundException::new);
+        guards.lock(key.getDemoRunId(), key.getBusId());
         var instruction = instructions.findForUpdate(id).orElseThrow(AdvisoryNotFoundException::new);
+        entityManager.refresh(instruction);
+        String subject = actor.subject();
         if (!instruction.captainUserId().toString().equals(subject)) throw new AdvisoryNotFoundException();
         if (instruction.acknowledgedAt() != null) return instruction;
         if (!instruction.demoRunId().equals(scopes.current().demoRunId())) throw new AdvisoryConflictException("Simulation is no longer active");
@@ -136,22 +171,30 @@ public class InstructionService {
         return instruction;
     }
     @Transactional
-    public IssuedInstruction cancel(UUID id, String actor) {
+    public IssuedInstruction cancel(UUID id, PlanningActor actor) {
+        actor.require(PlanningActor.Role.CONTROLLER);
+        var key = instructions.findKeyById(id).orElseThrow(AdvisoryNotFoundException::new);
+        guards.lock(key.getDemoRunId(), key.getBusId());
         var instruction = instructions.findForUpdate(id).orElseThrow(AdvisoryNotFoundException::new);
+        entityManager.refresh(instruction);
         if (!"CANCELLED".equals(instruction.status())) {
             instruction.cancel("CONTROLLER_CANCELLED");
-            recordInstruction(instruction, "INSTRUCTION_CANCELLED", actor);
+            recordInstruction(instruction, "INSTRUCTION_CANCELLED", actor.subject());
         }
         return instruction;
     }
     @Transactional
-    public Page<IssuedInstruction> history(int page, int size) {
+    public Page<IssuedInstruction> history(int page, int size, PlanningActor actor) {
+        actor.requireAny(PlanningActor.Role.CONTROLLER, PlanningActor.Role.ADMIN);
         validatePage(page, size);
         UUID run = scopes.current().demoRunId();
         if (run == null) return Page.empty(PageRequest.of(page, size));
         var found = instructions.findByDemoRunIdOrderByIssuedAtDesc(run, PageRequest.of(page, size));
+        guards.lockAll(found.getContent().stream().map(i -> new AssignmentBusGuards.Key(i.demoRunId(), i.busId())).toList());
         var fleet = context.fleet(run);
-        for (var instruction : found) {
+        var locked = found.getContent().stream().map(i -> instructions.findForUpdate(i.id()).orElseThrow()).toList();
+        locked.forEach(entityManager::refresh);
+        for (var instruction : locked) {
             if (!List.of("ISSUED", "ACKNOWLEDGED").contains(instruction.status())) continue;
             var bus = fleet.items().stream().filter(b -> b.busId().equals(instruction.busId())).findFirst();
             if (!List.of("RUNNING", "REPLAY_COMPLETE").contains(fleet.status()) || bus.isEmpty()) {
@@ -160,7 +203,26 @@ public class InstructionService {
             }
             else refresh(instruction, bus.get());
         }
-        return found;
+        return new PageImpl<>(locked, found.getPageable(), found.getTotalElements());
+    }
+
+    @Transactional
+    public List<Map<String, Object>> currentBlockersForAssignment(UUID runId, String busId, AdvisoryContextPort.Bus bus) {
+        var active = instructions.findActiveByDemoRunIdAndBusIdForUpdate(runId, busId);
+        var blocking = new java.util.ArrayList<Map<String, Object>>();
+        for (var instruction : active) {
+            entityManager.refresh(instruction);
+            refresh(instruction, bus);
+            if (instruction.isCurrent(clock.instant()))
+                blocking.add(Map.of("id", instruction.id().toString(), "status", instruction.status()));
+        }
+        return List.copyOf(blocking);
+    }
+
+    List<IssuedInstruction> activeForBusAfterGuard(UUID runId, AdvisoryContextPort.Bus bus) {
+        var active = instructions.findActiveByDemoRunIdAndBusIdForUpdate(runId, bus.busId());
+        for (var instruction : active) { entityManager.refresh(instruction); refresh(instruction, bus); }
+        return active.stream().filter(item -> item.isCurrent(clock.instant())).toList();
     }
     private AdvisoryContextPort.Bus assignedBus(UUID runId, String busId) {
         var fleet = context.fleet(runId);

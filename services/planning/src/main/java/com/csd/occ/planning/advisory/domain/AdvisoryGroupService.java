@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import jakarta.persistence.EntityManager;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -21,9 +22,13 @@ public class AdvisoryGroupService {
     private final AdvisoryProposalRepository proposals;
     private final InstructionService instructions;
     private final PlanningScopePort scopes;
+    private final AssignmentBusGuards guards;
+    private final EntityManager entityManager;
 
-    public AdvisoryGroupService(AdvisoryProposalRepository proposals, InstructionService instructions, PlanningScopePort scopes) {
+    public AdvisoryGroupService(AdvisoryProposalRepository proposals, InstructionService instructions, PlanningScopePort scopes,
+            AssignmentBusGuards guards, EntityManager entityManager) {
         this.proposals = proposals; this.instructions = instructions; this.scopes = scopes;
+        this.guards = guards; this.entityManager = entityManager;
     }
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
@@ -46,12 +51,18 @@ public class AdvisoryGroupService {
     }
 
     @Transactional
-    public List<IssuedInstruction> decide(List<UUID> proposalIds, String actor) {
+    public List<IssuedInstruction> decide(List<UUID> proposalIds, PlanningActor actor) {
+        actor.require(PlanningActor.Role.CONTROLLER);
         if (proposalIds == null || proposalIds.isEmpty()
                 || proposalIds.stream().anyMatch(id -> id == null) || new HashSet<>(proposalIds).size() != proposalIds.size())
             throw new IllegalArgumentException("Select all distinct proposals from the reviewed advisory group");
+        var keys = proposalIds.stream().map(id -> proposals.findKeyById(id)
+                .map(key -> new AssignmentBusGuards.Key(key.getDemoRunId(), key.getBusId()))
+                .orElseThrow(AdvisoryNotFoundException::new)).toList();
+        guards.requireAvailableForIssuance(guards.lockAll(keys));
         var selected = proposalIds.stream().sorted().map(id -> proposals.findForUpdate(id)
                 .orElseThrow(AdvisoryNotFoundException::new)).toList();
+        selected.forEach(entityManager::refresh);
         var key = AdvisoryGroup.Key.from(selected.getFirst());
         if (!key.demoRunId().equals(scopes.current().demoRunId())
                 || selected.stream().anyMatch(value -> !key.equals(AdvisoryGroup.Key.from(value))))

@@ -11,10 +11,24 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 
 public interface IssuedInstructionRepository extends JpaRepository<IssuedInstruction, UUID> {
+    interface InstructionKey { UUID getDemoRunId(); String getBusId(); UUID getCaptainUserId(); }
+    @Query("select i.demoRunId as demoRunId, i.busId as busId, i.captainUserId as captainUserId from IssuedInstruction i where i.id=:id")
+    Optional<InstructionKey> findKeyById(UUID id);
     @Query("select distinct i.demoRunId from IssuedInstruction i where i.status in ('ISSUED','ACKNOWLEDGED')")
     List<UUID> findActiveDemoRunIds();
+    @Query("select i.demoRunId as demoRunId, i.busId as busId from IssuedInstruction i where i.disruptionId=:id and i.status in ('ISSUED','ACKNOWLEDGED') order by i.demoRunId, i.busId")
+    List<InstructionKey> findActiveKeysByDisruptionId(UUID id);
+    @Query("select i.demoRunId as demoRunId, i.busId as busId from IssuedInstruction i where i.demoRunId=:runId and i.status in ('ISSUED','ACKNOWLEDGED') order by i.busId")
+    List<InstructionKey> findActiveKeysByDemoRunId(UUID runId);
+    @Query("select i.demoRunId as demoRunId, i.busId as busId from IssuedInstruction i where i.status in ('ISSUED','ACKNOWLEDGED') and ((i.acknowledgedAt is null and i.acknowledgementDeadline<=:now) or i.applicableUntil<=:now) order by i.demoRunId, i.busId")
+    List<InstructionKey> findDueKeys( java.time.Instant now);
+    @Query("select i.demoRunId as demoRunId, i.busId as busId from IssuedInstruction i where i.status in ('EXPIRED','CANCELLED') and i.issuedAt<:cutoff and (i.acknowledgedAt is null or i.acknowledgedAt<:cutoff) order by i.demoRunId, i.busId")
+    List<InstructionKey> findInactiveKeysBefore(java.time.Instant cutoff);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select i from IssuedInstruction i where i.id=:id")
     Optional<IssuedInstruction> findForUpdate(UUID id);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select i from IssuedInstruction i where i.demoRunId=:runId and i.busId=:busId and i.status in ('ISSUED','ACKNOWLEDGED') order by i.id")
+    List<IssuedInstruction> findActiveByDemoRunIdAndBusIdForUpdate(UUID runId, String busId);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select i from IssuedInstruction i where i.proposalId=:proposalId order by i.issuedAt asc")
     List<IssuedInstruction> findByProposalIdForUpdate(UUID proposalId);
     @Query("select i from IssuedInstruction i where i.proposalId=:proposalId order by i.issuedAt asc")

@@ -53,6 +53,9 @@ public class IngestionSecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/internal/v1/ingestion/demo-runs/*/planning-context",
                                 "/internal/v1/ingestion/planning-context")
                         .hasAuthority(PeerCapabilityAuthenticationFilter.PLANNING_AUTHORITY)
+                        .requestMatchers(HttpMethod.PUT,
+                                "/internal/v1/ingestion/demo-runs/*/buses/*/assignment-operations/*")
+                        .hasAuthority(PeerCapabilityAuthenticationFilter.PLANNING_AUTHORITY)
                         .requestMatchers("/internal/v1/**").denyAll()
                         // Public bootstrap configuration and the verified session checks live in Ingestion so the
                         // edge can route directly to the owning service. Page access still enforces the exact role.

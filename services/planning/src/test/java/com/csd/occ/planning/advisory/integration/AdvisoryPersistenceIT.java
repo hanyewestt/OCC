@@ -6,6 +6,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import com.csd.occ.planning.advisory.domain.*;
+import com.csd.occ.planning.advisory.infrastructure.config.AssignmentRecoveryProperties;
+import com.csd.occ.planning.advisory.infrastructure.config.AssignmentOperationRecoverySchedule;
 import com.csd.occ.planning.diagnosis.domain.PlanningScope;
 import com.csd.occ.planning.diagnosis.domain.PlanningScopePort;
 import java.sql.Timestamp;
@@ -29,7 +31,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import com.sun.net.httpserver.HttpServer;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -48,8 +56,10 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 
 @SpringBootTest(properties = {
         "OCC_PLANNING_DB_USERNAME=occ_planning", "OCC_PLANNING_DB_PASSWORD=synthetic-planning",
+        "occ.security.peer.ingestion-to-planning-token=synthetic-ingestion-peer-token",
         "OCC_DISRUPTION_INTERNAL_URL=http://127.0.0.1:1", "OCC_INGESTION_INTERNAL_URL=http://127.0.0.1:1",
         "OCC_PLANNING_DIAGNOSIS_WORKER_ENABLED=false", "OCC_PLANNING_RECOMMENDATION_AI_ENABLED=false",
+        "OCC_PLANNING_ASSIGNMENT_RECOVERY_INTERVAL=PT1H", "OCC_PLANNING_ASSIGNMENT_RECOVERY_BATCH_SIZE=25",
         "OCC_PLANNING_GEMINI_API_KEY=test-no-network", "SUPABASE_PROJECT_URL=https://issuer.test",
         "SUPABASE_JWKS_URL=https://issuer.test/auth/v1/jwks"
 })
@@ -58,7 +68,15 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @Testcontainers(disabledWithoutDocker = true)
 class AdvisoryPersistenceIT {
     private static final Instant NOW = Instant.parse("2026-10-25T02:00:00Z");
+    private static final PlanningActor CONTROLLER = new PlanningActor("controller", PlanningActor.Role.CONTROLLER);
+    private PlanningActor captainActor() { return new PlanningActor(captain.toString(), PlanningActor.Role.CAPTAIN); }
     private static final String MESSAGE = "Service 190 may be delayed near School.";
+    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final AtomicInteger simulatedRemoteMutations = new AtomicInteger();
+    private static final AtomicInteger simulatedRemoteRequests = new AtomicInteger();
+    private static final Map<UUID, String> simulatedRemoteReceipts = new ConcurrentHashMap<>();
+    private static volatile String assignmentTransportMode = "UNAVAILABLE";
+    private static volatile HttpServer assignmentServer;
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18.6-alpine")
             .withDatabaseName("occ").withUsername("occ_admin").withPassword("synthetic-admin")
@@ -67,6 +85,64 @@ class AdvisoryPersistenceIT {
     @DynamicPropertySource
     static void databaseProperties(DynamicPropertyRegistry registry) {
         registry.add("OCC_PLANNING_DB_INTERNAL_URL", POSTGRES::getJdbcUrl);
+        registry.add("occ.diagnosis.ingestion-internal-url", AdvisoryPersistenceIT::assignmentServerUrl);
+    }
+
+    private static String assignmentServerUrl() {
+        try {
+            if (assignmentServer == null) {
+                synchronized (AdvisoryPersistenceIT.class) {
+                    if (assignmentServer == null) {
+                        assignmentServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+                        assignmentServer.createContext("/", AdvisoryPersistenceIT::handleAssignmentRequest);
+                        assignmentServer.start();
+                    }
+                }
+            }
+            return "http://127.0.0.1:" + assignmentServer.getAddress().getPort();
+        } catch (java.io.IOException exception) {
+            throw new IllegalStateException("Could not start local assignment test endpoint", exception);
+        }
+    }
+
+    @AfterAll
+    static void stopAssignmentServer() {
+        if (assignmentServer != null) assignmentServer.stop(0);
+    }
+
+    private static void handleAssignmentRequest(com.sun.net.httpserver.HttpExchange exchange) throws java.io.IOException {
+        int attempt = simulatedRemoteRequests.incrementAndGet();
+        if ("UNAVAILABLE".equals(assignmentTransportMode)) {
+            exchange.sendResponseHeaders(503, -1);
+            exchange.close();
+            return;
+        }
+        var segments = exchange.getRequestURI().getPath().split("/");
+        var runId = UUID.fromString(segments[5]);
+        var busId = segments[7];
+        var operationId = UUID.fromString(segments[9]);
+        var body = JSON.readTree(exchange.getRequestBody());
+        var captainId = body.path("captainUserId").isNull() ? null : body.path("captainUserId").asText();
+        var receiptJson = simulatedRemoteReceipts.computeIfAbsent(operationId, ignored -> {
+            boolean captainConflict = "CAPTAIN_ALREADY_ASSIGNED".equals(assignmentTransportMode);
+            if (!captainConflict) simulatedRemoteMutations.incrementAndGet();
+            var receipt = JSON.createObjectNode().put("operationId", operationId.toString()).put("runId", runId.toString())
+                    .put("busId", busId).put("outcome", captainConflict ? "REJECTED" : "APPLIED")
+                    .put("beforeVersion", 0).put("afterVersion", captainConflict ? 0 : 1);
+            receipt.putNull("previousCaptainUserId");
+            receipt.put("captainUserId", captainId);
+            if ("MISMATCHED_RECEIPT".equals(assignmentTransportMode)) receipt.put("captainUserId", UUID.randomUUID().toString());
+            if (captainConflict) receipt.put("reason", "CAPTAIN_ALREADY_ASSIGNED");
+            return JSON.writeValueAsString(receipt);
+        });
+        if (attempt == 1 && "DROP_FIRST_RESPONSE".equals(assignmentTransportMode)) {
+            exchange.close();
+            return;
+        }
+        var bytes = receiptJson.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.sendResponseHeaders(200, bytes.length);
+        try (var output = exchange.getResponseBody()) { output.write(bytes); }
     }
 
     @Autowired JdbcTemplate jdbc;
@@ -81,6 +157,13 @@ class AdvisoryPersistenceIT {
     @Autowired InstructionRunReconciliationService instructionRuns;
     @Autowired AdvisoryRetentionService retention;
     @Autowired AdvisoryProposalRepository proposals;
+    @Autowired AssignmentOperationRepository assignmentOperations;
+    @Autowired AssignmentBusGuardRepository assignmentGuards;
+    @Autowired AssignmentBusGuards assignmentBusGuards;
+    @Autowired AssignmentOperationFinalizer assignmentFinalizer;
+    @Autowired AssignmentIngestionPort assignmentIngestion;
+    @Autowired com.csd.occ.planning.domain.audit.ApplicationAuditEventRepository applicationAuditEvents;
+    @Autowired Clock clock;
     @Autowired AdvisoryModelEvidenceRepository modelEvidence;
     @Autowired IssuedInstructionRepository issued;
     @Autowired PublicNoticeRepository publications;
@@ -96,9 +179,14 @@ class AdvisoryPersistenceIT {
     @BeforeEach
     void resetRowsAndExternalContext() {
         jdbc.execute("TRUNCATE planning.application_audit_event");
+        jdbc.execute("TRUNCATE planning.bus_assignment_operation, planning.bus_assignment_guard CASCADE");
         jdbc.execute("TRUNCATE planning.issued_instruction, planning.advisory_proposal, planning.advisory_model_evidence, planning.public_notice");
         jdbc.execute("TRUNCATE planning.recommendation_decision, planning.model_invocation_record, planning.recommendation");
         sources.clear();
+        assignmentTransportMode = "UNAVAILABLE";
+        simulatedRemoteMutations.set(0);
+        simulatedRemoteRequests.set(0);
+        simulatedRemoteReceipts.clear();
         when(recommendationScopes.includesDiagnosis(any())).thenReturn(true);
         run = UUID.randomUUID(); captain = UUID.randomUUID();
         bus = new AdvisoryContextPort.Bus("demo-190-b", "demo-190-b", "SBS5898U", "190", 1, captain, "ASSIGNED",
@@ -109,6 +197,347 @@ class AdvisoryPersistenceIT {
         when(context.hazard(any())).thenAnswer(invocation -> sources.get(invocation.getArgument(0)));
         when(context.limits()).thenReturn(new AdvisoryContextPort.Limits(10, 900, 10, Duration.ofMinutes(5), Duration.ofHours(12)));
     }
+
+    @Test
+    void adminAssignmentCommandRequiresAdminIdempotencyAndExplicitNullableFields() throws Exception {
+        String path = "/api/v1/planning/admin/demo-runs/" + run + "/buses/" + bus.busId() + "/assignment";
+        String key = UUID.randomUUID().toString();
+        mvc.perform(put(path).contentType("application/json").content("{\"captainUserId\":null,\"expectedVersion\":0}"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(put(path).with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                        .header("Idempotency-Key", key).contentType("application/json")
+                        .content("{\"captainUserId\":null,\"expectedVersion\":0}"))
+                .andExpect(status().isForbidden());
+        mvc.perform(put(path).with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                        .contentType("application/json").content("{\"captainUserId\":null,\"expectedVersion\":0}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(put(path).with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                        .header("Idempotency-Key", key).contentType("application/json")
+                        .content("{\"expectedVersion\":0}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(put(path).with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                        .header("Idempotency-Key", key).contentType("application/json")
+                        .content("{\"captainUserId\":null,\"expectedVersion\":-1}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void pendingAssignmentReplayIsStableAndChangedExplicitNullPayloadConflicts() throws Exception {
+        String path = "/api/v1/planning/admin/demo-runs/" + run + "/buses/" + bus.busId() + "/assignment";
+        String key = UUID.randomUUID().toString();
+        var admin = jwt().jwt(token -> token.subject("admin-a")).authorities(new SimpleGrantedAuthority("ROLE_ADMIN"));
+        var first = mvc.perform(put(path).with(admin).header("Idempotency-Key", key).contentType("application/json")
+                        .content("{\"captainUserId\":null,\"expectedVersion\":0}"))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.operationId").isNotEmpty())
+                .andExpect(jsonPath("$.status").value("PENDING"))
+                .andReturn().getResponse().getContentAsString();
+        var operationId = tools.jackson.databind.json.JsonMapper.builder().build().readTree(first).path("operationId").asText();
+        mvc.perform(get("/api/v1/planning/admin/assignment-operations/" + operationId).with(admin))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.operationId").value(operationId))
+                .andExpect(jsonPath("$.status").value("PENDING"));
+        mvc.perform(get("/internal/v1/planning/demo-runs/" + run + "/pending-assignment-operations")
+                        .header("X-OCC-Peer-Token", "synthetic-ingestion-peer-token"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].busId").value(bus.busId()))
+                .andExpect(jsonPath("$.items[0].operationId").value(operationId))
+                .andExpect(jsonPath("$.items[0].status").value("PENDING"));
+        mvc.perform(put(path).with(admin).header("Idempotency-Key", key).contentType("application/json")
+                        .content("{\"captainUserId\":null,\"expectedVersion\":0}"))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.operationId").value(operationId));
+        mvc.perform(put(path).with(admin).header("Idempotency-Key", key).contentType("application/json")
+                        .content("{\"captainUserId\":\"" + captain + "\",\"expectedVersion\":0}"))
+                .andExpect(status().isConflict());
+
+        var otherBus = groupedFleet().get(1);
+        var otherActor = jwt().jwt(token -> token.subject("admin-b"))
+                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"));
+        mvc.perform(put("/api/v1/planning/admin/demo-runs/" + run + "/buses/" + otherBus.busId() + "/assignment")
+                        .with(otherActor).header("Idempotency-Key", key).contentType("application/json")
+                        .content("{\"captainUserId\":null,\"expectedVersion\":0}"))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.operationId").isNotEmpty())
+                .andExpect(jsonPath("$.operationId").value(org.hamcrest.Matchers.not(operationId)));
+    }
+
+    @Test
+    void recoveredWorkerReplaysCommittedRemoteOperationAfterLostResponseExactlyOnce() throws Exception {
+        assignmentTransportMode = "DROP_FIRST_RESPONSE";
+        var admin = jwt().jwt(token -> token.subject("recovery-admin")).authorities(new SimpleGrantedAuthority("ROLE_ADMIN"));
+        var key = UUID.randomUUID().toString();
+        var path = "/api/v1/planning/admin/demo-runs/" + run + "/buses/" + bus.busId() + "/assignment";
+        var response = mvc.perform(put(path).with(admin).header("Idempotency-Key", key).contentType("application/json")
+                        .content("{\"captainUserId\":\"" + captain + "\",\"expectedVersion\":0}"))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.status").value("PENDING"))
+                .andReturn().getResponse().getContentAsString();
+        UUID operationId = UUID.fromString(JSON.readTree(response).path("operationId").asText());
+        var operation = assignmentOperations.findById(operationId).orElseThrow();
+        assertThat(operation.status()).isEqualTo("PENDING");
+        assertThat(assignmentGuards.findById(new AssignmentBusGuardId(run, bus.busId())).orElseThrow().pendingOperationId())
+                .isEqualTo(operationId);
+        assertThat(simulatedRemoteMutations).hasValue(1);
+        assertThat(simulatedRemoteReceipts).hasSize(1).containsKey(operationId);
+        assertThat(simulatedRemoteRequests).hasValue(1);
+
+        var restartedCoordinator = new AssignmentOperationCoordinator(assignmentOperations, assignmentBusGuards,
+                context, instructions, assignmentIngestion, assignmentFinalizer, applicationAuditEvents, clock);
+        new AssignmentOperationRecoverySchedule(restartedCoordinator,
+                new AssignmentRecoveryProperties(Duration.ofSeconds(5), 10)).recover();
+
+        var completed = assignmentOperations.findById(operationId).orElseThrow();
+        assertThat(completed.status()).isEqualTo("SUCCEEDED");
+        assertThat(completed.result()).containsEntry("afterVersion", 1);
+        assertThat(assignmentGuards.findById(new AssignmentBusGuardId(run, bus.busId())).orElseThrow().pendingOperationId()).isNull();
+        assertThat(simulatedRemoteMutations).hasValue(1);
+        assertThat(simulatedRemoteRequests).hasValue(2);
+        assertThat(applicationAuditEvents.findAll().stream()
+                .filter(event -> event.sourceKey().equals("assignment-operation:" + operationId + ":SUCCEEDED")))
+                .hasSize(1);
+    }
+
+    @Test
+    void mismatchedRemoteReceiptCannotClearTheAssignmentGuard() throws Exception {
+        assignmentTransportMode = "MISMATCHED_RECEIPT";
+        var admin = jwt().jwt(token -> token.subject("mismatch-admin")).authorities(new SimpleGrantedAuthority("ROLE_ADMIN"));
+        var key = UUID.randomUUID().toString();
+        var path = "/api/v1/planning/admin/demo-runs/" + run + "/buses/" + bus.busId() + "/assignment";
+        var response = mvc.perform(put(path).with(admin).header("Idempotency-Key", key).contentType("application/json")
+                        .content("{\"captainUserId\":\"" + captain + "\",\"expectedVersion\":0}"))
+                .andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
+        UUID operationId = UUID.fromString(JSON.readTree(response).path("operationId").asText());
+        assertThat(assignmentOperations.findById(operationId).orElseThrow().status()).isEqualTo("PENDING");
+        assertThat(assignmentGuards.findById(new AssignmentBusGuardId(run, bus.busId())).orElseThrow().pendingOperationId())
+                .isEqualTo(operationId);
+        assertThat(applicationAuditEvents.findAll().stream()
+                .filter(event -> event.sourceKey().equals("assignment-operation:" + operationId + ":SUCCEEDED")))
+                .isEmpty();
+    }
+
+    @Test
+    void secondBusCannotTakeCaptainAlreadyAssignedElsewhere() throws Exception {
+        assignmentTransportMode = "CAPTAIN_ALREADY_ASSIGNED";
+        var otherBus = new AdvisoryContextPort.Bus("demo-190-a", "demo-190-a", "SBS1234X", "190", 1,
+                null, "UNASSIGNED", bus.progress(), 0);
+        when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING", List.of(bus, otherBus), 2));
+        var admin = jwt().jwt(token -> token.subject("cross-bus-admin")).authorities(new SimpleGrantedAuthority("ROLE_ADMIN"));
+        var key = UUID.randomUUID().toString();
+        var path = "/api/v1/planning/admin/demo-runs/" + run + "/buses/" + otherBus.busId() + "/assignment";
+        var response = mvc.perform(put(path).with(admin).header("Idempotency-Key", key).contentType("application/json")
+                        .content("{\"captainUserId\":\"" + captain + "\",\"expectedVersion\":0}"))
+                .andExpect(status().isConflict()).andReturn().getResponse().getContentAsString();
+        assertThat(response).contains("CAPTAIN_ALREADY_ASSIGNED");
+        var operation = assignmentOperations.findByActorSubjectAndIdempotencyKey("cross-bus-admin", key).orElseThrow();
+        UUID operationId = operation.id();
+        assertThat(operation.status()).isEqualTo("REJECTED");
+        assertThat(operation.result()).containsEntry("outcome", "REJECTED");
+        assertThat(assignmentGuards.findById(new AssignmentBusGuardId(run, otherBus.busId())).orElseThrow().pendingOperationId()).isNull();
+        assertThat(simulatedRemoteMutations).hasValue(0);
+        assertThat(simulatedRemoteReceipts).hasSize(1).containsKey(operationId);
+    }
+
+    @Test
+    void adminAssignmentIsBlockedByCurrentInstructionAndReturnsItsIdentityAndStatus() throws Exception {
+        var outstanding = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, CONTROLLER, null);
+        String path = "/api/v1/planning/admin/demo-runs/" + run + "/buses/" + bus.busId() + "/assignment";
+        mvc.perform(put(path).with(jwt().jwt(token -> token.subject("admin-a"))
+                        .authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                        .header("Idempotency-Key", UUID.randomUUID().toString()).contentType("application/json")
+                        .content("{\"captainUserId\":null,\"expectedVersion\":0}"))
+                .andExpect(status().isConflict()).andExpect(content().string(org.hamcrest.Matchers.containsString(outstanding.id().toString())))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("ISSUED")));
+        assertThat(issued.findById(outstanding.id()).orElseThrow().status()).isEqualTo("ISSUED");
+    }
+
+    @Test
+    void staleAssignmentRevisionIsRejectedWithoutCreatingAnInstructionOrReservation() throws Exception {
+        String path = "/api/v1/planning/admin/demo-runs/" + run + "/buses/" + bus.busId() + "/assignment";
+        mvc.perform(put(path).with(jwt().jwt(token -> token.subject("admin-stale"))
+                        .authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                        .header("Idempotency-Key", UUID.randomUUID().toString()).contentType("application/json")
+                        .content("{\"captainUserId\":null,\"expectedVersion\":99}"))
+                .andExpect(status().isConflict());
+        assertThat(issued.count()).isZero();
+    }
+
+    @Test
+    void pendingAssignmentProjectionIsRestrictedToTheIngestionPeer() throws Exception {
+        String path = "/internal/v1/planning/demo-runs/" + run + "/pending-assignment-operations";
+        mvc.perform(get(path)).andExpect(status().isUnauthorized());
+        mvc.perform(get(path).with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isForbidden());
+        mvc.perform(get(path).header("X-OCC-Peer-Token", "synthetic-ingestion-peer-token"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items").isArray());
+    }
+
+    @Test
+    void twoAdminsRacingForOneBusCreateAtMostOnePendingReservation() throws Exception {
+        String path = "/api/v1/planning/admin/demo-runs/" + run + "/buses/" + bus.busId() + "/assignment";
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var responses = List.of("admin-a", "admin-b").stream().map(subject -> executor.submit(() -> {
+                ready.countDown();
+                start.await();
+                return mvc.perform(put(path).with(jwt().jwt(token -> token.subject(subject))
+                                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                                .header("Idempotency-Key", UUID.randomUUID().toString())
+                                .contentType("application/json")
+                                .content("{\"captainUserId\":null,\"expectedVersion\":0}"))
+                        .andReturn().getResponse();
+            })).toList();
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            var results = responses.stream().map(future -> {
+                try { return future.get(20, TimeUnit.SECONDS); }
+                catch (Exception failure) { throw new AssertionError(failure); }
+            }).toList();
+            assertThat(results).extracting(response -> response.getStatus()).containsExactlyInAnyOrder(202, 409);
+            var accepted = results.stream().filter(response -> response.getStatus() == 202).findFirst().orElseThrow();
+            var operationId = tools.jackson.databind.json.JsonMapper.builder().build()
+                    .readTree(accepted.getContentAsString()).path("operationId").asText();
+            assertThat(operationId).isNotBlank();
+            mvc.perform(get("/api/v1/planning/admin/assignment-operations/" + operationId)
+                            .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("PENDING"));
+        }
+    }
+
+    @Test
+    void instructionCancellationRacingAssignmentEitherBlocksOrReleasesTheGuard() throws Exception {
+        var outstanding = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, CONTROLLER, null);
+        String path = "/api/v1/planning/admin/demo-runs/" + run + "/buses/" + bus.busId() + "/assignment";
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var cancel = executor.submit(() -> {
+                ready.countDown(); start.await(); return instructions.cancel(outstanding.id(), CONTROLLER);
+            });
+            var assign = executor.submit(() -> {
+                ready.countDown(); start.await();
+                return mvc.perform(put(path).with(jwt().jwt(token -> token.subject("admin-a"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                                .header("Idempotency-Key", UUID.randomUUID().toString())
+                                .contentType("application/json")
+                                .content("{\"captainUserId\":null,\"expectedVersion\":0}"))
+                        .andReturn().getResponse();
+            });
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            assertThat(cancel.get(20, TimeUnit.SECONDS).status()).isEqualTo("CANCELLED");
+            int assignmentStatus = assign.get(20, TimeUnit.SECONDS).getStatus();
+            assertThat(assignmentStatus).isIn(202, 409);
+            if (assignmentStatus == 409)
+                assertThat(issued.findById(outstanding.id()).orElseThrow().status()).isEqualTo("CANCELLED");
+        }
+    }
+
+    @Test
+    void individualAdvisoryIssuanceRacingAssignmentHasOneGuardWinner() throws Exception {
+        var proposal = proposal(InstructionType.REDUCE_SPEED);
+        var race = raceAssignmentAgainst(() -> instructions.decide(proposal.id(), null, null, CONTROLLER, null), bus.busId());
+        assertThat(race.issueSucceeded()).isEqualTo(race.assignmentStatus() == 409);
+        assertThat(issued.count()).isEqualTo(race.issueSucceeded() ? 1 : 0);
+    }
+
+    @Test
+    void completeGroupIssuanceRacingAssignmentHasOneGuardWinner() throws Exception {
+        var fleet = groupedFleet();
+        var proposalIds = fleet.stream().limit(3)
+                .map(value -> proposalFor(value, InstructionType.BE_CAUTIOUS).id()).toList();
+        var race = raceAssignmentAgainst(() -> advisoryGroups.decide(proposalIds, CONTROLLER), bus.busId());
+        assertThat(race.issueSucceeded()).isEqualTo(race.assignmentStatus() == 409);
+        assertThat(issued.count()).isEqualTo(race.issueSucceeded() ? 3 : 0);
+        if (!race.issueSucceeded()) assertThat(proposals.findAll()).allSatisfy(value -> assertThat(value.status()).isEqualTo("PENDING"));
+    }
+
+    @Test
+    void bunchingIssueAndReplacementRacingAssignmentHasOneGuardWinner() throws Exception {
+        var recommendationId = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
+        var race = raceAssignmentAgainst(() -> bunchingInstructions.approveAndIssue(recommendationId, CONTROLLER, null),
+                bus.busId());
+        assertThat(race.issueSucceeded()).isEqualTo(race.assignmentStatus() == 409);
+        assertThat(issued.count()).isEqualTo(race.issueSucceeded() ? 1 : 0);
+        assertThat(jdbc.queryForObject("select count(*) from planning.recommendation_decision where recommendation_id=?",
+                Integer.class, recommendationId)).isEqualTo(race.issueSucceeded() ? 1 : 0);
+    }
+
+    @Test
+    void acknowledgementRacingAssignmentKeepsCurrentInstructionAsBlocker() throws Exception {
+        var instruction = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, CONTROLLER, null);
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+        String path = "/api/v1/planning/admin/demo-runs/" + run + "/buses/" + bus.busId() + "/assignment";
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var acknowledge = executor.submit(() -> {
+                ready.countDown(); start.await(); return instructions.acknowledge(instruction.id(), captainActor());
+            });
+            var assign = executor.submit(() -> {
+                ready.countDown(); start.await();
+                return mvc.perform(put(path).with(jwt().jwt(token -> token.subject("admin-a"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                                .header("Idempotency-Key", UUID.randomUUID().toString())
+                                .contentType("application/json")
+                                .content("{\"captainUserId\":null,\"expectedVersion\":0}"))
+                        .andReturn().getResponse();
+            });
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            assertThat(acknowledge.get(20, TimeUnit.SECONDS).status()).isEqualTo("ACKNOWLEDGED");
+            var response = assign.get(20, TimeUnit.SECONDS);
+            assertThat(response.getStatus()).isEqualTo(409);
+            assertThat(response.getContentAsString()).contains(instruction.id().toString(), "ACKNOWLEDGED");
+        }
+    }
+
+    @Test
+    void closedRunReconciliationRacingAssignmentClosesTheInstructionAndRejectsNewReservation() throws Exception {
+        var outstanding = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, CONTROLLER, null);
+        when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "CLOSED", List.of(bus), 1));
+        String path = "/api/v1/planning/admin/demo-runs/" + run + "/buses/" + bus.busId() + "/assignment";
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var close = executor.submit(() -> { ready.countDown(); start.await(); instructionRuns.reconcileClosedRuns(); return true; });
+            var assign = executor.submit(() -> {
+                ready.countDown(); start.await();
+                return mvc.perform(put(path).with(jwt().jwt(token -> token.subject("admin-close"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                                .header("Idempotency-Key", UUID.randomUUID().toString())
+                                .contentType("application/json")
+                                .content("{\"captainUserId\":null,\"expectedVersion\":0}"))
+                        .andReturn().getResponse();
+            });
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            assertThat(close.get(20, TimeUnit.SECONDS)).isTrue();
+            assertThat(assign.get(20, TimeUnit.SECONDS).getStatus()).isEqualTo(409);
+        }
+        assertThat(issued.findById(outstanding.id()).orElseThrow().status()).isEqualTo("CANCELLED");
+    }
+
+    private AssignmentRace raceAssignmentAgainst(Runnable issue, String busId) throws Exception {
+        String path = "/api/v1/planning/admin/demo-runs/" + run + "/buses/" + busId + "/assignment";
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var issueFuture = executor.submit(() -> {
+                ready.countDown(); start.await();
+                try { issue.run(); return true; }
+                catch (AdvisoryConflictException | DataIntegrityViolationException conflict) { return false; }
+            });
+            var assignmentFuture = executor.submit(() -> {
+                ready.countDown(); start.await();
+                return mvc.perform(put(path).with(jwt().jwt(token -> token.subject("admin-race"))
+                                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                                .header("Idempotency-Key", UUID.randomUUID().toString())
+                                .contentType("application/json")
+                                .content("{\"captainUserId\":null,\"expectedVersion\":0}"))
+                        .andReturn().getResponse().getStatus();
+            });
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            return new AssignmentRace(assignmentFuture.get(20, TimeUnit.SECONDS), issueFuture.get(20, TimeUnit.SECONDS));
+        }
+    }
+
+    private record AssignmentRace(int assignmentStatus, boolean issueSucceeded) { }
 
     @Test
     void groupsWholeServiceDirectionsBeforePagination() {
@@ -139,15 +568,15 @@ class AdvisoryPersistenceIT {
     void groupSendCreatesIndependentDeliveriesAndIdenticalRetriesReuseThem() {
         var fleet = groupedFleet();
         var ids = fleet.stream().limit(3).map(value -> proposalFor(value, InstructionType.BE_CAUTIOUS).id()).toList();
-        var sent = advisoryGroups.decide(ids, "controller");
+        var sent = advisoryGroups.decide(ids, CONTROLLER);
         assertThat(sent).hasSize(3);
         assertThat(issued.count()).isEqualTo(3);
-        assertThat(advisoryGroups.decide(ids.reversed(), "controller")).extracting(IssuedInstruction::id)
+        assertThat(advisoryGroups.decide(ids.reversed(), CONTROLLER)).extracting(IssuedInstruction::id)
                 .containsExactlyInAnyOrderElementsOf(sent.stream().map(IssuedInstruction::id).toList());
         assertThat(issued.count()).isEqualTo(3);
         var one = sent.getFirst();
         var captainId = fleet.stream().filter(value -> value.busId().equals(one.busId())).findFirst().orElseThrow().captainUserId();
-        instructions.acknowledge(one.id(), captainId.toString());
+        instructions.acknowledge(one.id(), new PlanningActor(captainId.toString(), PlanningActor.Role.CAPTAIN));
         assertThat(issued.findAll().stream().filter(value -> value.acknowledgedAt() != null).count()).isEqualTo(1);
     }
 
@@ -161,7 +590,7 @@ class AdvisoryPersistenceIT {
         var groups = advisoryGroups.pending(0, 1);
         assertThat(groups.getTotalElements()).isEqualTo(1);
         assertThat(groups.getContent().getFirst().members()).hasSize(101);
-        assertThat(advisoryGroups.decide(ids, "controller")).hasSize(101);
+        assertThat(advisoryGroups.decide(ids, CONTROLLER)).hasSize(101);
         assertThat(issued.count()).isEqualTo(101);
     }
 
@@ -174,7 +603,7 @@ class AdvisoryPersistenceIT {
                 ? new AdvisoryContextPort.Bus(value.busId(), value.tripId(), value.registrationNumber(), value.serviceId(),
                         value.directionId(), null, "UNASSIGNED", value.progress()) : value).toList();
         when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING", current, current.size()));
-        assertThatThrownBy(() -> advisoryGroups.decide(captured.stream().map(AdvisoryProposal::id).toList(), "controller"))
+        assertThatThrownBy(() -> advisoryGroups.decide(captured.stream().map(AdvisoryProposal::id).toList(), CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class);
         assertThat(issued.count()).isZero();
         assertThat(proposals.findAll()).allSatisfy(value -> assertThat(value.status()).isEqualTo("PENDING"));
@@ -184,15 +613,15 @@ class AdvisoryPersistenceIT {
     void groupSendRejectsMixedDirectionsIncompleteMembershipAndChangedRoutes() {
         var fleet = groupedFleet();
         var captured = fleet.stream().map(value -> proposalFor(value, InstructionType.BE_CAUTIOUS)).toList();
-        assertThatThrownBy(() -> advisoryGroups.decide(List.of(captured.get(0).id(), captured.get(3).id()), "controller"))
+        assertThatThrownBy(() -> advisoryGroups.decide(List.of(captured.get(0).id(), captured.get(3).id()), CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class);
-        assertThatThrownBy(() -> advisoryGroups.decide(captured.stream().limit(2).map(AdvisoryProposal::id).toList(), "controller"))
+        assertThatThrownBy(() -> advisoryGroups.decide(captured.stream().limit(2).map(AdvisoryProposal::id).toList(), CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class);
         var changed = fleet.stream().map(value -> value.busId().equals(bus.busId())
                 ? new AdvisoryContextPort.Bus(value.busId(), value.tripId(), value.registrationNumber(), "972", 1,
                         value.captainUserId(), value.assignmentStatus(), value.progress()) : value).toList();
         when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING", changed, changed.size()));
-        assertThatThrownBy(() -> advisoryGroups.decide(captured.stream().limit(3).map(AdvisoryProposal::id).toList(), "controller"))
+        assertThatThrownBy(() -> advisoryGroups.decide(captured.stream().limit(3).map(AdvisoryProposal::id).toList(), CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("route");
         assertThat(issued.count()).isZero();
     }
@@ -201,10 +630,10 @@ class AdvisoryPersistenceIT {
     void conflictingMovementInstructionPreventsTheWholeGroupSend() {
         groupedFleet();
         var previous = proposalFor(bus, InstructionType.REDUCE_SPEED);
-        instructions.decide(previous.id(), null, null, "controller", null);
+        instructions.decide(previous.id(), null, null, CONTROLLER, null);
         hazard = source(true);
         var captured = groupedFleet().stream().limit(3).map(value -> proposalFor(value, InstructionType.REDUCE_SPEED)).toList();
-        assertThatThrownBy(() -> advisoryGroups.decide(captured.stream().map(AdvisoryProposal::id).toList(), "controller"))
+        assertThatThrownBy(() -> advisoryGroups.decide(captured.stream().map(AdvisoryProposal::id).toList(), CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("explicitly replaced");
         assertThat(issued.count()).isEqualTo(1);
         assertThat(proposals.findAll().stream().filter(value -> value.disruptionId().equals(hazard.disruptionId())).toList())
@@ -216,7 +645,7 @@ class AdvisoryPersistenceIT {
         var ids = groupedFleet().stream().limit(3).map(value -> proposalFor(value, InstructionType.BE_CAUTIOUS).id()).toList();
         sources.put(hazard.disruptionId(), new AdvisoryContextPort.Hazard(hazard.disruptionId(), hazard.kind(), "ACTIVE", null,
                 hazard.classification(), run, UUID.randomUUID(), NOW, hazard.facts(), hazard.exposures(), hazard.limitations()));
-        assertThatThrownBy(() -> advisoryGroups.decide(ids, "controller"))
+        assertThatThrownBy(() -> advisoryGroups.decide(ids, CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("evidence changed");
         assertThat(issued.count()).isZero();
     }
@@ -230,7 +659,7 @@ class AdvisoryPersistenceIT {
                 ? new AdvisoryContextPort.Bus(value.busId(), value.tripId(), value.registrationNumber(), value.serviceId(),
                         value.directionId(), value.captainUserId(), value.assignmentStatus(), passed) : value).toList();
         when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING", current, current.size()));
-        assertThatThrownBy(() -> advisoryGroups.decide(ids, "controller"))
+        assertThatThrownBy(() -> advisoryGroups.decide(ids, CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("no current downstream exposure");
         assertThat(issued.count()).isZero();
     }
@@ -238,10 +667,10 @@ class AdvisoryPersistenceIT {
     @Test
     void groupSendRejectsDuplicateRecipientsAndAnotherSimulation() {
         var ids = groupedFleet().stream().limit(3).map(value -> proposalFor(value, InstructionType.BE_CAUTIOUS).id()).toList();
-        assertThatThrownBy(() -> advisoryGroups.decide(List.of(ids.getFirst(), ids.getFirst()), "controller"))
+        assertThatThrownBy(() -> advisoryGroups.decide(List.of(ids.getFirst(), ids.getFirst()), CONTROLLER))
                 .isInstanceOf(IllegalArgumentException.class);
         when(scopes.current()).thenReturn(new PlanningScope("DEMO", UUID.randomUUID()));
-        assertThatThrownBy(() -> advisoryGroups.decide(ids, "controller")).isInstanceOf(AdvisoryConflictException.class);
+        assertThatThrownBy(() -> advisoryGroups.decide(ids, CONTROLLER)).isInstanceOf(AdvisoryConflictException.class);
         assertThat(issued.count()).isZero();
     }
 
@@ -252,7 +681,7 @@ class AdvisoryPersistenceIT {
         try (var workers = Executors.newFixedThreadPool(2)) {
             java.util.concurrent.Callable<List<UUID>> send = () -> {
                 start.await();
-                return advisoryGroups.decide(ids, "controller").stream().map(IssuedInstruction::id).toList();
+                return advisoryGroups.decide(ids, CONTROLLER).stream().map(IssuedInstruction::id).toList();
             };
             var first = workers.submit(send);
             var second = workers.submit(send);
@@ -428,7 +857,7 @@ class AdvisoryPersistenceIT {
         assertThat(loadedProposal.context()).isEqualTo(hazard);
         assertThat(loadedProposal.bus()).isEqualTo(bus);
         assertThat(loadedProposal.candidate()).isEqualTo(proposal.candidate());
-        var instruction = instructions.decide(proposal.id(), null, null, "controller", null);
+        var instruction = instructions.decide(proposal.id(), null, null, CONTROLLER, null);
         var reloaded = issued.findById(instruction.id()).orElseThrow();
         assertThat(reloaded.parameters()).isEqualTo(proposal.candidate().parameters());
         assertThat(reloaded.message()).isEqualTo("Reduce speed by 5 km/h for 5 min.");
@@ -485,6 +914,30 @@ class AdvisoryPersistenceIT {
                 .andExpect(jsonPath("$.components.schemas.ProblemDetail.properties.status.type").value("integer"))
                 .andExpect(jsonPath("$.components.schemas.ProblemDetail.properties.detail.type").value("string"));
 
+        var assignmentContract = mvc.perform(get("/v3/api-docs")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"))))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        var assignmentApi = JSON.readTree(assignmentContract);
+        var assignmentOperation = assignmentApi.path("paths")
+                .path("/api/v1/planning/admin/demo-runs/{runId}/buses/{busId}/assignment").path("put");
+        var idempotencyParameter = java.util.stream.StreamSupport.stream(
+                        assignmentOperation.path("parameters").spliterator(), false)
+                .filter(parameter -> "Idempotency-Key".equals(parameter.path("name").asText()))
+                .findFirst().orElseThrow();
+        assertThat(idempotencyParameter.path("required").asBoolean()).isTrue();
+        var pendingOperation = assignmentApi.path("paths")
+                .path("/internal/v1/planning/demo-runs/{runId}/pending-assignment-operations").path("get");
+        assertThat(pendingOperation.path("security").toString()).contains("IngestionPeerToken")
+                .doesNotContain("SupabaseJWT", "DisruptionPeerToken");
+        assertThat(pendingOperation.path("responses").has("401")).isTrue();
+
+        var internalContract = mvc.perform(get("/v3/api-docs/planning-internal")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"))))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        var internalApi = JSON.readTree(internalContract);
+        assertThat(internalApi.path("security").toString()).contains("DisruptionPeerToken")
+                .doesNotContain("SupabaseJWT", "IngestionPeerToken");
+
         mvc.perform(post("/api/v1/planning/advisories/" + UUID.randomUUID() + "/decisions")
                         .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
                         .contentType("application/json").content("{}"))
@@ -518,7 +971,7 @@ class AdvisoryPersistenceIT {
         var proposal = proposal(InstructionType.REDUCE_SPEED);
         jdbc.execute("ALTER TABLE planning.issued_instruction ADD CONSTRAINT test_reject_instruction CHECK(false) NOT VALID");
         try {
-            assertThatThrownBy(() -> instructions.decide(proposal.id(), null, null, "controller", null))
+            assertThatThrownBy(() -> instructions.decide(proposal.id(), null, null, CONTROLLER, null))
                     .isInstanceOf(DataIntegrityViolationException.class);
         } finally {
             jdbc.execute("ALTER TABLE planning.issued_instruction DROP CONSTRAINT test_reject_instruction");
@@ -528,8 +981,8 @@ class AdvisoryPersistenceIT {
         assertThat(unchanged.finalCandidate()).isNull();
         assertThat(modelEvidence.findById(proposal.id()).orElseThrow().finalCandidate()).isNull();
         assertThat(issued.count()).isZero();
-        var first = instructions.decide(proposal.id(), null, null, "controller", null);
-        var repeated = instructions.decide(proposal.id(), null, null, "controller", null);
+        var first = instructions.decide(proposal.id(), null, null, CONTROLLER, null);
+        var repeated = instructions.decide(proposal.id(), null, null, CONTROLLER, null);
         assertThat(repeated.id()).isEqualTo(first.id());
         assertThat(issued.count()).isEqualTo(1);
         assertThat(proposals.findById(proposal.id()).orElseThrow().status()).isEqualTo("APPROVED");
@@ -537,11 +990,11 @@ class AdvisoryPersistenceIT {
 
     @Test
     void concurrentAcknowledgementsPersistOneReceiptAndCannotChangeItsTimestamp() throws Exception {
-        var instruction = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, "controller", null);
+        var instruction = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, CONTROLLER, null);
         CountDownLatch start = new CountDownLatch(1);
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            var first = executor.submit(() -> { start.await(); return instructions.acknowledge(instruction.id(), captain.toString()); });
-            var second = executor.submit(() -> { start.await(); return instructions.acknowledge(instruction.id(), captain.toString()); });
+            var first = executor.submit(() -> { start.await(); return instructions.acknowledge(instruction.id(), captainActor()); });
+            var second = executor.submit(() -> { start.await(); return instructions.acknowledge(instruction.id(), captainActor()); });
             start.countDown();
             assertThat(first.get(20, TimeUnit.SECONDS).acknowledgedAt()).isEqualTo(NOW);
             assertThat(second.get(20, TimeUnit.SECONDS).acknowledgedAt()).isEqualTo(NOW);
@@ -551,7 +1004,7 @@ class AdvisoryPersistenceIT {
         assertThat(persisted.applicableUntil()).isEqualTo(NOW.plusSeconds(300));
         assertThat(jdbc.queryForObject("SELECT version FROM planning.issued_instruction", Long.class)).isEqualTo(1L);
         assertThat(jdbc.queryForObject("SELECT acknowledgement_subject FROM planning.issued_instruction", String.class)).isEqualTo(captain.toString());
-        assertThatThrownBy(() -> instructions.acknowledge(instruction.id(), UUID.randomUUID().toString()))
+        assertThatThrownBy(() -> instructions.acknowledge(instruction.id(), new PlanningActor(UUID.randomUUID().toString(), PlanningActor.Role.CAPTAIN)))
                 .isInstanceOf(AdvisoryNotFoundException.class);
     }
 
@@ -811,7 +1264,7 @@ class AdvisoryPersistenceIT {
 
     @Test
     void sourceCancellationWithdrawsNoticeAndCancelsInstructionInOneTransaction() {
-        var instruction = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, "controller", null);
+        var instruction = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, CONTROLLER, null);
         var notice = draft(hazard, UUID.randomUUID(), MESSAGE); notices.publish(notice.id(), "controller");
         jdbc.execute("ALTER TABLE planning.public_notice ADD CONSTRAINT test_reject_withdrawal CHECK(status <> 'WITHDRAWN') NOT VALID");
         try {
@@ -836,9 +1289,9 @@ class AdvisoryPersistenceIT {
     @Test
     void closedRunRetiresAcknowledgedStopInstructionButKeepsModelAndDecisionEvidence() {
         var proposal = proposal(InstructionType.SLOW_DOWN_NEAR_STOPS);
-        var issuedInstruction = instructions.decide(proposal.id(), null, null, "controller", null);
+        var issuedInstruction = instructions.decide(proposal.id(), null, null, CONTROLLER, null);
         var pendingProposal = proposal(InstructionType.BE_CAUTIOUS);
-        instructions.acknowledge(issuedInstruction.id(), captain.toString());
+        instructions.acknowledge(issuedInstruction.id(), captainActor());
         jdbc.update("UPDATE planning.issued_instruction SET issued_at=?, acknowledgement_deadline=?, acknowledged_at=? WHERE id=?",
                 Timestamp.from(NOW.minus(Duration.ofHours(13))),
                 Timestamp.from(NOW.minus(Duration.ofHours(13)).plus(Duration.ofMinutes(5))),
@@ -870,7 +1323,7 @@ class AdvisoryPersistenceIT {
     @Test
     void retentionExpiryAuditsInstructionTransitionBeforeOperationalDeletion() {
         var proposal = proposal(InstructionType.SLOW_DOWN_NEAR_STOPS);
-        var instruction = instructions.decide(proposal.id(), null, null, "controller", null);
+        var instruction = instructions.decide(proposal.id(), null, null, CONTROLLER, null);
         jdbc.update("UPDATE planning.issued_instruction SET issued_at=?, acknowledgement_deadline=? WHERE id=?",
                 Timestamp.from(NOW.minus(Duration.ofHours(13))), Timestamp.from(NOW.minusSeconds(1)), instruction.id());
 
@@ -900,7 +1353,7 @@ class AdvisoryPersistenceIT {
 
     @Test
     void holdAtomicallyReplacesExplicitMovementAndReplaysOnlyTheSamePredecessor() throws Exception {
-        var predecessor = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, "controller", null);
+        var predecessor = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, CONTROLLER, null);
         var id = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
         mvc.perform(post("/api/v1/planning/recommendations/" + id + "/obu-decisions")
                 .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
@@ -930,7 +1383,7 @@ class AdvisoryPersistenceIT {
 
     @Test
     void competingReplacementReportsWinningInstructionAndFailedIssueRollsBackCancellation() throws Exception {
-        var predecessor = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, "controller", null);
+        var predecessor = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, CONTROLLER, null);
         var first = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
         var second = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
         var body = "{\"replaceInstructionId\":\"" + predecessor.id() + "\"}";
@@ -962,11 +1415,11 @@ class AdvisoryPersistenceIT {
         }
 
         jdbc.execute("TRUNCATE planning.application_audit_event, planning.issued_instruction, planning.advisory_proposal, planning.advisory_model_evidence, planning.recommendation_decision, planning.model_invocation_record, planning.recommendation");
-        var rollbackPredecessor = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, "controller", null);
+        var rollbackPredecessor = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, CONTROLLER, null);
         var rollbackId = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
         jdbc.execute("ALTER TABLE planning.issued_instruction ADD CONSTRAINT test_reject_bunching_instruction CHECK(false) NOT VALID");
         try {
-            assertThatThrownBy(() -> bunchingInstructions.approveAndIssue(rollbackId, "controller", rollbackPredecessor.id()))
+            assertThatThrownBy(() -> bunchingInstructions.approveAndIssue(rollbackId, CONTROLLER, rollbackPredecessor.id()))
                     .isInstanceOf(DataIntegrityViolationException.class);
         } finally {
             jdbc.execute("ALTER TABLE planning.issued_instruction DROP CONSTRAINT test_reject_bunching_instruction");
@@ -1001,7 +1454,7 @@ class AdvisoryPersistenceIT {
 
     private boolean decideAfter(CountDownLatch start, UUID id) throws InterruptedException {
         start.await();
-        try { instructions.decide(id, null, null, "controller", null); return true; }
+        try { instructions.decide(id, null, null, CONTROLLER, null); return true; }
         catch (AdvisoryConflictException | DataIntegrityViolationException conflict) { return false; }
     }
     private AdvisoryProposal proposal(InstructionType type) {

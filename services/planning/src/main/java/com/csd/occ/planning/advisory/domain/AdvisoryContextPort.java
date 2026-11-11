@@ -37,7 +37,12 @@ public interface AdvisoryContextPort {
     }
     record Fleet(UUID demoRunId, String status, List<Bus> items, long totalElements) {}
     record Bus(String busId, String tripId, String registrationNumber, String serviceId, int directionId,
-               UUID captainUserId, String assignmentStatus, Progress progress) {}
+               UUID captainUserId, String assignmentStatus, Progress progress, long assignmentRevision) {
+        public Bus(String busId, String tripId, String registrationNumber, String serviceId, int directionId,
+                UUID captainUserId, String assignmentStatus, Progress progress) {
+            this(busId, tripId, registrationNumber, serviceId, directionId, captainUserId, assignmentStatus, progress, 0);
+        }
+    }
     record Progress(String stopCode, int stopSequence, Instant observedAt, int assumedSpeedKmh,
                     List<Integer> allowedSpeedReductionsKmh, List<Integer> allowedDurationsSeconds) {}
     record Route(String serviceId, List<Operator> operators) {}

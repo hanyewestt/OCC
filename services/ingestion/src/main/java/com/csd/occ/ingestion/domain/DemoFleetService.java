@@ -32,7 +32,7 @@ public class DemoFleetService {
                     assignment.busId() == null ? assignment.id().tripId() : assignment.busId(),
                     assignment.id().tripId(), assignment.vehicleRegistrationNumber(), assignment.serviceId(),
                     assignment.directionId(), captain, captain.isPresent() ? "ASSIGNED" : "CAPTAIN_ASSIGNMENT_UNAVAILABLE",
-                    progress(assignment));
+                    progress(assignment), assignment.assignmentRevision());
         }).toList(), found.getTotalElements(), page, size);
     }
 
