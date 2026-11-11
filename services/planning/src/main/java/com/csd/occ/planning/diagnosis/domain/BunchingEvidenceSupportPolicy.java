@@ -218,7 +218,6 @@ public final class BunchingEvidenceSupportPolicy {
             limitations.add("Passenger load categories (SEA/SDA/LSD) reflect coarse occupancy tiers; intra-tier passenger boarding volumes were estimated from headway variance.");
         }
 
-        limitations.add("Corridor traffic signal timings and micro-segment vehicle trajectories were not directly telemetered.");
 
         List<String> ids = java.util.stream.Stream.concat(event.evidenceIds().stream(),
                 output.supportingEvidenceIds().stream()).distinct().toList();

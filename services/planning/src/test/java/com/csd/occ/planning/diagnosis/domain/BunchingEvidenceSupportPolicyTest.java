@@ -165,7 +165,6 @@ class BunchingEvidenceSupportPolicyTest {
         assertThat(driftResult.causeSubtype()).isEqualTo("CUMULATIVE_DRIFT");
         assertThat(driftResult.facts()).anySatisfy(fact -> assertThat(fact).contains("Uniform passenger load category (SEA)"));
         assertThat(driftResult.limitations()).anySatisfy(lim -> assertThat(lim).contains("Passenger load categories (SEA/SDA/LSD) reflect coarse occupancy tiers"));
-        assertThat(driftResult.limitations()).anySatisfy(lim -> assertThat(lim).contains("Corridor traffic signal timings and micro-segment vehicle trajectories were not directly telemetered."));
     }
 
     @Test
