@@ -230,7 +230,7 @@ class BunchingRecommendationControllerTest {
 
         assertThat(response).hasStatus(200)
                 .bodyJson().extractingPath("action").isEqualTo("APPROVED");
-        verify(bunchingInstructions).approveAndIssue(RECOMMENDATION_ID, "controller-subject");
+        verify(bunchingInstructions).approveSuggestedAndIssue(RECOMMENDATION_ID, "controller-subject");
     }
 
     @Test

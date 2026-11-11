@@ -26,9 +26,18 @@ public class BunchingInstructionService {
     }
     @Transactional
     public IssuedInstruction approveAndIssue(UUID id, String actor) { return approveAndIssue(id, actor, null); }
+    /** Single-bus approval that returns its one instruction; grouped recommendations use {@link #approveSuggestedAndIssue}. */
     @Transactional
     public IssuedInstruction approveAndIssue(UUID id, String actor, UUID replaceInstructionId) {
-        return issue(id, actor, RecommendationDecisionAction.APPROVED, null, 0, null, replaceInstructionId);
+        var record = recommendations.findByIdempotencyKey(id).orElseThrow(AdvisoryNotFoundException::new);
+        if (record.mitigationContext().affectedBusReferences().size() > 1)
+            throw new AdvisoryConflictException("Review an outcome for every affected bus");
+        return issue(id, actor, RecommendationDecisionAction.APPROVED, List.of(), null, replaceInstructionId).getFirst();
+    }
+    /** Approves the stored outcome for every affected bus: the single recommendation, or each grouped suggestion. */
+    @Transactional
+    public List<IssuedInstruction> approveSuggestedAndIssue(UUID id, String actor) {
+        return issue(id, actor, RecommendationDecisionAction.APPROVED, List.of(), null, null);
     }
     @Transactional
     public IssuedInstruction rejectAndIssue(UUID id, String actor, MitigationType type, int seconds, String rationale) {
@@ -43,12 +52,6 @@ public class BunchingInstructionService {
                 ? new ReplacementBusInstruction(record.recommendation().targetBusReference(), item.type(), item.seconds(), item.noInstructionReason()) : item).toList();
         return issue(id, actor, RecommendationDecisionAction.REJECTED, normalized, rationale, null);
     }
-    private IssuedInstruction issue(UUID id, String actor, RecommendationDecisionAction decisionAction,
-            MitigationType requestedType, int requestedSeconds, String rationale, UUID replaceInstructionId) {
-        List<ReplacementBusInstruction> requested = requestedType == null ? List.of()
-                : List.of(new ReplacementBusInstruction("", requestedType, requestedSeconds));
-        return issue(id, actor, decisionAction, requested, rationale, replaceInstructionId).getFirst();
-    }
     private List<IssuedInstruction> issue(UUID id, String actor, RecommendationDecisionAction decisionAction,
             List<ReplacementBusInstruction> requested, String rationale, UUID replaceInstructionId) {
         var record = recommendations.findByIdempotencyKeyForUpdate(id).orElseThrow(AdvisoryNotFoundException::new);
@@ -60,11 +63,14 @@ public class BunchingInstructionService {
             throw new AdvisoryConflictException("Only validated synthetic HOLD/DWELL recommendations can be issued");
         var target = recommendation.targetBusReference();
         var allowedReferences = record.mitigationContext().affectedBusReferences();
-        if (decisionAction == RecommendationDecisionAction.APPROVED && allowedReferences.size() > 1)
+        var suggestions = recommendation.suggestedOutcomes();
+        if (decisionAction == RecommendationDecisionAction.APPROVED && allowedReferences.size() > 1 && suggestions.isEmpty())
             throw new AdvisoryConflictException("Review an outcome for every affected bus");
-        var initialActions = decisionAction == RecommendationDecisionAction.APPROVED
-                ? List.of(new ReplacementBusInstruction(target, recommendation.mitigationType(), recommendation.adjustmentSeconds()))
-                : requested;
+        var initialActions = decisionAction != RecommendationDecisionAction.APPROVED ? requested
+                : allowedReferences.size() > 1 ? suggestions.stream().map(outcome -> new ReplacementBusInstruction(
+                        outcome.busReference(), outcome.mitigationType(), outcome.adjustmentSeconds(),
+                        outcome.mitigationType() == null ? outcome.reason() : null)).toList()
+                : List.of(new ReplacementBusInstruction(target, recommendation.mitigationType(), recommendation.adjustmentSeconds()));
         var actions = initialActions.stream().sorted(java.util.Comparator.comparing(action -> !action.busReference().equals(target))).toList();
         if (actions.isEmpty() || actions.size() > 100 || actions.stream().map(ReplacementBusInstruction::busReference).distinct().count() != actions.size())
             throw new AdvisoryConflictException("One unique instruction per affected bus is required");
