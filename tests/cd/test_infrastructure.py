@@ -75,6 +75,7 @@ class CloudFormationContractTests(unittest.TestCase):
         # create-change-set defaults to UPDATE and rejects a missing stack.
         self.assertIn("--change-set-type", bootstrap)
         self.assertIn('"CREATE"', bootstrap)
+        self.assertIn("list-stacks", bootstrap)
         self.assertIn("stack-create-complete", bootstrap)
 
     def test_storage_is_encrypted_versioned_and_private(self):
