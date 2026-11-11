@@ -16,7 +16,7 @@ public final class DemoHazardScenario {
         var road = new HazardLocation("ROAD", "Bt Panjang Rd", "Bt Panjang Rd", new BigDecimal("1.3803000"),
                 new BigDecimal("103.7623000"), new BigDecimal("0.5"), "ROAD_NAME", "PROVIDER_SUPPLIED");
         var coverage = new HazardLocation("AREA", "demo-flood", "Bt Panjang / Teck Whye", new BigDecimal("1.3802550"),
-                new BigDecimal("103.7550750"), new BigDecimal("1.5"), "BROADCAST_COVERAGE", "PROVIDER_SUPPLIED");
+                new BigDecimal("103.7550750"), new BigDecimal("1.0"), "BROADCAST_COVERAGE", "PROVIDER_SUPPLIED");
         var station = new HazardLocation("STATION", "BP6", "Bukit Panjang", new BigDecimal("1.3786000"),
                 new BigDecimal("103.7618000"), new BigDecimal("0.5"), "STATION_REFERENCE", "PROVIDER_SUPPLIED");
         var expiresAt = startedAt.plusSeconds(3600);
