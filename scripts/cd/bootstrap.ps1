@@ -27,15 +27,18 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Invoke-Aws {
-    param([Parameter(Mandatory)][string[]]$Arguments)
+    param([Parameter(Mandatory)][object[]]$Arguments)
+    # Flatten nested arrays so repeated parameter groups reach the CLI as
+    # separate argv entries instead of one space-joined string.
+    $flat = @($Arguments | ForEach-Object { $_ })
     if ($Profile) {
-        & aws @Arguments --profile $Profile --region $Region
+        & aws @flat --profile $Profile --region $Region
     }
     else {
-        & aws @Arguments --region $Region
+        & aws @flat --region $Region
     }
     if ($LASTEXITCODE -ne 0) {
-        throw "aws $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
+        throw "aws $($flat -join ' ') failed with exit code $LASTEXITCODE"
     }
 }
 
@@ -184,9 +187,13 @@ $parameters = @(
 Write-Output "Creating change set for stack $StackName..."
 $changeSet = "occ-bootstrap-" + (Get-Date -Format "yyyyMMddHHmmss")
 $templatePath = Join-Path $repoRoot "infra/aws/ec2-cd.yaml"
-Invoke-Aws @("cloudformation", "create-change-set", "--stack-name", $StackName,
-    "--change-set-name", $changeSet, "--template-body", "file://$templatePath",
-    "--capabilities", "CAPABILITY_NAMED_IAM", "--parameters", $parameters)
+$templateUri = "file://" + ($templatePath -replace '\\', '/')
+$changeSetArguments = @(
+    "cloudformation", "create-change-set", "--stack-name", $StackName,
+    "--change-set-name", $changeSet, "--template-body", $templateUri,
+    "--capabilities", "CAPABILITY_NAMED_IAM", "--parameters"
+) + $parameters
+Invoke-Aws $changeSetArguments
 Write-Output "Change set $changeSet created. Review it with:"
 Write-Output "  aws cloudformation describe-change-set --stack-name $StackName --change-set-name $changeSet"
 if (-not $ApplyChangeSet) {
@@ -218,10 +225,12 @@ $deployment["OCC_ORIGIN_PUBLIC_URL"] = $outputs["CloudFrontUrl"]
 $deployment["OCC_NGINX_ORIGIN_PORT"] = "8080"
 $deployment["OCC_COMPOSE_PROJECT"] = "occ-production"
 $payloadPath = Join-Path ([System.IO.Path]::GetTempPath()) ("occ-secret-" + [guid]::NewGuid().ToString("N") + ".json")
+$payloadUri = "file://" + ($payloadPath -replace '\\', '/')
 try {
-    @{ SecretId = $outputs["DeploymentSecretName"]; SecretString = ($deployment | ConvertTo-Json -Depth 4) } |
-        ConvertTo-Json -Depth 4 | Set-Content -Path $payloadPath -NoNewline
-    Invoke-Aws @("secretsmanager", "put-secret-value", "--cli-input-json", "file://$payloadPath") | Out-Null
+    $payload = @{ SecretId = $outputs["DeploymentSecretName"]; SecretString = ($deployment | ConvertTo-Json -Depth 4) } |
+        ConvertTo-Json -Depth 4
+    [System.IO.File]::WriteAllText($payloadPath, $payload, (New-Object System.Text.UTF8Encoding($false)))
+    Invoke-Aws @("secretsmanager", "put-secret-value", "--cli-input-json", $payloadUri) | Out-Null
 }
 finally {
     Remove-Item -Force $payloadPath -ErrorAction SilentlyContinue
