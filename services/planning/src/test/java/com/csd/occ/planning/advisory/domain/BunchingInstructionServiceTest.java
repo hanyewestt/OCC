@@ -69,11 +69,13 @@ class BunchingInstructionServiceTest {
         var context = mock(AdvisoryContextPort.class);
         var scopes = mock(PlanningScopePort.class);
         var auditEvents = mock(ApplicationAuditEventRepository.class);
+        var guards = mock(AssignmentBusGuards.class);
         var bus = new AdvisoryContextPort.Bus("demo-bus-2", "trip-2", "SBS5898U", "190", 1, CAPTAIN,
                 "ASSIGNED", new AdvisoryContextPort.Progress("44241", 1, NOW, 30, List.of(), List.of()));
         var hazard = new AdvisoryContextPort.Hazard(ID, "BUNCHING", "ACTIVE", null, "SIMULATION", RUN,
                 null, NOW, null, List.of(), List.of());
         when(records.findByIdempotencyKey(ID)).thenReturn(Optional.of(record));
+        when(decisions.findDecision(ID)).thenReturn(Optional.empty());
         when(scopes.current()).thenReturn(new PlanningScope("DEMO", RUN));
         when(context.hazard(ID)).thenReturn(hazard);
         when(context.fleet(RUN)).thenReturn(new AdvisoryContextPort.Fleet(RUN, "RUNNING", List.of(bus), 1));
@@ -84,15 +86,15 @@ class BunchingInstructionServiceTest {
                                 new AdvisoryContextPort.Stop("44251", "City Hall", 2))))))));
         when(context.limits()).thenReturn(new AdvisoryContextPort.Limits(20, 1800, 5,
                 Duration.ofMinutes(5), Duration.ofDays(30)));
-        when(current.captain(CAPTAIN.toString())).thenReturn(List.of());
         when(instructions.findByProposalIdForUpdate(ID)).thenReturn(List.of());
         when(instructions.saveAndFlush(any())).thenAnswer(call -> call.getArgument(0));
 
         var service = new BunchingInstructionService(records, decisions, instructions, current, context,
-                scopes, Clock.fixed(NOW, ZoneOffset.UTC), auditEvents);
+                scopes, Clock.fixed(NOW, ZoneOffset.UTC), auditEvents, guards);
+        var actor = new PlanningActor("controller-subject", PlanningActor.Role.CONTROLLER);
         var issued = rejected
-                ? service.rejectAndIssue(ID, "controller-subject", type, 60, "Use a shorter hold.")
-                : service.approveAndIssue(ID, "controller-subject");
+                ? service.rejectAndIssue(ID, actor, type, 60, "Use a shorter hold.")
+                : service.approveAndIssue(ID, actor);
 
         assertThat(issued.busId()).isEqualTo("demo-bus-2");
         assertThat(issued.captainUserId()).isEqualTo(CAPTAIN);

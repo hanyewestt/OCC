@@ -17,14 +17,19 @@ public class AdvisoryReconciliationService {
     private final InstructionService instructionAudit;
     private final ApplicationAuditEventRepository auditEvents;
     private final Clock clock;
+    private final AssignmentBusGuards guards;
     public AdvisoryReconciliationService(IssuedInstructionRepository instructions, PublicNoticeService notices,
             AdvisoryProposalRepository proposals, InstructionService instructionAudit,
-            ApplicationAuditEventRepository auditEvents, Clock clock) {
+            ApplicationAuditEventRepository auditEvents, Clock clock, AssignmentBusGuards guards) {
         this.instructions = instructions; this.notices = notices; this.proposals = proposals;
-        this.instructionAudit = instructionAudit; this.auditEvents = auditEvents; this.clock = clock;
+        this.instructionAudit = instructionAudit; this.auditEvents = auditEvents; this.clock = clock; this.guards = guards;
     }
     @Transactional
     public void sourceCleared(UUID id, String reason) {
+        var keys = new java.util.ArrayList<AssignmentBusGuards.Key>();
+        instructions.findActiveKeysByDisruptionId(id).forEach(key -> keys.add(new AssignmentBusGuards.Key(key.getDemoRunId(), key.getBusId())));
+        proposals.findPendingKeysByDisruptionId(id).forEach(key -> keys.add(new AssignmentBusGuards.Key(key.getDemoRunId(), key.getBusId())));
+        guards.lockAll(keys);
         for (var instruction : instructions.findActiveByDisruptionIdForUpdate(id)) {
             instruction.cancel("SOURCE_WITHDRAWN");
             instructionAudit.recordTransition(instruction, "INSTRUCTION_CANCELLED", null);
@@ -35,6 +40,10 @@ public class AdvisoryReconciliationService {
     @Transactional
     public void runClosed(UUID runId) {
         Instant now = clock.instant();
+        var keys = new java.util.ArrayList<AssignmentBusGuards.Key>();
+        instructions.findActiveKeysByDemoRunId(runId).forEach(key -> keys.add(new AssignmentBusGuards.Key(key.getDemoRunId(), key.getBusId())));
+        proposals.findPendingKeysByDemoRunId(runId).forEach(key -> keys.add(new AssignmentBusGuards.Key(key.getDemoRunId(), key.getBusId())));
+        guards.lockAll(keys);
         for (var proposal : proposals.findPendingByDemoRunIdForUpdate(runId)) {
             proposal.expire();
             String sourceKey = "advisory-proposal-state:" + proposal.id() + ":EXPIRED";

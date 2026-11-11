@@ -8,6 +8,10 @@ import com.csd.occ.planning.recommendation.domain.RecommendationDecisionService;
 import com.csd.occ.planning.advisory.domain.AdvisoryProposalRepository;
 import com.csd.occ.planning.advisory.domain.IssuedInstructionRepository;
 import com.csd.occ.planning.advisory.domain.InstructionType;
+import com.csd.occ.planning.advisory.domain.AdvisoryForbiddenException;
+import com.csd.occ.planning.advisory.domain.AssignmentOperationConflictException;
+import com.csd.occ.planning.advisory.domain.AssignmentOperationNotFoundException;
+import com.csd.occ.planning.advisory.domain.AssignmentEligibilityUnavailableException;
 import com.csd.occ.planning.domain.audit.ApplicationAuditNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
@@ -41,6 +45,29 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(com.csd.occ.planning.advisory.domain.AdvisoryNotFoundException.class)
     ProblemDetail advisoryNotFound(HttpServletRequest request) {
         return problem(HttpStatus.NOT_FOUND, "Advisory not found", "The requested advisory is not available.", "urn:occ:problem:advisory-not-found", request);
+    }
+    @ExceptionHandler(AssignmentOperationNotFoundException.class)
+    ProblemDetail handleAssignmentOperationNotFound(HttpServletRequest request) {
+        return problem(HttpStatus.NOT_FOUND, "Assignment operation not found", "The requested assignment operation is not available.",
+                "urn:occ:problem:assignment-operation-not-found", request);
+    }
+    @ExceptionHandler(AssignmentOperationConflictException.class)
+    ProblemDetail handleAssignmentOperationConflict(AssignmentOperationConflictException exception, HttpServletRequest request) {
+        ProblemDetail body = problem(HttpStatus.CONFLICT, "Assignment conflict", exception.getMessage(),
+                "urn:occ:problem:assignment-conflict", request);
+        exception.details().forEach(body::setProperty);
+        return body;
+    }
+    @ExceptionHandler(AssignmentEligibilityUnavailableException.class)
+    ProblemDetail handleAssignmentEligibilityUnavailable(HttpServletRequest request) {
+        return problem(HttpStatus.SERVICE_UNAVAILABLE, "Assignment eligibility unavailable",
+                "The current run and assignment revision cannot be verified. Retry when Ingestion is available.",
+                "urn:occ:problem:assignment-eligibility-unavailable", request);
+    }
+    @ExceptionHandler(AdvisoryForbiddenException.class)
+    ProblemDetail handleDomainForbidden(HttpServletRequest request) {
+        return problem(HttpStatus.FORBIDDEN, "Forbidden", "The authenticated role cannot perform this action.",
+                "urn:occ:problem:forbidden", request);
     }
     @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
     ProblemDetail concurrentAdvisoryConflict(org.springframework.dao.DataIntegrityViolationException exception,

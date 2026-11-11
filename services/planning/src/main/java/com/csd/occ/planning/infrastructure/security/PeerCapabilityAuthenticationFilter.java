@@ -20,6 +20,7 @@ final class PeerCapabilityAuthenticationFilter extends OncePerRequestFilter {
     static final String DISRUPTION_AUTHORITY = "PEER_DISRUPTION";
     static final String INGESTION_AUTHORITY = "PEER_INGESTION";
     private static final String REQUEST_PATH = "/internal/v1/planning/requests";
+    private static final String PENDING_ASSIGNMENTS_PATH = "/internal/v1/planning/demo-runs/([^/]+)/pending-assignment-operations";
 
     private final PeerCapabilityProperties properties;
 
@@ -38,6 +39,9 @@ final class PeerCapabilityAuthenticationFilter extends OncePerRequestFilter {
             expectedToken = properties.disruptionToPlanningToken();
         } else if (HttpMethod.GET.matches(request.getMethod())
                 && path.matches("/internal/v1/planning/recommendations/by-disruption-event/[^/]+")) {
+            authority = INGESTION_AUTHORITY;
+            expectedToken = properties.ingestionToPlanningToken();
+        } else if (HttpMethod.GET.matches(request.getMethod()) && path.matches(PENDING_ASSIGNMENTS_PATH)) {
             authority = INGESTION_AUTHORITY;
             expectedToken = properties.ingestionToPlanningToken();
         }

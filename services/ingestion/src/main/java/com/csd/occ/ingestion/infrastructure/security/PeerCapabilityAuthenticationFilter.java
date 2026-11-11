@@ -29,7 +29,16 @@ final class PeerCapabilityAuthenticationFilter extends OncePerRequestFilter {
         String path = applicationPath(request);
         String authority = null;
         String expectedToken = null;
-        if (HttpMethod.GET.matches(request.getMethod()) && (path.equals("/internal/v1/ingestion/demo-fleet")
+        if (HttpMethod.PUT.matches(request.getMethod()) && path.matches(
+                "/internal/v1/ingestion/demo-runs/[^/]+/buses/[^/]+/assignment-operations/[^/]+")) {
+            if (matches(properties.planningToIngestionToken(), request.getHeader(HEADER_NAME))) {
+                authority = PLANNING_AUTHORITY;
+                expectedToken = properties.planningToIngestionToken();
+            } else if (matches(properties.disruptionToIngestionToken(), request.getHeader(HEADER_NAME))) {
+                authority = DISRUPTION_AUTHORITY;
+                expectedToken = properties.disruptionToIngestionToken();
+            }
+        } else if (HttpMethod.GET.matches(request.getMethod()) && (path.equals("/internal/v1/ingestion/demo-fleet")
                 || path.startsWith("/internal/v1/ingestion/bus-routes/") || path.startsWith("/internal/v1/ingestion/stations/"))) {
             if (matches(properties.planningToIngestionToken(), request.getHeader(HEADER_NAME))) {
                 authority = PLANNING_AUTHORITY;

@@ -11,6 +11,17 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 
 public interface AdvisoryProposalRepository extends JpaRepository<AdvisoryProposal, UUID> {
+    interface ProposalKey { UUID getDemoRunId(); String getBusId(); }
+    @Query("select p.demoRunId as demoRunId, p.busId as busId from AdvisoryProposal p where p.disruptionId=:id and p.status='PENDING' order by p.demoRunId, p.busId")
+    List<ProposalKey> findPendingKeysByDisruptionId(UUID id);
+    @Query("select p.demoRunId as demoRunId, p.busId as busId from AdvisoryProposal p where p.demoRunId=:runId and p.status='PENDING' order by p.busId")
+    List<ProposalKey> findPendingKeysByDemoRunId(UUID runId);
+    @Query("select distinct p.demoRunId from AdvisoryProposal p where p.status='PENDING'")
+    List<UUID> findPendingDemoRunIds();
+    @Query("select p.demoRunId as demoRunId, p.busId as busId from AdvisoryProposal p where p.createdAt<:cutoff and not exists (select i from IssuedInstruction i where i.proposalId=p.id) order by p.demoRunId, p.busId")
+    List<ProposalKey> findUnreferencedKeysBefore(java.time.Instant cutoff);
+    @Query("select p.demoRunId as demoRunId, p.busId as busId from AdvisoryProposal p where p.id=:id")
+    Optional<ProposalKey> findKeyById(UUID id);
     String PENDING_GROUPS = """
         from planning.advisory_proposal p where p.demo_run_id=:runId and p.status='PENDING'
         group by p.disruption_id,p.source_revision_key,p.bus->>'serviceId',p.bus->>'directionId',

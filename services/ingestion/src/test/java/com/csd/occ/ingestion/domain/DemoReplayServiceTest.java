@@ -36,12 +36,15 @@ class DemoReplayServiceTest {
                 .thenReturn(Optional.of(route));
         when(runs.save(org.mockito.ArgumentMatchers.any())).thenAnswer(invocation -> invocation.getArgument(0));
         UUID captain = UUID.randomUUID();
+        var identities = mock(IdentityProviderPort.class);
+        when(identities.get(captain)).thenReturn(Optional.of(new IdentityProviderPort.User(captain, "Captain",
+                "captain@example.test", OccRole.CAPTAIN, true, NOW.minusSeconds(10), null, null)));
         var auditEvents = mock(ApplicationAuditEventRepository.class);
         var service = new DemoReplayService(runs, assignments, mock(PollRunRepository.class),
                 mock(RawObservationRepository.class), mock(BusArrivalObservationRepository.class),
                 mock(TrafficIncidentObservationRepository.class), topology, Clock.fixed(NOW, ZoneOffset.UTC),
                 mock(DemoModeService.class), new DemoReplayConfiguration("multi-route-bunching-v2", 190,
-                Duration.ofSeconds(90), Optional.of(captain)), mock(DemoHazardReplayService.class), auditEvents);
+                Duration.ofSeconds(90), Optional.of(captain)), mock(DemoHazardReplayService.class), auditEvents, identities);
         var first = service.start(DemoRunConfiguration.defaults(), "verified-controller-subject");
         var second = service.start();
         var auditCapture = org.mockito.ArgumentCaptor.forClass(ApplicationAuditEvent.class);
@@ -79,12 +82,17 @@ class DemoReplayServiceTest {
                         new ReferenceTopologyPort.BusRouteStop("44251", "A", "Stop A", null, null, 10, null)))))));
         when(topology.busRoute(versionId, "972")).thenReturn(Optional.of(route));
         when(runs.save(org.mockito.ArgumentMatchers.any())).thenAnswer(invocation -> invocation.getArgument(0));
+        var identities = mock(IdentityProviderPort.class);
+        var captains = List.of(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        for (UUID captain : captains) when(identities.get(captain)).thenReturn(Optional.of(
+                new IdentityProviderPort.User(captain, "Captain", "captain@example.test", OccRole.CAPTAIN,
+                        true, NOW.minusSeconds(10), null, null)));
         var service = new DemoReplayService(runs, assignments, mock(PollRunRepository.class), mock(RawObservationRepository.class),
                 mock(BusArrivalObservationRepository.class), mock(TrafficIncidentObservationRepository.class), topology,
                 Clock.fixed(NOW, ZoneOffset.UTC), mock(DemoModeService.class),
-                new DemoReplayConfiguration("multi-route-bunching-v2", 190, Duration.ofSeconds(90)), mock(DemoHazardReplayService.class), mock(ApplicationAuditEventRepository.class));
+                new DemoReplayConfiguration("multi-route-bunching-v2", 190, Duration.ofSeconds(90)),
+                mock(DemoHazardReplayService.class), mock(ApplicationAuditEventRepository.class), identities);
 
-        var captains = List.of(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
         service.start(new DemoRunConfiguration("972", 2, 3, Duration.ofSeconds(120),
                 List.of(Duration.ofSeconds(120), Duration.ofSeconds(120)), "44251", DemoScenario.NORMAL, captains));
 
@@ -143,6 +151,8 @@ class DemoReplayServiceTest {
                 Duration.ofSeconds(90), List.of(Duration.ofSeconds(90), Duration.ofSeconds(90)), "12345", DemoScenario.BUNCHING));
         run.startReplay();
         when(runs.findActive()).thenReturn(Optional.of(run));
+        when(runs.findActiveId()).thenReturn(Optional.of(runId));
+        when(runs.findByIdForUpdate(runId)).thenReturn(Optional.of(run));
         when(mode.enabled()).thenReturn(true);
         var referenceVersion = new ReferenceTopologyPort.ReferenceTopologyVersion(UUID.randomUUID(), "a".repeat(64));
         when(topology.activeVersion()).thenReturn(Optional.of(referenceVersion));
@@ -200,6 +210,8 @@ class DemoReplayServiceTest {
                         List.of(Duration.ofSeconds(100), Duration.ofSeconds(40)), "44251", DemoScenario.BUNCHING));
         run.startReplay();
         when(runs.findActive()).thenReturn(Optional.of(run));
+        when(runs.findActiveId()).thenReturn(Optional.of(run.id()));
+        when(runs.findByIdForUpdate(run.id())).thenReturn(Optional.of(run));
         when(mode.enabled()).thenReturn(true);
         var reference = new ReferenceTopologyPort.ReferenceTopologyVersion(UUID.randomUUID(), "a".repeat(64));
         when(topology.activeVersion()).thenReturn(Optional.of(reference));

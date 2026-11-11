@@ -22,6 +22,9 @@ public class PlanningOpenApiConfig {
                                 .type(SecurityScheme.Type.HTTP).scheme("bearer").bearerFormat("JWT"))
                         .addSecuritySchemes("DisruptionPeerToken", new SecurityScheme()
                                 .type(SecurityScheme.Type.APIKEY).in(SecurityScheme.In.HEADER)
+                                .name("X-OCC-Peer-Token"))
+                        .addSecuritySchemes("IngestionPeerToken", new SecurityScheme()
+                                .type(SecurityScheme.Type.APIKEY).in(SecurityScheme.In.HEADER)
                                 .name("X-OCC-Peer-Token")));
     }
 

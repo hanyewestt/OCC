@@ -470,6 +470,11 @@ class IngestionStartupIT {
         String contract = mvc.perform(get("http://localhost:6767/v3/api-docs").with(jwt()
                         .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        var assignmentOperation = tools.jackson.databind.json.JsonMapper.builder().build().readTree(contract)
+                .path("paths").path("/internal/v1/ingestion/demo-runs/{runId}/buses/{busId}/assignment-operations/{operationId}")
+                .path("put");
+        assertThat(assignmentOperation.path("security").toString()).contains("OCCPeerCapability");
+        assertThat(assignmentOperation.path("responses").has("401")).isTrue();
         java.nio.file.Path output = java.nio.file.Path.of("openapi", "ingestion.json");
         java.nio.file.Files.createDirectories(output.getParent());
         java.nio.file.Files.writeString(output, contract);
