@@ -107,6 +107,22 @@ falling back to open egress.
 Create the list once per account/region from the deployment's actual
 destinations, and refresh it before bootstrap when provider ranges change:
 
+Use `python scripts/cd/egress-prefix-list.py plan` to generate a deterministic
+CIDR inventory from AWS, Cloudflare, Google and GitHub feeds. Add verified
+provider ranges with `--cidr` or explicitly observed DNS endpoints with
+`--provider-host`; observed addresses need refresh and are not permanent
+provider guarantees. `--source-file` supports an offline JSON inventory for
+review/tests. `create` and additive-only `update --prefix-list-id ...` are
+explicit AWS mutations, never side effects of plan. Review removals/resizing
+separately to avoid interrupting a running host.
+
+Bootstrap checks **MaxEntries + the two explicit DNS rules**, not populated
+entry count, and checks the rules-per-group × groups-per-ENI quota product
+against 1000. A 1000-capacity prefix does not fit a 1000-rule group once other
+rules are included. Large rule-quota changes can require an account-wide
+groups-per-ENI quota reduction; coordinate that impact rather than requesting
+1000 blindly. A nonempty list also does not prove endpoint connectivity.
+
 - AWS service endpoints (ECR, S3, Secrets Manager, SSM): the `us-east-1` and
   `GLOBAL` prefixes in `https://ip-ranges.amazonaws.com/ip-ranges.json`.
 - Supabase (`*.supabase.co`), LTA DataMall (`datamall2.mytransport.sg`), Gemini
