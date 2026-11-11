@@ -29,6 +29,7 @@ public class CurrentSimulationBunchingGroupService {
     public Optional<Group> find(UUID runId, UUID episodeId) {
         var run = runs.findById(runId).orElse(null);
         if (run == null || !List.of("RUNNING", "REPLAY_COMPLETE").contains(run.status())) return Optional.empty();
+        boolean isActiveRun = List.of("RUNNING", "REPLAY_COMPLETE").contains(run.status());
         var evidence = bunching.currentEvidence(runId, episodeId).orElse(null);
         var now = clock.instant();
         if (evidence == null || !runId.equals(evidence.demoRunId()) || !episodeId.equals(evidence.bunchingEventId())
@@ -36,7 +37,8 @@ public class CurrentSimulationBunchingGroupService {
                 || !run.configuration().monitoredStopCode().equals(evidence.stopCode())
                 || run.configuration().directionId() != evidence.directionId() || !"BUNCHING".equals(evidence.state())
                 || !evidence.fresh() || evidence.rawObservationId() == null || evidence.fetchedAt() == null
-                || evidence.validUntil() == null || evidence.fetchedAt().isAfter(now) || !now.isBefore(evidence.validUntil())
+                || evidence.validUntil() == null || evidence.fetchedAt().isAfter(now)
+                || (!isActiveRun && !now.isBefore(evidence.validUntil()))
                 || evidence.affectedObservationIds() == null || evidence.affectedObservationIds().size() < 2
                 || evidence.affectedObservationIds().size() > 100
                 || evidence.affectedObservationIds().stream().anyMatch(java.util.Objects::isNull)
@@ -52,7 +54,7 @@ public class CurrentSimulationBunchingGroupService {
                 || !evidence.serviceId().equals(value.getServiceId()) || !evidence.stopCode().equals(value.getStopCode())
                 || !java.util.Objects.equals(evidence.directionId(), value.getDirectionId())
                 || value.getEstimatedArrivalAt() == null
-                || !now.isBefore(DemoReplayScenario.boardingUntil(value.getEstimatedArrivalAt(), evidence.validUntil()))
+                || (!isActiveRun && !now.isBefore(DemoReplayScenario.boardingUntil(value.getEstimatedArrivalAt(), evidence.validUntil())))
                 || value.getVisitOrder() == null)) return Optional.empty();
         if (found.stream().map(BusArrivalObservation::getVisitOrder).distinct().count() != found.size()) return Optional.empty();
         var ordered = found.stream().sorted(Comparator.comparing(BusArrivalObservation::getEstimatedArrivalAt)
