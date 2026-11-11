@@ -59,6 +59,15 @@ committed; the local file stays unchanged), records the secret version, and
 configures the main-only GitHub `production` environment with the publish and
 deploy role ARNs without per-push reviewers.
 
+The CloudFront origin explicitly uses HTTP port 8080 and forwards GET, HEAD,
+OPTIONS, POST, PUT, PATCH and DELETE. The production environment's deployment
+branch policy permits exactly `main`. A separate main-only, read-only OIDC
+verification role can inspect release objects and ECR candidates; it cannot
+write releases, invoke SSM or read deployment secrets. Its ARN, region and
+bucket are repository variables; publication/deployment credentials remain
+scoped to their trusted jobs. Bootstrap accepts an absolute or repository-relative
+`-EnvFile` path and checks every AWS/gh command result.
+
 `scripts/cd/bootstrap-host.sh` prepares the host through SSM: Docker and
 Compose, the durable data volume mounted by validated UUID before Docker or
 PostgreSQL can start (a missing mount blocks startup — there is no root-disk

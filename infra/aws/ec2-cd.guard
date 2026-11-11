@@ -161,6 +161,7 @@ rule occ_cloudfront_origin_is_http_only {
         Origins[*] {
           CustomOriginConfig {
             OriginProtocolPolicy == "http-only"
+            HTTPPort == 8080
           }
         }
       }
