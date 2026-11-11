@@ -302,6 +302,12 @@ http {
             for path in fixture.rglob("*"):
                 if path.is_file():
                     path.chmod(0o644)
+                elif path.is_dir():
+                    path.chmod(0o755)
+            # TemporaryDirectory creates the mount root as 0700. The Nginx
+            # process runs as 101:101 and must traverse /fixture to read its
+            # config, even though every file is world-readable.
+            fixture.chmod(0o755)
             command = ["docker", "run", "--rm", "--user", "101:101", "--read-only",
                  "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                  "--tmpfs", "/tmp:mode=1777", "--tmpfs", "/var/cache/nginx:uid=101,gid=101,mode=1777",
