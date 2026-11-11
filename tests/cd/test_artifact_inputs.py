@@ -92,6 +92,15 @@ class StageBundleTests(CliTestCase):
         result = self.verify(bundle, "--revision", REVISION)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_wrong_producing_run_is_rejected(self):
+        result = self.verify(self.make_bundle(), "--run-id", "999")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("producing run", result.stderr)
+
+    def test_matching_producing_run_passes(self):
+        result = self.verify(self.make_bundle(), "--run-id", "1234567")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_expired_artifact_is_rejected(self):
         stale = (datetime.now(timezone.utc) - timedelta(hours=6)).strftime("%Y-%m-%dT%H:%M:%SZ")
         bundle = self.make_bundle(produced_at=stale)
