@@ -44,22 +44,29 @@ function Invoke-Aws {
 
 function Test-Stack {
     param([Parameter(Mandatory)][string]$Name)
-    # A missing stack makes the CLI write to stderr; PowerShell 5.1 turns that
-    # into a terminating NativeCommandError under ErrorActionPreference=Stop.
+    # list-stacks succeeds whether or not the name exists, so no expected
+    # "not found" stderr can become a PowerShell NativeCommandError.
+    $arguments = @(
+        "cloudformation", "list-stacks",
+        "--query", "StackSummaries[?StackName=='$Name' && StackStatus!='DELETE_COMPLETE'].StackName",
+        "--output", "text"
+    )
+    if ($Profile) { $arguments += @("--profile", $Profile) }
+    $arguments += @("--region", $Region)
     $previous = $ErrorActionPreference
     $ErrorActionPreference = "SilentlyContinue"
     try {
-        if ($Profile) {
-            $null = & aws cloudformation describe-stacks --stack-name $Name --profile $Profile --region $Region 2>&1
-        }
-        else {
-            $null = & aws cloudformation describe-stacks --stack-name $Name --region $Region 2>&1
-        }
-        return ($LASTEXITCODE -eq 0)
+        $result = & aws @arguments 2>&1
+        $exitCode = $LASTEXITCODE
     }
     finally {
         $ErrorActionPreference = $previous
     }
+    if ($exitCode -ne 0) {
+        throw "aws cloudformation list-stacks failed with exit code $exitCode"
+    }
+    $text = (($result | ForEach-Object { "$_" }) -join "").Trim()
+    return ($text -ne "" -and $text -ne "None")
 }
 
 # Verify both identities before any mutation so a missing session fails fast
