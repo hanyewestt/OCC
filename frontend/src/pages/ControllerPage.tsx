@@ -322,7 +322,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     if (!simulation && (pathname === '/controller' || pathname.endsWith('/disruptions') || pathname.endsWith('/planning'))) requests.push(alertCollection.refresh(signal))
     if (pathname === '/controller/planning') requests.push(recommendationCollection.refresh(signal), diagnosisCollection.refresh(signal))
     if (pathname === '/controller/audit') requests.push(decisionCollection.refresh(signal), suggestionCollection.refresh(signal), aiAuditCollection.refresh(signal))
-    if (pathname !== '/controller' && !pathname.endsWith('/planning')) requests.push(refreshAdvisories.current(signal))
+    if (pathname !== '/controller') requests.push(refreshAdvisories.current(signal))
     await Promise.allSettled(requests)
   }, loading || collectionsLoading || advisoryPending || planningPending || switching, requestKey)
 
@@ -331,7 +331,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       : pathname.endsWith('/planning') ? [recommendationCollection.lastSuccessAt, diagnosisCollection.lastSuccessAt]
       : pathname.endsWith('/audit') ? [decisionCollection.lastSuccessAt, suggestionCollection.lastSuccessAt, aiAuditCollection.lastSuccessAt] : []),
     ...(!simulation && (pathname === '/controller' || pathname.endsWith('/disruptions') || pathname.endsWith('/planning')) ? [alertCollection.lastSuccessAt] : []),
-    ...(pathname !== '/controller' && !pathname.endsWith('/planning') ? [advisoryRefreshTime.key === refreshScope ? advisoryRefreshTime.at : null] : [])]
+    ...(pathname !== '/controller' ? [advisoryRefreshTime.key === refreshScope ? advisoryRefreshTime.at : null] : [])]
   const lastPageRefresh = refreshTimes.includes(null) ? null : [...refreshTimes].sort()[0] ?? null
 
   const modeValue = simulation ? 'DEMO' : 'LIVE'
