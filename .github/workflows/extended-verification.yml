@@ -16,9 +16,6 @@ on:
 
 permissions:
   contents: read
-  # The called system-verification workflow declares actions: read; a caller
-  # that grants less fails the whole run at load time (startup_failure).
-  actions: read
 
 concurrency:
   group: extended-${{ github.workflow }}-${{ github.ref }}

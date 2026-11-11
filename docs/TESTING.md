@@ -12,21 +12,17 @@ second copy of the PR checks. Its independent jobs cover:
 | Job | Coverage |
 | --- | --- |
 | Launcher and setup checks | Bash and PowerShell startup, reset/clear, pgAdmin actions and failure handling on Windows and Linux, using fake Docker/npm commands. |
-| Reactor tests and migration checks | All three Java services, unit/slice tests, database integration tests and contract export; no skipped tests allowed. The verified JARs are packaged as run/SHA-bound artifacts and inspected for the committed contracts, shared Swagger UI page, Jackson JavaTime support and the absence of test-only springdoc. |
-| Frontend checks | Reproducible install, lint, TypeScript and production build. The verified dist is packaged as a checksummed artifact. |
-| Packaging | The `package-images` job verifies the artifact bundle against the exact run and SHA, stages narrow build contexts, builds the three runtime images, the web edge image and the combined db-setup image, and saves digest-preserving OCI archives with recorded image IDs. |
-| Configuration and API contract checks | Example Compose configurations, the immutable-image overlay with placeholder digests, OpenAPI validation and API compatibility baselines. |
+| Reactor tests and migration checks | All three Java services, unit/slice tests, database integration tests and contract export; no skipped tests allowed. |
+| Frontend checks | Reproducible install, lint, TypeScript and production build. |
+| Configuration and API contract checks | Example Compose configurations, OpenAPI validation and API compatibility baselines. |
 | Live API contract comparison | Running service definitions match the committed OpenAPI files. |
-| Nginx and authentication smoke | HTTP/HTTPS routes to all three services, assets, 401/403 role rules, hidden endpoints, rate limits, SSE streaming and static hosting with a backend stopped. Smoke and contract runs load the exact packaged images and dist from the same run instead of recompiling them. |
-| Security scans | Repository secrets/configuration plus all application, migration and web images, scanned after loading the exact packaged bytes; the pinned Nginx base image keeps its own scan. |
+| Nginx and authentication smoke | HTTP/HTTPS routes to all three services, assets, 401/403 role rules, hidden endpoints, rate limits, SSE streaming and static hosting with a backend stopped. |
+| Security scans | Repository secrets/configuration and all application, migration and Nginx images. |
 
-The reactor and frontend jobs feed `package-images`; the image scans and the
-system verification callers consume its packaged images. Extended verification
-still builds from source because its runs produce no artifacts, and manual
-system-verification runs keep that source-build fallback. A contract failure
-does not prevent the routing/authentication job from running. Within a job,
-later steps still stop after a failure; security scan reports and
-disposable-stack cleanup use `always()` where needed.
+These jobs do not depend on one another. A contract failure does not prevent
+the routing/authentication job from running. Within a job, later steps still
+stop after a failure; security scan reports and disposable-stack cleanup use
+`always()` where needed.
 
 [`Extended verification`](../.github/workflows/extended-verification.yml) runs
 on PRs changing `services/`, `infra/`, root Compose files, Maven build files,
@@ -40,46 +36,6 @@ To run it manually, open **Actions → Extended verification → Run workflow**
 and select the branch. GitHub requires a dispatchable workflow to exist on the
 default branch before its manual-run control is available. No workflow pushes
 code or deploys the app.
-
-## Commit triggers and the deployment path
-
-Commit classification follows [commit convention](commit-convention.md):
-classify by behavior, not file extension. Deployment-affecting commits —
-workflows, Dockerfiles and build tooling, runtime Compose/Nginx/CloudFront
-configuration, database setup/migrations and CD/lifecycle scripts — always run
-CI/CD on `main`, even with no service or frontend source edits.
-
-Commits that are exclusively documentation, agent prose or local launchers
-keep the `[skip ci]` marker. GitHub suppresses push workflows for those
-commits; there is no privileged bypass. If a marker is used by mistake on a
-deployment-affecting commit, manually dispatch the verification workflow for
-that commit. If a docs-only skipped run leaves required checks pending on a
-pull request, add a normal non-skipped commit or validate manually according
-to branch protection.
-
-### Branch protection migration for the CD pipeline
-
-Pushes to `main` no longer run `Core CI` directly: they run
-**Main verification**, which invokes the same reusable verification once for
-the exact pushed SHA. Pull requests continue to run `Core CI` with unchanged
-job names. In branch protection:
-
-- Pull-request required checks keep their existing `Core CI` names (including
-  the two system caller jobs' `System verification` checks).
-- Required checks for pushes to `main`, if your protection rules target them,
-  move from the `Core CI` names to the same names under the
-  `Main verification` caller workflow. Workflow files do not change
-  branch-protection settings automatically; update the rules in the
-  repository settings when adopting the CD pipeline.
-- The **Release and deploy** workflow runs after every successful Main
-  verification on `main`. Its publish, scan and deploy jobs use the
-  `production` environment (main-only, no per-push reviewers) and the
-  deployment role secrets; pull-request jobs never see them. Its mutation
-  runs are serialized in one concurrency group and are never cancelled.
-
-The Extended verification workflow keeps its path-filtered, non-universal
-semantics, and its runs still build from source with their isolated synthetic
-providers.
 
 All system jobs reuse
 [`system-verification.yml`](../.github/workflows/system-verification.yml).
