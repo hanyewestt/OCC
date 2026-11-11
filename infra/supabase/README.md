@@ -37,18 +37,25 @@ no private key or secret mount. The browser continues using only the existing
    the role. Existing access tokens keep their old claims until refreshed or
    expired; plan that transition deliberately.
 6. Create a modern `sb_secret_...` project key using the provider's administrative
-   console. Store it using the deployment's secret mechanism in a backend-only
-   mounted file, for example `/run/secrets/occ_supabase_identity_key`. Never put
-   the value in `.env`, image layers, frontend configuration, logs or the repository.
-7. Set `OCC_IDENTITY_SECRET_SOURCE_FILE` to the host-side secret file,
+   console. For environment configuration, put it in `OCC_IDENTITY_SECRET_KEY`
+   in the ignored root `.env`. Compose passes it only to Ingestion. This key is
+   visible to administrators through container environment inspection. A mounted
+   secret remains supported: leave the environment key empty and store the key
+   in a backend-only file. Keep keys out of image layers, frontend configuration,
+   logs and the repository.
+7. For the environment option, set `OCC_IDENTITY_ENABLED=true` after the hook
+   checks and use the normal app launcher. No identity overlay is needed.
+   For the mounted-file option, set `OCC_IDENTITY_SECRET_SOURCE_FILE` to the host-side secret file,
    `OCC_IDENTITY_SECRET_KEY_FILE=/run/secrets/occ_supabase_identity_key`, and
    `OCC_IDENTITY_ENABLED=true`. `SUPABASE_PROJECT_URL` keeps its existing name
    and project. For Compose, include `infra/compose.identity.yaml` after the
    regular local or production Compose files. This overlay mounts the Docker
    secret into Ingestion only; the default stack does not require a secret file.
 
-The configuration validates the origin, readable mounted path and positive timing
-settings at startup when enabled. The adapter reads the file at request time so
+The configuration validates the origin, configured environment key or readable
+mounted path, and positive timing
+settings at startup when enabled. A nonblank environment key takes precedence over the file. With no environment
+key, the adapter reads the file at request time so
 mounted-key rotation does not require copying a credential into application
 configuration. It accepts modern secret keys in the `apikey` header only and
 does not send a bearer header. Timeout defaults to 5 seconds and full scans to

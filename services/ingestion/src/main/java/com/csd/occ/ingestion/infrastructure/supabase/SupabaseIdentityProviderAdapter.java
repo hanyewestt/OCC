@@ -83,11 +83,13 @@ public class SupabaseIdentityProviderAdapter implements IdentityProviderPort {
     private ProviderResponse request(HttpMethod method, String path, Object payload, boolean missingAllowed) {
         if (!settings.enabled()) throw unavailable();
         try {
-            String secret;
-            try (var input = Files.newInputStream(Path.of(settings.secretKeyFile()))) {
-                byte[] bytes = input.readNBytes(4097);
-                if (bytes.length > 4096) throw unavailable();
-                secret = new String(bytes, StandardCharsets.UTF_8).strip();
+            String secret = settings.secretKey();
+            if (secret.isBlank()) {
+                try (var input = Files.newInputStream(Path.of(settings.secretKeyFile()))) {
+                    byte[] bytes = input.readNBytes(4097);
+                    if (bytes.length > 4096) throw unavailable();
+                    secret = new String(bytes, StandardCharsets.UTF_8).strip();
+                }
             }
             if (!secret.startsWith("sb_secret_") || secret.length() <= "sb_secret_".length()
                     || secret.chars().anyMatch(Character::isWhitespace)) throw unavailable();

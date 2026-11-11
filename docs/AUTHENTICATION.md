@@ -90,14 +90,17 @@ Use root `.env.example` as the single inventory. Ingestion publishes only
 `GET /frontend-config`. Private/service-role keys must never reach the browser.
 JWT validation uses the separate JWKS URL, allowed algorithms and audience.
 
-The optional backend identity directory reads a private key from an Ingestion-only
-mounted Docker secret file using `infra/compose.identity.yaml`. It remains disabled until the existing trusted roles have
+The optional backend identity directory reads `OCC_IDENTITY_SECRET_KEY` from the
+ignored root `.env`, passed only to Ingestion by Compose. It also supports an
+Ingestion-only mounted Docker secret file using `infra/compose.identity.yaml`. It remains disabled until the existing trusted roles have
 been migrated to server-managed `app_metadata.occ_role` and the provider hook has
 been verified. See [identity rollout](../infra/supabase/README.md) before enabling
 it. Directory snapshots never grant permissions or replace JWT validation.
 `OCC_IDENTITY_SECRET_SOURCE_FILE` points to the host-side secret source, and
-`OCC_IDENTITY_SECRET_KEY_FILE` points to the fixed in-container mount. Never put
-the key value in `.env`.
+`OCC_IDENTITY_SECRET_KEY_FILE` points to the fixed in-container mount. A nonblank
+`OCC_IDENTITY_SECRET_KEY` takes precedence over that file; clear it to use mounted
+key rotation. Environment keys are visible to administrators through container
+inspection, so use the file option when that exposure is unsuitable.
 
 See [development guide](DEVELOPMENT.md) for builds, Vite proxy settings and
 browser tests. Nginx serves the React build. Simulation controls and

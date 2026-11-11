@@ -106,9 +106,9 @@ Fill in the settings described in `.env.example`:
   to `OCC_PLANNING_ASSIGNMENT_RECOVERY_INTERVAL=5s` and batch size `25`.
 - The optional identity adapter defaults off. Do not enable it until the
   [Supabase role-hook rollout](../infra/supabase/README.md) is complete. Compose
-  deployments use `OCC_IDENTITY_SECRET_SOURCE_FILE` for the host-side secret
-  file, and `infra/compose.identity.yaml` mounts it only into Ingestion. The
-  in-container path is `OCC_IDENTITY_SECRET_KEY_FILE=/run/secrets/occ_supabase_identity_key`.
+  deployments can set `OCC_IDENTITY_SECRET_KEY` in the ignored root `.env`; Compose
+  passes it only to Ingestion. Alternatively, use `OCC_IDENTITY_SECRET_SOURCE_FILE`
+  with `infra/compose.identity.yaml` for a mounted secret.
 
 Keep one entry per environment-variable name. Duplicate example values later
 in `.env` can override real settings. Keep `.env` out of Git. The example file
@@ -152,10 +152,13 @@ configuration, so use `up` to apply the Gemini recommendation flag or other `.en
 changes. Both commands preserve database data.
 
 Enable the identity provider adapter only after completing its external role
-migration and hook checks. Set `OCC_IDENTITY_ENABLED=true`, point
-`OCC_IDENTITY_SECRET_SOURCE_FILE` at a protected host-side key file, then include
-`infra/compose.identity.yaml` with the regular local or production Compose files.
-That overlay mounts the secret into Ingestion only. Do not put the key in `.env`.
+migration and hook checks. Set `OCC_IDENTITY_SECRET_KEY` to the modern Supabase
+backend secret in the ignored root `.env`, then set `OCC_IDENTITY_ENABLED=true`
+and run the normal app launcher with `up`. The key goes only to Ingestion.
+For a mounted secret, leave `OCC_IDENTITY_SECRET_KEY` empty, point
+`OCC_IDENTITY_SECRET_SOURCE_FILE` at its host-side file, and include
+`infra/compose.identity.yaml` with the regular Compose files. A nonblank
+environment key takes precedence over the mounted file.
 
 **Reset and clear permanently delete the selected project's database and pgAdmin data.**
 Reset requires typing `RESET`, then rebuilds and starts the app. Clear requires

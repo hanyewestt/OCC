@@ -23,6 +23,36 @@ class IdentityProviderHttpTest {
     @TempDir Path temporary;
 
     @Test
+    void environmentSecretUsesOnlyApiKeyHeaderAndOverridesTheOptionalFile() throws Exception {
+        var apiKey = new AtomicReference<String>();
+        var bearer = new AtomicReference<String>();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/auth/v1/admin/users", exchange -> {
+            apiKey.set(exchange.getRequestHeaders().getFirst("apikey"));
+            bearer.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            byte[] body = "{\"users\":[]}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (var output = exchange.getResponseBody()) { output.write(body); }
+        });
+        server.start();
+        try {
+            var settings = new IdentityProviderProperties(true,
+                    URI.create("http://127.0.0.1:" + server.getAddress().getPort()),
+                    temporary.resolve("not-mounted").toString(), Duration.ofSeconds(5), Duration.ofMinutes(5),
+                    "sb_secret_synthetic_environment");
+            var client = new IdentityProviderConfig().identityProviderRestClient(RestClient.builder(), settings);
+            var adapter = new SupabaseIdentityProviderAdapter(client, settings, JsonMapper.builder().build(), Clock.systemUTC());
+            assertThat(adapter.listPage(1, 1000).users()).isEmpty();
+            assertThat(apiKey.get()).isEqualTo("sb_secret_synthetic_environment");
+            assertThat(bearer.get()).isNull();
+            assertThat(settings.toString()).doesNotContain("sb_secret_synthetic_environment");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void realJdkTransportSendsModernKeyOnlyAndReadsRotatedMountedSecret() throws Exception {
         var apiKey = new AtomicReference<String>();
         var bearer = new AtomicReference<String>();
@@ -40,7 +70,7 @@ class IdentityProviderHttpTest {
             Path file = temporary.resolve("mounted-secret");
             Files.writeString(file, "sb_secret_synthetic_first");
             var settings = new IdentityProviderProperties(true,
-                    URI.create("http://127.0.0.1:" + server.getAddress().getPort()), file.toString(), Duration.ofSeconds(5), Duration.ofMinutes(5));
+                    URI.create("http://127.0.0.1:" + server.getAddress().getPort()), file.toString(), Duration.ofSeconds(5), Duration.ofMinutes(5), "");
             var client = new IdentityProviderConfig().identityProviderRestClient(RestClient.builder(), settings);
             var adapter = new SupabaseIdentityProviderAdapter(client, settings, JsonMapper.builder().build(), Clock.systemUTC());
             assertThat(adapter.listPage(1, 1000).users()).isEmpty();

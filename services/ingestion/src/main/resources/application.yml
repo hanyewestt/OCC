@@ -49,6 +49,7 @@ occ:
     enabled: ${OCC_IDENTITY_ENABLED:false}
     project-url: ${SUPABASE_PROJECT_URL:}
     secret-key-file: ${OCC_IDENTITY_SECRET_KEY_FILE:}
+    secret-key: ${OCC_IDENTITY_SECRET_KEY:}
     timeout: ${OCC_IDENTITY_TIMEOUT:5s}
     directory-interval: ${OCC_IDENTITY_DIRECTORY_INTERVAL:5m}
   frontend:
