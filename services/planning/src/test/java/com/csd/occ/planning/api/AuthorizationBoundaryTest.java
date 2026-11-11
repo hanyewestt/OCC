@@ -28,12 +28,15 @@ import org.springframework.web.bind.annotation.RestController;
         "occ.security.supabase.allowed-algorithms=ES256",
         "occ.security.peer.disruption-to-planning-token=synthetic-disruption-to-planning",
         "occ.security.peer.ingestion-to-planning-token=synthetic-ingestion-to-planning"})
-@Import({PlanningSecurityConfig.class, SupabaseRoleConverter.class, AuthorizationBoundaryTest.Probe.class})
+@Import({PlanningSecurityConfig.class, SupabaseRoleConverter.class,
+        com.csd.occ.planning.infrastructure.security.AuditedBearerFailureHandler.class,
+        AuthorizationBoundaryTest.Probe.class})
 class AuthorizationBoundaryTest {
     @Autowired MockMvc mvc;
     @MockitoBean JwtDecoder decoder;
     @MockitoBean com.csd.occ.planning.advisory.domain.AdvisoryProposalRepository proposals;
     @MockitoBean com.csd.occ.planning.advisory.domain.IssuedInstructionRepository instructions;
+    @MockitoBean com.csd.occ.planning.infrastructure.security.ApplicationAuthorizationFailureCapture authorizationFailures;
 
     @ParameterizedTest
     @CsvSource({"GET,ADMIN,200", "GET,CONTROLLER,200", "GET,CAPTAIN,403", "GET,UNASSIGNED,403",
@@ -59,6 +62,27 @@ class AuthorizationBoundaryTest {
         perform(method, "/api/v1/planning/unknown", role, 403);
         perform(method, "/api/v1/planning/notices/unknown/unsupported", role, 403);
         perform(method, "/unknown", role, 403);
+    }
+
+    @org.junit.jupiter.api.Test
+    void deniedAuthenticatedRequestsAreAuditedWithoutChangingTheForbiddenResponse() throws Exception {
+        mvc.perform(request(HttpMethod.GET, "/api/v1/planning/admin/probe?token=must-not-be-captured")
+                .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"))))
+                .andExpect(status().isForbidden());
+        org.mockito.Mockito.verify(authorizationFailures).record(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(403),
+                org.mockito.ArgumentMatchers.any());
+    }
+
+    @org.junit.jupiter.api.Test
+    void unauthenticatedRequestsKeepTheBearerChallengeAndAreAudited() throws Exception {
+        mvc.perform(request(HttpMethod.GET, "/api/v1/planning/admin/probe"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                        .string("WWW-Authenticate", org.hamcrest.Matchers.startsWith("Bearer")));
+        org.mockito.Mockito.verify(authorizationFailures).record(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(401),
+                org.mockito.ArgumentMatchers.isNull());
     }
 
     private void perform(String method, String path, String role, int expected) throws Exception {

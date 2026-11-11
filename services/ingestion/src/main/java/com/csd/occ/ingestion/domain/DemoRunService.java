@@ -30,15 +30,21 @@ public class DemoRunService {
         this.configuration = configuration;
     }
 
-    public DemoRunDetails start() { return start(null); }
+    public DemoRunDetails start() { return start(null, null); }
+
+    public DemoRunDetails start(String actorSubject) { return start(null, actorSubject); }
 
     public DemoRunDetails start(DemoRunConfiguration configuration) {
+        return start(configuration, null);
+    }
+
+    public DemoRunDetails start(DemoRunConfiguration configuration, String actorSubject) {
         Optional<DemoRun> current = runs.findActive();
         if (current.isPresent()) throw new DemoRunAlreadyActiveException(current.get().id());
 
         DemoRun run;
         try {
-            run = configuration == null ? replay.start() : replay.start(configuration);
+            run = replay.start(configuration == null ? DemoRunConfiguration.defaults() : configuration, actorSubject);
         } catch (RuntimeException failure) {
             current = runs.findActive();
             if (current.isPresent()) throw new DemoRunAlreadyActiveException(current.get().id());
@@ -47,13 +53,13 @@ public class DemoRunService {
 
         try {
             bunching.selectDemo(run.id());
-            mode.setEnabled(true);
-            replay.activate(run.id());
+            mode.setEnabled(true, actorSubject);
+            replay.activate(run.id(), actorSubject);
         } catch (RuntimeException failure) {
             try { bunching.selectLive(); } catch (RuntimeException rollbackFailure) { failure.addSuppressed(rollbackFailure); }
-            try { replay.fail(run.id(), "Bunching control unavailable"); }
+            try { replay.fail(run.id(), "Bunching control unavailable", actorSubject); }
             catch (RuntimeException persistenceFailure) { failure.addSuppressed(persistenceFailure); }
-            try { mode.setEnabled(false); }
+            try { mode.setEnabled(false, actorSubject); }
             catch (RuntimeException persistenceFailure) { failure.addSuppressed(persistenceFailure); }
             throw new DemoBunchingUnavailableException();
         }
@@ -70,13 +76,15 @@ public class DemoRunService {
         return details(run);
     }
 
-    public DemoRunDetails close(UUID id) {
+    public DemoRunDetails close(UUID id) { return close(id, null); }
+
+    public DemoRunDetails close(UUID id, String actorSubject) {
         DemoRun run = runs.findById(id).orElseThrow(() -> new DemoRunNotFoundException(id));
         if (!"CLOSED".equals(run.status())) {
             Optional<DemoRun> current = runs.findActive();
             if (current.isPresent() && !current.get().id().equals(id))
                 throw new DemoRunAlreadyActiveException(current.get().id());
-            returnToLive(id);
+            returnToLive(id, actorSubject);
         }
         return new DemoRunDetails(run.id(), "CLOSED", run.currentStep(), run.configuration(), List.of());
     }
@@ -91,17 +99,19 @@ public class DemoRunService {
                 .flatMap(recommendations::findByBunchingEventId);
     }
 
-    public boolean setMode(boolean enabled) {
+    public boolean setMode(boolean enabled) { return setMode(enabled, null); }
+
+    public boolean setMode(boolean enabled, String actorSubject) {
         if (enabled) {
             Optional<DemoRun> current = runs.findActive();
             if (current.isPresent()) {
                 try { bunching.selectDemo(current.get().id()); }
                 catch (RuntimeException failure) { throw new DemoBunchingUnavailableException(); }
-                mode.setEnabled(true);
+                mode.setEnabled(true, actorSubject);
             } else {
                 // Enabling demo mode is an action, not just a flag: create and select a
                 // simulation run so the consumer cannot remain idle on the live feed.
-                start();
+                start(actorSubject);
             }
         } else {
             Optional<DemoRun> current = runs.findActive();
@@ -110,20 +120,20 @@ public class DemoRunService {
             } catch (RuntimeException failure) {
                 throw new DemoBunchingUnavailableException();
             }
-            current.ifPresent(run -> replay.close(run.id(), clock.instant()));
-            mode.setEnabled(false);
+            current.ifPresent(run -> replay.close(run.id(), clock.instant(), actorSubject));
+            mode.setEnabled(false, actorSubject);
         }
         return mode.enabled();
     }
 
-    private void returnToLive(UUID runId) {
+    private void returnToLive(UUID runId, String actorSubject) {
         try {
             bunching.selectLive();
         } catch (RuntimeException failure) {
             throw new DemoBunchingUnavailableException();
         }
-        mode.setEnabled(false);
-        replay.close(runId, clock.instant());
+        mode.setEnabled(false, actorSubject);
+        replay.close(runId, clock.instant(), actorSubject);
     }
 
     private DemoRunDetails details(DemoRun run) {

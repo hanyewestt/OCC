@@ -21,12 +21,13 @@ public class UserDirectoryService {
     private final DemoRunRepository runs;
     private final DemoVehicleAssignmentRepository assignments;
     private final Clock clock;
+    private final DirectoryAuditCapturePort audit;
 
     public UserDirectoryService(IdentityProviderPort provider, DirectoryProjectionService projection,
             OccUserRepository users, DirectorySynchronizationRepository checkpoints, DemoRunRepository runs,
-            DemoVehicleAssignmentRepository assignments, Clock clock) {
+            DemoVehicleAssignmentRepository assignments, Clock clock, DirectoryAuditCapturePort audit) {
         this.provider = provider; this.projection = projection; this.users = users; this.checkpoints = checkpoints;
-        this.runs = runs; this.assignments = assignments; this.clock = clock;
+        this.runs = runs; this.assignments = assignments; this.clock = clock; this.audit = audit;
     }
 
     public Instant synchronize(DirectoryActor actor) { actor.requireAdmin(); return synchronize(); }
@@ -34,18 +35,25 @@ public class UserDirectoryService {
     /** Trusted infrastructure entry point; HTTP callers use the actor-checked overload. No transaction spans HTTP. */
     public Instant synchronize() {
         Instant startedAt = clock.instant();
-        var snapshot = new LinkedHashMap<UUID, IdentityProviderPort.User>();
-        for (int page = 1; ; page++) {
-            var batch = provider.listPage(page, 1000);
-            for (var user : batch.users()) {
-                if (snapshot.putIfAbsent(user.id(), user) != null)
+        try {
+            var snapshot = new LinkedHashMap<UUID, IdentityProviderPort.User>();
+            for (int page = 1; ; page++) {
+                var batch = provider.listPage(page, 1000);
+                for (var user : batch.users()) {
+                    if (snapshot.putIfAbsent(user.id(), user) != null)
+                        throw new IdentityProviderException(IdentityProviderException.Reason.UNAVAILABLE);
+                }
+                if (!batch.hasMore()) break;
+                if (batch.users().isEmpty() || page == Integer.MAX_VALUE)
                     throw new IdentityProviderException(IdentityProviderException.Reason.UNAVAILABLE);
             }
-            if (!batch.hasMore()) break;
-            if (batch.users().isEmpty() || page == Integer.MAX_VALUE)
-                throw new IdentityProviderException(IdentityProviderException.Reason.UNAVAILABLE);
+            return projection.publish(startedAt, List.copyOf(snapshot.values()));
+        } catch (RuntimeException failure) {
+            String reason = failure instanceof IdentityProviderException providerFailure
+                    ? providerFailure.reason().name() : "SYNC_FAILED";
+            audit.failure(startedAt, reason);
+            throw failure;
         }
-        return projection.publish(startedAt, List.copyOf(snapshot.values()));
     }
 
     /** Eligibility is always confirmed directly against the provider; an unavailable provider throws safely. */

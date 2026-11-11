@@ -45,15 +45,15 @@ class DemoRunServiceTest {
         UUID runId = UUID.randomUUID();
         DemoRun run = new DemoRun(runId, Instant.parse("2026-09-26T00:00:00Z"), "route190-bunching-v1", 190);
         when(runs.findActive()).thenReturn(Optional.empty());
-        when(replay.start()).thenReturn(run);
+        when(replay.start(DemoRunConfiguration.defaults(), null)).thenReturn(run);
         when(bunching.alerts(runId)).thenReturn(List.of());
         when(mode.enabled()).thenReturn(true);
 
         assertTrue(service.setMode(true));
 
         verify(bunching).selectDemo(runId);
-        verify(mode).setEnabled(true);
-        verify(replay).activate(runId);
+        verify(mode).setEnabled(true, null);
+        verify(replay).activate(runId, null);
     }
 
     @Test
@@ -62,13 +62,13 @@ class DemoRunServiceTest {
         var fleet = new DemoRunConfiguration("972", 1, 3, java.time.Duration.ofSeconds(120), DemoScenario.NORMAL);
         DemoRun run = new DemoRun(runId, Instant.parse("2026-09-26T00:00:00Z"), "route190-bunching-v1", 190, fleet);
         when(runs.findActive()).thenReturn(Optional.empty());
-        when(replay.start(fleet)).thenReturn(run);
+        when(replay.start(fleet, null)).thenReturn(run);
         when(bunching.alerts(runId)).thenReturn(List.of());
 
         DemoRunDetails details = service.start(fleet);
 
         assertEquals(fleet, details.configuration());
-        verify(replay).start(fleet);
+        verify(replay).start(fleet, null);
         verify(bunching).selectDemo(runId);
     }
 
@@ -82,8 +82,8 @@ class DemoRunServiceTest {
         assertFalse(service.setMode(false));
 
         verify(bunching).selectLive();
-        verify(mode).setEnabled(false);
-        verify(replay).close(runId, Instant.parse("2026-09-26T00:00:00Z"));
+        verify(mode).setEnabled(false, null);
+        verify(replay).close(runId, Instant.parse("2026-09-26T00:00:00Z"), null);
         verify(replay, never()).start();
     }
 
@@ -104,15 +104,15 @@ class DemoRunServiceTest {
         UUID runId = UUID.randomUUID();
         DemoRun run = new DemoRun(runId, Instant.parse("2026-09-26T00:00:00Z"), "route190-bunching-v1", 190);
         when(runs.findActive()).thenReturn(Optional.empty());
-        when(replay.start()).thenReturn(run);
+        when(replay.start(DemoRunConfiguration.defaults(), null)).thenReturn(run);
         org.mockito.Mockito.doThrow(new IllegalStateException("control unavailable"))
                 .when(bunching).selectDemo(runId);
 
         assertThrows(DemoBunchingUnavailableException.class, service::start);
 
         verify(bunching).selectLive();
-        verify(replay).fail(runId, "Bunching control unavailable");
-        verify(mode).setEnabled(false);
+        verify(replay).fail(runId, "Bunching control unavailable", null);
+        verify(mode).setEnabled(false, null);
         verify(replay, never()).activate(runId);
     }
 

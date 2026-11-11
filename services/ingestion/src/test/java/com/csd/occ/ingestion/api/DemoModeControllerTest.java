@@ -38,7 +38,7 @@ class DemoModeControllerTest {
     @Test
     void runtimeModeCanBeReadAndEnabledOverHttp() throws Exception {
         when(mode.enabled()).thenReturn(false);
-        when(runs.setMode(true)).thenReturn(true);
+        when(runs.setMode(true, "controller")).thenReturn(true);
 
         mvc.perform(get("/api/v1/demo-mode").with(user("admin").roles("ADMIN")))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.enabled").value(false));
@@ -47,7 +47,7 @@ class DemoModeControllerTest {
                         .content("{\"enabled\":true}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.enabled").value(true));
 
-        verify(runs).setMode(true);
+        verify(runs).setMode(true, "controller");
     }
 
     @Test

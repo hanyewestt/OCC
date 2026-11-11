@@ -113,22 +113,27 @@ class BunchingAlertIT {
     }
 
     @BeforeEach
-    void reset() { jdbc.update("UPDATE disruption.consumer_state SET mode='LIVE', demo_run_id=null, updated_at=?", java.sql.Timestamp.from(NOW.minusSeconds(3600))); jdbc.execute("TRUNCATE disruption.hazard_state, disruption.planning_outbox, disruption.bunching_diagnosis_link, disruption.bunching_diagnosis_correlation, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption, disruption.source_processing_state"); }
+    void reset() { jdbc.update("UPDATE disruption.consumer_state SET mode='LIVE', demo_run_id=null, updated_at=?", java.sql.Timestamp.from(NOW.minusSeconds(3600))); jdbc.execute("TRUNCATE disruption.application_audit_event, disruption.hazard_state, disruption.planning_outbox, disruption.bunching_diagnosis_link, disruption.bunching_diagnosis_correlation, disruption.event_evidence, disruption.disruption_event, disruption.traffic_incident_state, disruption.disruption_processing_state, disruption.disruption, disruption.source_processing_state"); }
 
     @Test
     void opensOnceClearsAndReopensWithANewEpisode() {
         record(snapshot(0, 60, Optional.of(1)));
         assertEquals(0, events());
+        assertEquals(0, auditEvents());
         record(snapshot(1, 60, Optional.of(1)));
         UUID episode = jdbc.queryForObject("SELECT disruption_id FROM disruption.disruption_event", UUID.class);
         assertEquals(1, events());
+        assertEquals(1, auditEvents());
         record(snapshot(2, 90, Optional.of(1)));
         assertEquals(2, events());
+        assertEquals(2, auditEvents());
         assertEquals(episode, jdbc.queryForObject("SELECT disruption_id FROM disruption.disruption_event WHERE action='CLEARED'", UUID.class));
         record(snapshot(3, 60, Optional.of(1)));
         record(snapshot(4, 60, Optional.of(1)));
         assertEquals(3, events());
+        assertEquals(3, auditEvents());
         assertEquals(2, jdbc.queryForObject("SELECT count(DISTINCT disruption_id) FROM disruption.disruption_event", Integer.class));
+        assertEquals(3, jdbc.queryForObject("SELECT count(DISTINCT source_key) FROM disruption.application_audit_event WHERE event_type='DISRUPTION_TRANSITION'", Integer.class));
     }
 
     @Test
@@ -368,6 +373,7 @@ class BunchingAlertIT {
     }
 
     private int events() { return jdbc.queryForObject("SELECT count(*) FROM disruption.disruption_event", Integer.class); }
+    private int auditEvents() { return jdbc.queryForObject("SELECT count(*) FROM disruption.application_audit_event WHERE event_type='DISRUPTION_TRANSITION'", Integer.class); }
 
     private ArrivalSnapshot snapshot(int offset, int gap, Optional<Integer> direction) {
         return new ArrivalSnapshot(UUID.randomUUID(), UUID.randomUUID(), Optional.empty(), NOW.plusSeconds(offset), List.of(

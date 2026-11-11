@@ -7,15 +7,19 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.util.Map;
+import java.util.UUID;
 
 @Service
 public class DirectoryProjectionService {
     private final OccUserRepository users;
     private final DirectorySynchronizationRepository checkpoints;
     private final Clock clock;
+    private final ApplicationAuditEventRepository auditEvents;
 
-    public DirectoryProjectionService(OccUserRepository users, DirectorySynchronizationRepository checkpoints, Clock clock) {
-        this.users = users; this.checkpoints = checkpoints; this.clock = clock;
+    public DirectoryProjectionService(OccUserRepository users, DirectorySynchronizationRepository checkpoints, Clock clock,
+            ApplicationAuditEventRepository auditEvents) {
+        this.users = users; this.checkpoints = checkpoints; this.clock = clock; this.auditEvents = auditEvents;
     }
 
     /** Only called with the full provider snapshot, after all HTTP requests have completed. */
@@ -37,6 +41,11 @@ public class DirectoryProjectionService {
         existing.values().stream().filter(user -> !user.observedAt().isAfter(scanStartedAt))
                 .forEach(user -> user.markUnavailable(scanStartedAt, completedAt));
         checkpoint.complete(scanStartedAt, completedAt);
+        String sourceKey = "directory-sync:" + scanStartedAt + ":SUCCESS";
+        auditEvents.save(new ApplicationAuditEvent(UUID.randomUUID(), completedAt, completedAt, "ACCOUNT_ASSIGNMENT",
+                "DIRECTORY_SYNCHRONIZATION", "SUCCESS", "INGESTION", null, "SYSTEM", "ACCOUNT_DIRECTORY", "SYNC",
+                null, null, null, null, "Account directory synchronization completed",
+                Map.of("accountCount", snapshot.size()), sourceKey));
         return completedAt;
     }
 }

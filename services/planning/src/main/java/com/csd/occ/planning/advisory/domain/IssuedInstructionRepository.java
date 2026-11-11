@@ -20,6 +20,12 @@ public interface IssuedInstructionRepository extends JpaRepository<IssuedInstruc
     @Query("select i from IssuedInstruction i where i.proposalId=:proposalId order by i.issuedAt asc")
     List<IssuedInstruction> findByProposalIdOrderByIssuedAtAsc(UUID proposalId);
     List<IssuedInstruction> findByDemoRunIdAndBusIdAndStatusInOrderByIssuedAtAsc(UUID runId, String busId, List<String> statuses);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select i from IssuedInstruction i where i.disruptionId=:id and i.status in ('ISSUED','ACKNOWLEDGED') order by i.id")
+    List<IssuedInstruction> findActiveByDisruptionIdForUpdate(UUID id);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select i from IssuedInstruction i where i.demoRunId=:runId and i.status in ('ISSUED','ACKNOWLEDGED') order by i.id")
+    List<IssuedInstruction> findActiveByDemoRunIdForUpdate(UUID runId);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select i from IssuedInstruction i where i.status in ('ISSUED','ACKNOWLEDGED') and ((i.acknowledgedAt is null and i.acknowledgementDeadline<=:now) or i.applicableUntil<=:now) order by i.id")
+    List<IssuedInstruction> findDueForUpdate(java.time.Instant now);
     Page<IssuedInstruction> findByDemoRunIdOrderByIssuedAtDesc(UUID runId, Pageable page);
     @org.springframework.data.jpa.repository.Modifying
     @Query("update IssuedInstruction i set i.status='CANCELLED',i.inactiveReason=:reason,i.version=i.version+1 where i.disruptionId=:id and i.status in ('ISSUED','ACKNOWLEDGED')")

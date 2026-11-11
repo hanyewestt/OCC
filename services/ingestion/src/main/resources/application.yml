@@ -43,6 +43,8 @@ springdoc:
     version: OPENAPI_3_1
 
 occ:
+  audit:
+    retention: ${OCC_AUDIT_RETENTION:90d}
   identity:
     enabled: ${OCC_IDENTITY_ENABLED:false}
     project-url: ${SUPABASE_PROJECT_URL:}

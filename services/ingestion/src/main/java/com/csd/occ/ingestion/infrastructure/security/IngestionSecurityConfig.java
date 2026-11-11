@@ -1,5 +1,6 @@
 package com.csd.occ.ingestion.infrastructure.security;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,6 +18,10 @@ import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
 import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.web.BearerTokenAuthenticationEntryPoint;
+import org.springframework.security.oauth2.server.resource.web.access.BearerTokenAccessDeniedHandler;
+import org.springframework.security.web.AuthenticationEntryPoint;
+import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.intercept.AuthorizationFilter;
 
@@ -26,9 +31,13 @@ import org.springframework.security.web.access.intercept.AuthorizationFilter;
 public class IngestionSecurityConfig {
     @Bean
     SecurityFilterChain ingestionSecurityFilterChain(HttpSecurity http, JwtDecoder jwtDecoder,
-            SupabaseRoleConverter roleConverter, PeerCapabilityProperties peerProperties) throws Exception {
+            SupabaseRoleConverter roleConverter, PeerCapabilityProperties peerProperties,
+            ObjectProvider<AuthenticationEntryPoint> auditEntryPoints,
+            ObjectProvider<AccessDeniedHandler> auditDeniedHandlers) throws Exception {
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
         converter.setJwtGrantedAuthoritiesConverter(roleConverter);
+        AuthenticationEntryPoint auditEntryPoint = auditEntryPoints.getIfAvailable(BearerTokenAuthenticationEntryPoint::new);
+        AccessDeniedHandler auditDeniedHandler = auditDeniedHandlers.getIfAvailable(BearerTokenAccessDeniedHandler::new);
         return http.csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
@@ -85,8 +94,11 @@ public class IngestionSecurityConfig {
                         .requestMatchers("/v3/**", "/swagger-ui/**", "/swagger-ui.html", "/webjars/**")
                         .hasAnyRole("ADMIN", "CONTROLLER")
                         .anyRequest().denyAll())
-                .oauth2ResourceServer(server -> server.jwt(jwt -> jwt.decoder(jwtDecoder)
-                        .jwtAuthenticationConverter(converter)))
+                .exceptionHandling(errors -> errors.authenticationEntryPoint(auditEntryPoint)
+                        .accessDeniedHandler(auditDeniedHandler))
+                .oauth2ResourceServer(server -> server.authenticationEntryPoint(auditEntryPoint)
+                        .accessDeniedHandler(auditDeniedHandler)
+                        .jwt(jwt -> jwt.decoder(jwtDecoder).jwtAuthenticationConverter(converter)))
                 .addFilterBefore(new PeerCapabilityAuthenticationFilter(peerProperties), AuthorizationFilter.class)
                 .build();
     }

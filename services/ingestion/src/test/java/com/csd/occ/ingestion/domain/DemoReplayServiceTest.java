@@ -36,13 +36,20 @@ class DemoReplayServiceTest {
                 .thenReturn(Optional.of(route));
         when(runs.save(org.mockito.ArgumentMatchers.any())).thenAnswer(invocation -> invocation.getArgument(0));
         UUID captain = UUID.randomUUID();
+        var auditEvents = mock(ApplicationAuditEventRepository.class);
         var service = new DemoReplayService(runs, assignments, mock(PollRunRepository.class),
                 mock(RawObservationRepository.class), mock(BusArrivalObservationRepository.class),
                 mock(TrafficIncidentObservationRepository.class), topology, Clock.fixed(NOW, ZoneOffset.UTC),
                 mock(DemoModeService.class), new DemoReplayConfiguration("multi-route-bunching-v2", 190,
-                Duration.ofSeconds(90), Optional.of(captain)), mock(DemoHazardReplayService.class));
-        var first = service.start();
+                Duration.ofSeconds(90), Optional.of(captain)), mock(DemoHazardReplayService.class), auditEvents);
+        var first = service.start(DemoRunConfiguration.defaults(), "verified-controller-subject");
         var second = service.start();
+        var auditCapture = org.mockito.ArgumentCaptor.forClass(ApplicationAuditEvent.class);
+        verify(auditEvents, times(2)).save(auditCapture.capture());
+        org.assertj.core.api.Assertions.assertThat(auditCapture.getAllValues().get(0).actorSubject())
+                .isEqualTo("verified-controller-subject");
+        org.assertj.core.api.Assertions.assertThat(auditCapture.getAllValues().get(0).actorType()).isEqualTo("CONTROLLER");
+        org.assertj.core.api.Assertions.assertThat(auditCapture.getAllValues().get(1).actorType()).isEqualTo("SYSTEM");
         org.assertj.core.api.Assertions.assertThat(first.id()).isNotEqualTo(second.id());
         @SuppressWarnings("unchecked")
         var capture = org.mockito.ArgumentCaptor.forClass(Iterable.class);
@@ -75,7 +82,7 @@ class DemoReplayServiceTest {
         var service = new DemoReplayService(runs, assignments, mock(PollRunRepository.class), mock(RawObservationRepository.class),
                 mock(BusArrivalObservationRepository.class), mock(TrafficIncidentObservationRepository.class), topology,
                 Clock.fixed(NOW, ZoneOffset.UTC), mock(DemoModeService.class),
-                new DemoReplayConfiguration("multi-route-bunching-v2", 190, Duration.ofSeconds(90)), mock(DemoHazardReplayService.class));
+                new DemoReplayConfiguration("multi-route-bunching-v2", 190, Duration.ofSeconds(90)), mock(DemoHazardReplayService.class), mock(ApplicationAuditEventRepository.class));
 
         var captains = List.of(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
         service.start(new DemoRunConfiguration("972", 2, 3, Duration.ofSeconds(120),
@@ -100,7 +107,7 @@ class DemoReplayServiceTest {
                 mock(PollRunRepository.class), mock(RawObservationRepository.class), mock(BusArrivalObservationRepository.class),
                 mock(TrafficIncidentObservationRepository.class), mock(ReferenceTopologyPort.class), Clock.fixed(NOW, ZoneOffset.UTC),
                 mock(DemoModeService.class), new DemoReplayConfiguration("multi-route-bunching-v2", 190, Duration.ofSeconds(90)),
-                mock(DemoHazardReplayService.class));
+                mock(DemoHazardReplayService.class), mock(ApplicationAuditEventRepository.class));
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.start(
                 new DemoRunConfiguration("190", 1, 3, Duration.ofSeconds(90), DemoScenario.NORMAL)))
@@ -114,7 +121,7 @@ class DemoReplayServiceTest {
                 mock(PollRunRepository.class), mock(RawObservationRepository.class), mock(BusArrivalObservationRepository.class),
                 mock(TrafficIncidentObservationRepository.class), mock(ReferenceTopologyPort.class), Clock.fixed(NOW, ZoneOffset.UTC),
                 mock(DemoModeService.class), new DemoReplayConfiguration("multi-route-bunching-v2", 190, Duration.ofSeconds(90)),
-                mock(DemoHazardReplayService.class));
+                mock(DemoHazardReplayService.class), mock(ApplicationAuditEventRepository.class));
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.start(new DemoRunConfiguration("190", 1, 3,
                 Duration.ofSeconds(120), List.of(Duration.ofSeconds(120), Duration.ofSeconds(60)), DemoScenario.NORMAL)))
@@ -155,7 +162,7 @@ class DemoReplayServiceTest {
         }).when(arrivals).saveAll(org.mockito.ArgumentMatchers.any());
         DemoReplayService service = new DemoReplayService(runs, assignments, pollRuns, rawObservations, arrivals,
                 incidents, topology, Clock.fixed(NOW, ZoneOffset.UTC), mode,
-                new DemoReplayConfiguration("route190-bunching-v1", 190, Duration.ofSeconds(90)), mock(DemoHazardReplayService.class));
+                new DemoReplayConfiguration("route190-bunching-v1", 190, Duration.ofSeconds(90)), mock(DemoHazardReplayService.class), mock(ApplicationAuditEventRepository.class));
 
         for (int step = 0; step < DemoReplayScenario.STEP_COUNT; step++) service.replayNext();
 
@@ -210,7 +217,7 @@ class DemoReplayServiceTest {
         DemoReplayService service = new DemoReplayService(runs, mock(DemoVehicleAssignmentRepository.class),
                 mock(PollRunRepository.class), mock(RawObservationRepository.class), arrivals,
                 mock(TrafficIncidentObservationRepository.class), topology, Clock.fixed(NOW, ZoneOffset.UTC), mode,
-                new DemoReplayConfiguration("route190-bunching-v1", 190, Duration.ofSeconds(90)), mock(DemoHazardReplayService.class));
+                new DemoReplayConfiguration("route190-bunching-v1", 190, Duration.ofSeconds(90)), mock(DemoHazardReplayService.class), mock(ApplicationAuditEventRepository.class));
 
         service.replayNext();
         service.replayNext();

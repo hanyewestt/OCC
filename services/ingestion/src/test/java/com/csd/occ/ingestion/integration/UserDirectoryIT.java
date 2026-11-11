@@ -8,9 +8,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.csd.occ.ingestion.domain.*;
 import com.csd.occ.ingestion.infrastructure.config.*;
+import com.csd.occ.ingestion.infrastructure.audit.ApplicationAuditBackfillService;
 import com.csd.occ.ingestion.infrastructure.datamall.DataMallAdapter;
 import java.time.Instant;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -59,6 +61,8 @@ class UserDirectoryIT {
     @Autowired DirectoryProjectionService projection;
     @Autowired UserDirectoryService directory;
     @Autowired OccUserRepository users;
+    @Autowired ApplicationAuditRetentionService auditRetention;
+    @Autowired ApplicationAuditBackfillService auditBackfill;
     @Autowired JdbcTemplate jdbc;
     @Autowired MockMvc mvc;
     @org.springframework.boot.test.web.server.LocalServerPort int port;
@@ -67,6 +71,7 @@ class UserDirectoryIT {
 
     @BeforeEach void resetDirectory() {
         when(clock.instant()).thenReturn(first);
+        jdbc.update("delete from ingestion.application_audit_event");
         jdbc.update("delete from ingestion.occ_user");
         jdbc.update("update ingestion.directory_synchronization set scan_started_at=null, synchronized_at=null where id=1");
     }
@@ -136,6 +141,31 @@ class UserDirectoryIT {
             assertThat(row.displayName()).isEqualTo("Updated name");
             assertThat(row.synchronizedAt()).isEqualTo(first.plusSeconds(7));
         });
+    }
+
+    @Test
+    void auditRetentionIsIndependentOfOperationalDeletionAndKeepsStableCollectionStart() {
+        UUID runId = UUID.randomUUID();
+        jdbc.update("insert into ingestion.demo_run (id, scenario_key, scenario_version, seed, status, started_at) values (?, 'retention-test', '1', 1, 'CLOSED', ?)", runId, java.sql.Timestamp.from(first.minusSeconds(1000)));
+        Instant cutoff = first.minus(Duration.ofDays(90));
+        insertAudit(runId, cutoff.minusNanos(1000), "older");
+        insertAudit(runId, cutoff, "at-cutoff");
+        insertAudit(runId, cutoff.plusNanos(1000), "newer");
+        assertThat(auditRetention.collectionStartedAt()).isEqualTo(first);
+        assertThat(auditRetention.purgeExpired(Duration.ofDays(90))).isEqualTo(1);
+        assertThat(jdbc.queryForList("select source_key from ingestion.application_audit_event order by source_key", String.class))
+                .containsExactly("at-cutoff", "newer");
+        jdbc.update("delete from ingestion.demo_run where id=?", runId);
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.application_audit_event where run_id=?", Integer.class, runId)).isEqualTo(2);
+        jdbc.update("delete from ingestion.application_audit_event");
+        assertThat(auditRetention.collectionStartedAt()).isEqualTo(first);
+        assertThat(jdbc.queryForObject("select collection_started_at from ingestion.application_audit_metadata where id=1", Instant.class)).isEqualTo(first);
+        assertThat(jdbc.queryForObject("select count(*) from information_schema.columns where table_schema='ingestion' and table_name='application_audit_event' and column_name='backfilled'", Integer.class)).isEqualTo(1);
+    }
+
+    private void insertAudit(UUID runId, Instant occurredAt, String sourceKey) {
+        jdbc.update("insert into ingestion.application_audit_event (id, occurred_at, recorded_at, category, event_type, outcome, source_service, actor_type, entity_type, entity_id, run_id, summary, details, source_key) values (?, ?, ?, 'OPERATIONS', 'RETENTION_TEST', 'SUCCESS', 'INGESTION', 'SYSTEM', 'RUN', ?, ?, 'test event', '{}'::jsonb, ?)",
+                UUID.randomUUID(), java.sql.Timestamp.from(occurredAt), java.sql.Timestamp.from(first), runId.toString(), runId, sourceKey);
     }
 
     @Test
@@ -212,6 +242,61 @@ class UserDirectoryIT {
         mvc.perform(get("/api/v1/admin/users").with(actor("ADMIN")))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.items").isEmpty())
                 .andExpect(jsonPath("$.directorySynchronizedAt").isEmpty());
+    }
+
+    @Test
+    void authenticationAndAuthorizationDenialsAreCapturedWithoutRequestSecrets() throws Exception {
+        UUID pathId = UUID.randomUUID();
+        String secret = "never-persist-this-query-secret";
+        mvc.perform(get("/api/v1/admin/users/{id}", pathId).param("search", secret)
+                        .header("X-Untrusted-Marker", "request-header-secret").with(actor("CONTROLLER")))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/admin/users/{id}", pathId).param("search", secret)
+                        .header("X-Untrusted-Marker", "request-header-secret").with(actor("CONTROLLER")))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/api/v1/admin/users").param("search", secret)
+                        .header("Authorization", "Bearer request-token-secret")
+                        .header("X-Untrusted-Marker", "request-header-secret"))
+                .andExpect(status().isUnauthorized());
+
+        assertThat(jdbc.queryForList("select event_type from ingestion.application_audit_event where event_type like 'AUTH%DENIED'", String.class))
+                .containsExactlyInAnyOrder("AUTHORIZATION_DENIED", "AUTHENTICATION_DENIED");
+        String stored = jdbc.queryForObject("select string_agg(concat_ws(' ', source_key, actor_subject, actor_type, entity_id, summary, details::text), ' ') from ingestion.application_audit_event", String.class);
+        assertThat(stored).contains("verified-actor", "ADMIN_USERS_DETAIL", "ADMIN_USERS_LIST", "CONTROLLER", "ANONYMOUS")
+                .doesNotContain(secret, pathId.toString(), "request-token-secret", "request-header-secret", "Bearer");
+        assertThat(jdbc.queryForObject("select actor_subject from ingestion.application_audit_event where actor_type='ANONYMOUS'", String.class)).isNull();
+    }
+
+    @Test
+    void retainedPollBackfillUsesOriginalOccurrenceTimeAndIsIdempotent() {
+        UUID retainedPollId = UUID.randomUUID();
+        UUID expiredPollId = UUID.randomUUID();
+        Instant retainedCompletedAt = first.minus(Duration.ofDays(10));
+        Instant cutoff = first.minus(Duration.ofDays(90));
+        insertPollRun(retainedPollId, retainedCompletedAt, "SUCCESS", "BUS", "old diagnostic secret");
+        insertPollRun(expiredPollId, cutoff.minusSeconds(1), "FAILED", "BUS", "old diagnostic secret");
+
+        auditBackfill.backfillRetainedRecords();
+        auditBackfill.backfillRetainedRecords();
+
+        var rows = jdbc.queryForList("select id, occurred_at, recorded_at, outcome, backfilled, details::text from ingestion.application_audit_event where source_key=?",
+                "ingestion-poll:" + retainedPollId);
+        assertThat(rows).hasSize(1);
+        assertThat(rows.getFirst().get("occurred_at")).isEqualTo(java.sql.Timestamp.from(retainedCompletedAt));
+        assertThat(rows.getFirst().get("recorded_at")).isEqualTo(java.sql.Timestamp.from(first));
+        assertThat(rows.getFirst().get("outcome")).isEqualTo("SUCCESS");
+        assertThat(rows.getFirst().get("backfilled")).isEqualTo(true);
+        assertThat(jdbc.queryForObject("select details ->> 'scope' from ingestion.application_audit_event where source_key=?",
+                String.class, "ingestion-poll:" + retainedPollId)).isEqualTo("scope-1");
+        assertThat(rows.getFirst().get("details").toString()).doesNotContain("old diagnostic secret");
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.application_audit_event where source_key=?", Integer.class,
+                "ingestion-poll:" + expiredPollId)).isZero();
+    }
+
+    private void insertPollRun(UUID id, Instant completedAt, String outcome, String source, String errorMessage) {
+        jdbc.update("insert into ingestion.poll_run (id, source, scope_key, idempotency_key, started_at, completed_at, outcome, records_received, error_message) values (?, ?, 'scope-1', ?, ?, ?, ?, 7, ?)",
+                id, source, "legacy-" + id, java.sql.Timestamp.from(completedAt.minusSeconds(5)),
+                java.sql.Timestamp.from(completedAt), outcome, errorMessage);
     }
 
     @Test

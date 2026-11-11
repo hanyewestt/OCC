@@ -14,10 +14,12 @@ public class HazardPollingService {
     private final HazardObservationRepository observations;
     private final FeedStatusRepository statuses;
     private final Clock clock;
+    private final PollCompletionAuditService completionAudit;
     public HazardPollingService(HazardFeedPort provider, HazardEvidencePort evidence, PollRunRepository polls,
-            RawObservationRepository raw, HazardObservationRepository observations, FeedStatusRepository statuses, Clock clock) {
+            RawObservationRepository raw, HazardObservationRepository observations, FeedStatusRepository statuses, Clock clock,
+            PollCompletionAuditService completionAudit) {
         this.provider = provider; this.evidence = evidence; this.polls = polls; this.raw = raw;
-        this.observations = observations; this.statuses = statuses; this.clock = clock;
+        this.observations = observations; this.statuses = statuses; this.clock = clock; this.completionAudit = completionAudit;
     }
 
     public void poll(HazardKind kind, Duration staleAfter) {
@@ -48,17 +50,18 @@ public class HazardPollingService {
         } catch (RuntimeException failed) {
             run.setOutcome("FAILED"); run.setErrorCode("poll_failed"); run.setErrorMessage("Hazard ingestion failed");
         } finally {
-            run.setCompletedAt(clock.instant()); polls.save(run);
+            run.setCompletedAt(clock.instant());
             var id = new FeedStatusId(source, kind.name());
             FeedStatus status = statuses.findById(id).orElseGet(FeedStatus::new);
+            String previousHealth = status.getStatus() == null ? "UNKNOWN" : status.getStatus();
             status.setSource(source); status.setScopeKey(kind.name());
             status.setStatus(switch (run.getOutcome()) { case "SUCCESS" -> "HEALTHY"; case "PARTIAL" -> "DEGRADED"; default -> "FAILED"; });
             status.setLastAttemptAt(run.getStartedAt()); status.setUpdatedAt(run.getCompletedAt());
             status.setStaleAfterSeconds(Math.toIntExact(staleAfter.toSeconds()));
             if ("SUCCESS".equals(run.getOutcome())) { status.setLastSuccessAt(run.getCompletedAt()); status.setConsecutiveFailures(0); }
-            else status.setConsecutiveFailures(status.getConsecutiveFailures() == null ? 1 : status.getConsecutiveFailures() + 1);
+            else status.setConsecutiveFailures((status.getConsecutiveFailures() == null ? 0 : status.getConsecutiveFailures()) + 1);
             status.setMessage("SUCCESS".equals(run.getOutcome()) ? null : "Hazard snapshot unavailable or incomplete");
-            statuses.save(status);
+            completionAudit.complete(run, status, previousHealth);
         }
     }
 }

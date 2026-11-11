@@ -18,10 +18,11 @@ class UserDirectoryServiceTest {
     private final DirectorySynchronizationRepository checkpoints = mock(DirectorySynchronizationRepository.class);
     private final DemoRunRepository runs = mock(DemoRunRepository.class);
     private final DemoVehicleAssignmentRepository assignments = mock(DemoVehicleAssignmentRepository.class);
+    private final DirectoryAuditCapturePort audit = mock(DirectoryAuditCapturePort.class);
     private final Instant now = Instant.parse("2026-11-10T00:00:00Z");
     private final DirectoryActor admin = new DirectoryActor("verified-admin", OccRole.ADMIN);
     private final UserDirectoryService directory = new UserDirectoryService(provider, projection, users,
-            checkpoints, runs, assignments, Clock.fixed(now, ZoneOffset.UTC));
+            checkpoints, runs, assignments, Clock.fixed(now, ZoneOffset.UTC), audit);
 
     @Test
     void scansEveryPageBeforePublishingTheCompleteSnapshot() {
@@ -43,6 +44,7 @@ class UserDirectoryServiceTest {
         when(provider.listPage(2, 1000)).thenThrow(new IdentityProviderException(IdentityProviderException.Reason.UNAVAILABLE));
         assertThatThrownBy(() -> directory.synchronize(admin)).isInstanceOf(IdentityProviderException.class);
         verifyNoInteractions(projection, users, checkpoints);
+        verify(audit).failure(now, "UNAVAILABLE");
     }
 
     @Test

@@ -174,7 +174,7 @@ class AdvisoryAuthorizationTest {
         var notice = mock(PublicNotice.class);
         when(notice.id()).thenReturn(next);
         when(notices.publish(previous, "verified-controller")).thenReturn(notice);
-        when(notices.withdraw(previous)).thenReturn(notice);
+        when(notices.withdraw(previous, "verified-controller")).thenReturn(notice);
         when(notices.replace(previous, next, source, "Correction", "Reviewed message", List.of(), List.of(), from, until,
                 "verified-controller")).thenReturn(notice);
         String body = """
@@ -191,7 +191,7 @@ class AdvisoryAuthorizationTest {
         verify(notices).publish(previous, "verified-controller");
         verify(notices).replace(previous, next, source, "Correction", "Reviewed message", List.of(), List.of(), from, until,
                 "verified-controller");
-        verify(notices).withdraw(previous);
+        verify(notices).withdraw(previous, "verified-controller");
     }
 
     @Test

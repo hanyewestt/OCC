@@ -52,6 +52,8 @@ management:
           include: readinessState,db
 
 occ:
+  audit:
+    retention: ${OCC_AUDIT_RETENTION:90d}
   planning:
     advisory:
       max-speed-reduction-kmh: ${OCC_PLANNING_ADVISORY_MAX_SPEED_REDUCTION_KMH:10}

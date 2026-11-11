@@ -2,10 +2,17 @@ package com.csd.occ.disruption.api;
 
 import com.csd.occ.disruption.infrastructure.security.DisruptionSecurityConfig;
 import com.csd.occ.disruption.infrastructure.security.SupabaseRoleConverter;
+import com.csd.occ.disruption.infrastructure.security.AuditAccessDeniedHandler;
+import com.csd.occ.disruption.infrastructure.security.AuditAuthenticationEntryPoint;
+import com.csd.occ.disruption.infrastructure.security.AuthorizationFailureAuditCapture;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.verify;
 
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -28,10 +35,12 @@ import org.springframework.web.bind.annotation.RestController;
         "occ.security.supabase.allowed-algorithms=ES256",
         "occ.security.peer.ingestion-to-disruption-token=synthetic-ingestion-to-disruption",
         "occ.security.peer.planning-to-disruption-token=synthetic-planning-to-disruption"})
-@Import({DisruptionSecurityConfig.class, SupabaseRoleConverter.class, AuthorizationBoundaryTest.Probe.class})
+@Import({DisruptionSecurityConfig.class, SupabaseRoleConverter.class, AuditAuthenticationEntryPoint.class,
+        AuditAccessDeniedHandler.class, AuthorizationBoundaryTest.Probe.class})
 class AuthorizationBoundaryTest {
     @Autowired MockMvc mvc;
     @MockitoBean JwtDecoder decoder;
+    @MockitoBean AuthorizationFailureAuditCapture audit;
 
     @ParameterizedTest
     @CsvSource({"GET,ADMIN,200", "GET,CONTROLLER,200", "GET,CAPTAIN,403", "GET,UNASSIGNED,403",
@@ -59,10 +68,18 @@ class AuthorizationBoundaryTest {
         perform(method, "/unknown", role, 403);
     }
 
+    @org.junit.jupiter.api.Test
+    void anonymousAdminRequestRetainsBearerAuthenticationBehavior() throws Exception {
+        mvc.perform(request(HttpMethod.GET, "/api/v1/disruption/admin/probe"))
+                .andExpect(status().isUnauthorized());
+        verify(audit).record(any(), eq("AUTHENTICATION_REQUIRED"), any());
+    }
+
     private void perform(String method, String path, String role, int expected) throws Exception {
         mvc.perform(request(HttpMethod.valueOf(method), path)
                 .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_" + role))))
                 .andExpect(status().is(expected));
+        if (expected == 403) verify(audit, atLeastOnce()).record(any(), eq("ROLE_NOT_PERMITTED"), any());
     }
 
     @RestController
