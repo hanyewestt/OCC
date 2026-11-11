@@ -55,7 +55,6 @@ public class GeminiRootCauseModelAdapter implements RootCauseModelPort {
             When formulating limitations, provide concise, realistic operational observations:
             - Note when uniform passenger load categories (e.g. SEA/SDA) obscure sub-tier boarding variance.
             - Note when external incident logs show no clear proximity or direct corridor impact.
-            - Note when corridor traffic signal timings and micro-segment vehicle trajectories are not directly telemetered.
             Do not repeat variations of missing data that are already stated.
             Return only the requested structured fields.
             """;
