@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
-import type { AiAuditRecord, Arrival, BunchingAlert, DemoRun, EarlyControllerSuggestion, PageResult, RouteDirection, RoutePositions } from '@/lib/api'
+import type { AiAuditRecord, Arrival, BunchingAlert, DemoRun, EarlyControllerSuggestion, PageResult, RouteDirection, RoutePositions, TrafficIncident } from '@/lib/api'
 import { bunchingArrivals } from '@/lib/bunching'
 import { dataClassificationLabel } from '@/lib/presentation'
 import { formatSgtDateTime } from '@/lib/time'
@@ -382,6 +382,24 @@ export function filterMapRoutes<T extends { serviceId: string; directionId: numb
   return routes.filter(r => disruptedRouteKeys.has(`${r.serviceId}-${r.directionId}`))
 }
 
+export function distanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const r = 6371000
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLon = (lon2 - lon1) * Math.PI / 180
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2)
+  return 2 * r * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
+export interface MapHazard {
+  id: string
+  latitude: number
+  longitude: number
+  incidentType?: string
+  message?: string
+}
+
 export interface BunchingMapProps {
   routes: RouteDirection[]
   affectedStopCodes: Set<string>
@@ -395,6 +413,7 @@ export interface BunchingMapProps {
   mapHeightClassName?: string
   title?: string
   subtitle?: React.ReactNode
+  hazards?: MapHazard[]
 }
 
 export function BunchingMap({
@@ -410,6 +429,7 @@ export function BunchingMap({
   mapHeightClassName,
   title,
   subtitle,
+  hazards = [],
 }: BunchingMapProps) {
   const incidentBusKeys = useMemo(() => {
     const keys = new Set<string>()
@@ -847,6 +867,13 @@ export function BunchingMap({
     ...project(bus.latitude, bus.longitude),
   }))
 
+  const projectedHazards = (hazards ?? [])
+    .filter(h => validCoord(h.latitude, h.longitude))
+    .map(hazard => ({
+      ...hazard,
+      ...project(hazard.latitude, hazard.longitude),
+    }))
+
   const busClusters = clusterProjectedBuses(projectedBuses, selectedBuses, incidents, 28)
 
   return (
@@ -919,6 +946,12 @@ export function BunchingMap({
               ›
             </span>
             Travel direction
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-flex items-center justify-center size-3.5 text-amber-500 text-xs font-black leading-none" aria-hidden="true">
+              ▲
+            </span>
+            Traffic hazard
           </span>
         </div>
       </div>
@@ -1065,6 +1098,46 @@ export function BunchingMap({
                   cy={stop.y}
                   r={isSelectedStop ? 7 : isAffected ? 6 : 3}
                   fill={isAffected ? '#dc2626' : '#475569'}
+                />
+              </g>
+            )
+          })}
+          {projectedHazards.map(hazard => {
+            const label = `Hazard: ${hazard.incidentType || 'Traffic incident'} - ${hazard.message || 'Reported incident'}`
+            return (
+              <g
+                key={hazard.id}
+                role="img"
+                aria-label={label}
+                tabIndex={0}
+                className="pointer-events-auto cursor-pointer outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
+                onPointerDown={e => e.stopPropagation()}
+              >
+                <title>{label}</title>
+                <polygon
+                  points={`${hazard.x},${hazard.y - 13} ${hazard.x + 11},${hazard.y + 7} ${hazard.x - 11},${hazard.y + 7}`}
+                  fill="#f59e0b"
+                  stroke="#78350f"
+                  strokeWidth="1.5"
+                  strokeLinejoin="round"
+                  className="drop-shadow-md hover:brightness-110"
+                />
+                <line
+                  x1={hazard.x}
+                  y1={hazard.y - 6}
+                  x2={hazard.x}
+                  y2={hazard.y}
+                  stroke="#78350f"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  className="pointer-events-none select-none"
+                />
+                <circle
+                  cx={hazard.x}
+                  cy={hazard.y + 3.5}
+                  r="1"
+                  fill="#78350f"
+                  className="pointer-events-none select-none"
                 />
               </g>
             )
@@ -1345,7 +1418,7 @@ function formatVehicleCell(
   return <span className="text-muted-foreground">Unavailable</span>
 }
 
-export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], positions = [], pollIntervalSeconds = 60, gapToleranceSeconds = 30 }: {
+export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], positions = [], pollIntervalSeconds = 60, gapToleranceSeconds = 30, trafficIncidents = [] }: {
   liveAlerts: PagedCollection<BunchingAlert, PageResult<BunchingAlert>>
   run: Resource<DemoRun>
   loading: boolean
@@ -1353,6 +1426,7 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
   positions?: RoutePositions[]
   pollIntervalSeconds?: number
   gapToleranceSeconds?: number
+  trafficIncidents?: TrafficIncident[]
 }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const incidentParam = searchParams.get('incident')
@@ -1745,6 +1819,31 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
     )
   }
 
+  const corridorHazards = useMemo<MapHazard[]>(() => {
+    if (!trafficIncidents.length) return []
+    const valid = trafficIncidents.filter(i => validCoord(i.latitude, i.longitude))
+    if (selectedCorridorKey === 'all') {
+      return valid.map(i => ({
+        id: i.id,
+        latitude: i.latitude!,
+        longitude: i.longitude!,
+        incidentType: i.incidentType,
+        message: i.message,
+      }))
+    }
+    const corridorStops = corridorRoutes.flatMap(r => r.stops).filter(s => validCoord(s.latitude, s.longitude))
+    if (!corridorStops.length) return []
+    return valid
+      .filter(i => corridorStops.some(s => distanceMeters(i.latitude!, i.longitude!, s.latitude!, s.longitude!) <= 2500))
+      .map(i => ({
+        id: i.id,
+        latitude: i.latitude!,
+        longitude: i.longitude!,
+        incidentType: i.incidentType,
+        message: i.message,
+      }))
+  }, [trafficIncidents, selectedCorridorKey, corridorRoutes])
+
   return <div className="space-y-10">
     <section aria-labelledby="bunching-title" className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1870,6 +1969,7 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
           incidents={mapIncidents}
           onSelectIncident={handleSelectIncident}
           isAllCorridors={selectedCorridorKey === 'all'}
+          hazards={corridorHazards}
         />
       )}
 

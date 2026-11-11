@@ -35,6 +35,8 @@ class DiagnosisSummaryPolicyTest {
             assertThat(detail.secondsBeforeFirstConfirmed()).isEqualTo(180);
             assertThat(detail.distanceMetersFromSuppliedBusPosition()).isZero();
             assertThat(detail.monitoredStopCode()).isEqualTo("44251");
+            assertThat(detail.latitude()).isEqualTo(new BigDecimal("1.3"));
+            assertThat(detail.longitude()).isEqualTo(new BigDecimal("103.8"));
         });
     }
 

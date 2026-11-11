@@ -1,3 +1,5 @@
+import { createElement } from 'react'
+import { renderToString } from 'react-dom/server'
 import { expect, test } from '@playwright/test'
 import type { BunchingAlert, RouteDirection } from '../../src/lib/api'
 import {
@@ -14,7 +16,10 @@ import {
   TILE_SIZE,
   validCoord,
   worldToLatLng,
-} from '../../src/pages/ControllerViews'
+  distanceMeters,
+  BunchingMap,
+  type MapHazard,
+} from '../../src/pages/ControllerViews' 
 
 test('validCoord validates latitude and longitude ranges and excludes origin', () => {
   expect(validCoord(1.3521, 103.8198)).toBe(true)
@@ -444,4 +449,65 @@ test('filterMapRoutes returns empty array in All Corridors when no routes are di
   ]
   const result = filterMapRoutes(routes, true, new Set())
   expect(result).toEqual([])
+})
+
+test('distanceMeters calculates accurate ground distance between Singapore coordinates', () => {
+  // Teck Whye Ave (1.380255, 103.755075) to Opp Phoenix Stn (1.378000, 103.758000)
+  const d = distanceMeters(1.380255, 103.755075, 1.378000, 103.758000)
+  expect(d).toBeGreaterThan(300)
+  expect(d).toBeLessThan(500)
+
+  // Same point
+  expect(distanceMeters(1.35, 103.8, 1.35, 103.8)).toBe(0)
+})
+
+test('BunchingMap renders hazard markers with warning icons, accessible labels, and legend item', () => {
+  const routes: RouteDirection[] = [
+    {
+      serviceId: '190',
+      directionId: 1,
+      operator: 'SMRT',
+      stops: [
+        { stopCode: '44251', stopSequence: 1, latitude: 1.380255, longitude: 103.755075, description: 'Teck Whye Ave', roadName: 'Teck Whye Ave', distanceKm: 0 },
+        { stopCode: '44269', stopSequence: 2, latitude: 1.382000, longitude: 103.758000, description: 'Phoenix Stn', roadName: 'Choa Chu Kang Rd', distanceKm: 0.5 },
+      ],
+    },
+  ]
+
+  const hazards: MapHazard[] = [
+    {
+      id: 'haz-1',
+      latitude: 1.380255,
+      longitude: 103.755075,
+      incidentType: 'Vehicle Breakdown',
+      message: 'Breakdown on Teck Whye Ave',
+    },
+    {
+      id: 'haz-invalid',
+      latitude: Number.NaN,
+      longitude: 103.755075,
+      incidentType: 'Roadwork',
+      message: 'Invalid coordinate hazard',
+    },
+  ]
+
+  const html = renderToString(
+    createElement(BunchingMap, {
+      routes,
+      affectedStopCodes: new Set(['44251']),
+      buses: [],
+      hazards,
+    })
+  )
+
+  // Map legend contains Traffic hazard
+  expect(html).toContain('Traffic hazard')
+
+  // Valid hazard marker rendered with warning icon and title
+  expect(html).toContain('Hazard: Vehicle Breakdown - Breakdown on Teck Whye Ave')
+  expect(html).toContain('polygon')
+  expect(html).toContain('fill="#f59e0b"')
+
+  // Invalid hazard is filtered out
+  expect(html).not.toContain('Invalid coordinate hazard')
 })

@@ -103,7 +103,23 @@ export type DiagnosisEvidenceDetail = {
   reportTime: string | null; fetchedAt: string | null; firstConfirmedAt: string | null
   secondsBeforeFirstConfirmed: number | null; distanceMetersFromSuppliedBusPosition: number | null
   busPositionEvidenceId: string | null; monitoredStopCode: string | null
+  latitude?: number | null; longitude?: number | null
 }
+export type TrafficIncident = {
+  id: string
+  disruptionId?: string | null
+  classification?: string
+  demoRunId?: string | null
+  incidentType: string
+  message: string
+  latitude: number | null
+  longitude: number | null
+  observedAt?: string | null
+  fetchedAt?: string | null
+  openedAt?: string | null
+  updatedAt?: string | null
+}
+export type TrafficIncidentPageResponse = PageResult<TrafficIncident>
 export type RecommendationImpact = {
   headwayBeforeSeconds: number; headwayAfterSeconds: number
   queueBeforePassengers: number; queueAfterPassengers: number

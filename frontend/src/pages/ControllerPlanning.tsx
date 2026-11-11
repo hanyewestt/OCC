@@ -8,13 +8,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
-import { ApiError, apiRequest, triggerDiagnosis, type BunchingAlert, type ControllerBusInstruction, type Decision, type DiagnosisEvidenceDetail, type EarlyControllerSuggestion, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RoutePositions, type RouteStop } from '@/lib/api'
+import { ApiError, apiRequest, triggerDiagnosis, type BunchingAlert, type ControllerBusInstruction, type Decision, type DiagnosisEvidenceDetail, type EarlyControllerSuggestion, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RoutePositions, type RouteStop, type TrafficIncident } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { bunchingArrivals } from '@/lib/bunching'
 import { groupRouteIncidents, linkIncidentToPosition, routeKey, type IncidentStripLink, type RouteIncident } from '@/lib/route-strip'
 import type { Planning } from './ControllerPage'
 import type { PagedCollection } from '@/lib/paged-collection'
-import { BunchingMap, DataMessage, timestamp, type PositionedIncident } from './ControllerViews'
+import { BunchingMap, DataMessage, distanceMeters, timestamp, validCoord, type MapHazard, type PositionedIncident } from './ControllerViews'
 import { adjacentBunchingGaps, bunchedArrivalGaps, formatGap } from '@/lib/route-strip'
 
 function seconds(value: number) {
@@ -178,6 +178,8 @@ export function PlanningCorridorMap({
   alert,
   title,
   subtitle,
+  evidenceDetails,
+  trafficIncidents = [],
 }: {
   routes: RouteDirection[]
   positions?: RoutePositions[]
@@ -192,6 +194,8 @@ export function PlanningCorridorMap({
   alert?: BunchingAlert
   title?: string
   subtitle?: React.ReactNode
+  evidenceDetails?: DiagnosisEvidenceDetail[]
+  trafficIncidents?: TrafficIncident[]
 }) {
   const [focusIncident, setFocusIncident] = useState(true)
 
@@ -296,6 +300,47 @@ export function PlanningCorridorMap({
     stripLink: computedStripLink,
   }), [serviceId, directionId, targetStopCode, affectedStopCodes, targetStopName, alert, computedStripLink])
 
+  const corridorHazards = useMemo<MapHazard[]>(() => {
+    const list: MapHazard[] = []
+    const seen = new Set<string>()
+
+    if (evidenceDetails) {
+      for (const d of evidenceDetails) {
+        if (validCoord(d.latitude, d.longitude) && !seen.has(d.evidenceId)) {
+          seen.add(d.evidenceId)
+          list.push({
+            id: d.evidenceId,
+            latitude: d.latitude!,
+            longitude: d.longitude!,
+            incidentType: d.incidentType,
+            message: d.message,
+          })
+        }
+      }
+    }
+
+    if (trafficIncidents.length) {
+      const stops = corridorRoutes.flatMap(r => r.stops).filter(s => validCoord(s.latitude, s.longitude))
+      for (const inc of trafficIncidents) {
+        if (validCoord(inc.latitude, inc.longitude) && !seen.has(inc.id)) {
+          const isNear = !stops.length || stops.some(s => distanceMeters(inc.latitude!, inc.longitude!, s.latitude!, s.longitude!) <= 2500)
+          if (isNear) {
+            seen.add(inc.id)
+            list.push({
+              id: inc.id,
+              latitude: inc.latitude!,
+              longitude: inc.longitude!,
+              incidentType: inc.incidentType,
+              message: inc.message,
+            })
+          }
+        }
+      }
+    }
+
+    return list
+  }, [evidenceDetails, trafficIncidents, corridorRoutes])
+
   if (!corridorRoutes.length) return null
 
   const defaultTitle = mitigationType ? 'Assigned control stop & corridor' : 'Affected corridor map'
@@ -323,6 +368,7 @@ export function PlanningCorridorMap({
         title={title ?? defaultTitle}
         subtitle={subtitle ?? defaultSubtitle}
         mapHeightClassName="h-60 sm:h-64"
+        hazards={corridorHazards}
       />
     </div>
   )
@@ -460,6 +506,7 @@ export function ControllerPlanning({
   pollIntervalSeconds = 60,
   nowMs = 0,
   gapToleranceSeconds = 30,
+  trafficIncidents = [],
   onPendingChange,
   onRefresh,
   onSaved,
@@ -477,6 +524,7 @@ export function ControllerPlanning({
   pollIntervalSeconds?: number
   nowMs?: number
   gapToleranceSeconds?: number
+  trafficIncidents?: TrafficIncident[]
   onRefresh: () => void
   onSaved: () => void
   onPendingChange: (pending: boolean) => void
@@ -979,7 +1027,7 @@ export function ControllerPlanning({
       </Card>
 
       {!selectedRequest && detailRecommendation && detailIdentity && <RecommendationDetail key={detailIdentity} selected={detailRecommendation} identity={detailIdentity}
-        scopeIdentity={scopeIdentity} token={token} detectedAlerts={detectedAlerts} routes={routes} positions={positions} isCurrent={selectionIsCurrent} validationFailed={editorUnavailable}
+        scopeIdentity={scopeIdentity} token={token} detectedAlerts={detectedAlerts} routes={routes} positions={positions} trafficIncidents={trafficIncidents} isCurrent={selectionIsCurrent} validationFailed={editorUnavailable}
         retryCurrentCheck={modeError ? onRefresh : recommendations.reload}
         onSaved={onSaved} onMessage={setMessage} onEditorChange={setEditingRecommendation}
         onRefreshed={item => {
@@ -990,6 +1038,7 @@ export function ControllerPlanning({
       {selectedRequest && <DiagnosisRequestDetail request={selectedRequest}
         corridor={selectedCorridor}
         routes={routes} positions={positions} detectedAlerts={detectedAlerts}
+        trafficIncidents={trafficIncidents}
         detectedBusReferences={detectedBusReferences(selectedRequest, detectedAlerts, selectedCorridor)}
         generating={triggeringRequestId === selectedRequest.requestId} suggesting={suggestingRequestId === selectedRequest.requestId}
         token={token} onSuggestionPending={pending => setSuggestingRequestId(pending ? selectedRequest.requestId : null)}
@@ -1060,9 +1109,9 @@ function detectedBusReferences(request: PlanningDiagnosisRequest | null, alerts:
   return []
 }
 
-function DiagnosisRequestDetail({ request, corridor, routes, positions, detectedAlerts, detectedBusReferences, generating, suggesting, token, onSuggestionPending, onSaved, onGenerate }: {
+function DiagnosisRequestDetail({ request, corridor, routes, positions, detectedAlerts, detectedBusReferences, generating, suggesting, token, trafficIncidents = [], onSuggestionPending, onSaved, onGenerate }: {
   request: PlanningDiagnosisRequest; corridor?: CorridorDiagnosisGroup | null; routes: RouteDirection[]; positions: RoutePositions[]; detectedAlerts: BunchingAlert[]; detectedBusReferences: string[]; generating: boolean; suggesting: boolean; token: string
-  onSuggestionPending: (pending: boolean) => void; onSaved: () => void; onGenerate: () => void
+  trafficIncidents?: TrafficIncident[]; onSuggestionPending: (pending: boolean) => void; onSaved: () => void; onGenerate: () => void
 }) {
   const retry = request.status.startsWith('FAILED')
   const processing = request.status === 'PROCESSING'
@@ -1159,6 +1208,8 @@ function DiagnosisRequestDetail({ request, corridor, routes, positions, detected
       busReferences={detectedBusReferences}
       corridorIncident={corridor?.corridorIncident}
       alert={corridor?.corridorIncident?.alerts[0] ?? detectedAlerts.find(a => a.eventId === request.eventId || (a.serviceId === request.serviceId && a.stopCode === request.stopCode))}
+      evidenceDetails={request.evidenceDetails}
+      trafficIncidents={trafficIncidents}
     />
 
     <div><h3 className="text-sm font-medium">Bunching detection</h3>
@@ -1214,7 +1265,7 @@ function DiagnosisRequestDetail({ request, corridor, routes, positions, detected
   </CardContent></Card>
 }
 
-function RecommendationDetail({ selected, identity, scopeIdentity, token, detectedAlerts, routes, positions, isCurrent, validationFailed, retryCurrentCheck, onSaved, onMessage, onEditorChange, onRefreshed }: {
+function RecommendationDetail({ selected, identity, scopeIdentity, token, detectedAlerts, routes, positions, isCurrent, validationFailed, retryCurrentCheck, onSaved, onMessage, onEditorChange, onRefreshed, trafficIncidents = [] }: {
   selected: PendingRecommendation; identity: string; scopeIdentity: string; token: string
   detectedAlerts: BunchingAlert[]
   routes: RouteDirection[]
@@ -1222,6 +1273,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
   isCurrent: boolean; validationFailed: boolean; retryCurrentCheck: () => void
   onSaved: () => void; onMessage: (message: string) => void; onEditorChange: Dispatch<SetStateAction<EditingRecommendation | null>>
   onRefreshed: (item: PendingRecommendation) => void
+  trafficIncidents?: TrafficIncident[]
 }) {
   const [pending, setPending] = useState(false)
   const [message, setMessage] = useState('')
@@ -1508,6 +1560,8 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
           mitigationType={selected.mitigationType}
           busReferences={affectedBuses(selected)}
           alert={recommendationAlert(selected, detectedAlerts)}
+          evidenceDetails={selected.explanation.evidenceDetails}
+          trafficIncidents={trafficIncidents}
         />
 
         <section aria-labelledby="affected-buses" className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 id="affected-buses" className="text-sm font-medium">Buses bunching</h3>{showsLegacySuggestion && <span className="text-xs text-muted-foreground">Expected gap {seconds(selected.expectedImpact.headwayAfterSeconds)}</span>}</div>
