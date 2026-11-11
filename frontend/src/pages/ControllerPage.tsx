@@ -262,7 +262,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     const runPromise = readResource(apiRequest<DemoRun>('/api/v1/demo-runs/active', token, signal).then(async value =>
       value ? { ...value, alerts: await enrichBunchingStops(value.alerts, token, signal) } : null), signal)
     const [liveRequest, nextRun] = await Promise.all([
-      (pathname === '/controller' || pathname.endsWith('/disruptions')) ? requestLiveData(signal) : Promise.resolve(null), runPromise,
+      (pathname === '/controller' || pathname.endsWith('/disruptions') || pathname.endsWith('/planning')) ? requestLiveData(signal) : Promise.resolve(null), runPromise,
     ])
     if (signal.aborted) return false
     const liveIsCurrent = !liveRequest || liveRequest.generation === liveRequestGenerationRef.current
@@ -283,7 +283,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     }
     runState.current = resolvedRun
     setRun(resolvedRun)
-    if ((pathname === '/controller' || pathname.endsWith('/disruptions')) && activeSimulation) {
+    if ((pathname === '/controller' || pathname.endsWith('/disruptions') || pathname.endsWith('/planning')) && activeSimulation) {
       const simulationPositions = await loadSimulationRoutePositions(token, activeSimulation.id, signal)
       if (!signal.aborted) {
         setRoutePositions(simulationPositions)
@@ -489,7 +489,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           positions={routePositions.data ?? []}
           routes={routeStops.data ?? []} pollIntervalSeconds={pollIntervalSeconds}
           gapToleranceSeconds={Math.max(30, routeIncidentGapToleranceSeconds)}
-          nowMs={Date.parse(alertCollection.lastSuccessAt ?? '') || 0}
+          nowMs={Date.parse(alertCollection.lastSuccessAt || (simulation ? shellRefreshTime.at : '') || '') || 0}
           onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { void requestRefresh('mutation') }} />}
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} suggestions={suggestionCollection} aiAudits={aiAuditCollection} loading={loading} />}
         {pathname !== '/controller' && loaded === requestKey && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}

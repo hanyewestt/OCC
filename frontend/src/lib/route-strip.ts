@@ -189,7 +189,7 @@ function similarGaps(first: number | null, second: number | null, toleranceSecon
 }
 
 export function groupRouteIncidents(alerts: BunchingAlert[], routes: RouteDirection[], nowMs: number,
-  pollIntervalSeconds: number, gapToleranceSeconds: number = 30): RouteIncident[] {
+  pollIntervalSeconds: number, gapToleranceSeconds: number = 30, isSimulation: boolean = false): RouteIncident[] {
   const resolved: ResolvedAlert[] = alerts.map(alert => ({
     alert,
     ...alertRoute(alert, routes),
@@ -251,7 +251,7 @@ export function groupRouteIncidents(alerts: BunchingAlert[], routes: RouteDirect
       latestDetectedAt,
       gapSeconds,
       ageSeconds,
-      historical: ageSeconds > pollIntervalSeconds * 3 || passedPrediction,
+      historical: isSimulation ? false : (ageSeconds > pollIntervalSeconds * 3 || passedPrediction),
       latestStopIndex: latest.stopIndex,
     }
   }).sort((first, second) => Date.parse(second.latestDetectedAt) - Date.parse(first.latestDetectedAt))

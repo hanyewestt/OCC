@@ -26,10 +26,11 @@ public class CurrentBunchingEvidenceService {
                         && state.currentEvidenceValidUntil() != null && state.currentAffectedObservationIds() != null)
                 .map(state -> {
                     var now = clock.instant();
+                    boolean fresh = runId != null || (!state.lastFetchedAt().isAfter(now)
+                            && now.isBefore(state.currentEvidenceValidUntil()));
                     return new Evidence(runId, episodeId, state.serviceId(), state.stopCode(), state.directionId(),
                             state.currentBunchingState(), state.currentRawObservationId(), state.lastFetchedAt(),
-                            state.currentEvidenceValidUntil(), !state.lastFetchedAt().isAfter(now)
-                                    && now.isBefore(state.currentEvidenceValidUntil()),
+                            state.currentEvidenceValidUntil(), fresh,
                             state.currentAffectedObservationIds());
                 });
     }

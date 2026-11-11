@@ -1366,11 +1366,11 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
     ? [] : simulation ? simulation.alerts : liveAlerts.items), [loading, error, simulation, liveAlerts.isLoading, liveAlerts.latestPage, liveAlerts.items])
 
   // Compute grouped incidents
-  const nowMs = Date.parse(liveAlerts.lastSuccessAt ?? '') || 0
+  const nowMs = Date.parse(liveAlerts.lastSuccessAt ?? items[0]?.detectedAt ?? '') || 0
   const incidents = useMemo(() => {
     if (viewMode !== 'grouped' || !items.length) return []
-    return groupRouteIncidents(items, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds)
-  }, [viewMode, items, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds])
+    return groupRouteIncidents(items, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds, Boolean(simulation))
+  }, [viewMode, items, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds, simulation])
 
   type PositionSnapshot = {
     position: RoutePositions['directions'][number]
