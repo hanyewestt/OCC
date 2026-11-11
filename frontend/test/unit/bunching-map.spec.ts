@@ -18,6 +18,7 @@ import {
   worldToLatLng,
   distanceMeters,
   BunchingMap,
+  categorizeHazard,
   type MapHazard,
 } from '../../src/pages/ControllerViews' 
 
@@ -461,7 +462,16 @@ test('distanceMeters calculates accurate ground distance between Singapore coord
   expect(distanceMeters(1.35, 103.8, 1.35, 103.8)).toBe(0)
 })
 
-test('BunchingMap renders hazard markers with warning icons, accessible labels, and legend item', () => {
+test('categorizeHazard correctly categorizes incident types and messages', () => {
+  expect(categorizeHazard({ incidentType: 'Accident', message: 'Accident on PIE' })).toBe('accident')
+  expect(categorizeHazard({ incidentType: 'Vehicle Breakdown', message: 'Car breakdown on lane 3' })).toBe('breakdown')
+  expect(categorizeHazard({ incidentType: 'Roadwork', message: 'Road Works on BKE' })).toBe('roadwork')
+  expect(categorizeHazard({ incidentType: 'Heavy Traffic', message: 'Jam after Clementi' })).toBe('traffic')
+  expect(categorizeHazard({ incidentType: 'Flood', message: 'Flash flood at Dunearn' })).toBe('flood')
+  expect(categorizeHazard({ incidentType: 'Obstacle', message: 'Debris on road' })).toBe('other')
+})
+
+test('BunchingMap renders differentiated hazard icons, layer toggles, and legend items', () => {
   const routes: RouteDirection[] = [
     {
       serviceId: '190',
@@ -483,6 +493,13 @@ test('BunchingMap renders hazard markers with warning icons, accessible labels, 
       message: 'Breakdown on Teck Whye Ave',
     },
     {
+      id: 'haz-2',
+      latitude: 1.382000,
+      longitude: 103.758000,
+      incidentType: 'Roadwork',
+      message: 'Road Works on Choa Chu Kang Rd',
+    },
+    {
       id: 'haz-invalid',
       latitude: Number.NaN,
       longitude: 103.755075,
@@ -500,13 +517,26 @@ test('BunchingMap renders hazard markers with warning icons, accessible labels, 
     })
   )
 
-  // Map legend contains Traffic hazard
-  expect(html).toContain('Traffic hazard')
+  // Map controls contain layer toggles
+  expect(html).toContain('Layers:')
+  expect(html).toContain('Stops')
+  expect(html).toContain('Buses')
+  expect(html).toContain('Hazards')
 
-  // Valid hazard marker rendered with warning icon and title
+  // Category filter toggles
+  expect(html).toContain('Breakdown')
+  expect(html).toContain('Roadwork')
+
+  // Differentiated legend items
+  expect(html).toContain('Vehicle breakdown')
+  expect(html).toContain('Roadwork')
+
+  // Valid hazard markers rendered with custom SVGs
   expect(html).toContain('Hazard: Vehicle Breakdown - Breakdown on Teck Whye Ave')
+  expect(html).toContain('Hazard: Roadwork - Road Works on Choa Chu Kang Rd')
+
+  // Roadwork renders traffic cone with polygon
   expect(html).toContain('polygon')
-  expect(html).toContain('fill="#d97706"')
 
   // Invalid hazard is filtered out
   expect(html).not.toContain('Invalid coordinate hazard')
