@@ -7,8 +7,9 @@ export type CaptainInstruction = { id: string; demoRunId: string; busId: string;
   parameters: InstructionParameters; message: string; busClassification: string; hazardClassification: string;
   status: string; issuedAt: string; acknowledgementDeadline: string; acknowledgedAt: string | null;
   applicableUntil: string | null; inactiveReason: string | null }
+export type HazardLocation = { latitude?: number | null; longitude?: number | null; description?: string | null; type?: string | null }
 export type Hazard = { disruptionId: string; kind: string; status: string; classification: string; demoRunId: string | null;
-  updatedAt: string; facts: { title: string; description: string; instruction: string | null; effectiveUntil: string | null };
+  updatedAt: string; facts: { title: string; description: string; instruction: string | null; effectiveUntil: string | null; locations?: HazardLocation[] };
   exposures: { busId: string; serviceId: string; stopCode: string; stopName: string; stopSequence: number; basis: string }[]; limitations: string[] }
 export type PublicNotice = { id: string; classification: string; title: string; message: string; services: string[];
   locations: string[]; effectiveFrom: string; effectiveUntil: string; publishedAt: string | null }

@@ -6,10 +6,10 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type AiAuditRecord, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type EarlyControllerSuggestion, type PageResult, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RoutePositions, type TrafficIncident, type TrafficIncidentPageResponse } from '@/lib/api'
+import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type AiAuditRecord, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type EarlyControllerSuggestion, type PageResult, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RoutePositions, type TrafficIncident, type TrafficIncidentPageResponse, type Hazard } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { ControllerSidebar, controllerPages } from '@/components/ControllerSidebar'
-import { ControllerOverview, ControllerDisruptions, ControllerAudit } from '@/pages/ControllerViews'
+import { ControllerOverview, ControllerDisruptions, ControllerAudit, type MapHazard } from '@/pages/ControllerViews'
 import { ControllerRouteStrip } from '@/pages/ControllerRouteStrip'
 import { ControllerPlanning } from '@/pages/ControllerPlanning'
 import { ControllerAdvisories } from '@/pages/ControllerAdvisories'
@@ -156,6 +156,27 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const [arrivalStopName, setArrivalStopName] = useState('')
   const [arrivalSortBy, setArrivalSortBy] = useState<'arrival' | 'stopName'>('arrival')
   const [arrivalSortDirection, setArrivalSortDirection] = useState<'asc' | 'desc'>('asc')
+  const [selectedHazardId, setSelectedHazardId] = useState<string | null>(null)
+  const [focusHazardCoord, setFocusHazardCoord] = useState<{ lat: number; lng: number } | null>(null)
+  const [locatedHazard, setLocatedHazard] = useState<MapHazard | null>(null)
+
+  const handleLocateHazard = (hazardId: string, lat: number, lon: number, hazard: Hazard) => {
+    setSelectedHazardId(hazardId)
+    setFocusHazardCoord({ lat, lng: lon })
+    const mapHazard: MapHazard = {
+      id: hazardId,
+      disruptionId: hazardId,
+      latitude: lat,
+      longitude: lon,
+      incidentType: hazard.kind === 'FLOOD' ? 'Flood' : hazard.kind === 'RAIL_DISRUPTION' ? 'Rail Disruption' : hazard.kind === 'ROADWORKS' ? 'Roadwork' : hazard.facts.title,
+      message: hazard.facts.description,
+      title: hazard.facts.title,
+      status: hazard.status,
+      updatedAt: hazard.updatedAt,
+    }
+    setLocatedHazard(mapHazard)
+    document.getElementById('corridor-map')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }
   const [routeArrivals, setRouteArrivals] = useState<Resource<Arrival[]>>(empty)
   const [routeStops, setRouteStops] = useState<Resource<RouteDirection[]>>(empty)
   const [routePositions, setRoutePositions] = useState<Resource<RoutePositions[]>>(empty)
@@ -751,7 +772,11 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         {pathname.endsWith('/disruptions') && <ControllerDisruptions liveAlerts={alertCollection} run={run} loading={loading}
           routes={routeStops.data ?? []} positions={routePositions.data ?? []} pollIntervalSeconds={pollIntervalSeconds}
           gapToleranceSeconds={Math.max(30, routeIncidentGapToleranceSeconds)}
-          trafficIncidents={currentTraffic} />}
+          trafficIncidents={currentTraffic}
+          selectedHazardId={selectedHazardId}
+          onSelectHazard={setSelectedHazardId}
+          focusCoord={focusHazardCoord}
+          extraHazards={locatedHazard ? [locatedHazard] : []} />}
         {pathname.endsWith('/planning') && <ControllerPlanning recommendations={recommendationCollection} diagnosisRequests={diagnosisCollection}
           loading={loading} modeError={run.error} mode={modeValue} demoRunId={simulation?.id ?? null} token={token}
           detectedAlerts={simulation ? simulation.alerts : alertCollection.items}
@@ -764,7 +789,10 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} suggestions={suggestionCollection} aiAudits={aiAuditCollection} loading={loading} />}
         {pathname !== '/controller' && loaded === requestKey && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
           registerRefresh={registerAdvisoryRefresh} onRefresh={() => { void requestRefresh('mutation') }} onPendingChange={setAdvisoryPending} onRefreshTimeChange={reportAdvisoryRefresh}
-          view={pathname.endsWith('/disruptions') ? 'hazards' : pathname.endsWith('/planning') ? 'planning' : pathname.endsWith('/notices') ? 'notices' : 'audit'} />}
+          view={pathname.endsWith('/disruptions') ? 'hazards' : pathname.endsWith('/planning') ? 'planning' : pathname.endsWith('/notices') ? 'notices' : 'audit'}
+          selectedHazardId={selectedHazardId}
+          onLocateHazard={handleLocateHazard}
+          trafficIncidents={currentTraffic} />}
       </div>
     </div>
   </div>

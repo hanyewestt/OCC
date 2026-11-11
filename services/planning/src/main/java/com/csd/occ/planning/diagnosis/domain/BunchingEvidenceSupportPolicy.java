@@ -188,7 +188,15 @@ public final class BunchingEvidenceSupportPolicy {
         boolean capacityMismatch = leadVeh != null && followVeh != null && !leadVeh.equalsIgnoreCase(followVeh);
 
         String derivedSubtype;
-        if (output.causeSubtype() != null && Set.of("PEAK_CONGESTION", "TERMINAL_DISPATCH", "FLEET_CAPACITY_ASYMMETRY", "CUMULATIVE_DRIFT").contains(output.causeSubtype())) {
+        if ("PEAK_CONGESTION".equals(output.causeSubtype())) {
+            if (isPeak) {
+                derivedSubtype = "PEAK_CONGESTION";
+            } else if (capacityMismatch) {
+                derivedSubtype = "FLEET_CAPACITY_ASYMMETRY";
+            } else {
+                derivedSubtype = "CUMULATIVE_DRIFT";
+            }
+        } else if (output.causeSubtype() != null && Set.of("TERMINAL_DISPATCH", "FLEET_CAPACITY_ASYMMETRY", "CUMULATIVE_DRIFT").contains(output.causeSubtype())) {
             derivedSubtype = output.causeSubtype();
         } else if (isPeak) {
             derivedSubtype = "PEAK_CONGESTION";

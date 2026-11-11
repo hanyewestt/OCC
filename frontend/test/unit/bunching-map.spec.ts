@@ -485,6 +485,7 @@ test('categorizeHazard correctly categorizes incident types and messages', () =>
   expect(categorizeHazard({ incidentType: 'Roadwork', message: 'Road Works on BKE' })).toBe('roadwork')
   expect(categorizeHazard({ incidentType: 'Heavy Traffic', message: 'Jam after Clementi' })).toBe('traffic')
   expect(categorizeHazard({ incidentType: 'Flood', message: 'Flash flood at Dunearn' })).toBe('flood')
+  expect(categorizeHazard({ incidentType: 'Rail Disruption', message: 'BPL train disruption' })).toBe('rail')
   expect(categorizeHazard({ incidentType: 'Obstacle', message: 'Debris on road' })).toBe('other')
 })
 
@@ -557,4 +558,64 @@ test('BunchingMap renders differentiated hazard icons, layer toggles, and legend
 
   // Invalid hazard is filtered out
   expect(html).not.toContain('Invalid coordinate hazard')
+})
+
+test('BunchingMap renders pulsing selection ring and floating hazard detail card when selectedHazardId is set', () => {
+  const routes: RouteDirection[] = [
+    {
+      serviceId: '190',
+      directionId: 1,
+      operator: 'SMRT',
+      stops: [
+        { stopCode: '44251', stopSequence: 1, latitude: 1.380255, longitude: 103.755075, description: 'Teck Whye Ave', roadName: 'Teck Whye Ave', distanceKm: 0 },
+        { stopCode: '44269', stopSequence: 2, latitude: 1.382000, longitude: 103.758000, description: 'Phoenix Stn', roadName: 'Choa Chu Kang Rd', distanceKm: 0.5 },
+      ],
+    },
+  ]
+
+  const hazards: MapHazard[] = [
+    {
+      id: 'haz-101',
+      disruptionId: 'disr-101',
+      latitude: 1.380255,
+      longitude: 103.755075,
+      incidentType: 'Roadwork',
+      message: 'Road Works on Teck Whye Ave near stop 44251',
+      distanceToCorridorM: 25,
+      updatedAt: '2026-11-12T01:30:00Z',
+    },
+    {
+      id: 'haz-102',
+      disruptionId: 'disr-102',
+      latitude: 1.385000,
+      longitude: 103.760000,
+      incidentType: 'Rail Disruption',
+      message: 'Train disruption along Bukit Panjang line',
+      distanceToCorridorM: 600,
+    },
+  ]
+
+  // Render with haz-101 selected
+  const html = renderToString(
+    createElement(BunchingMap, {
+      routes,
+      affectedStopCodes: new Set(['44251']),
+      buses: [],
+      hazards,
+      selectedHazardId: 'haz-101',
+    })
+  )
+
+  // Floating detail card
+  expect(html).toContain('role="region"')
+  expect(html).toContain('aria-label="Hazard details"')
+  expect(html).toContain('Road Works on Teck Whye Ave near stop 44251')
+  expect(html).toContain('Directly on route')
+  expect(html).toContain('Center on map')
+  expect(html).toContain('Locate in list ↓')
+
+  // Pulsing highlight ring on SVG marker
+  expect(html).toContain('animate-pulse')
+  expect(html).toContain('stroke="#f59e0b"')
+  expect(html).toContain('Hazard: Roadwork - Road Works on Teck Whye Ave near stop 44251 (Selected)')
 })
