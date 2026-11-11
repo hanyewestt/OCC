@@ -42,9 +42,10 @@ public class DemoRoutePositionService {
         List<DemoVehicleAssignment> fleet = assignments.findByIdDemoRunIdOrderByBusId(runId,
                 PageRequest.of(0, configuration.busCount())).getContent();
         java.time.Instant now = clock.instant();
+        java.time.Instant referenceTime = run.completedAt() != null ? run.completedAt() : now;
         double selectedStopDistance = distanceToStop(direction.stops(), configuration.monitoredStopCode());
-        double leadDistance = Math.max(0, selectedStopDistance - 30) + CRUISING_SPEED_MPS
-                * java.time.Duration.between(run.startedAt(), now).toSeconds();
+        double elapsedSeconds = Math.min(60.0, java.time.Duration.between(run.startedAt(), referenceTime).toSeconds());
+        double leadDistance = Math.max(0, selectedStopDistance - 30) + CRUISING_SPEED_MPS * elapsedSeconds;
         List<RoutePositionBus> buses = java.util.stream.IntStream.range(0, fleet.size()).mapToObj(index -> {
             double precedingGaps = configuration.busGaps().subList(0, index).stream()
                     .mapToLong(java.time.Duration::toSeconds).sum();
@@ -52,7 +53,7 @@ public class DemoRoutePositionService {
             return new RoutePositionBus(index + 1, Math.max(0, Math.min(routeLength, distance)), 20, CRUISING_SPEED_MPS);
         }).toList();
         return new RoutePositionSnapshot(configuration.serviceId(), now, java.util.Optional.empty(),
-                java.util.Optional.of(now), 1, 60,
+                java.util.Optional.of(now), 1, 86400,
                 List.of(new RoutePositionDirection(operator.operator(), configuration.directionId(), routeLength, buses)));
     }
 

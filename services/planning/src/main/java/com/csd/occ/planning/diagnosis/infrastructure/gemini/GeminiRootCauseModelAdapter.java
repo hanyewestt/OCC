@@ -38,13 +38,22 @@ public class GeminiRootCauseModelAdapter implements RootCauseModelPort {
                within spatial and temporal proximity. Cite the incident evidence ID. Use provider type as causeSubtype.
             2. PASSENGER_SURGE: Choose when arrival evidence shows passenger load disparity (e.g. leading bus has
                higher load category than trailing bus: LSD > SDA > SEA). Cite arrival IDs. Use causeSubtype "BOARDING_IMBALANCE".
-            3. HEADWAY_DECAY: Choose when arrival spacing compressed without external incidents or severe passenger surge.
-               Use causeSubtype: "PEAK_CONGESTION" (during rush hours), "FLEET_CAPACITY_ASYMMETRY" (different vehicle types),
-               "TERMINAL_DISPATCH" (early route stop sequences), or "CUMULATIVE_DRIFT" (progressive off-peak spacing decay).
+            3. HEADWAY_DECAY: Bus bunching without external traffic incidents or passenger load spikes is an inherent
+               operational dynamic (leading bus delays compound as trailing bus catches up). When neither road incidents
+               nor passenger load surges are present in the evidence snapshot, categorize the bunching under HEADWAY_DECAY.
+               Choose the most applicable causeSubtype:
+               - "TERMINAL_DISPATCH": Irregularity occurred near route origin / early stops.
+               - "PEAK_CONGESTION": Confirmed during Singapore peak commute hours (07:00-10:00 or 17:00-20:00 SGT).
+               - "FLEET_CAPACITY_ASYMMETRY": Different vehicle types or capacities between leading and trailing buses.
+               - "CUMULATIVE_DRIFT": Progressive off-peak headway erosion and spacing decay along the corridor.
                Cite event evidence IDs or arrival IDs.
-            4. UNKNOWN: Choose when evidence is missing, conflicting, or does not support any specific operational cause.
+            4. UNKNOWN: Reserve strictly for corrupted, logically conflicting, or unparseable event telemetry where
+               headway compression cannot be confirmed. Do not choose UNKNOWN simply because external incident data or
+               passenger loads are absent; absent external factors indicate HEADWAY_DECAY.
                Cite event evidence IDs. Use null for causeSubtype.
 
+            When formulating limitations, provide concise, realistic operational observations. Do not repeat variations
+            of missing data that are already stated.
             Return only the requested structured fields.
             """;
 

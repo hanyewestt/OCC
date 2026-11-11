@@ -63,7 +63,7 @@ public class CaptainRouteService {
                 .filter(arrival -> arrival.getEstimatedArrivalAt() != null)
                 .map(arrival -> new CaptainRoutePolicy.Progress(value.stopSequence(), arrival.getEstimatedArrivalAt(),
                         value.observedAt(), value.assumedSpeedKmh())));
-        var plan = policy.plan(stops, progress, clock.instant(), Duration.ofSeconds(polling.staleAfterSeconds()));
+        var plan = policy.plan(stops, progress, clock.instant(), Duration.ofSeconds(Math.max(polling.staleAfterSeconds(), 86400)));
         return Optional.of(new CaptainRoute(assignment.busId(), assignment.vehicleRegistrationNumber(),
                 assignment.serviceId(), assignment.directionId(), plan.stops(), plan.position(), pacing(assignment)));
     }
