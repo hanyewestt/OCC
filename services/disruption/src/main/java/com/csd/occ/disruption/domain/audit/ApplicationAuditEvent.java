@@ -68,10 +68,14 @@ public class ApplicationAuditEvent {
     public String eventType() { return eventType; }
     public String outcome() { return outcome; }
     public String sourceService() { return sourceService; }
+    public String actorSubject() { return actorSubject; }
     public String actorType() { return actorType; }
     public String entityType() { return entityType; }
     public String entityId() { return entityId; }
     public UUID runId() { return runId; }
+    public String busId() { return busId; }
+    public UUID captainId() { return captainId; }
+    public String correlationId() { return correlationId; }
     public String summary() { return summary; }
     public Map<String, Object> details() { return details; }
     public String sourceKey() { return sourceKey; }

@@ -18,6 +18,7 @@ import com.csd.occ.planning.recommendation.infrastructure.config.RecommendationG
 import com.csd.occ.planning.recommendation.infrastructure.gemini.GeminiMitigationCandidateAdapter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -60,6 +61,7 @@ import tools.jackson.databind.json.JsonMapper;
 @Testcontainers(disabledWithoutDocker = true)
 class PlanningRecommendationPersistenceIT {
     private static final String IDEMPOTENCY_KEY = "f07c921a-bd3b-4a97-8b17-a384ef1269a7";
+    private static final Instant TEST_RECORDED_AT = Instant.parse("2026-10-25T02:00:00Z");
 
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18.6-alpine")
@@ -130,6 +132,93 @@ class PlanningRecommendationPersistenceIT {
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().is3xxRedirection())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
                         .redirectedUrl("/swagger-ui/index.html"));
+    }
+
+    @Test
+    void adminAuditEndpointsRequireAdminRole() throws Exception {
+        mvc.perform(get("/api/v1/planning/admin/audit-events"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnauthorized());
+        for (String role : List.of("CONTROLLER", "CAPTAIN")) {
+            mvc.perform(get("/api/v1/planning/admin/audit-events")
+                            .with(SecurityMockMvcRequestPostProcessors.jwt().authorities(new SimpleGrantedAuthority("ROLE_" + role))))
+                    .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isForbidden());
+        }
+        mvc.perform(get("/api/v1/planning/admin/audit-events")
+                        .with(SecurityMockMvcRequestPostProcessors.jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+    }
+
+    @Test
+    void adminAuditFiltersBeforePaginationAndUsesOccurrenceThenIdDescendingWithoutDetails() throws Exception {
+        UUID runId = UUID.randomUUID();
+        Instant occurred = Instant.parse("2026-10-25T01:00:00Z");
+        UUID oldest = UUID.fromString("00000000-0000-0000-0000-000000000010");
+        UUID middle = UUID.fromString("00000000-0000-0000-0000-000000000020");
+        UUID newest = UUID.fromString("00000000-0000-0000-0000-000000000030");
+        insertAuditEvent(oldest, occurred, "AI_PROCESSING", "FILTER_MATCH", "FAILURE", "actor-a", runId, "entity-a");
+        insertAuditEvent(middle, occurred, "AI_PROCESSING", "FILTER_MATCH", "FAILURE", "actor-a", runId, "entity-a");
+        insertAuditEvent(newest, occurred, "AI_PROCESSING", "FILTER_MATCH", "FAILURE", "actor-a", runId, "entity-a");
+        insertAuditEvent(UUID.randomUUID(), occurred, "OPERATIONS", "FILTER_MATCH", "FAILURE", "actor-a", runId, "entity-a");
+        insertAuditEvent(UUID.randomUUID(), occurred, "AI_PROCESSING", "FILTER_MATCH", "SUCCESS", "actor-a", runId, "entity-a");
+
+        var admin = SecurityMockMvcRequestPostProcessors.jwt().jwt(token -> token.subject("admin-subject"))
+                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"));
+        String filters = "?category=AI_PROCESSING&eventType=FILTER_MATCH&outcome=FAILURE&actorSubject=actor-a"
+                + "&runId=" + runId + "&entityId=entity-a&from=2026-10-25T00:00:00Z&to=2026-10-25T02:00:00Z";
+        mvc.perform(get("/api/v1/planning/admin/audit-events" + filters + "&page=0&size=2").with(admin))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.items.length()").value(2))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.items[0].id").value(newest.toString()))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.items[1].id").value(middle.toString()))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.items[0].details").doesNotExist())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.totalItems").value(3))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.totalPages").value(2))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.retentionSeconds").isNumber())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.collectionStartedAt").isNotEmpty());
+        mvc.perform(get("/api/v1/planning/admin/audit-events" + filters + "&page=1&size=2").with(admin))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.items[0].id").value(oldest.toString()));
+    }
+
+    @Test
+    void adminAiDetailReturnsSanitizedEvidenceAndRecordsOnlySafeAccessMetadata() throws Exception {
+        UUID evidenceId = UUID.randomUUID();
+        insertAuditEvent(evidenceId, Instant.parse("2026-10-25T01:00:00Z"), "AI_PROCESSING", "AI_TEST", "FAILURE",
+                "system", null, evidenceId.toString(), "{\"input\":\"api_key=private-value\",\"output\":\"Bearer private-token\"}");
+        var admin = SecurityMockMvcRequestPostProcessors.jwt().jwt(token -> token.subject("verified-admin"))
+                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"));
+
+        mvc.perform(get("/api/v1/planning/admin/audit-events/" + evidenceId).with(admin))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.details.input").value("api_key=[REDACTED]"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.details.output").value("Bearer [REDACTED]"));
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM planning.application_audit_event WHERE event_type='AI_EVIDENCE_ACCESSED'", Integer.class))
+                .isEqualTo(1);
+        UUID accessId = jdbc.queryForObject("SELECT id FROM planning.application_audit_event WHERE event_type='AI_EVIDENCE_ACCESSED'", UUID.class);
+        assertThat(jdbc.queryForMap("SELECT actor_subject,details::text AS details,category FROM planning.application_audit_event WHERE id=?", accessId))
+                .containsEntry("actor_subject", "verified-admin").containsEntry("category", "OPERATIONS")
+                .satisfies(row -> assertThat(row.get("details").toString()).contains(evidenceId.toString())
+                        .doesNotContain("private-value", "private-token", "input", "output"));
+        mvc.perform(get("/api/v1/planning/admin/audit-events/" + accessId).with(admin))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM planning.application_audit_event WHERE event_type='AI_EVIDENCE_ACCESSED'", Integer.class))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void adminAuditDetailRejectsMissingAndOutOfRetentionEventsWithoutMutation() throws Exception {
+        UUID missing = UUID.randomUUID();
+        UUID expired = UUID.randomUUID();
+        insertAuditEvent(expired, Instant.parse("2026-01-01T00:00:00Z"), "AI_PROCESSING", "AI_OLD", "SUCCESS",
+                "system", null, expired.toString());
+        var admin = SecurityMockMvcRequestPostProcessors.jwt().jwt(token -> token.subject("verified-admin"))
+                .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"));
+        mvc.perform(get("/api/v1/planning/admin/audit-events/" + missing).with(admin))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNotFound());
+        mvc.perform(get("/api/v1/planning/admin/audit-events/" + expired).with(admin))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNotFound());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM planning.application_audit_event WHERE event_type='AI_EVIDENCE_ACCESSED'", Integer.class))
+                .isZero();
     }
 
     @Test
@@ -344,6 +433,21 @@ class PlanningRecommendationPersistenceIT {
     private String validRequest() throws IOException {
         return new ClassPathResource("fixtures/requests/confirmed-bunching-recommendation.json")
                 .getContentAsString(StandardCharsets.UTF_8);
+    }
+
+    private void insertAuditEvent(UUID id, Instant occurredAt, String category, String eventType, String outcome,
+            String actorSubject, UUID runId, String entityId) {
+        insertAuditEvent(id, occurredAt, category, eventType, outcome, actorSubject, runId, entityId, "{}");
+    }
+
+    private void insertAuditEvent(UUID id, Instant occurredAt, String category, String eventType, String outcome,
+            String actorSubject, UUID runId, String entityId, String details) {
+        jdbc.update("""
+                INSERT INTO planning.application_audit_event
+                    (id,occurred_at,recorded_at,category,event_type,outcome,actor_subject,actor_type,entity_type,entity_id,run_id,summary,details,source_key)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb,?)
+                """, id, Timestamp.from(occurredAt), Timestamp.from(TEST_RECORDED_AT), category, eventType, outcome,
+                actorSubject, "SYSTEM", "TEST_ENTITY", entityId, runId, "test event", details, "test:" + id);
     }
 
     private ModelInvocationRecord acceptedModelInvocation() {

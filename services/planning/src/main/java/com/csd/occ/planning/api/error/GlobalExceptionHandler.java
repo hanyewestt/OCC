@@ -8,6 +8,7 @@ import com.csd.occ.planning.recommendation.domain.RecommendationDecisionService;
 import com.csd.occ.planning.advisory.domain.AdvisoryProposalRepository;
 import com.csd.occ.planning.advisory.domain.IssuedInstructionRepository;
 import com.csd.occ.planning.advisory.domain.InstructionType;
+import com.csd.occ.planning.domain.audit.ApplicationAuditNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.util.List;
@@ -86,6 +87,12 @@ public class GlobalExceptionHandler {
     ProblemDetail handleNotFound(HttpServletRequest request) {
         return problem(HttpStatus.NOT_FOUND, "Resource not found", "The requested planning resource does not exist.",
                 "urn:occ:problem:not-found", request);
+    }
+
+    @ExceptionHandler(ApplicationAuditNotFoundException.class)
+    ProblemDetail handleApplicationAuditNotFound(HttpServletRequest request) {
+        return problem(HttpStatus.NOT_FOUND, "Audit event not found", "The requested audit event is not available.",
+                "urn:occ:problem:audit-event-not-found", request);
     }
 
     @ExceptionHandler(com.csd.occ.planning.diagnosis.domain.EarlyBunchingControllerSuggestionService.SuggestionConflictException.class)

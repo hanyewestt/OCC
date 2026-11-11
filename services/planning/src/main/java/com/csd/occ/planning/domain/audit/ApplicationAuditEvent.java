@@ -50,6 +50,7 @@ public class ApplicationAuditEvent {
         this.summary = summary; this.details = AuditEvidenceSanitizer.sanitize(details); this.sourceKey = sourceKey;
     }
     public UUID id() { return id; }
+    public int eventSchemaVersion() { return eventSchemaVersion; }
     public Instant occurredAt() { return occurredAt; }
     public Instant recordedAt() { return recordedAt; }
     public String category() { return category; }

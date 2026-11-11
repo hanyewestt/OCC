@@ -293,6 +293,118 @@ class UserDirectoryIT {
                 "ingestion-poll:" + expiredPollId)).isZero();
     }
 
+    @Test
+    void adminAuditAppliesCombinedFiltersBeforePaginationAndUsesStableTieOrdering() throws Exception {
+        UUID runId = UUID.randomUUID();
+        Instant occurredAt = first.minus(Duration.ofHours(2));
+        UUID lowerId = UUID.fromString("00000000-0000-4000-8000-000000000101");
+        UUID higherId = UUID.fromString("00000000-0000-4000-8000-000000000102");
+        insertAuditEvent(lowerId, occurredAt, "ACCOUNT_ASSIGNMENT", "BUS_ASSIGNMENT_CHANGED", "SUCCESS",
+                "admin-actor", "DEMO_RUN", "BUS-1", runId, "{}", "task5-lower");
+        insertAuditEvent(higherId, occurredAt, "ACCOUNT_ASSIGNMENT", "BUS_ASSIGNMENT_CHANGED", "SUCCESS",
+                "admin-actor", "DEMO_RUN", "BUS-2", runId, "{}", "task5-higher");
+        insertAuditEvent(UUID.randomUUID(), first.minus(Duration.ofDays(3)), "OPERATIONS", "FEED_POLL_COMPLETED",
+                "FAILURE", "admin-actor", "POLL_RUN", "poll-old", runId, "{}", "task5-old");
+        UUID filterRun = UUID.randomUUID();
+        insertAuditEvent(UUID.randomUUID(), occurredAt.plusSeconds(1), "OPERATIONS", "FEED_POLL_COMPLETED",
+                "FAILURE", "admin-actor", "POLL_RUN", "poll-1", filterRun, "{}", "task5-filter-target");
+        insertAuditEvent(UUID.randomUUID(), first.minus(Duration.ofDays(90)), "OPERATIONS", "FEED_POLL_COMPLETED",
+                "SUCCESS", "admin-actor", "POLL_RUN", "poll-at-cutoff", filterRun, "{}", "task5-cutoff");
+        insertAuditEvent(UUID.randomUUID(), first.minus(Duration.ofDays(91)), "OPERATIONS", "FEED_POLL_COMPLETED",
+                "FAILURE", "admin-actor", "POLL_RUN", "poll-expired", filterRun, "{}", "task5-expired");
+        auditRetention.collectionStartedAt();
+        int eventCount = jdbc.queryForObject("select count(*) from ingestion.application_audit_event", Integer.class);
+        int pollCount = jdbc.queryForObject("select count(*) from ingestion.poll_run", Integer.class);
+
+        mvc.perform(get("/api/v1/admin/audit-events").with(actor("ADMIN"))
+                        .param("category", "OPERATIONS").param("eventType", "FEED_POLL_COMPLETED")
+                        .param("outcome", "FAILURE").param("actorSubject", "admin-actor")
+                        .param("runId", filterRun.toString()).param("entityId", "poll-1")
+                        .param("from", occurredAt.toString()).param("to", occurredAt.plusSeconds(2).toString()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalItems").value(1))
+                .andExpect(jsonPath("$.page").value(0)).andExpect(jsonPath("$.size").value(20))
+                .andExpect(jsonPath("$.items[0].entityId").value("poll-1"))
+                .andExpect(jsonPath("$.items[0].details").doesNotExist())
+                .andExpect(jsonPath("$.retentionSeconds").value(Duration.ofDays(90).toSeconds()))
+                .andExpect(jsonPath("$.collectionStartedAt").value(first.toString()));
+
+        mvc.perform(get("/api/v1/admin/audit-events").with(actor("ADMIN"))
+                        .param("category", "ACCOUNT_ASSIGNMENT").param("page", "0").param("size", "1"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalItems").value(2))
+                .andExpect(jsonPath("$.items[0].id").value(higherId.toString()));
+        mvc.perform(get("/api/v1/admin/audit-events").with(actor("ADMIN"))
+                        .param("category", "ACCOUNT_ASSIGNMENT").param("page", "1").param("size", "1"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items[0].id").value(lowerId.toString()));
+
+        // Default is last 24 hours; even explicit wider searches remain within the retained 90-day window.
+        mvc.perform(get("/api/v1/admin/audit-events").with(actor("ADMIN")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalItems").value(3));
+        mvc.perform(get("/api/v1/admin/audit-events").with(actor("ADMIN"))
+                        .param("from", first.minus(Duration.ofDays(91)).toString()).param("to", first.toString()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalItems").value(5));
+        mvc.perform(get("/api/v1/admin/audit-events").with(actor("ADMIN")).param("size", "101"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/admin/audit-events").with(actor("ADMIN")).param("page", "-1"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/v1/admin/audit-events").with(actor("ADMIN"))
+                        .param("from", first.toString()).param("to", first.minusSeconds(1).toString()))
+                .andExpect(status().isBadRequest());
+
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.application_audit_event", Integer.class)).isEqualTo(eventCount);
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.poll_run", Integer.class)).isEqualTo(pollCount);
+        assertThat(jdbc.queryForObject("select outcome from ingestion.poll_run where id=?", String.class,
+                jdbc.queryForObject("select id from ingestion.poll_run order by id limit 1", UUID.class))).isNotNull();
+    }
+
+    @Test
+    void auditFilterIndexesPreserveOccurrenceAndIdOrdering() {
+        List<String> indexDefinitions = jdbc.queryForList("""
+                select indexdef from pg_indexes
+                 where schemaname = 'ingestion' and tablename = 'application_audit_event'
+                """, String.class);
+
+        for (String filterColumn : List.of("event_type", "outcome", "actor_subject", "run_id", "entity_id")) {
+            assertThat(indexDefinitions).as("audit index for %s", filterColumn)
+                    .anySatisfy(indexDefinition -> assertThat(indexDefinition.toLowerCase())
+                            .contains("(" + filterColumn + ", occurred_at desc, id desc)"));
+        }
+    }
+
+    @Test
+    void adminAuditDetailIsSanitizedAndEveryAuditRouteIsAdminOnly() throws Exception {
+        UUID eventId = UUID.randomUUID();
+        UUID runId = UUID.randomUUID();
+        insertAuditEvent(eventId, first.minusSeconds(60), "AI_PROCESSING", "AI_ATTEMPT_FAILED", "FAILURE",
+                "verified-controller", "MODEL_INVOCATION", eventId.toString(), runId,
+                "{\"authorization\":\"Bearer private-token\",\"prompt\":\"<script>alert(1)</script>\",\"nested\":{\"sessionToken\":\"private-nested-token\"}}",
+                "task5-hostile-detail");
+        for (String role : List.of("CONTROLLER", "CAPTAIN", "UNASSIGNED")) {
+            mvc.perform(get("/api/v1/admin/audit-events").with(actor(role))).andExpect(status().isForbidden());
+            mvc.perform(get("/api/v1/admin/audit-events/{id}", eventId).with(actor(role))).andExpect(status().isForbidden());
+        }
+        mvc.perform(get("/api/v1/admin/audit-events")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/admin/audit-events/{id}", eventId)).andExpect(status().isUnauthorized());
+
+        mvc.perform(get("/api/v1/admin/audit-events/{id}", eventId).with(actor("ADMIN")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.id").value(eventId.toString()))
+                .andExpect(jsonPath("$.details.authorization").doesNotExist())
+                .andExpect(jsonPath("$.details.nested.sessionToken").doesNotExist())
+                .andExpect(jsonPath("$.details.prompt").value("<script>alert(1)</script>"));
+        mvc.perform(get("/api/v1/admin/audit-events/{id}", UUID.randomUUID()).with(actor("ADMIN")))
+                .andExpect(status().isNotFound());
+    }
+
+    private void insertAuditEvent(UUID id, Instant occurredAt, String category, String eventType, String outcome,
+            String actorSubject, String entityType, String entityId, UUID runId, String details, String sourceKey) {
+        jdbc.update("""
+                insert into ingestion.application_audit_event
+                    (id, occurred_at, recorded_at, category, event_type, outcome, source_service, actor_subject,
+                     actor_type, entity_type, entity_id, run_id, summary, details, source_key)
+                values (?, ?, ?, ?, ?, ?, 'INGESTION', ?, 'ADMIN', ?, ?, ?, 'safe summary', ?::jsonb, ?)
+                """, id, java.sql.Timestamp.from(occurredAt), java.sql.Timestamp.from(first), category, eventType,
+                outcome, actorSubject, entityType, entityId, runId, details, sourceKey);
+    }
+
     private void insertPollRun(UUID id, Instant completedAt, String outcome, String source, String errorMessage) {
         jdbc.update("insert into ingestion.poll_run (id, source, scope_key, idempotency_key, started_at, completed_at, outcome, records_received, error_message) values (?, ?, 'scope-1', ?, ?, ?, ?, 7, ?)",
                 id, source, "legacy-" + id, java.sql.Timestamp.from(completedAt.minusSeconds(5)),
