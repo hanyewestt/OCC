@@ -94,11 +94,15 @@ def ownership_for(path: str) -> frozenset:
         return NO_RELEASE
     if path == "LICENSE":
         return NO_RELEASE
+    if path in (".github/workflows/ci.yml", "scripts/cd/stage.py") or \
+            path.startswith(".github/actions/"):
+        return ALL_FIVE
     if path.startswith(".github/"):
         return frozenset()  # release-only: pipeline wiring, no packaged bytes
     if path in ("pom.xml", "mvnw", "mvnw.cmd") or path.startswith(".mvn/"):
         return JAVA_SET
-    if path == "infra/java.Dockerfile" or path.startswith("infra/swagger-ui/"):
+    if path in ("infra/java.Dockerfile", "infra/java-runtime.Dockerfile") or \
+            path.startswith("infra/swagger-ui/"):
         return JAVA_SET
     if path in ("infra/flyway.Dockerfile", "infra/db-setup.sh") or \
             path.startswith("infra/flyway/") or path.startswith("infra/postgres/"):
@@ -262,7 +266,8 @@ def scan_for_credentials(payload, where: str) -> None:
 
 
 def build_plan(repo: Path, head: str, base: str | None, published: dict | None,
-               refresh: bool) -> dict:
+               refresh: bool, *, rebuild: bool = False) -> dict:
+    refresh = refresh or rebuild
     scan_for_credentials(published, "published release record")
     if not rev_exists(repo, head):
         raise ContractError(f"head revision does not exist: {head}")
@@ -302,6 +307,9 @@ def build_plan(repo: Path, head: str, base: str | None, published: dict | None,
         build = sorted(owners)
         deploy_required = classification["releaseAffecting"] or refresh
 
+    if rebuild:
+        build = sorted(COMPONENTS)
+        deploy_required = True
     return {
         "schemaVersion": PLAN_SCHEMA_VERSION,
         "revision": head,
@@ -309,6 +317,7 @@ def build_plan(repo: Path, head: str, base: str | None, published: dict | None,
         "buildComponents": build,
         "deployRequired": deploy_required,
         "refresh": bool(refresh),
+        "rebuild": bool(rebuild),
         "inputHashes": hashes,
     }
 
@@ -542,6 +551,8 @@ def main(argv: list[str] | None = None) -> int:
     plan_parser.add_argument("--repo", default=".", help="git repository (default: cwd)")
     plan_parser.add_argument("--refresh", action="store_true",
                              help="re-release an unchanged revision under a new id")
+    plan_parser.add_argument("--rebuild", action="store_true",
+                             help="refresh by rebuilding all five images")
 
     manifest_parser = subparsers.add_parser("manifest", help="validate a release manifest")
     manifest_parser.add_argument("--plan", required=True)
@@ -556,7 +567,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "plan":
             published = load_json(args.published, "published") if args.published else None
-            plan = build_plan(Path(args.repo), args.head, args.base, published, args.refresh)
+            plan = build_plan(Path(args.repo), args.head, args.base, published,
+                              args.refresh, rebuild=args.rebuild)
             print(json.dumps(plan, indent=2, sort_keys=True))
         else:
             plan = load_json(args.plan, "plan")

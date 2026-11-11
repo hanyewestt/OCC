@@ -246,13 +246,31 @@ class PlanOwnershipTests(ReleaseTestCase):
     def test_config_only_release_rebuilds_nothing(self):
         repo = self.make_repo()
         for path in ("compose.yaml", "infra/compose.production.yaml",
-                     "infra/compose.host-data.yaml", ".github/workflows/ci.yml"):
+                     "infra/compose.host-data.yaml", ".github/workflows/cd.yml"):
             base = self.git(repo, "rev-parse", "HEAD")
             self.write(repo, {path: "# changed\n"})
             head = self.commit(repo, f"change {path}")
             plan = self.plan_json(repo, head, base)
             self.assertEqual(plan["buildComponents"], [], path)
             self.assertTrue(plan["deployRequired"], path)
+
+    def test_runtime_dockerfile_invalidates_three_java_images(self):
+        repo = self.make_repo()
+        base = self.git(repo, "rev-parse", "HEAD")
+        before = self.plan_json(repo, base, base)["inputHashes"]
+        self.write(repo, {"infra/java-runtime.Dockerfile": "FROM changed-runtime\n"})
+        head = self.commit(repo, "runtime base update")
+        plan = self.plan_json(repo, head, base)
+        self.assertEqual(plan["buildComponents"], sorted(JAVA))
+        for service in JAVA:
+            self.assertNotEqual(before[service], plan["inputHashes"][service])
+
+    def test_build_definition_change_invalidates_image_owners(self):
+        repo = self.make_repo()
+        base = self.git(repo, "rev-parse", "HEAD")
+        self.write(repo, {".github/workflows/ci.yml": "build-arg: changed\n"})
+        head = self.commit(repo, "image build arguments")
+        self.assertEqual(self.plan_json(repo, head, base)["buildComponents"], sorted(FIVE))
 
     def test_docs_test_and_launcher_changes_need_no_release(self):
         repo = self.make_repo()
@@ -347,6 +365,26 @@ class PlanOwnershipTests(ReleaseTestCase):
 
 
 class ReuseAndRefreshTests(ReleaseTestCase):
+    def test_refresh_rebuild_builds_all_five(self):
+        repo = self.make_repo()
+        head = self.git(repo, "rev-parse", "HEAD")
+        published = self.published_manifest(self.plan_json(repo, head, head), "rel-1")
+        result = self.run_cli("plan", "--head", head, "--repo", str(repo),
+                              "--published", self.staged(published), "--rebuild")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        plan = json.loads(result.stdout)
+        self.assertEqual(plan["buildComponents"], sorted(FIVE))
+        self.assertTrue(plan["refresh"])
+        self.assertTrue(plan["deployRequired"])
+
+    def test_first_release_rebuild_includes_initial_commit_inputs(self):
+        repo = self.make_repo()
+        head = self.git(repo, "rev-parse", "HEAD")
+        result = self.run_cli("plan", "--head", head, "--base", head,
+                             "--repo", str(repo), "--rebuild")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["buildComponents"], sorted(FIVE))
+
     def test_missing_baseline_with_published_uses_published_revision(self):
         repo = self.make_repo()
         head = self.git(repo, "rev-parse", "HEAD")

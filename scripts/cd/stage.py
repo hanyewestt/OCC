@@ -75,11 +75,14 @@ def verify_checksums(bundle: Path) -> None:
                              f"verified release outputs")
 
 
-def verify_bundle(bundle: Path, revision: str | None, max_age_hours: float | None) -> dict:
+def verify_bundle(bundle: Path, revision: str | None, max_age_hours: float | None,
+                  run_id: str | None = None) -> dict:
     bundle = Path(bundle)
     if not bundle.is_dir():
         raise StageError(f"bundle directory not found: {bundle}")
     metadata = load_metadata(bundle)
+    if run_id is not None and str(metadata.get("runId")) != str(run_id):
+        raise StageError("bundle producing run does not match the expected run")
     if revision is not None and metadata["revision"] != revision:
         raise StageError(f"bundle revision {metadata['revision']} does not match the "
                          f"expected release revision {revision}")
@@ -142,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
     verify_parser = subparsers.add_parser("verify-bundle", help="validate an artifact bundle")
     verify_parser.add_argument("--bundle", required=True)
     verify_parser.add_argument("--revision", help="expected release revision (40-hex)")
+    verify_parser.add_argument("--run-id", help="expected producing Actions run")
     verify_parser.add_argument("--max-age-hours", type=float,
                                help="reject bundles produced longer ago than this")
 
@@ -158,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "verify-bundle":
-            verify_bundle(Path(args.bundle), args.revision, args.max_age_hours)
+            verify_bundle(Path(args.bundle), args.revision, args.max_age_hours, args.run_id)
         elif args.command == "runtime-context":
             stage_runtime_context(Path(args.bundle), args.service, Path(args.output))
         else:
