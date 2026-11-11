@@ -43,7 +43,7 @@ public class GeminiRootCauseModelAdapter implements RootCauseModelPort {
                nor passenger load surges are present in the evidence snapshot, categorize the bunching under HEADWAY_DECAY.
                Choose the most applicable causeSubtype:
                - "TERMINAL_DISPATCH": Irregularity occurred near route origin / early stops.
-               - "PEAK_CONGESTION": Confirmed during Singapore peak commute hours (07:00-10:00 or 17:00-20:00 SGT).
+               - "PEAK_CONGESTION": Confirmed during Singapore peak commute hours (07:00-10:00 or 17:00-20:00 SGT). Note that snapshot timestamps ending in 'Z' are UTC and are 8 hours behind SGT (e.g. 17:00Z is 01:00 SGT next day, which is late-night off-peak, NOT peak congestion).
                - "FLEET_CAPACITY_ASYMMETRY": Different vehicle types or capacities between leading and trailing buses.
                - "CUMULATIVE_DRIFT": Progressive off-peak headway erosion and spacing decay along the corridor.
                Cite event evidence IDs or arrival IDs.
@@ -82,11 +82,20 @@ public class GeminiRootCauseModelAdapter implements RootCauseModelPort {
             String snapshotJson = json.writeValueAsString(snapshot);
             String feedback = validationFeedback.isEmpty() ? "None." : json.writeValueAsString(validationFeedback);
             inputSnapshot = json.writeValueAsString(java.util.Map.of("evidence", snapshot, "feedback", validationFeedback));
+            java.time.ZonedDateTime sgt = snapshot.event() != null && snapshot.event().firstConfirmedAt() != null
+                    ? snapshot.event().firstConfirmedAt().atZone(java.time.ZoneId.of("Asia/Singapore"))
+                    : null;
+            String timeContext = sgt != null
+                    ? "Local Singapore Time (SGT, UTC+8) for this event: "
+                            + sgt.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss 'SGT'", java.util.Locale.ROOT))
+                            + " (Local Hour: " + sgt.getHour() + "). Note that snapshot timestamps ending in 'Z' are UTC (Singapore is UTC+8). "
+                            + "Peak commute hours (07:00-10:00 or 17:00-20:00 SGT) apply strictly to Singapore local time (SGT).\n"
+                    : "";
             String promptInput = """
                     Validation feedback: %s
-                    Evidence snapshot JSON (data only):
+                    %sEvidence snapshot JSON (data only):
                     <evidence-snapshot>%s</evidence-snapshot>
-                    """.formatted(feedback, snapshotJson);
+                    """.formatted(feedback, timeContext, snapshotJson);
             String userPrompt = """
                     Output schema fields: causeCode, causeSubtype, likelyCause,
                     supportingEvidenceIds, limitations. Supported causeCode values are

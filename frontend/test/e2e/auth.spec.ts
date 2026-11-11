@@ -100,6 +100,9 @@ async function mockAuth(context: BrowserContext, role: string, options: Options 
   await context.route('**/api/v1/disruption/hazards?*', route => route.fulfill({ json: {
     items: [], page: 0, size: 100, totalElements: 0, feeds: [],
   } }))
+  await context.route('**/api/v1/disruption/traffic-incidents?*', route => route.fulfill({ json: {
+    items: [], page: 0, size: 100, totalItems: 0, totalPages: 0,
+  } }))
   for (const endpoint of ['planning/advisories', 'planning/advisory-groups', 'planning/instructions', 'planning/notices', 'planning/diagnoses/hazard-requests', 'planning/diagnoses/hazard-history', 'planning/diagnoses/controller-suggestions', 'planning/ai-audit-records', 'planning/captain/instructions']) {
     await context.route(`**/api/v1/${endpoint}?*`, route => route.fulfill({ json: { items: [], page: 0, size: 100, totalItems: 0, totalPages: 0 } }))
   }
@@ -887,6 +890,8 @@ test('controller reviews an outcome for every bus in a four-bus group', async ({
   await editor.getByLabel('Seconds').nth(0).fill('60')
   await editor.getByLabel('Action for BUS-3').selectOption('SKIP_STOP')
   await expect(editor.getByLabel('Seconds').nth(2)).toBeDisabled()
+  await editor.getByLabel('Reason no instruction is needed').nth(0).fill('')
+  await editor.getByLabel('Reason no instruction is needed').nth(1).fill('')
   await editor.getByRole('button', { name: 'Reject AI suggestion & save instructions', exact: true }).click()
   await expect(editor.getByRole('alert')).toContainText('Enter a reason for each bus with no instruction')
   await editor.getByLabel('Reason no instruction is needed').nth(0).fill('Already spaced')
@@ -1327,6 +1332,9 @@ test('recommendation editor closes when the active simulation run changes', asyn
     if (runId === 'run-2') signalNewRun()
     return route.fulfill({ json: { id: runId, status: 'REPLAY_COMPLETE', alerts: [] } })
   })
+  await context.route('**/api/v1/demo-runs/run-2/route-positions', route => route.fulfill({ json: {
+    serviceId: '190', computedAt: '2026-10-22T01:00:00Z', refreshIntervalSeconds: 60, maxSourceAgeSeconds: 120, directions: [],
+  } }))
   let newRunPending = false
   await context.route('**/api/v1/planning/recommendations/pending?*', route => newRunPending
     ? route.fulfill({ json: { mode: 'DEMO', demoRunId: 'run-2', items: [], page: 0, totalItems: 0, totalPages: 0 } })
@@ -2448,8 +2456,9 @@ test('corridor map reveals collision-safe stop codes at high zoom and preserves 
   } }))
 
   await login(page)
+  await expectAccessVerified(page)
   await page.getByRole('link', { name: 'Disruptions', exact: true }).click()
-  await page.getByRole('button', { name: 'Svc 190 · to Stop 44003', exact: true }).click()
+  await expect(page.getByLabel('Page refresh status', { exact: true })).toContainText('Last successful refresh')
   const map = page.getByRole('region', { name: 'Interactive affected corridor map. Use arrow keys to pan, plus and minus to zoom.' })
   await expect(map).toBeVisible()
   const mapSvg = map.locator('svg[aria-label="OneMap of affected bus stops and estimated buses"]')

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { BusFront, ChevronDown, ChevronRight, Minus, Plus, RotateCcw, Wrench } from 'lucide-react'
+import { BusFront, ChevronDown, ChevronRight, Minus, Plus, RotateCcw, TrainFront, Wrench, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -264,7 +264,7 @@ export function computeStopCodeLabelPositions(
   for (const stop of orderedStops) {
     if (stop.x < 0 || stop.x > width || stop.y < 0 || stop.y > height) continue
 
-    const labelWidth = Math.max(32, stop.stopCode.length * 5.5 + 10)
+    const labelWidth = Math.max(52, stop.stopCode.length * 5.5 + 24)
     const labelHeight = 16
     const markerRadius = stop.selected ? 16 : 9
     const offset = markerRadius + 4
@@ -457,7 +457,7 @@ export function distanceMeters(lat1: number, lon1: number, lat2: number, lon2: n
   return 2 * r * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
-export type HazardCategory = 'accident' | 'breakdown' | 'roadwork' | 'traffic' | 'flood' | 'other'
+export type HazardCategory = 'accident' | 'breakdown' | 'roadwork' | 'traffic' | 'flood' | 'rail' | 'other'
 
 export function categorizeHazard(hazard: { incidentType?: string | null; message?: string | null }): HazardCategory {
   const text = `${hazard.incidentType ?? ''} ${hazard.message ?? ''}`.toLowerCase()
@@ -465,6 +465,7 @@ export function categorizeHazard(hazard: { incidentType?: string | null; message
   if (text.includes('breakdown') || text.includes('broken down') || text.includes('stalled')) return 'breakdown'
   if (text.includes('roadwork') || text.includes('road work') || text.includes('construction') || text.includes('maintenance')) return 'roadwork'
   if (text.includes('flood') || text.includes('ponding') || text.includes('water')) return 'flood'
+  if (text.includes('rail') || text.includes('train') || text.includes('mrt') || text.includes('lrt')) return 'rail'
   if (text.includes('heavy traffic') || text.includes('jam') || text.includes('congestion')) return 'traffic'
   return 'other'
 }
@@ -509,6 +510,13 @@ export function renderHazardSvg(x: number, y: number, category: HazardCategory) 
           <rect x="-4" y="1" width="8" height="2.5" rx="0.8" fill="#ffffff" />
         </g>
       )
+    case 'rail':
+      return (
+        <g transform={`translate(${x}, ${y})`}>
+          <circle r="7.5" fill="#4f46e5" stroke="#3730a3" strokeWidth="1" />
+          <TrainFront x="-4.5" y="-4.5" width={9} height={9} stroke="#ffffff" strokeWidth={2} />
+        </g>
+      )
     case 'other':
     default:
       return (
@@ -529,10 +537,18 @@ export function renderHazardSvg(x: number, y: number, category: HazardCategory) 
 
 export interface MapHazard {
   id: string
+  disruptionId?: string | null
   latitude: number
   longitude: number
   incidentType?: string
   message?: string
+  title?: string
+  status?: string
+  updatedAt?: string
+  description?: string
+  instruction?: string
+  distanceToCorridorM?: number
+  category?: HazardCategory
 }
 
 export interface BunchingMapProps {
@@ -549,6 +565,9 @@ export interface BunchingMapProps {
   title?: string
   subtitle?: React.ReactNode
   hazards?: MapHazard[]
+  selectedHazardId?: string | null
+  onSelectHazard?: (hazardId: string | null) => void
+  focusCoord?: { lat: number; lng: number } | null
 }
 
 export function BunchingMap({
@@ -565,6 +584,9 @@ export function BunchingMap({
   title,
   subtitle,
   hazards = [],
+  selectedHazardId,
+  onSelectHazard,
+  focusCoord,
 }: BunchingMapProps) {
   const incidentBusKeys = useMemo(() => {
     const keys = new Set<string>()
@@ -784,6 +806,7 @@ export function BunchingMap({
   const [manualView, setManualView] = useState<{ center: { lat: number; lng: number }; zoom: number } | null>(null)
   const [prevFitKey, setPrevFitKey] = useState(fitKey)
   const [prevSelectedId, setPrevSelectedId] = useState<string | null | undefined>(selectedIncident?.id)
+  const [prevFocusCoord, setPrevFocusCoord] = useState(focusCoord)
 
   if (prevFitKey !== fitKey) {
     setPrevFitKey(fitKey)
@@ -793,12 +816,34 @@ export function BunchingMap({
     setPrevSelectedId(selectedIncident?.id)
     setManualView(null)
   }
+  if (prevFocusCoord !== focusCoord) {
+    setPrevFocusCoord(focusCoord)
+    if (focusCoord && validCoord(focusCoord.lat, focusCoord.lng)) {
+      setManualView({ center: focusCoord, zoom: 15 })
+    }
+  }
+
+  const [localSelectedHazardId, setLocalSelectedHazardId] = useState<string | null>(null)
+  const activeHazardId = selectedHazardId !== undefined ? selectedHazardId : localSelectedHazardId
+
+  const activeSelectedHazard = useMemo(() => {
+    if (!activeHazardId) return null
+    return (hazards ?? []).find(h => h.id === activeHazardId || (h.disruptionId && h.disruptionId === activeHazardId)) ?? null
+  }, [hazards, activeHazardId])
+
+  const handleHazardClick = (hazard: MapHazard) => {
+    const nextId = (activeHazardId === hazard.id || (hazard.disruptionId && activeHazardId === hazard.disruptionId))
+      ? null
+      : (hazard.disruptionId ?? hazard.id)
+    setLocalSelectedHazardId(nextId)
+    onSelectHazard?.(nextId)
+  }
 
   const [showStops, setShowStops] = useState(true)
   const [showBuses, setShowBuses] = useState(true)
   const [showHazards, setShowHazards] = useState(true)
   const [activeHazardTypes, setActiveHazardTypes] = useState<Set<HazardCategory>>(
-    () => new Set(['breakdown', 'roadwork', 'accident', 'traffic', 'flood', 'other'])
+    () => new Set(['breakdown', 'roadwork', 'accident', 'traffic', 'flood', 'rail', 'other'])
   )
 
   const toggleHazardType = (cat: HazardCategory) => {
@@ -817,6 +862,7 @@ export function BunchingMap({
       accident: 0,
       traffic: 0,
       flood: 0,
+      rail: 0,
       other: 0,
     }
     for (const h of hazards ?? []) {
@@ -1076,7 +1122,7 @@ export function BunchingMap({
     : new Map<string, MapOverlayRect>()
 
   return (
-    <div className="overflow-hidden rounded-lg border bg-muted/10">
+    <div id="corridor-map" className="relative overflow-hidden rounded-lg border bg-muted/10">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
         <div className="space-y-0.5">
           <div className="flex flex-wrap items-center gap-2">
@@ -1176,7 +1222,7 @@ export function BunchingMap({
         {showHazards && totalValidHazards > 0 && (
           <div className="flex flex-wrap items-center gap-1">
             <span className="text-[11px] text-muted-foreground mr-1">Filter:</span>
-            {(['roadwork', 'breakdown', 'accident', 'traffic', 'flood', 'other'] as HazardCategory[])
+            {(['roadwork', 'breakdown', 'accident', 'traffic', 'flood', 'rail', 'other'] as HazardCategory[])
               .filter(cat => hazardCounts[cat] > 0)
               .map(cat => {
                 const active = activeHazardTypes.has(cat)
@@ -1186,6 +1232,7 @@ export function BunchingMap({
                   accident: { name: 'Accident', icon: '💥' },
                   traffic: { name: 'Jam', icon: '🚗' },
                   flood: { name: 'Flood', icon: '🌊' },
+                  rail: { name: 'Train', icon: '🚆' },
                   other: { name: 'Other', icon: '⚠️' },
                 }
                 return (
@@ -1250,6 +1297,12 @@ export function BunchingMap({
                 <span className="inline-flex items-center gap-1">
                   <span>💥</span>
                   <span>Accident</span>
+                </span>
+              )}
+              {hazardCounts.rail > 0 && (
+                <span className="inline-flex items-center gap-1">
+                  <span>🚆</span>
+                  <span>Train / Rail</span>
                 </span>
               )}
               {hazardCounts.other > 0 && (
@@ -1394,84 +1447,105 @@ export function BunchingMap({
                     className="animate-pulse"
                   />
                 )}
-                {labelPosition ? (
-                  <>
-                    <circle
-                      cx={stop.x}
-                      cy={stop.y}
-                      r={isSelectedStop ? 9 : isAffected ? 8 : 8}
-                      fill={isAffected ? '#dc2626' : '#475569'}
-                      stroke="white"
-                      strokeWidth="1.5"
-                      className="drop-shadow-sm"
+                <circle
+                  cx={stop.x}
+                  cy={stop.y}
+                  r={isSelectedStop ? 9 : isAffected ? 8 : 4.5}
+                  fill="white"
+                  className="drop-shadow-sm"
+                />
+                <circle
+                  cx={stop.x}
+                  cy={stop.y}
+                  r={isSelectedStop ? 7 : isAffected ? 6 : 3}
+                  fill={isAffected ? '#dc2626' : '#475569'}
+                />
+                {labelPosition && (
+                  <g pointerEvents="none">
+                    <rect
+                      x={labelPosition.x}
+                      y={labelPosition.y}
+                      width={labelPosition.width}
+                      height={labelPosition.height}
+                      rx="5"
+                      fill="white"
+                      fillOpacity="0.9"
+                      stroke={isAffected ? '#fecaca' : '#cbd5e1'}
+                      strokeWidth="1"
                     />
                     <BusFront
-                      x={stop.x - 6}
-                      y={stop.y - 6}
-                      width={12}
-                      height={12}
-                      color="white"
-                      strokeWidth={2.5}
+                      x={labelPosition.x + 5}
+                      y={labelPosition.y + 3}
+                      width={10}
+                      height={10}
+                      color={isAffected ? '#dc2626' : '#475569'}
+                      strokeWidth={2}
                       aria-hidden="true"
                     />
-                    <g pointerEvents="none">
-                      <rect
-                        x={labelPosition.x}
-                        y={labelPosition.y}
-                        width={labelPosition.width}
-                        height={labelPosition.height}
-                        rx="5"
-                        fill="white"
-                        fillOpacity="0.96"
-                        stroke={isAffected ? '#fecaca' : '#cbd5e1'}
-                        strokeWidth="1"
-                      />
-                      <text
-                        x={labelPosition.x + labelPosition.width / 2}
-                        y={labelPosition.y + labelPosition.height / 2 + 0.5}
-                        textAnchor="middle"
-                        dominantBaseline="middle"
-                        fill="#334155"
-                        fontSize="9"
-                        fontWeight="700"
-                        className="select-none"
-                      >
-                        {stop.stopCode}
-                      </text>
-                    </g>
-                  </>
-                ) : (
-                  <>
-                    <circle
-                      cx={stop.x}
-                      cy={stop.y}
-                      r={isSelectedStop ? 9 : isAffected ? 8 : 4.5}
-                      fill="white"
-                      className="drop-shadow-sm"
-                    />
-                    <circle
-                      cx={stop.x}
-                      cy={stop.y}
-                      r={isSelectedStop ? 7 : isAffected ? 6 : 3}
-                      fill={isAffected ? '#dc2626' : '#475569'}
-                    />
-                  </>
+                    <text
+                      x={labelPosition.x + 19}
+                      y={labelPosition.y + labelPosition.height / 2 + 0.5}
+                      textAnchor="start"
+                      dominantBaseline="middle"
+                      fill={isAffected ? '#b91c1c' : '#334155'}
+                      fontSize="9"
+                      fontWeight="700"
+                      className="select-none"
+                    >
+                      {stop.stopCode}
+                    </text>
+                  </g>
                 )}
               </g>
             )
           })}
           {projectedHazards.map(hazard => {
-            const label = `Hazard: ${hazard.incidentType || 'Traffic incident'} - ${hazard.message || 'Reported incident'}`
+            const isSelected = activeHazardId === hazard.id || (hazard.disruptionId && activeHazardId === hazard.disruptionId)
+            const label = `Hazard: ${hazard.incidentType || 'Traffic incident'} - ${hazard.message || 'Reported incident'}${isSelected ? ' (Selected)' : ''}`
             return (
               <g
                 key={hazard.id}
-                role="img"
+                role="button"
                 aria-label={label}
+                aria-pressed={Boolean(isSelected)}
                 tabIndex={0}
-                className="pointer-events-auto cursor-pointer outline-none opacity-80 hover:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
+                className={cn(
+                  "pointer-events-auto cursor-pointer outline-none transition-opacity focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600",
+                  isSelected ? "opacity-100" : "opacity-80 hover:opacity-100 focus-visible:opacity-100"
+                )}
+                onClick={() => handleHazardClick(hazard)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    handleHazardClick(hazard)
+                  }
+                }}
                 onPointerDown={e => e.stopPropagation()}
               >
                 <title>{label}</title>
+                {isSelected && (
+                  <>
+                    <circle
+                      cx={hazard.x}
+                      cy={hazard.y}
+                      r={14}
+                      className="animate-pulse pointer-events-none"
+                      fill="none"
+                      stroke="#f59e0b"
+                      strokeWidth={2.5}
+                    />
+                    <circle
+                      cx={hazard.x}
+                      cy={hazard.y}
+                      r={19}
+                      className="pointer-events-none opacity-40"
+                      fill="none"
+                      stroke="#f59e0b"
+                      strokeWidth={1.5}
+                      strokeDasharray="3 3"
+                    />
+                  </>
+                )}
                 {renderHazardSvg(hazard.x, hazard.y, hazard.category)}
               </g>
             )
@@ -1605,6 +1679,106 @@ export function BunchingMap({
             )
           })}
         </svg>
+
+        {activeSelectedHazard && (() => {
+          const activeCategory = activeSelectedHazard.category ?? categorizeHazard(activeSelectedHazard)
+          return (
+          <div
+            role="region"
+            aria-label="Hazard details"
+            className="absolute left-3 top-3 z-20 w-80 max-w-[calc(100%-4.5rem)] rounded-lg border bg-card/95 p-3.5 shadow-lg backdrop-blur-xs text-card-foreground space-y-2.5 animate-in fade-in slide-in-from-top-2 duration-150"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted">
+                  {activeCategory === 'roadwork' ? <span className="text-xs">🚧</span> :
+                   activeCategory === 'breakdown' ? <Wrench className="h-3.5 w-3.5 text-orange-600" /> :
+                   activeCategory === 'accident' ? <span className="text-xs">💥</span> :
+                   activeCategory === 'flood' ? <span className="text-xs">🌊</span> :
+                   activeCategory === 'traffic' ? <span className="text-xs">🚗</span> :
+                   activeCategory === 'rail' ? <TrainFront className="h-3.5 w-3.5 text-indigo-600" /> :
+                   <span className="text-xs">⚠️</span>}
+                </span>
+                <div>
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    {activeSelectedHazard.incidentType || 'Hazard'}
+                  </h4>
+                  <p className="text-sm font-medium leading-snug line-clamp-1">
+                    {activeSelectedHazard.title || activeSelectedHazard.message || 'Reported Incident'}
+                  </p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 rounded-md hover:bg-muted"
+                aria-label="Close hazard details"
+                onClick={() => {
+                  setLocalSelectedHazardId(null)
+                  onSelectHazard?.(null)
+                }}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+
+            <p className="text-xs leading-relaxed text-foreground/90">
+              {activeSelectedHazard.message || activeSelectedHazard.description || 'No additional provider description supplied.'}
+            </p>
+
+            <div className="space-y-1 rounded border border-border/50 bg-muted/30 p-2 text-[11px] text-muted-foreground">
+              <div className="flex justify-between">
+                <span>Coordinates:</span>
+                <span className="font-mono text-foreground">{activeSelectedHazard.latitude.toFixed(5)}, {activeSelectedHazard.longitude.toFixed(5)}</span>
+              </div>
+              {activeSelectedHazard.distanceToCorridorM !== undefined && (
+                <div className="flex justify-between">
+                  <span>Corridor distance:</span>
+                  <span className="font-medium text-foreground">
+                    {activeSelectedHazard.distanceToCorridorM < 50 ? 'Directly on route' : `${Math.round(activeSelectedHazard.distanceToCorridorM)} m from nearest stop`}
+                  </span>
+                </div>
+              )}
+              {activeSelectedHazard.updatedAt && (
+                <div className="flex justify-between">
+                  <span>Updated:</span>
+                  <span>{formatSgtDateTime(activeSelectedHazard.updatedAt)}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between pt-1 text-xs">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs gap-1"
+                onClick={() => {
+                  setManualView({ center: { lat: activeSelectedHazard.latitude, lng: activeSelectedHazard.longitude }, zoom: 16 })
+                }}
+              >
+                Center on map
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-primary hover:underline"
+                onClick={() => {
+                  const targetId = activeSelectedHazard.disruptionId || activeSelectedHazard.id
+                  const el = document.getElementById(`hazard-${targetId}`)
+                  if (el) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                  }
+                }}
+              >
+                Locate in list ↓
+              </Button>
+            </div>
+          </div>
+          )
+        })()}
 
         <div className="absolute right-3 top-3 flex flex-col gap-1 rounded-md border bg-background/90 backdrop-blur-xs p-1 shadow-sm z-10">
           <Button
@@ -1752,7 +1926,20 @@ function formatVehicleCell(
   return <span className="text-muted-foreground">Unavailable</span>
 }
 
-export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], positions = [], pollIntervalSeconds = 60, gapToleranceSeconds = 30, trafficIncidents = [] }: {
+export function ControllerDisruptions({
+  liveAlerts,
+  run,
+  loading,
+  routes = [],
+  positions = [],
+  pollIntervalSeconds = 60,
+  gapToleranceSeconds = 30,
+  trafficIncidents = [],
+  selectedHazardId,
+  onSelectHazard,
+  focusCoord,
+  extraHazards = [],
+}: {
   liveAlerts: PagedCollection<BunchingAlert, PageResult<BunchingAlert>>
   run: Resource<DemoRun>
   loading: boolean
@@ -1761,6 +1948,10 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
   pollIntervalSeconds?: number
   gapToleranceSeconds?: number
   trafficIncidents?: TrafficIncident[]
+  selectedHazardId?: string | null
+  onSelectHazard?: (hazardId: string | null) => void
+  focusCoord?: { lat: number; lng: number } | null
+  extraHazards?: MapHazard[]
 }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const incidentParam = searchParams.get('incident')
@@ -2154,36 +2345,44 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
   }
 
   const corridorHazards = useMemo<MapHazard[]>(() => {
-    if (!trafficIncidents.length) return []
     const isLive = !run?.data
     const currentDemoRunId = run?.data?.id
-    const valid = trafficIncidents.filter(i => {
+    const valid = (trafficIncidents || []).filter(i => {
       if (!validCoord(i.latitude, i.longitude)) return false
       if (isLive && (i.classification === 'SIMULATION' || i.demoRunId)) return false
       if (!isLive && currentDemoRunId && i.demoRunId && i.demoRunId !== currentDemoRunId) return false
       return true
     })
-    if (selectedCorridorKey === 'all') {
-      return valid.map(i => ({
-        id: i.id,
-        latitude: i.latitude!,
-        longitude: i.longitude!,
-        incidentType: i.incidentType,
-        message: i.message,
-      }))
-    }
     const corridorStops = corridorRoutes.flatMap(r => r.stops).filter(s => validCoord(s.latitude, s.longitude))
-    if (!corridorStops.length) return []
-    return valid
-      .filter(i => corridorStops.some(s => distanceMeters(i.latitude!, i.longitude!, s.latitude!, s.longitude!) <= 2500))
-      .map(i => ({
+    const mapToHazard = (i: TrafficIncident): MapHazard => {
+      const nearestDistM = corridorStops.length > 0
+        ? Math.min(...corridorStops.map(s => distanceMeters(i.latitude!, i.longitude!, s.latitude!, s.longitude!)))
+        : undefined
+      return {
         id: i.id,
+        disruptionId: i.disruptionId ?? undefined,
         latitude: i.latitude!,
         longitude: i.longitude!,
         incidentType: i.incidentType,
         message: i.message,
-      }))
-  }, [trafficIncidents, selectedCorridorKey, corridorRoutes, run])
+        updatedAt: i.updatedAt ?? i.openedAt ?? i.observedAt ?? undefined,
+        distanceToCorridorM: nearestDistM,
+      }
+    }
+    const baseList: MapHazard[] = selectedCorridorKey === 'all'
+      ? valid.map(mapToHazard)
+      : !corridorStops.length
+        ? []
+        : valid
+            .filter(i => corridorStops.some(s => distanceMeters(i.latitude!, i.longitude!, s.latitude!, s.longitude!) <= 2500))
+            .map(mapToHazard)
+    if (extraHazards && extraHazards.length > 0) {
+      const existingIds = new Set(baseList.map(h => h.id))
+      const additional = extraHazards.filter(h => !existingIds.has(h.id))
+      return [...baseList, ...additional]
+    }
+    return baseList
+  }, [trafficIncidents, selectedCorridorKey, corridorRoutes, run, extraHazards])
 
   return <div className="space-y-10">
     <section aria-labelledby="bunching-title" className="space-y-4">
@@ -2311,6 +2510,9 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
           onSelectIncident={handleSelectIncident}
           isAllCorridors={selectedCorridorKey === 'all'}
           hazards={corridorHazards}
+          selectedHazardId={selectedHazardId}
+          onSelectHazard={onSelectHazard}
+          focusCoord={focusCoord}
         />
       )}
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { MapPin } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -8,7 +9,9 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
-import { ApiError, apiRequest, type Advisory, type AdvisoryGroup, type AdvisoryCandidate, type CaptainInstruction, type Hazard, type ManagedNotice, type NoticeSuggestion, type PageResult, type PlanningHazardHistory } from '@/lib/api'
+import { ApiError, apiRequest, type Advisory, type AdvisoryGroup, type AdvisoryCandidate, type CaptainInstruction, type Hazard, type ManagedNotice, type NoticeSuggestion, type PageResult, type PlanningHazardHistory, type TrafficIncident } from '@/lib/api'
+import { cn } from '@/lib/utils'
+import { validCoord } from '@/pages/ControllerViews'
 import { signOut } from '@/lib/auth'
 import { dataClassificationLabel } from '@/lib/presentation'
 import { formatSgtDateTime, sgtDateTimeInputFromUtc, sgtDateTimeInputToUtc } from '@/lib/time'
@@ -19,11 +22,14 @@ type Draft = { id: string; previousId?: string; disruptionId: string; title: str
 type HazardPageResponse = Omit<PageResult<Hazard>, 'totalItems' | 'totalPages'> & { size: number; totalElements: number }
 const instructionLabels = { BE_CAUTIOUS: 'Be cautious', REDUCE_SPEED: 'Reduce speed', SLOW_DOWN_NEAR_STOPS: 'Slow down near stops', HOLD: 'Hold', DWELL_ADJUSTMENT: 'Adjust dwell', SKIP_STOP: 'Skip stop' }
 
-export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPendingChange, onRefreshTimeChange, view }: {
+export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPendingChange, onRefreshTimeChange, view, selectedHazardId, onLocateHazard, trafficIncidents }: {
   token: string; registerRefresh: (callback: (signal: AbortSignal) => Promise<void>) => void
   onRefresh: () => void; onPendingChange: (pending: boolean) => void
   onRefreshTimeChange: (at: string | null) => void
   view: 'hazards' | 'planning' | 'notices' | 'audit'
+  selectedHazardId?: string | null
+  onLocateHazard?: (hazardId: string, lat: number, lon: number, hazard: Hazard) => void
+  trafficIncidents?: TrafficIncident[]
 }) {
   const [actionError, setActionError] = useState('')
   const [pending, setPending] = useState(false)
@@ -251,13 +257,61 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       {!hazards.isLoading && hazards.error === null && hazards.latestPage && !hazards.items.length && <p className="text-sm text-muted-foreground">{kind ? 'No hazards found for the selected type.' : 'No hazards found.'}</p>}
       {!!hazards.items.length && <ScrollArea role="region" aria-label="Hazard conditions" tabIndex={0} className="h-[32rem] rounded-lg border"
         viewportProps={{ onScroll: hazards.onScroll }}>
-        <div className="space-y-3 p-1 pr-3.5">{hazards.items.map(h => <Card key={h.disruptionId} className="min-h-28"><CardContent className="space-y-3">
-          <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{h.facts.title}</h3><p className="text-xs text-muted-foreground">{h.status} · {dataClassificationLabel(h.classification)}</p></div>
-          <p className="text-sm">{h.facts.description}</p>{h.facts.instruction && <p className="text-sm font-medium">{h.facts.instruction}</p>}
-          <p className="text-xs text-muted-foreground">Updated {formatSgtDateTime(h.updatedAt)} · Exposure uses simulated progress.</p>
-          {h.exposures.length > 0 ? <p className="text-sm">Candidate stops: {h.exposures.map(e => `${e.serviceId} · ${e.stopName} (${e.basis})`).join('; ')}</p> : <p className="text-sm text-muted-foreground">No resolved upcoming bus exposure.</p>}
-          {!!h.limitations.length && <details className="text-xs text-muted-foreground"><summary className="cursor-pointer font-medium">Evidence and limitations</summary><ul className="mt-2 space-y-1">{h.limitations.map(value => <li key={value}>{value}</li>)}</ul></details>}
-        </CardContent></Card>)}</div>
+        <div className="space-y-3 p-1 pr-3.5">{hazards.items.map(h => {
+          const explicitLoc = h.facts.locations?.find(l => typeof l.latitude === 'number' && typeof l.longitude === 'number' && validCoord(l.latitude, l.longitude))
+          const matchedTraffic = !explicitLoc && trafficIncidents
+            ? trafficIncidents.find(t => t.disruptionId === h.disruptionId || t.id === h.disruptionId)
+            : undefined
+          const lat = explicitLoc?.latitude ?? matchedTraffic?.latitude ?? null
+          const lon = explicitLoc?.longitude ?? matchedTraffic?.longitude ?? null
+          const hasCoords = typeof lat === 'number' && typeof lon === 'number' && validCoord(lat, lon)
+          const isSelected = selectedHazardId === h.disruptionId || (matchedTraffic && selectedHazardId === matchedTraffic.id)
+
+          return (
+            <Card
+              key={h.disruptionId}
+              id={`hazard-${h.disruptionId}`}
+              className={cn("min-h-28 transition-all", isSelected && "ring-2 ring-amber-500 bg-amber-500/5 shadow-md")}
+            >
+              <CardContent className="space-y-3">
+                <div className="flex flex-wrap justify-between gap-2">
+                  <h3 className="font-semibold">{h.facts.title}</h3>
+                  <p className="text-xs text-muted-foreground">{h.status} · {dataClassificationLabel(h.classification)}</p>
+                </div>
+                <p className="text-sm">{h.facts.description}</p>
+                {h.facts.instruction && <p className="text-sm font-medium">{h.facts.instruction}</p>}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs text-muted-foreground">
+                  <span>Updated {formatSgtDateTime(h.updatedAt)} · Exposure uses simulated progress.</span>
+                  {hasCoords ? (
+                    <Button
+                      type="button"
+                      variant={isSelected ? "secondary" : "outline"}
+                      size="sm"
+                      className={cn("h-7 gap-1.5 text-xs", isSelected && "font-semibold text-amber-700 dark:text-amber-400 border-amber-500/50")}
+                      onClick={() => onLocateHazard?.(h.disruptionId, lat, lon, h)}
+                    >
+                      <MapPin className="h-3.5 w-3.5 text-amber-600" />
+                      {isSelected ? 'Focused on map' : 'Locate on map'}
+                    </Button>
+                  ) : (
+                    <span className="text-[11px] text-muted-foreground/70 italic">Coordinates unmapped</span>
+                  )}
+                </div>
+                {h.exposures.length > 0 ? (
+                  <p className="text-sm">Candidate stops: {h.exposures.map(e => `${e.serviceId} · ${e.stopName} (${e.basis})`).join('; ')}</p>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No resolved upcoming bus exposure.</p>
+                )}
+                {!!h.limitations.length && (
+                  <details className="text-xs text-muted-foreground">
+                    <summary className="cursor-pointer font-medium">Evidence and limitations</summary>
+                    <ul className="mt-2 space-y-1">{h.limitations.map(value => <li key={value}>{value}</li>)}</ul>
+                  </details>
+                )}
+              </CardContent>
+            </Card>
+          )
+        })}</div>
       </ScrollArea>}
       <PagedCollectionControls label="hazards" hasItems={!!hazards.items.length} hasMore={hazards.hasMore}
         isLoadingMore={hazards.isLoadingMore} error={hazards.error} refreshError={hazards.refreshError} reload={hazards.reload} loadNext={hazards.loadNext} />
