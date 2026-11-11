@@ -11,7 +11,7 @@ import { PagedCollectionControls } from '@/components/PagedCollectionControls'
 import { ApiError, apiRequest, triggerDiagnosis, type BunchingAlert, type ControllerBusInstruction, type Decision, type DiagnosisEvidenceDetail, type EarlyControllerSuggestion, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RoutePositions, type RouteStop } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { bunchingArrivals } from '@/lib/bunching'
-import { groupRouteIncidents, type RouteIncident } from '@/lib/route-strip'
+import { groupRouteIncidents, linkIncidentToPosition, routeKey, type IncidentStripLink, type RouteIncident } from '@/lib/route-strip'
 import type { Planning } from './ControllerPage'
 import type { PagedCollection } from '@/lib/paged-collection'
 import { BunchingMap, DataMessage, timestamp, type PositionedIncident } from './ControllerViews'
@@ -142,12 +142,6 @@ type EditingRecommendation = { identity: string; scopeIdentity: string; recommen
 
 function extractBusOrders(references: string[], alert?: BunchingAlert): number[] {
   const orders = new Set<number>()
-  if (alert) {
-    for (const pair of bunchedArrivalGaps(alert)) {
-      orders.add(pair.leadingOrder)
-      orders.add(pair.followingOrder)
-    }
-  }
   for (const ref of references) {
     const hashMatch = ref.match(/#(\d+)/)
     if (hashMatch) {
@@ -159,6 +153,12 @@ function extractBusOrders(references: string[], alert?: BunchingAlert): number[]
     if (suffixMatch) {
       const num = Number(suffixMatch[1])
       if (Number.isInteger(num) && num > 0) orders.add(num)
+    }
+  }
+  if (!orders.size && alert) {
+    for (const pair of bunchedArrivalGaps(alert)) {
+      orders.add(pair.leadingOrder)
+      orders.add(pair.followingOrder)
     }
   }
   return [...orders].sort((a, b) => a - b)
@@ -174,6 +174,7 @@ export function PlanningCorridorMap({
   corridorStopCodes = [],
   mitigationType,
   busReferences = [],
+  corridorIncident,
   alert,
   title,
   subtitle,
@@ -187,6 +188,7 @@ export function PlanningCorridorMap({
   corridorStopCodes?: string[]
   mitigationType?: string | null
   busReferences?: string[]
+  corridorIncident?: PositionedIncident | null
   alert?: BunchingAlert
   title?: string
   subtitle?: React.ReactNode
@@ -225,21 +227,57 @@ export function PlanningCorridorMap({
       }))))
   }, [positions, corridorRoutes])
 
+  const computedStripLink = useMemo<IncidentStripLink | null>(() => {
+    if (corridorIncident?.stripLink) return corridorIncident.stripLink
+    const route = corridorRoutes.find(r => r.serviceId === serviceId && (directionId === null || r.directionId === directionId))
+    if (!route || !positions.length) return null
+    const snapshot = positions.find(s => s.serviceId === serviceId)
+    const direction = snapshot?.directions.find(d => d.directionId === route.directionId && d.operator === route.operator)
+    if (!snapshot || !direction) return null
+    const candidateIncident: RouteIncident = {
+      id: `planning-${serviceId}-${directionId ?? 1}-${targetStopCode}`,
+      serviceId,
+      directionId,
+      routeKey: routeKey(route),
+      stopCodes: [...affectedStopCodes],
+      stopNames: [targetStopName],
+      firstDetectedAt: alert?.detectedAt ?? new Date().toISOString(),
+      latestDetectedAt: alert?.detectedAt ?? new Date().toISOString(),
+      gapSeconds: null,
+      ageSeconds: 0,
+      latestStopIndex: Math.max(0, route.stops.findIndex(s => s.stopCode === monitoredStopCode)),
+      historical: false,
+      alerts: alert ? [alert] : [],
+    }
+    return linkIncidentToPosition(
+      candidateIncident,
+      route,
+      direction,
+      (snapshot.sourceObservedAt || snapshot.computedAt) ?? undefined,
+      snapshot.maxSourceAgeSeconds
+    )
+  }, [corridorIncident, corridorRoutes, serviceId, directionId, targetStopCode, affectedStopCodes, targetStopName, alert, monitoredStopCode, positions])
+
   const busOrders = useMemo(() => extractBusOrders(busReferences, alert), [busReferences, alert])
 
   const selectedBusKeys = useMemo(() => {
     const keys = new Set<string>()
+    if (computedStripLink) {
+      keys.add(`${serviceId}-${computedStripLink.frontOrder}`)
+      keys.add(`${serviceId}-${computedStripLink.followingOrder}`)
+      return keys
+    }
     for (const order of busOrders) {
       keys.add(`${serviceId}-${order}`)
     }
-    if (alert) {
+    if (!busOrders.length && alert) {
       for (const pair of bunchedArrivalGaps(alert)) {
         keys.add(`${serviceId}-${pair.leadingOrder}`)
         keys.add(`${serviceId}-${pair.followingOrder}`)
       }
     }
     return keys
-  }, [busOrders, alert, serviceId])
+  }, [computedStripLink, busOrders, alert, serviceId])
 
   const selectedIncident = useMemo<PositionedIncident>(() => ({
     id: `planning-${serviceId}-${directionId ?? 1}-${targetStopCode}`,
@@ -255,8 +293,8 @@ export function PlanningCorridorMap({
     latestStopIndex: 0,
     historical: false,
     alerts: alert ? [alert] : [],
-    stripLink: null,
-  }), [serviceId, directionId, targetStopCode, affectedStopCodes, targetStopName, alert])
+    stripLink: computedStripLink,
+  }), [serviceId, directionId, targetStopCode, affectedStopCodes, targetStopName, alert, computedStripLink])
 
   if (!corridorRoutes.length) return null
 
@@ -296,7 +334,7 @@ export type CorridorDiagnosisGroup = {
   directionId: number | null
   stopCodes: string[]
   stopNames: string[]
-  corridorIncident: RouteIncident | null
+  corridorIncident: PositionedIncident | null
   requests: PlanningDiagnosisRequest[]
   representativeRequest: PlanningDiagnosisRequest | null
   firstDetectedAt: string
@@ -308,7 +346,7 @@ export type CorridorDiagnosisGroup = {
 
 function buildCorridorGroups(
   requests: PlanningDiagnosisRequest[],
-  liveCorridors: RouteIncident[],
+  liveCorridors: PositionedIncident[],
   routes: RouteDirection[]
 ): CorridorDiagnosisGroup[] {
   const matchedRequestIds = new Set<string>()
@@ -498,17 +536,42 @@ export function ControllerPlanning({
     return ids
   }, [requestedEventId, requestedIncident])
 
+  type PositionSnapshot = {
+    position: RoutePositions['directions'][number]
+    computedAt?: string
+    sourceObservedAt?: string | null
+    maxSourceAgeSeconds: number
+  }
+
+  const positionByRoute = useMemo(() => new Map<string, PositionSnapshot>(positions.flatMap(snapshot =>
+    snapshot.directions.map(direction => [
+      `${snapshot.serviceId}:${direction.operator}:${direction.directionId}`,
+      { position: direction, computedAt: snapshot.computedAt, sourceObservedAt: snapshot.sourceObservedAt,
+        maxSourceAgeSeconds: snapshot.maxSourceAgeSeconds },
+    ] as const))), [positions])
+
   // Live corridors computed with identical logic to Disruptions
   const liveCorridorIncidents = useMemo(() => {
     if (!detectedAlerts.length || !routes.length) return []
     return groupRouteIncidents(detectedAlerts, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds, mode === 'DEMO')
   }, [detectedAlerts, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds, mode])
 
+  const positionedLiveCorridors = useMemo<PositionedIncident[]>(() => liveCorridorIncidents.map(incident => {
+    const route = routes.find(candidate => routeKey(candidate) === incident.routeKey)
+    const snapshot = route ? positionByRoute.get(routeKey(route)) : undefined
+    return {
+      ...incident,
+      stripLink: route && snapshot
+        ? linkIncidentToPosition(incident, route, snapshot.position,
+          (snapshot.sourceObservedAt || snapshot.computedAt) ?? undefined, snapshot.maxSourceAgeSeconds) : null,
+    }
+  }), [liveCorridorIncidents, routes, positionByRoute])
+
   // Build corridor groups from diagnosis requests + live corridors
   const allCorridorGroups = useMemo(() => {
     if (diagnosisError || !diagnosisScopeMatches) return []
-    return buildCorridorGroups(diagnosisRequests.items, liveCorridorIncidents, routes)
-  }, [diagnosisError, diagnosisScopeMatches, diagnosisRequests.items, liveCorridorIncidents, routes])
+    return buildCorridorGroups(diagnosisRequests.items, positionedLiveCorridors, routes)
+  }, [diagnosisError, diagnosisScopeMatches, diagnosisRequests.items, positionedLiveCorridors, routes])
 
   // Locate matched corridor from deep-link parameters
   const matchedCorridor = useMemo(() => {
@@ -865,6 +928,11 @@ export function ControllerPlanning({
             <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
               <span className="font-semibold text-foreground">Corridor: {group.stopCodes.length} {group.stopCodes.length === 1 ? 'stop' : 'stops'}</span>
               {group.gapSeconds !== null && <span>· Gap {seconds(group.gapSeconds)}</span>}
+              {group.corridorIncident?.stripLink && (
+                <span className="rounded bg-sky-500/10 px-1.5 py-0.2 font-medium text-sky-700 dark:text-sky-300">
+                  Buses #{group.corridorIncident.stripLink.frontOrder} & #{group.corridorIncident.stripLink.followingOrder}
+                </span>
+              )}
             </div>
             {group.stopNames.length > 0 && (
               <p className="line-clamp-1 text-xs text-muted-foreground">
@@ -952,6 +1020,10 @@ export function ControllerPlanning({
 }
 
 function detectedBusReferences(request: PlanningDiagnosisRequest | null, alerts: BunchingAlert[], corridor?: CorridorDiagnosisGroup | null) {
+  if (corridor?.corridorIncident?.stripLink) {
+    const { frontOrder, followingOrder } = corridor.corridorIncident.stripLink
+    return [`Bus #${frontOrder} (Leading)`, `Bus #${followingOrder} (Following)`]
+  }
   const corridorAlerts = corridor?.corridorIncident?.alerts ?? alerts
   const simulationReferences = corridorAlerts.flatMap(alert => {
     const match = !request || alert.eventId === request.eventId ||
@@ -1045,10 +1117,17 @@ function DiagnosisRequestDetail({ request, corridor, routes, positions, detected
             </span>
           )}
         </div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {corridor && corridor.stopCodes.length > 1
-            ? `Lead stop ${request.stopCode ?? 'unknown'} (${corridor.stopCodes.length}-stop corridor) · detected ${timestamp(request.createdAt)}`
-            : `Stop ${request.stopCode ?? 'unknown'} · detected ${timestamp(request.createdAt)}`}
+        <p className="mt-1 text-xs text-muted-foreground flex flex-wrap items-center gap-1.5">
+          <span>
+            {corridor && corridor.stopCodes.length > 1
+              ? `Lead stop ${request.stopCode ?? 'unknown'} (${corridor.stopCodes.length}-stop corridor) · detected ${timestamp(request.createdAt)}`
+              : `Stop ${request.stopCode ?? 'unknown'} · detected ${timestamp(request.createdAt)}`}
+          </span>
+          {corridor?.corridorIncident?.stripLink && (
+            <span className="rounded bg-sky-500/10 px-1.5 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-300">
+              Buses #{corridor.corridorIncident.stripLink.frontOrder} & #{corridor.corridorIncident.stripLink.followingOrder}
+            </span>
+          )}
         </p>
       </div>
       <span className="text-xs text-muted-foreground">{request.requestId}</span>
@@ -1078,6 +1157,7 @@ function DiagnosisRequestDetail({ request, corridor, routes, positions, detected
       monitoredStopCode={request.stopCode ?? ''}
       corridorStopCodes={corridor?.stopCodes}
       busReferences={detectedBusReferences}
+      corridorIncident={corridor?.corridorIncident}
       alert={corridor?.corridorIncident?.alerts[0] ?? detectedAlerts.find(a => a.eventId === request.eventId || (a.serviceId === request.serviceId && a.stopCode === request.stopCode))}
     />
 
