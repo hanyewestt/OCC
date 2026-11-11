@@ -101,15 +101,21 @@ function initialInstruction(recommendation: PendingRecommendation): ControllerRe
   return { action, adjustmentSeconds: recommendation.adjustmentSeconds, noInstructionReason: '' }
 }
 
+function isBusCaptainAssigned(busReference: string, recommendation: PendingRecommendation): boolean {
+  const outcome = recommendation.suggestedOutcomes?.find(item => item.busReference === busReference)
+  if (!outcome) return true
+  return !outcome.reason?.toLowerCase().includes('no captain')
+}
+
 function initialBusInstructions(recommendation: PendingRecommendation): BusReplacement[] {
   const initial = initialInstruction(recommendation)
   const buses = affectedBuses(recommendation)
   return buses.map(busReference => {
     const outcome = recommendation.suggestedOutcomes?.find(item => item.busReference === busReference)
     if (outcome) return { busReference, action: outcome.mitigationType ?? 'NONE',
-      adjustmentSeconds: outcome.adjustmentSeconds, noInstructionReason: outcome.reason ?? '' }
+      adjustmentSeconds: outcome.adjustmentSeconds || 30, noInstructionReason: outcome.reason ?? 'No action required by controller' }
     return buses.length === 1 ? { busReference, ...initial }
-      : { busReference, action: 'NONE', adjustmentSeconds: 0, noInstructionReason: '' }
+      : { busReference, action: 'NONE', adjustmentSeconds: 30, noInstructionReason: 'No action required by controller' }
   })
 }
 
@@ -495,8 +501,8 @@ export function ControllerPlanning({
   // Live corridors computed with identical logic to Disruptions
   const liveCorridorIncidents = useMemo(() => {
     if (!detectedAlerts.length || !routes.length) return []
-    return groupRouteIncidents(detectedAlerts, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds)
-  }, [detectedAlerts, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds])
+    return groupRouteIncidents(detectedAlerts, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds, mode === 'DEMO')
+  }, [detectedAlerts, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds, mode])
 
   // Build corridor groups from diagnosis requests + live corridors
   const allCorridorGroups = useMemo(() => {
@@ -675,8 +681,9 @@ export function ControllerPlanning({
     !editNeedsRevalidation && selectedIdentity !== editingRecommendation.identity)
   const detailRecommendation = selected
   const detailIdentity = detailRecommendation ? `${scopeIdentity}:${detailRecommendation.recommendationId}` : null
-  const selectionIsCurrent = !recommendations.isLoading && recommendationLoadError === null && !modeError && !!selected && recommendationItems.some(item => item.recommendationId === selected.recommendationId &&
-    JSON.stringify(item) === JSON.stringify(selected))
+  const selectionIsCurrent = (!recommendations.isLoading || recommendations.items.length > 0) && recommendationLoadError === null && !modeError && !!selected &&
+    (recommendationItems.some(item => item.recommendationId === selected.recommendationId) ||
+      (editingInScope?.recommendation.recommendationId === selected.recommendationId))
 
   useEffect(() => {
     if (!editingInScope || editingItemIsLoaded || modeError || recommendationIsLoading || recommendationIsLoadingMore ||
@@ -1187,7 +1194,17 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
 
   function updateInstruction(index: number, changes: Partial<ControllerReplacement>) {
     setMessage('')
-    setInstructions(items => items.map((item, itemIndex) => itemIndex === index ? { ...item, ...changes } : item))
+    setInstructions(items => items.map((item, itemIndex) => {
+      if (itemIndex !== index) return item
+      const updated = { ...item, ...changes }
+      if (changes.action === 'NONE' && !updated.noInstructionReason.trim()) {
+        updated.noInstructionReason = 'No action required by controller'
+      }
+      if ((changes.action === 'HOLD' || changes.action === 'DWELL_ADJUSTMENT') && (!updated.adjustmentSeconds || updated.adjustmentSeconds < 1)) {
+        updated.adjustmentSeconds = 30
+      }
+      return updated
+    }))
   }
 
   async function refresh() {
@@ -1219,11 +1236,18 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
 
   async function decide(action: Decision['action']) {
     if (submitting.current || !isCurrent) return
-    if (action === 'REJECTED' && instructions.some(item => item.action === 'NONE'
-      ? !item.noInstructionReason.trim()
-      : item.action !== 'SKIP_STOP' && (!Number.isInteger(item.adjustmentSeconds) || item.adjustmentSeconds < 1 || item.adjustmentSeconds > 120))) {
-      setMessage('Enter a reason for each bus with no instruction and a 1–120 second duration for each action.')
-      return
+    if (action === 'REJECTED') {
+      const unassignedWithAction = instructions.find(item => !isBusCaptainAssigned(item.busReference, selected) && item.action !== 'NONE')
+      if (unassignedWithAction) {
+        setMessage(`${unassignedWithAction.busReference} has no captain assigned to receive instructions. Select No instruction for this bus.`)
+        return
+      }
+      if (instructions.some(item => item.action === 'NONE'
+        ? !item.noInstructionReason.trim()
+        : item.action !== 'SKIP_STOP' && (!Number.isInteger(item.adjustmentSeconds) || item.adjustmentSeconds < 1 || item.adjustmentSeconds > 120))) {
+        setMessage('Enter a reason for each bus with no instruction and a 1–120 second duration for each action.')
+        return
+      }
     }
     submitting.current = true; setPending(true); setMessage('')
     onEditorChange({ identity, scopeIdentity, recommendation: selected, pending: true })
@@ -1297,11 +1321,66 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
               </div>}
               {message && <p role="alert" className="rounded-lg border p-3 text-sm">{message}</p>}
               <form className="space-y-4" noValidate onSubmit={event => { event.preventDefault(); void decide('REJECTED') }}>
-                {instructions.map((item, index) => <div key={item.busReference} className="grid gap-3 rounded-lg border p-4 sm:grid-cols-[1fr_8rem]">
-                  <div className="space-y-2"><Label htmlFor={`bus-action-${index}`}>Action for {item.busReference}</Label><select ref={index === 0 ? firstAction : undefined} id={`bus-action-${index}`} value={item.action} onChange={event => updateInstruction(index, { action: event.target.value as ControllerReplacement['action'] })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"><option value="HOLD">Hold at next stop</option>{(affectedBuses(selected).length === 1 || index > 0) && <option value="DWELL_ADJUSTMENT">Extend dwell at stop {selected.controlStopCode}</option>}<option value="SKIP_STOP">Skip stop {selected.controlStopCode}</option><option value="NONE">No instruction</option></select></div>
-                  <div className="space-y-2"><Label htmlFor={`bus-adjustment-${index}`}>Seconds</Label><Input id={`bus-adjustment-${index}`} type="number" min="1" max="120" step="1" value={item.adjustmentSeconds} onChange={event => updateInstruction(index, { adjustmentSeconds: Number(event.target.value) })} required={item.action === 'HOLD' || item.action === 'DWELL_ADJUSTMENT'} disabled={item.action === 'NONE' || item.action === 'SKIP_STOP'} /></div>
-                  {item.action === 'NONE' && <div className="space-y-2 sm:col-span-2"><Label htmlFor={`bus-no-instruction-reason-${index}`}>Reason no instruction is needed</Label><Input id={`bus-no-instruction-reason-${index}`} maxLength={480} value={item.noInstructionReason} onChange={event => updateInstruction(index, { noInstructionReason: event.target.value })} required /></div>}
-                </div>)}
+                {instructions.map((item, index) => {
+                  const hasCaptain = isBusCaptainAssigned(item.busReference, selected)
+                  const isNone = item.action === 'NONE'
+                  const unassignedError = !hasCaptain && !isNone
+                  const reasonError = isNone && !item.noInstructionReason.trim()
+                  const secondsError = !isNone && item.action !== 'SKIP_STOP' && (!Number.isInteger(item.adjustmentSeconds) || item.adjustmentSeconds < 1 || item.adjustmentSeconds > 120)
+                  return (
+                    <div key={item.busReference} className={`grid gap-3 rounded-lg border p-4 sm:grid-cols-[1fr_8rem] ${unassignedError ? 'border-amber-500/50 bg-amber-500/5' : ''}`}>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label htmlFor={`bus-action-${index}`}>Action for {item.busReference}</Label>
+                          {!hasCaptain && <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">No captain assigned</span>}
+                        </div>
+                        <select
+                          ref={index === 0 ? firstAction : undefined}
+                          id={`bus-action-${index}`}
+                          value={item.action}
+                          onChange={event => updateInstruction(index, { action: event.target.value as ControllerReplacement['action'] })}
+                          className={`h-10 w-full rounded-md border bg-background px-3 text-sm ${unassignedError ? 'border-amber-500' : 'border-input'}`}
+                        >
+                          <option value="HOLD">Hold at next stop</option>
+                          {(affectedBuses(selected).length === 1 || index > 0) && <option value="DWELL_ADJUSTMENT">Extend dwell at stop {selected.controlStopCode}</option>}
+                          <option value="SKIP_STOP">Skip stop {selected.controlStopCode}</option>
+                          <option value="NONE">No instruction</option>
+                        </select>
+                        {!hasCaptain && <p className="text-xs text-muted-foreground">No captain is assigned to this bus; movement instructions cannot be delivered.</p>}
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor={`bus-adjustment-${index}`}>Seconds</Label>
+                        <Input
+                          id={`bus-adjustment-${index}`}
+                          type="number"
+                          min="1"
+                          max="120"
+                          step="1"
+                          value={item.adjustmentSeconds}
+                          onChange={event => updateInstruction(index, { adjustmentSeconds: Number(event.target.value) })}
+                          required={item.action === 'HOLD' || item.action === 'DWELL_ADJUSTMENT'}
+                          disabled={item.action === 'NONE' || item.action === 'SKIP_STOP'}
+                          aria-invalid={secondsError ? 'true' : undefined}
+                          className={secondsError ? 'border-destructive' : ''}
+                        />
+                      </div>
+                      {item.action === 'NONE' && (
+                        <div className="space-y-2 sm:col-span-2">
+                          <Label htmlFor={`bus-no-instruction-reason-${index}`}>Reason no instruction is needed</Label>
+                          <Input
+                            id={`bus-no-instruction-reason-${index}`}
+                            maxLength={480}
+                            value={item.noInstructionReason}
+                            onChange={event => updateInstruction(index, { noInstructionReason: event.target.value })}
+                            required
+                            aria-invalid={reasonError ? 'true' : undefined}
+                            className={reasonError ? 'border-destructive' : ''}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
                 <DialogFooter>
                   <DialogClose asChild><Button type="button" variant="outline" disabled={pending}>Close</Button></DialogClose>
                   <Button type="button" variant="outline" disabled={pending} onClick={requestClose}>Cancel</Button>

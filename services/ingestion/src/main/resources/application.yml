@@ -96,7 +96,7 @@ occ:
         initial-delay: ${OCC_INGESTION_ROADWORKS_INITIAL_DELAY:30s}
         stale-after: ${OCC_INGESTION_ROADWORKS_STALE_AFTER:48h}
     monitored-services: ${OCC_INGESTION_MONITORED_SERVICES:190,972}
-    stale-after-seconds: ${OCC_INGESTION_STALE_AFTER_SECONDS:180}
+    stale-after-seconds: ${OCC_INGESTION_STALE_AFTER_SECONDS:600}
     retention: ${OCC_INGESTION_RETENTION:12h}
     schedule:
       bus-arrival-enabled: ${OCC_INGESTION_BUS_ARRIVAL_ENABLED:true}
