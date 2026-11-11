@@ -14,70 +14,86 @@
 
 set -eu
 
-DATA_DEVICE="${OCC_DATA_DEVICE:-/dev/nvme1n1}"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+OCC_DATA_VOLUME_ID="${OCC_DATA_VOLUME_ID:?set OCC_DATA_VOLUME_ID from the stack output}"
+DATA_DEVICE=$(python3 "$SCRIPT_DIR/volume.py" resolve "$OCC_DATA_VOLUME_ID")
 DATA_MOUNT_POINT=/var/lib/postgresql
 DATA_UUID_FILE=/etc/occ/data-volume-uuid
 ENV_DIR=/opt/occ
 
-echo "Installing container runtime..."
-dnf install -y docker iptables-nft
-systemctl enable --now docker
-mkdir -p /usr/libexec/docker/cli-plugins
-curl --fail --silent --show-error --location \
-    "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
-    --output /usr/libexec/docker/cli-plugins/docker-compose
-chmod 0755 /usr/libexec/docker/cli-plugins/docker-compose
-
-echo "Preparing the durable data volume..."
-if [ ! -b "$DATA_DEVICE" ]; then
-    echo "error: data device $DATA_DEVICE is not present" >&2
-    exit 1
-fi
-
-# Refuse to touch anything that already carries a filesystem other than the
-# recorded one; formatting is only ever allowed on a completely blank volume.
-FILESYSTEM_KIND="$(blkid -s TYPE -o value "$DATA_DEVICE" || true)"
-RECORDED_UUID="$(cat "$DATA_UUID_FILE" 2>/dev/null || true)"
-ACTUAL_UUID="$(blkid -s UUID -o value "$DATA_DEVICE" || true)"
-if [ -n "$FILESYSTEM_KIND" ]; then
-    if [ -z "$RECORDED_UUID" ] || [ "$ACTUAL_UUID" != "$RECORDED_UUID" ]; then
-        echo "error: $DATA_DEVICE already contains a filesystem ($FILESYSTEM_KIND, uuid $ACTUAL_UUID) " \
-             "that does not match the recorded data volume; refusing to format or mount it" >&2
-        exit 1
-    fi
-else
-    if [ -n "$RECORDED_UUID" ]; then
-        echo "error: the recorded data volume lost its filesystem; refusing to reformat automatically" >&2
-        exit 1
-    fi
-    echo "First boot: creating the encrypted-volume filesystem on the blank data volume..."
+[ -b "$DATA_DEVICE" ] || { echo "error: designated EBS device is absent" >&2; exit 1; }
+# The authoritative filesystem UUID survives root-disk replacement on the EBS tag.
+EXPECTED_UUID=$(aws ec2 describe-volumes --volume-ids "$OCC_DATA_VOLUME_ID" \
+    --query 'Volumes[0].Tags[?Key==`occ:filesystem-uuid`].Value | [0]' --output text)
+[ "$EXPECTED_UUID" != "None" ] || EXPECTED_UUID=""
+FILESYSTEM_KIND=$(blkid -s TYPE -o value "$DATA_DEVICE" || true)
+ACTUAL_UUID=$(blkid -s UUID -o value "$DATA_DEVICE" || true)
+VOLUME_ACTION=$(python3 "$SCRIPT_DIR/volume.py" check "$FILESYSTEM_KIND" "$ACTUAL_UUID" \
+    "$EXPECTED_UUID" "${OCC_INITIALIZE_DATA_VOLUME:-false}")
+if [ "$VOLUME_ACTION" = initialize ]; then
+    # Existing filesystems never reach mkfs, even with initialize=true.
     mkfs.ext4 -L occ-postgresql "$DATA_DEVICE"
-    ACTUAL_UUID="$(blkid -s UUID -o value "$DATA_DEVICE")"
-    mkdir -p /etc/occ
-    printf '%s\n' "$ACTUAL_UUID" > "$DATA_UUID_FILE"
-    chmod 0600 "$DATA_UUID_FILE"
+    ACTUAL_UUID=$(blkid -s UUID -o value "$DATA_DEVICE")
+    aws ec2 create-tags --resources "$OCC_DATA_VOLUME_ID" \
+        --tags "Key=occ:filesystem-uuid,Value=$ACTUAL_UUID"
 fi
+mkdir -p /etc/occ
+printf '%s\n' "$ACTUAL_UUID" > "$DATA_UUID_FILE"
+printf '%s\n' "$OCC_DATA_VOLUME_ID" > /etc/occ/data-volume-id
+chmod 0600 "$DATA_UUID_FILE" /etc/occ/data-volume-id
 
-# Systemd mounts the validated UUID before Docker starts; a missing or
-# failing mount blocks the host from ever running the application stack.
-cat > /etc/systemd/system/opt-occ-data.mount <<UNIT
+# Install boot dependencies before Docker can start containers.
+mkdir -p /etc/systemd/system/docker.service.d
+cat > /etc/systemd/system/var-lib-postgresql.mount <<UNIT
 [Unit]
 Description=OCC durable PostgreSQL data volume
-Requires=local-fs.target
 Before=docker.service
 [Mount]
 What=UUID=$ACTUAL_UUID
 Where=$DATA_MOUNT_POINT
 Type=ext4
 Options=noatime
+[Install]
+WantedBy=local-fs.target
+UNIT
+cat > /etc/systemd/system/docker.service.d/occ-data.conf <<UNIT
+[Unit]
+RequiresMountsFor=$DATA_MOUNT_POINT
+Requires=occ-gate-close.service
+After=occ-gate-close.service
+UNIT
+# A reboot never exposes the old stack before an explicit checked apply/resume.
+cat > /etc/occ/close-gate.sh <<'SH'
+#!/bin/sh
+set -eu
+file=/opt/occ/runtime/nginx-gate/traffic-gate.inc
+[ ! -f "$file" ] || sed -i 's/"open"/"closed"/' "$file"
+SH
+chmod 0700 /etc/occ/close-gate.sh
+cat > /etc/systemd/system/occ-gate-close.service <<'UNIT'
+[Unit]
+Description=Close OCC traffic before container startup
+Before=docker.service
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /etc/occ/close-gate.sh
+RemainAfterExit=yes
 UNIT
 systemctl daemon-reload
 mkdir -p "$DATA_MOUNT_POINT"
-if ! systemctl start "$(systemd-escape --path --suffix mount "$DATA_MOUNT_POINT")"; then
-    echo "error: the durable data volume could not be mounted; startup blocked" >&2
+systemctl enable --now var-lib-postgresql.mount
+findmnt --mountpoint "$DATA_MOUNT_POINT" --source "UUID=$ACTUAL_UUID" >/dev/null || {
+    echo "error: durable data mount identity could not be verified" >&2
     exit 1
-fi
-systemctl enable "$(systemd-escape --path --suffix mount "$DATA_MOUNT_POINT")"
+}
+echo "Installing container runtime..."
+dnf install -y docker iptables-nft
+mkdir -p /usr/libexec/docker/cli-plugins
+curl --fail --silent --show-error --location \
+    "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
+    --output /usr/libexec/docker/cli-plugins/docker-compose
+chmod 0755 /usr/libexec/docker/cli-plugins/docker-compose
+systemctl enable --now docker
 
 # Proof that the retained volume is the one mounted where PostgreSQL writes.
 # deploy.sh treats a missing marker as "not mounted" and blocks startup.

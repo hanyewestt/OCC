@@ -74,6 +74,28 @@ PostgreSQL can start (a missing mount blocks startup — there is no root-disk
 fallback, and an existing retained volume is never reformatted), root-only
 secret files, and the ECR login.
 
+### Retained data volume and replacement
+
+New stacks create a separate encrypted `OccDataVolume`, retained on deletion
+and replacement. `DataVolumeId` and `DataVolumeAvailabilityZone` identify it.
+Copy `bootstrap-host.sh` and its sibling `volume.py` together before host setup.
+Pass `OCC_DATA_VOLUME_ID` from the stack output. Only the first initialization
+of the explicitly created blank volume uses `OCC_INITIALIZE_DATA_VOLUME=true`;
+omit that flag for later setup/adoption. The host resolves the Nitro device by
+EBS serial, records the filesystem UUID in the volume's `occ:filesystem-uuid`
+tag, and requires that independent identity before mounting an existing disk.
+
+To replace a host or adopt an older inline disk: pause, verify PostgreSQL is
+stopped, create and verify a snapshot, record/verify the old filesystem UUID,
+and detach the retained volume. Set its verified UUID tag if legacy setup did
+not create one. Review the infrastructure replacement change set, then pass
+`bootstrap.ps1 -ExistingDataVolumeId <verified-volume-id>`. Bootstrap requires
+an encrypted detached volume and selects its actual AZ. Adoption is external
+by ID; it does not format or automatically import the disk into CloudFormation.
+Never delete the old disk/snapshot until row continuity has been demonstrated.
+Docker requires the correct `/var/lib/postgresql` mount, and a boot hook closes
+the traffic gate before old application containers can restart.
+
 ### Host egress allow-list
 
 The host has no unrestricted outbound rule. Its security group admits HTTPS

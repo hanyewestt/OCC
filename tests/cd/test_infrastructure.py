@@ -122,7 +122,7 @@ class CloudFormationContractTests(unittest.TestCase):
     def test_storage_is_encrypted_versioned_and_private(self):
         text = template_text()
         self.assertRegex(text, r"Encrypted:\s*true")
-        self.assertRegex(text, r"DeleteOnTermination:\s*false")
+        self.assertRegex(text, r"DeletionPolicy:\s*Retain")
         self.assertRegex(text, r"PublicAccessBlockConfiguration:[\s\S]{0,300}RestrictPublicBuckets:\s*true")
         self.assertRegex(text, r"VersioningConfiguration:[\s\S]{0,100}Status:\s*Enabled")
         self.assertRegex(text, r"BucketEncryption")
