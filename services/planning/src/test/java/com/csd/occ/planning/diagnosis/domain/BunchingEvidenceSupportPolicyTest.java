@@ -12,6 +12,8 @@ import org.junit.jupiter.api.Test;
 
 class BunchingEvidenceSupportPolicyTest {
     private static final Instant CONFIRMED = Instant.parse("2026-10-25T04:00:00Z");
+    private static final Instant PEAK_CONFIRMED = Instant.parse("2026-10-25T01:00:00Z"); // 09:00 SGT (morning peak)
+    private static final Instant LATE_NIGHT_CONFIRMED = Instant.parse("2026-10-25T17:28:00Z"); // 01:28 SGT (late night off-peak)
     private static final UUID RUN = UUID.fromString("00000000-0000-0000-0000-000000000001");
     private final BunchingEvidenceSupportPolicy policy = new BunchingEvidenceSupportPolicy();
 
@@ -143,10 +145,16 @@ class BunchingEvidenceSupportPolicyTest {
 
         var peakOutput = new ModelOutput("HEADWAY_DECAY", "PEAK_CONGESTION", "Peak corridor friction",
                 List.of("arrival:lead"), List.of());
-        var peakResult = policy.associate(event(), context, peakOutput, Duration.ofMinutes(15), 1);
+        var peakResult = policy.associate(eventAt(PEAK_CONFIRMED), context, peakOutput, Duration.ofMinutes(15), 1);
         assertThat(peakResult.causeCode()).isEqualTo("HEADWAY_DECAY");
         assertThat(peakResult.causeSubtype()).isEqualTo("PEAK_CONGESTION");
         assertThat(peakResult.facts()).anySatisfy(fact -> assertThat(fact).contains("Headway compressed to 45s"));
+        assertThat(peakResult.facts()).anySatisfy(fact -> assertThat(fact).contains("peak traffic window (09:00 SGT)"));
+
+        // When Gemini suggests PEAK_CONGESTION at 01:28 SGT (off-peak), policy guards and rejects it
+        var offPeakResult = policy.associate(eventAt(LATE_NIGHT_CONFIRMED), context, peakOutput, Duration.ofMinutes(15), 1);
+        assertThat(offPeakResult.causeCode()).isEqualTo("HEADWAY_DECAY");
+        assertThat(offPeakResult.causeSubtype()).isEqualTo("FLEET_CAPACITY_ASYMMETRY");
 
         var fleetOutput = new ModelOutput("HEADWAY_DECAY", "FLEET_CAPACITY_ASYMMETRY", "Capacity mismatch",
                 List.of(), List.of());
@@ -158,6 +166,33 @@ class BunchingEvidenceSupportPolicyTest {
                 List.of(), List.of());
         var dispatchResult = policy.associate(event(), context, dispatchOutput, Duration.ofMinutes(15), 1);
         assertThat(dispatchResult.causeSubtype()).isEqualTo("TERMINAL_DISPATCH");
+
+        var driftOutput = new ModelOutput("HEADWAY_DECAY", "CUMULATIVE_DRIFT", "Long-distance drift",
+                List.of(), List.of());
+        var driftResult = policy.associate(event(), context, driftOutput, Duration.ofMinutes(15), 1);
+        assertThat(driftResult.causeSubtype()).isEqualTo("CUMULATIVE_DRIFT");
+        assertThat(driftResult.facts()).anySatisfy(fact -> assertThat(fact).contains("Uniform passenger load category (SEA)"));
+        assertThat(driftResult.limitations()).contains("No nearby incidents: No traffic accidents or roadworks reported along this route.");
+    }
+
+    @Test
+    void evaluatesNonProximateTrafficIncidentsUnderHeadwayDecay() {
+        var lead = new ArrivalEvidence("arrival:lead", UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                "190", "44251", 1, CONFIRMED, CONFIRMED, new BigDecimal("1.3"), new BigDecimal("103.8"),
+                "SEA", "DD", "SIMULATION", RUN, null);
+        var follow = new ArrivalEvidence("arrival:follow", UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                "190", "44251", 1, CONFIRMED.plusSeconds(32), CONFIRMED, new BigDecimal("1.3"), new BigDecimal("103.8"),
+                "SEA", "DD", "SIMULATION", RUN, null);
+        var distantIncident = incident("incident:far", "Road Works", CONFIRMED.minusSeconds(120), "1.35", "103.85");
+        var context = new RootCauseContext("SIMULATION", RUN, null, List.of(lead, follow), List.of(distantIncident), List.of());
+
+        var driftOutput = new ModelOutput("HEADWAY_DECAY", "CUMULATIVE_DRIFT", "Long-distance spacing decay",
+                List.of(), List.of());
+        var result = policy.associate(event(), context, driftOutput, Duration.ofMinutes(15), 1);
+
+        assertThat(result.causeCode()).isEqualTo("HEADWAY_DECAY");
+        assertThat(result.facts()).anySatisfy(fact -> assertThat(fact).contains("Nearest reported traffic incident was", "outside direct corridor impact proximity"));
+        assertThat(result.limitations()).contains("No nearby incidents: No traffic accidents or roadworks reported along this route.");
     }
 
     private BunchingEvidenceSupportPolicy.AssociatedEvidence associate(List<IncidentEvidence> incidents, ModelOutput output) {
@@ -178,9 +213,13 @@ class BunchingEvidenceSupportPolicyTest {
     }
 
     private BunchingEventFacts event() {
+        return eventAt(CONFIRMED);
+    }
+
+    private BunchingEventFacts eventAt(Instant confirmedAt) {
         return new BunchingEventFacts(UUID.randomUUID(), UUID.randomUUID(), "SIMULATION", RUN, "190", 1, "44251",
-                UUID.randomUUID(), UUID.randomUUID(), "CONFIRMED", 600, List.of(45, 45), CONFIRMED,
-                List.of(CONFIRMED, CONFIRMED.plusSeconds(5)), List.of(UUID.randomUUID(), UUID.randomUUID()),
+                UUID.randomUUID(), UUID.randomUUID(), "CONFIRMED", 600, List.of(45, 45), confirmedAt,
+                List.of(confirmedAt, confirmedAt.plusSeconds(5)), List.of(UUID.randomUUID(), UUID.randomUUID()),
                 List.of("event:one"), "test-rule");
     }
 }

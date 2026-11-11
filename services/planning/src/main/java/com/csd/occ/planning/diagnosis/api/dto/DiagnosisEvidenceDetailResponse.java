@@ -2,6 +2,7 @@ package com.csd.occ.planning.diagnosis.api.dto;
 
 import com.csd.occ.planning.diagnosis.domain.DiagnosisEvidenceDetail;
 import io.swagger.v3.oas.annotations.media.Schema;
+import java.math.BigDecimal;
 import java.time.Instant;
 
 @Schema(description = "Source facts associated with a diagnosis. Evidence IDs identify retained technical records.")
@@ -25,11 +26,16 @@ public record DiagnosisEvidenceDetailResponse(
         @Schema(description = "Technical reference to the supplied bus-position evidence", maxLength = 200, nullable = true)
         String busPositionEvidenceId,
         @Schema(maxLength = 12)
-        String monitoredStopCode) {
+        String monitoredStopCode,
+        @Schema(description = "Latitude of the incident location in WGS-84 decimal degrees", nullable = true)
+        BigDecimal latitude,
+        @Schema(description = "Longitude of the incident location in WGS-84 decimal degrees", nullable = true)
+        BigDecimal longitude) {
 
     public static DiagnosisEvidenceDetailResponse from(DiagnosisEvidenceDetail detail) {
         return new DiagnosisEvidenceDetailResponse(detail.evidenceId(), detail.incidentType(), detail.message(),
                 detail.reportTime(), detail.fetchedAt(), detail.firstConfirmedAt(), detail.secondsBeforeFirstConfirmed(),
-                detail.distanceMetersFromSuppliedBusPosition(), detail.busPositionEvidenceId(), detail.monitoredStopCode());
+                detail.distanceMetersFromSuppliedBusPosition(), detail.busPositionEvidenceId(), detail.monitoredStopCode(),
+                detail.latitude(), detail.longitude());
     }
 }
