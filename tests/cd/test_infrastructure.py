@@ -233,7 +233,7 @@ class CloudFrontTemplateTests(unittest.TestCase):
     def test_includes_the_shared_routes(self):
         self.assertIn("include /etc/nginx/conf.d/routes.inc;", self.read())
 
-    def test_renders_and_passes_nginx_syntax_check(self):
+    def test_cloudfront_fixture_loads_generated_server_and_routes(self):
         with tempfile.TemporaryDirectory(prefix="occ-cf-nginx-") as directory:
             fixture = Path(directory)
             routes = (ROOT / "infra" / "nginx" / "routes.inc.template").read_text(encoding="utf-8")
@@ -249,7 +249,8 @@ class CloudFrontTemplateTests(unittest.TestCase):
             gate_dir = fixture / "gate"
             gate_dir.mkdir()
             (gate_dir / "traffic-gate.inc").write_text(
-                'set $occ_traffic_gate "open";\n', encoding="utf-8")
+                'set $occ_traffic_gate "open";\n'
+                'set $occ_gate_token "synthetic-gate-token";\n', encoding="utf-8")
             nginx_conf = """pid /tmp/nginx.pid;
 error_log /tmp/nginx-error.log notice;
 events { worker_connections 128; }
@@ -264,20 +265,31 @@ http {
             for path in fixture.rglob("*"):
                 if path.is_file():
                     path.chmod(0o644)
-            result = subprocess.run(
-                ["docker", "run", "--rm", "--user", "101:101", "--read-only",
+            command = ["docker", "run", "--rm", "--user", "101:101", "--read-only",
                  "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                  "--tmpfs", "/tmp:mode=1777", "--tmpfs", "/var/cache/nginx:uid=101,gid=101,mode=1777",
                  "--mount", f"type=bind,source={fixture},target=/fixture,readonly",
+                 "--mount", f"type=bind,source={fixture / 'cloudfront.conf'},target=/etc/nginx/conf.d/cloudfront.conf,readonly",
+                 "--mount", f"type=bind,source={fixture / 'routes.inc'},target=/etc/nginx/conf.d/routes.inc,readonly",
                  "--mount", f"type=bind,source={gate_dir},target=/etc/nginx/gate,readonly",
                  "--entrypoint", "nginx", NGINX_IMAGE,
-                 "-c", "/fixture/nginx.conf", "-t"],
-                capture_output=True, text=True, encoding="utf-8", errors="replace")
-            self.assertEqual(result.returncode, 0,
-                             result.stdout + result.stderr)
-            self.assertIn("syntax is ok", result.stdout + result.stderr)
-            # The rendered configuration never reaches logs or test output.
-            self.assertNotIn("synthetic-origin-secret", result.stdout + result.stderr)
+                 "-c", "/fixture/nginx.conf", "-t"]
+            for state in ("open", "closed"):
+                (gate_dir / "traffic-gate.inc").write_text(
+                    f'set $occ_traffic_gate "{state}";\n'
+                    'set $occ_gate_token "synthetic-gate-token";\n', encoding="utf-8")
+                result = subprocess.run(command, capture_output=True, text=True,
+                                        encoding="utf-8", errors="replace")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("syntax is ok", result.stdout + result.stderr)
+                self.assertNotIn("synthetic-origin-secret", result.stdout + result.stderr)
+            # Prove the mounted config is actually consumed, not the stock image config.
+            (fixture / "cloudfront.conf").write_text(template + "\ninvalid_occ_directive;\n",
+                                                    encoding="utf-8")
+            result = subprocess.run(command, capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("invalid_occ_directive", result.stderr)
 
 
 class CloudFrontOverlayTests(unittest.TestCase):
