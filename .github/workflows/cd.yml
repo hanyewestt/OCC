@@ -1,0 +1,370 @@
+name: Release and deploy
+
+# Runs after Main verification completes on main. It re-verifies the exact
+# run/SHA-bound artifacts, publishes the complete immutable release bundle
+# and the five digest-pinned ECR images, scans those exact bytes with current
+# vulnerability data, advances the published record with a compare-and-set,
+# and deploys only when the environment's desired mode is running. While the
+# environment is paused, publishing still happens and deployment is deferred.
+on:
+  workflow_run:
+    workflows: ["Main verification"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+
+# One production mutation at a time; queued runs are never cancelled. The
+# group is shared with the environment-control workflow's mutating jobs.
+concurrency:
+  group: occ-production-mutation
+  cancel-in-progress: false
+
+env:
+  OCC_REGION: ${{ secrets.OCC_REGION }}
+  OCC_RELEASE_BUCKET: ${{ secrets.OCC_RELEASE_BUCKET }}
+
+jobs:
+  release:
+    name: Publish verified release
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-24.04
+    environment: production
+    outputs:
+      release-id: ${{ steps.plan.outputs.release-id }}
+      deploy-required: ${{ steps.plan.outputs.deploy-required }}
+    steps:
+      - name: Check out the verified revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Assume the publish role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.OCC_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ secrets.OCC_REGION }}
+
+      - name: Download the verified artifacts from the producing run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bundle" "$RUNNER_TEMP/images" "$RUNNER_TEMP/artifacts"
+          for name in occ-jar-ingestion occ-jar-disruption occ-jar-planning \
+                      occ-web-dist occ-image-ingestion occ-image-disruption \
+                      occ-image-planning occ-image-db-setup occ-image-web; do
+            gh run download "${{ github.event.workflow_run.id }}" --repo "$GITHUB_REPOSITORY" \
+              --name "$name" --dir "$RUNNER_TEMP/artifacts/$name"
+            cp -n "$RUNNER_TEMP/artifacts/$name"/* "$RUNNER_TEMP/bundle/"
+          done
+          for component in ingestion disruption planning db-setup web; do
+            mv "$RUNNER_TEMP/bundle/occ-image-${component}.tar" \
+               "$RUNNER_TEMP/images/occ-image-${component}.tar"
+            mv "$RUNNER_TEMP/bundle/occ-image-${component}.id" \
+               "$RUNNER_TEMP/images/occ-image-${component}.id"
+          done
+
+      - name: Verify the artifact bundle against the verified revision
+        run: >-
+          python3 scripts/cd/stage.py verify-bundle --bundle "$RUNNER_TEMP/bundle"
+          --revision "${{ github.event.workflow_run.head_sha }}" --max-age-hours 24
+
+      - name: Download the current published release manifest
+        run: |
+          set -euo pipefail
+          aws s3 cp "s3://$OCC_RELEASE_BUCKET/state/latest-published.json" \
+            "$RUNNER_TEMP/latest-published.json" \
+            || echo '{}' > "$RUNNER_TEMP/latest-published.json"
+
+      - name: Plan the release inputs
+        id: plan
+        run: |
+          set -euo pipefail
+          published="$RUNNER_TEMP/latest-published.json"
+          args=(plan --head "${{ github.event.workflow_run.head_sha }}")
+          if python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("revision") else 1)' \
+              "$published"; then
+            args+=(--published "$published")
+          else
+            # First release: there is no published baseline to diff against,
+            # so diff from the root commit and rebuild conservatively.
+            base=$(git rev-list --max-parents=0 "${{ github.event.workflow_run.head_sha }}" | tail -n 1)
+            args+=(--base "$base")
+          fi
+          python3 scripts/cd/release.py "${args[@]}" > "$RUNNER_TEMP/plan.json"
+          release_id="${{ github.event.workflow_run.head_sha }}-${{ github.run_id }}-${{ github.run_attempt }}"
+          echo "release-id=$release_id" >> "$GITHUB_OUTPUT"
+          echo "deploy-required=$(python3 -c \
+            'import json,sys; print(str(json.load(open(sys.argv[1]))["deployRequired"]).lower())' \
+            "$RUNNER_TEMP/plan.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Load and verify the packaged images
+        run: |
+          set -euo pipefail
+          for component in ingestion disruption planning db-setup web; do
+            docker load --input "$RUNNER_TEMP/images/occ-image-${component}.tar"
+            loaded="$(docker image inspect --format '{{.Id}}' "occ-${component}:ci")"
+            recorded="$(cat "$RUNNER_TEMP/images/occ-image-${component}.id")"
+            test "$loaded" = "$recorded"
+          done
+
+      - name: Publish the five images to ECR and verify their digests exist
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password --region "$OCC_REGION" \
+            | docker login --username AWS --password-stdin \
+                "$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$OCC_REGION.amazonaws.com"
+          release_id="${{ steps.plan.outputs.release-id }}"
+          for component in ingestion disruption planning db-setup web; do
+            repository_var="OCC_${component^^}_REPOSITORY"
+            repository="${!repository_var:?missing $repository_var environment secret}"
+            docker tag "occ-${component}:ci" "$repository:$release_id"
+            docker push "$repository:$release_id"
+            digest="$(aws ecr describe-images --repository-name "${repository##*/}" \
+              --image-ids imageTag="$release_id" \
+              --query 'imageDetails[0].imageDigest' --output text)"
+            test "${digest#sha256:}" != "$digest"
+            printf '{"component": "%s", "repository": "%s", "digest": "%s"}\n' \
+              "$component" "$repository" "$digest" >> "$RUNNER_TEMP/digests.jsonl"
+          done
+          python3 - "$RUNNER_TEMP/digests.jsonl" "$RUNNER_TEMP/digests.json" <<'PY'
+          import json
+          import sys
+
+          digests = {}
+          for line in open(sys.argv[1], encoding="utf-8"):
+              row = json.loads(line)
+              digests[row["component"]] = f'{row["repository"]}@{row["digest"]}'
+          json.dump(digests, open(sys.argv[2], "w", encoding="utf-8"), sort_keys=True)
+          PY
+
+      - name: Build the immutable release bundle
+        run: |
+          set -euo pipefail
+          release_id="${{ steps.plan.outputs.release-id }}"
+          # The manifest is the release contract the host deploy validates.
+          # latest-published.json stores the full manifest (inputHashes,
+          # images, releaseId, revision) so the next plan can diff against it.
+          # A first release has no prior record (the download fallback is
+          # `{}`), so --previous is only passed when a revision is present.
+          previous_args=()
+          if python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("revision") else 1)' \
+              "$RUNNER_TEMP/latest-published.json"; then
+            previous_args=(--previous "$RUNNER_TEMP/latest-published.json")
+          fi
+          python3 scripts/cd/release.py manifest \
+            --plan "$RUNNER_TEMP/plan.json" \
+            "${previous_args[@]}" \
+            --digests "$RUNNER_TEMP/digests.json" \
+            --release-id "$release_id" \
+            --compatibility unknown > "$RUNNER_TEMP/manifest.json"
+          mkdir -p "$RUNNER_TEMP/release-bundle/scripts" \
+            "$RUNNER_TEMP/release-bundle/infra/nginx"
+          cp "$RUNNER_TEMP/manifest.json" "$RUNNER_TEMP/release-bundle/"
+          cp "$RUNNER_TEMP/digests.json" "$RUNNER_TEMP/release-bundle/images.json"
+          cp compose.yaml infra/compose.images.yaml infra/compose.cloudfront.yaml \
+            infra/compose.host-data.yaml "$RUNNER_TEMP/release-bundle/"
+          # The CloudFront overlay mounts this server block from the bundle
+          # root; the web image deliberately bakes only the shared routes.
+          cp infra/nginx/cloudfront.conf.template \
+            "$RUNNER_TEMP/release-bundle/infra/nginx/"
+          cp scripts/cd/deploy.sh scripts/cd/traffic-gate.sh \
+            "$RUNNER_TEMP/release-bundle/scripts/"
+          (cd "$RUNNER_TEMP/release-bundle" && \
+            find . -type f ! -name checksums.txt -print0 | \
+            xargs -0 sha256sum | sed 's|\./||' > checksums.txt)
+
+      - name: Upload the release bundle and manifest
+        run: |
+          set -euo pipefail
+          release_id="${{ steps.plan.outputs.release-id }}"
+          # The host runs <release>/bundle/scripts/deploy.sh and validates
+          # <release>/bundle/manifest.json, so the bundle lives under a
+          # `bundle/` prefix while the manifest record is a sibling key.
+          aws s3 cp --recursive "$RUNNER_TEMP/release-bundle/" \
+            "s3://$OCC_RELEASE_BUCKET/releases/$release_id/bundle/"
+          aws s3 cp "$RUNNER_TEMP/manifest.json" \
+            "s3://$OCC_RELEASE_BUCKET/releases/$release_id.json"
+
+      - name: Summarize the release
+        run: |
+          set -euo pipefail
+          {
+            echo "## Release ${{ steps.plan.outputs.release-id }}"
+            echo "- revision: ${{ github.event.workflow_run.head_sha }}"
+            echo "- deploy required: ${{ steps.plan.outputs.deploy-required }}"
+            echo "- verification run: ${{ github.event.workflow_run.html_url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  scan:
+    name: Scan published ${{ matrix.component }}
+    needs: release
+    if: needs.release.outputs.deploy-required == 'true'
+    runs-on: ubuntu-24.04
+    environment: production
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [ingestion, disruption, planning, db-setup, web]
+    steps:
+      - name: Assume the publish role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.OCC_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ secrets.OCC_REGION }}
+
+      - name: Pull the exact published digest
+        run: |
+          set -euo pipefail
+          repository_var="OCC_${{ matrix.component }}_REPOSITORY"
+          repository="${!repository_var:?missing $repository_var environment secret}"
+          digest="$(aws ecr describe-images --repository-name "${repository##*/}" \
+            --image-ids imageTag="${{ needs.release.outputs.release-id }}" \
+            --query 'imageDetails[0].imageDigest' --output text)"
+          aws ecr get-login-password --region "$OCC_REGION" \
+            | docker login --username AWS --password-stdin "${repository%%/*}"
+          docker pull "$repository@$digest"
+          echo "reference=$repository@$digest" >> "$GITHUB_ENV"
+
+      - name: Fail on HIGH or CRITICAL OS/library findings
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.reference }}
+          version: v0.76.0
+          format: table
+          output: ${{ runner.temp }}/trivy-${{ matrix.component }}.txt
+          exit-code: '1'
+          ignore-unfixed: 'false'
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+
+      - name: Generate the image SBOM
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.reference }}
+          version: v0.76.0
+          format: cyclonedx
+          output: ${{ runner.temp }}/sbom-${{ matrix.component }}.json
+          exit-code: '0'
+
+      - name: Upload the scan report and SBOM
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-scan-${{ matrix.component }}
+          path: |
+            ${{ runner.temp }}/trivy-${{ matrix.component }}.txt
+            ${{ runner.temp }}/sbom-${{ matrix.component }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish the release manifest
+    needs: [release, scan]
+    if: needs.release.outputs.deploy-required == 'true'
+    runs-on: ubuntu-24.04
+    environment: production
+    outputs:
+      release-id: ${{ needs.release.outputs.release-id }}
+      deploy-required: ${{ needs.release.outputs.deploy-required }}
+    steps:
+      - name: Assume the publish role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.OCC_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ secrets.OCC_REGION }}
+
+      - name: Advance the published manifest with a compare-and-set
+        run: |
+          set -euo pipefail
+          release_id="${{ needs.release.outputs.release-id }}"
+          aws s3 cp "s3://$OCC_RELEASE_BUCKET/state/latest-published.json" \
+            "$RUNNER_TEMP/latest-published.json" \
+            || echo '{}' > "$RUNNER_TEMP/latest-published.json"
+          aws s3 cp "s3://$OCC_RELEASE_BUCKET/releases/$release_id.json" \
+            "$RUNNER_TEMP/new-manifest.json"
+          # CAS on the manifest: the candidate is the full release manifest
+          # with the run id as its monotonic sequence. An older or duplicate
+          # sequence is rejected, so out-of-order runs cannot regress the
+          # published record.
+          python3 - "$RUNNER_TEMP" "${{ github.run_id }}" <<'PY'
+          import json
+          import sys
+
+          temp, sequence = sys.argv[1], int(sys.argv[2])
+          candidate = json.load(open(f"{temp}/new-manifest.json", encoding="utf-8"))
+          candidate["sequence"] = sequence
+          try:
+              current = json.load(open(f"{temp}/latest-published.json", encoding="utf-8"))
+          except (FileNotFoundError, json.JSONDecodeError):
+              current = None
+          if current and current.get("releaseId"):
+              current_sequence = current.get("sequence", 0)
+              if candidate["releaseId"] == current.get("releaseId") and \
+                      candidate.get("revision") == current.get("revision"):
+                  raise SystemExit(
+                      "duplicate publication of an already-published release; "
+                      "a refresh must use a new release id")
+              if sequence <= current_sequence:
+                  raise SystemExit(
+                      "candidate sequence is not newer than the published record; "
+                      "an older run cannot replace a newer publication")
+          json.dump(candidate, open(f"{temp}/published-manifest.json", "w",
+                                    encoding="utf-8"), sort_keys=True)
+          PY
+          aws s3 cp "$RUNNER_TEMP/published-manifest.json" \
+            "s3://$OCC_RELEASE_BUCKET/state/latest-published.json"
+
+      - name: Summarize the publication
+        run: |
+          set -euo pipefail
+          {
+            echo "## Published ${{ needs.release.outputs.release-id }}"
+            echo "- latest-published.json now carries the full release manifest"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy to the EC2 host
+    needs: publish
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - name: Check out the CD tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Assume the deploy role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.OCC_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ secrets.OCC_REGION }}
+
+      - name: Deploy the release through SSM and wait for terminal status
+        run: >-
+          python3 scripts/cd/deploy_remote.py deploy
+          --region "${{ secrets.OCC_REGION }}"
+          --instance-id "${{ secrets.OCC_INSTANCE_ID }}"
+          --bucket "${{ secrets.OCC_RELEASE_BUCKET }}"
+          --release-id "${{ needs.publish.outputs.release-id }}"
+          --operation-id "deploy-${{ needs.publish.outputs.release-id }}-${{ github.run_id }}"
+          --sequence "${{ github.run_id }}"
+
+      - name: Summarize the deployment
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            echo "## Deployment ${{ needs.publish.outputs.release-id }}"
+            echo "- outcome: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"

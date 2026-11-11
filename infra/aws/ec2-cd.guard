@@ -1,0 +1,186 @@
+# AWS CloudFormation Guard rules for infra/aws/ec2-cd.yaml.
+# Each rule fails a change set that weakens one of the deployment's security
+# or durability controls. Run:
+#   cfn-guard validate -d infra/aws/ec2-cd.yaml -r infra/aws/ec2-cd.guard
+# Rules address properties through the explicit Properties block: guard 3
+# matches the resource node itself, so this form is required for the rules
+# to evaluate the template's real property values.
+
+rule occ_instance_is_t3_small {
+  # The raw template resolves InstanceType through a parameter, so the
+  # parameter's literal AllowedValues is what this check can enforce.
+  Parameters {
+    InstanceType {
+      AllowedValues == ["t3.small"]
+    }
+  }
+}
+
+rule occ_imdsv2_required {
+  AWS::EC2::Instance {
+    Properties {
+      MetadataOptions {
+        HttpTokens == "required"
+        HttpEndpoint == "enabled"
+      }
+    }
+  }
+}
+
+rule occ_volumes_encrypted {
+  AWS::EC2::Instance {
+    Properties {
+      BlockDeviceMappings[*] {
+        Ebs {
+          Encrypted == true
+        }
+      }
+    }
+  }
+}
+
+rule occ_data_volume_is_retained {
+  AWS::EC2::Instance {
+    Properties {
+      # The durable PostgreSQL data volume survives instance replacement.
+      BlockDeviceMappings[DeviceName == "/dev/xvdf"] {
+        Ebs {
+          DeleteOnTermination == false
+        }
+      }
+    }
+  }
+}
+
+rule occ_root_volume_is_ephemeral {
+  AWS::EC2::Instance {
+    Properties {
+      BlockDeviceMappings[DeviceName == "/dev/xvda"] {
+        Ebs {
+          DeleteOnTermination == true
+        }
+      }
+    }
+  }
+}
+
+# These rules fail closed: every ingress element must avoid the forbidden
+# ports, and removing the ingress list entirely also fails the change set.
+rule occ_no_ssh_ingress {
+  AWS::EC2::SecurityGroup {
+    Properties {
+      SecurityGroupIngress[*] {
+        FromPort != 22
+        ToPort != 22
+      }
+    }
+  }
+}
+
+rule occ_no_database_or_service_ingress {
+  AWS::EC2::SecurityGroup {
+    Properties {
+      SecurityGroupIngress[*] {
+        FromPort != 5432
+        FromPort != 8001
+        FromPort != 8002
+        FromPort != 8003
+      }
+    }
+  }
+}
+
+# The ingress rule must target the AWS-managed prefix list
+# com.amazonaws.global.cloudfront.origin-facing, resolved by the bootstrap
+# tool, never a public CIDR.
+rule occ_origin_restricted_to_prefix_list {
+  AWS::EC2::SecurityGroup {
+    Properties {
+      SecurityGroupIngress[*] {
+        SourcePrefixListId {
+          Ref == "CloudFrontOriginPrefixListId"
+        }
+      }
+    }
+  }
+}
+
+rule occ_bucket_versioned_and_private {
+  AWS::S3::Bucket {
+    Properties {
+      VersioningConfiguration {
+        Status == "Enabled"
+      }
+      PublicAccessBlockConfiguration {
+        BlockPublicPolicy == true
+        RestrictPublicBuckets == true
+      }
+    }
+  }
+}
+
+rule occ_ecr_images_immutable_and_scanned {
+  AWS::ECR::Repository {
+    Properties {
+      ImageTagMutability == "IMMUTABLE"
+      ImageScanningConfiguration {
+        ScanOnPush == true
+      }
+    }
+  }
+}
+
+rule occ_cloudfront_never_caches_errors {
+  AWS::CloudFront::Distribution {
+    Properties {
+      DistributionConfig {
+        CustomErrorResponses[*] {
+          ErrorCachingMinTTL == 0
+        }
+      }
+    }
+  }
+}
+
+rule occ_cloudfront_redirects_viewers_to_https {
+  AWS::CloudFront::Distribution {
+    Properties {
+      DistributionConfig {
+        DefaultCacheBehavior {
+          ViewerProtocolPolicy == "redirect-to-https"
+        }
+      }
+    }
+  }
+}
+
+rule occ_cloudfront_origin_is_http_only {
+  AWS::CloudFront::Distribution {
+    Properties {
+      DistributionConfig {
+        Origins[*] {
+          CustomOriginConfig {
+            OriginProtocolPolicy == "http-only"
+          }
+        }
+      }
+    }
+  }
+}
+
+rule occ_oidc_roles_are_repository_scoped {
+  # Only the OIDC-federated CI/CD roles carry web-identity trust conditions.
+  AWS::IAM::Role {
+    Properties {
+      AssumeRolePolicyDocument {
+        Statement[*] {
+          when Principal.Federated exists {
+            Condition {
+              StringEquals exists
+            }
+          }
+        }
+      }
+    }
+  }
+}
