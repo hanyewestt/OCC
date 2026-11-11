@@ -40,14 +40,11 @@ rule occ_volumes_encrypted {
 }
 
 rule occ_data_volume_is_retained {
-  AWS::EC2::Instance {
+  AWS::EC2::Volume {
+    DeletionPolicy == "Retain"
+    UpdateReplacePolicy == "Retain"
     Properties {
-      # The durable PostgreSQL data volume survives instance replacement.
-      BlockDeviceMappings[DeviceName == "/dev/xvdf"] {
-        Ebs {
-          DeleteOnTermination == false
-        }
-      }
+      Encrypted == true
     }
   }
 }

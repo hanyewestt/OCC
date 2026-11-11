@@ -21,6 +21,7 @@ param(
     [ValidateSet("t3.small")]
     [string]$InstanceType = "t3.small",
     [string]$EnvFile = ".env",
+    [string]$ExistingDataVolumeId = "",
     [switch]$ApplyChangeSet
 )
 
@@ -251,7 +252,20 @@ if ($unrestricted) {
 }
 
 # Create (or reuse) the change set. Nothing is applied without -ApplyChangeSet.
+$dataAvailabilityZone = ""
+if ($ExistingDataVolumeId) {
+    $volume = (Invoke-Aws @("ec2", "describe-volumes", "--volume-ids", $ExistingDataVolumeId) | ConvertFrom-Json).Volumes[0]
+    if (-not $volume -or $volume.State -ne "available" -or -not $volume.Encrypted) {
+        throw "Adoption requires a verified encrypted, detached volume; stop, snapshot and detach it first."
+    }
+    if (-not ($volume.Tags | Where-Object { $_.Key -eq "occ:filesystem-uuid" -and $_.Value })) {
+        throw "Adoption requires the independently verified occ:filesystem-uuid tag; never infer it from a new blank disk."
+    }
+    $dataAvailabilityZone = $volume.AvailabilityZone
+}
 $parameters = @(
+    "ParameterKey=ExistingDataVolumeId,ParameterValue=$ExistingDataVolumeId",
+    "ParameterKey=DataVolumeAvailabilityZone,ParameterValue=$dataAvailabilityZone",
     "ParameterKey=RepositoryName,ParameterValue=$Repository",
     "ParameterKey=InstanceType,ParameterValue=$InstanceType",
     "ParameterKey=OidcProviderArn,ParameterValue=$oidcArn",
@@ -341,6 +355,7 @@ foreach ($name in $envNames.Keys) {
 $deployment["OCC_ORIGIN_PUBLIC_URL"] = $outputs["CloudFrontUrl"]
 $deployment["OCC_NGINX_ORIGIN_PORT"] = "8080"
 $deployment["OCC_COMPOSE_PROJECT"] = "occ-production"
+$deployment["OCC_DATA_VOLUME_ID"] = $outputs["DataVolumeId"]
 $payloadPath = Join-Path ([System.IO.Path]::GetTempPath()) ("occ-secret-" + [guid]::NewGuid().ToString("N") + ".json")
 $payloadUri = "file://" + ($payloadPath -replace '\\', '/')
 try {

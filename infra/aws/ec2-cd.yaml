@@ -32,6 +32,15 @@ Parameters:
     MinValue: 20
     MaxValue: 20
     Description: Root volume (GiB).
+  ExistingDataVolumeId:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^vol-[0-9a-f]{8,17}$'
+    Description: Optional verified retained volume to adopt without formatting.
+  DataVolumeAvailabilityZone:
+    Type: String
+    Default: ""
+    Description: Required availability zone when adopting an existing volume.
   OriginSecretName:
     Type: String
     Default: occ-ec2-cd/origin-secret
@@ -64,6 +73,10 @@ Parameters:
       ARN of the existing GitHub Actions OIDC provider to reuse; the bootstrap
       tool resolves it and never creates a second provider.
 
+Conditions:
+  HasExistingDataVolume: !Not [!Equals [!Ref ExistingDataVolumeId, ""]]
+  CreateDataVolume: !Equals [!Ref ExistingDataVolumeId, ""]
+
 Resources:
   OccVpc:
     Type: AWS::EC2::VPC
@@ -80,7 +93,7 @@ Resources:
     Properties:
       VpcId: !Ref OccVpc
       CidrBlock: !Select [0, !Cidr [!Ref VpcCidr, 4, 8]]
-      AvailabilityZone: !Select [0, !GetAZs ""]
+      AvailabilityZone: !If [HasExistingDataVolume, !Ref DataVolumeAvailabilityZone, !Select [0, !GetAZs ""]]
       MapPublicIpOnLaunch: false
       Tags:
         - Key: Name
@@ -183,6 +196,19 @@ Resources:
             Version: "2012-10-17"
             Statement:
               - Effect: Allow
+                Action: [ec2:DescribeVolumes]
+                Resource: "*"
+              - Effect: Allow
+                Action: [ec2:CreateTags]
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/${VolumeId}"
+                  - VolumeId: !If [HasExistingDataVolume, !Ref ExistingDataVolumeId, !Ref OccDataVolume]
+                Condition:
+                  ForAllValues:StringEquals:
+                    aws:TagKeys: ["occ:filesystem-uuid"]
+                  "Null":
+                    aws:TagKeys: "false"
+              - Effect: Allow
                 Action:
                   - ecr:GetAuthorizationToken
                   - ecr:BatchGetImage
@@ -239,13 +265,6 @@ Resources:
             VolumeType: gp3
             Encrypted: true
             DeleteOnTermination: true
-        - DeviceName: /dev/xvdf
-          Ebs:
-            VolumeSize: !Ref DataVolumeSize
-            VolumeType: gp3
-            Encrypted: true
-            # Durable PostgreSQL storage survives instance replacement.
-            DeleteOnTermination: false
       MetadataOptions:
         HttpEndpoint: enabled
         # Instance credentials require IMDSv2; no fallback to token-less IMDS.
@@ -254,6 +273,27 @@ Resources:
       Tags:
         - Key: Name
           Value: occ-ec2-cd-host
+
+  OccDataVolume:
+    Type: AWS::EC2::Volume
+    Condition: CreateDataVolume
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AvailabilityZone: !GetAtt OccPublicSubnet.AvailabilityZone
+      Size: !Ref DataVolumeSize
+      VolumeType: gp3
+      Encrypted: true
+      Tags:
+        - Key: Name
+          Value: occ-ec2-cd-data
+
+  OccDataAttachment:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdf
+      InstanceId: !Ref OccHost
+      VolumeId: !If [HasExistingDataVolume, !Ref ExistingDataVolumeId, !Ref OccDataVolume]
 
   OccReleaseKey:
     Type: AWS::KMS::Key
@@ -659,6 +699,10 @@ Resources:
             ErrorCachingMinTTL: 0
 
 Outputs:
+  DataVolumeId:
+    Value: !If [HasExistingDataVolume, !Ref ExistingDataVolumeId, !Ref OccDataVolume]
+  DataVolumeAvailabilityZone:
+    Value: !GetAtt OccPublicSubnet.AvailabilityZone
   InstanceId:
     Value: !Ref OccHost
   PublicIp:
