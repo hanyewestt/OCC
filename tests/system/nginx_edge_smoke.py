@@ -28,15 +28,12 @@ def request_status(base_url: str, path: str, headers: dict[str, str] | None = No
 
 def assert_status(base_url: str, label: str, path: str, expected: int,
                   headers: dict[str, str] | None = None, method: str = "GET") -> None:
-    for attempt in range(3):
-        actual = request_status(base_url, path, headers, method)
-        if actual == expected or expected != 200 or actual != 429 or attempt == 2:
-            break
-        # The preceding burst can transiently exhaust the edge rate-limit bucket.
-        time.sleep(1.1)
+    actual = request_status(base_url, path, headers, method)
     if actual != expected:
         raise AssertionError(f"{label}: expected HTTP {expected}, got {actual}")
     print(f"PASS {label}: HTTP {actual}")
+    # Functional assertions are not a load test; stay below the 20 r/s edge limit.
+    time.sleep(0.06)
 
 
 def assert_pacing_event_stream(base_url: str, token: str,
@@ -157,6 +154,8 @@ def main() -> int:
         assert_status(base_url, label, path, expected, headers, method)
 
     if args.token_dir:
+        # Let the fixed-window bucket from the unauthenticated checks reset.
+        time.sleep(1.1)
         token_dir = args.token_dir
         for role in ("admin", "controller"):
             token = (token_dir / f"{role}.jwt").read_text(encoding="utf-8").strip()
