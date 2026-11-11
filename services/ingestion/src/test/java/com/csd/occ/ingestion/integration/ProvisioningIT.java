@@ -148,7 +148,7 @@ class ProvisioningIT {
         try {
             java.nio.file.Files.writeString(secret,"sb_secret_synthetic_fixture");
             var origin=java.net.URI.create("http://127.0.0.1:"+server.getAddress().getPort());
-            var settings=new IdentityProviderProperties(true,origin,secret.toString(),Duration.ofSeconds(5),Duration.ofMinutes(5));
+            var settings=new IdentityProviderProperties(true,origin,secret.toString(),Duration.ofSeconds(5),Duration.ofMinutes(5), "");
             var adapter=new com.csd.occ.ingestion.infrastructure.supabase.SupabaseIdentityProviderAdapter(org.springframework.web.client.RestClient.builder().baseUrl(origin.toString()).build(),settings,json,clock);
             doAnswer(call -> adapter.createUser(call.getArgument(0))).when(provider).createUser(any());
             when(decoder.decode("synthetic-admin-fixture")).thenReturn(org.springframework.security.oauth2.jwt.Jwt.withTokenValue("synthetic-admin-fixture").header("alg","ES256").subject("http-admin").claim("occ_role","ADMIN").issuedAt(now).expiresAt(now.plusSeconds(300)).build());

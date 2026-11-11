@@ -122,7 +122,7 @@ class SupabaseIdentityProviderAdapterTest {
 
     @Test
     void disabledAdapterNeverReadsSecretOrCallsProvider() {
-        var settings = new IdentityProviderProperties(false, null, "", Duration.ofSeconds(5), Duration.ofMinutes(5));
+        var settings = new IdentityProviderProperties(false, null, "", Duration.ofSeconds(5), Duration.ofMinutes(5), "");
         var adapter = new SupabaseIdentityProviderAdapter(RestClient.create(), settings, JsonMapper.builder().build(), Clock.systemUTC());
         assertThatThrownBy(() -> adapter.get(id)).isInstanceOf(IdentityProviderException.class).hasNoCause();
     }
@@ -130,7 +130,7 @@ class SupabaseIdentityProviderAdapterTest {
     private SupabaseIdentityProviderAdapter adapter() throws Exception {
         var file = temporary.resolve("secret");
         Files.writeString(file, "sb_secret_synthetic\n");
-        var settings = new IdentityProviderProperties(true, URI.create("https://provider.test"), file.toString(), Duration.ofSeconds(5), Duration.ofMinutes(5));
+        var settings = new IdentityProviderProperties(true, URI.create("https://provider.test"), file.toString(), Duration.ofSeconds(5), Duration.ofMinutes(5), "");
         var builder = RestClient.builder().baseUrl(settings.projectUrl().toString());
         server = MockRestServiceServer.bindTo(builder).build();
         return new SupabaseIdentityProviderAdapter(builder.build(), settings, JsonMapper.builder().build(),
