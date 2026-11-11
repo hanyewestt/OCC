@@ -6,7 +6,7 @@ ARG OCC_SERVICE
 ARG OCC_SERVICE_INTERNAL_PORT
 
 WORKDIR /workspace
-    RUN sed -i 's#http://archive.ubuntu.com#https://azure.archive.ubuntu.com#g; s#http://security.ubuntu.com#https://azure.archive.ubuntu.com#g; s#https://archive.ubuntu.com#https://azure.archive.ubuntu.com#g; s#https://security.ubuntu.com#https://azure.archive.ubuntu.com#g' /etc/apt/sources.list.d/ubuntu.sources \
+RUN sed -i 's#http://archive.ubuntu.com#https://archive.ubuntu.com#g; s#http://security.ubuntu.com#https://security.ubuntu.com#g' /etc/apt/sources.list.d/ubuntu.sources \
     && echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
     && apt-get update \
     && apt-get install --no-install-recommends -y unzip \
@@ -29,7 +29,7 @@ FROM ${RUNTIME_IMAGE} AS runtime
 ARG OCC_SERVICE
 ARG OCC_SERVICE_INTERNAL_PORT
 
-    RUN sed -i 's#http://archive.ubuntu.com#https://azure.archive.ubuntu.com#g; s#http://security.ubuntu.com#https://azure.archive.ubuntu.com#g; s#https://archive.ubuntu.com#https://azure.archive.ubuntu.com#g; s#https://security.ubuntu.com#https://azure.archive.ubuntu.com#g' /etc/apt/sources.list.d/ubuntu.sources \
+RUN sed -i 's#http://archive.ubuntu.com#https://archive.ubuntu.com#g; s#http://security.ubuntu.com#https://security.ubuntu.com#g' /etc/apt/sources.list.d/ubuntu.sources \
     && echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
     && apt-get update \
     && apt-get upgrade -y \

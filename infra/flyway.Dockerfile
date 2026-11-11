@@ -7,7 +7,7 @@ ARG GUAVA_SHA256=b530942257fb935f8b2cfaa5f8eb5bd59c555fd8e8d01b8ce98912e077ea606
 # This stack migrates PostgreSQL only; omit unused vendor drivers and their
 # vulnerable transitive dependencies from the one-shot migration image. Flyway's
 # GCP driver keeps Guava, so replace it with the CVE-fixed release and verify it.
-RUN sed -i 's#http://archive.ubuntu.com#https://azure.archive.ubuntu.com#g; s#http://security.ubuntu.com#https://azure.archive.ubuntu.com#g; s#https://archive.ubuntu.com#https://azure.archive.ubuntu.com#g; s#https://security.ubuntu.com#https://azure.archive.ubuntu.com#g' /etc/apt/sources.list.d/ubuntu.sources \
+RUN sed -i 's#http://archive.ubuntu.com#https://archive.ubuntu.com#g; s#http://security.ubuntu.com#https://security.ubuntu.com#g' /etc/apt/sources.list.d/ubuntu.sources \
     && echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries \
     && apt-get update \
     && apt-get upgrade -y \
