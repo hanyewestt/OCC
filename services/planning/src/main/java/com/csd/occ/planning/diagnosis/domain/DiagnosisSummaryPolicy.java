@@ -107,20 +107,20 @@ public final class DiagnosisSummaryPolicy {
         String summary;
         if ("TERMINAL_DISPATCH".equalsIgnoreCase(causeSubtype)) {
             summary = String.format(Locale.ROOT,
-                    "Terminal dispatch irregularity: Headway compressed to %s (scheduled: %ds) near route origin at stop %s, consistent with origin berth delay or dispatch spacing deviation.",
-                    observedStr, expected, stop);
+                    "Interchange dispatch gap: Buses departed the interchange too close together, reaching stop %s only %s apart (scheduled: %ds).",
+                    stop, observedStr, expected);
         } else if ("FLEET_CAPACITY_ASYMMETRY".equalsIgnoreCase(causeSubtype)) {
             summary = String.format(Locale.ROOT,
-                    "Fleet capacity asymmetry: Differing vehicle passenger capacities between leading and trailing vehicles accelerated headway compression to %s (scheduled: %ds) at stop %s.",
+                    "Bus size mismatch: Differing vehicle passenger capacities between leading and trailing vehicles accelerated headway compression to %s (scheduled: %ds) at stop %s.",
                     observedStr, expected, stop);
         } else if ("PEAK_CONGESTION".equalsIgnoreCase(causeSubtype)) {
             String timeStr = formatSingaporeTime(event.firstConfirmedAt());
             summary = String.format(Locale.ROOT,
-                    "Peak arterial traffic friction: During rush hour (%s), recurring intersection signal delays and corridor traffic compressed headway from %ds to %s at stop %s.",
+                    "Rush hour traffic: Heavy corridor congestion (%s) slowed the lead bus, shrinking spacing from %ds to %s at stop %s.",
                     timeStr, expected, observedStr, stop);
         } else {
             summary = String.format(Locale.ROOT,
-                    "Cumulative route drift: Long-distance spacing decay on corridor. In the absence of external road incidents, minor dwell variations compounded to %s (scheduled: %ds) at stop %s.",
+                    "Route spacing drift: Trailing bus caught up to %s (scheduled: %ds) at stop %s as small stop delays compounded along the corridor without road incidents.",
                     observedStr, expected, stop);
         }
         return new Summary(truncate(summary, MAX_SUMMARY_LENGTH), List.of());

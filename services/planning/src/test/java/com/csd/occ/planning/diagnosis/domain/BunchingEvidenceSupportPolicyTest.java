@@ -164,7 +164,7 @@ class BunchingEvidenceSupportPolicyTest {
         var driftResult = policy.associate(event(), context, driftOutput, Duration.ofMinutes(15), 1);
         assertThat(driftResult.causeSubtype()).isEqualTo("CUMULATIVE_DRIFT");
         assertThat(driftResult.facts()).anySatisfy(fact -> assertThat(fact).contains("Uniform passenger load category (SEA)"));
-        assertThat(driftResult.limitations()).anySatisfy(lim -> assertThat(lim).contains("Passenger load categories (SEA/SDA/LSD) reflect coarse occupancy tiers"));
+        assertThat(driftResult.limitations()).contains("No nearby incidents: No traffic accidents or roadworks reported along this route.");
     }
 
     @Test
@@ -184,7 +184,7 @@ class BunchingEvidenceSupportPolicyTest {
 
         assertThat(result.causeCode()).isEqualTo("HEADWAY_DECAY");
         assertThat(result.facts()).anySatisfy(fact -> assertThat(fact).contains("Nearest reported traffic incident was", "outside direct corridor impact proximity"));
-        assertThat(result.limitations()).anySatisfy(lim -> assertThat(lim).contains("External traffic incident logs do not show clear proximity or direct impact to the service route monitored."));
+        assertThat(result.limitations()).contains("No nearby incidents: No traffic accidents or roadworks reported along this route.");
     }
 
     private BunchingEvidenceSupportPolicy.AssociatedEvidence associate(List<IncidentEvidence> incidents, ModelOutput output) {

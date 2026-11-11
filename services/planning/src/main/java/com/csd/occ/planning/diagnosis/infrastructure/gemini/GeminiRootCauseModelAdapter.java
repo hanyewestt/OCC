@@ -53,8 +53,7 @@ public class GeminiRootCauseModelAdapter implements RootCauseModelPort {
                Cite event evidence IDs. Use null for causeSubtype.
 
             When formulating limitations, provide concise, realistic operational observations:
-            - Note when uniform passenger load categories (e.g. SEA/SDA) obscure sub-tier boarding variance.
-            - Note when external incident logs show no clear proximity or direct corridor impact.
+            - When no nearby traffic incidents affect the corridor, note "No nearby incidents: No traffic accidents or roadworks reported along this route."
             Do not repeat variations of missing data that are already stated.
             Return only the requested structured fields.
             """;
