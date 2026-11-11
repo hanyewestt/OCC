@@ -9,6 +9,7 @@ from pathlib import Path
 import socket
 import ssl
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -27,6 +28,9 @@ def request_status(base_url: str, path: str, headers: dict[str, str] | None = No
 
 def assert_status(base_url: str, label: str, path: str, expected: int,
                   headers: dict[str, str] | None = None, method: str = "GET") -> None:
+    # Keep permission/routing checks below the edge's shared 20 requests/s limit.
+    # request_status stays unpaced for the explicit concurrent burst test.
+    time.sleep(0.06)
     actual = request_status(base_url, path, headers, method)
     if actual != expected:
         raise AssertionError(f"{label}: expected HTTP {expected}, got {actual}")

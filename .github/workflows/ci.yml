@@ -345,6 +345,19 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Diagnose hosted Docker DNS
+        if: matrix.service == 'ingestion'
+        shell: bash
+        run: |
+          cat /etc/resolv.conf
+          cat /run/systemd/resolve/resolv.conf || true
+          getent ahostsv4 archive.ubuntu.com || true
+          image=$(sed -n 's/^ARG RUNTIME_IMAGE=//p' infra/java.Dockerfile)
+          probe='id; ls -l /etc/resolv.conf; cat /etc/resolv.conf; getent ahostsv4 archive.ubuntu.com; su -s /bin/sh _apt -c "getent ahostsv4 archive.ubuntu.com"'
+          docker run --rm "$image" sh -c "$probe" || true
+          docker run --rm --network host "$image" sh -c "$probe" || true
+          docker run --rm --dns 1.1.1.1 "$image" sh -c "$probe" || true
+          printf 'FROM %s\nRUN %s\n' "$image" "$probe" | docker build --no-cache --progress plain - || true
       - name: Build shared Java application image
         if: ${{ !matrix.migration_source }}
         run: >-
