@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ChevronDown, ChevronRight, Minus, Plus, RotateCcw } from 'lucide-react'
+import { BusFront, ChevronDown, ChevronRight, Minus, Plus, RotateCcw, Wrench } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -228,6 +228,71 @@ export type BusCluster = {
   text: string
 }
 
+type StopLabelCandidate = {
+  stopCode: string
+  x: number
+  y: number
+  affected: boolean
+  selected: boolean
+}
+
+type MapOverlayRect = { x: number; y: number; width: number; height: number }
+
+export function computeStopCodeLabelPositions(
+  stops: StopLabelCandidate[],
+  width: number,
+  height: number,
+  protectedMarkers: MapOverlayRect[] = [],
+): Map<string, MapOverlayRect> {
+  const labels = new Map<string, MapOverlayRect>()
+  if (width <= 0 || height <= 0) return labels
+
+  const markerRects = stops.map(stop => {
+    const radius = stop.selected ? 16 : 9
+    return { stopCode: stop.stopCode, x: stop.x - radius, y: stop.y - radius, width: radius * 2, height: radius * 2 }
+  })
+  const orderedStops = [...stops].sort((a, b) =>
+    Number(b.selected) - Number(a.selected) ||
+    Number(b.affected) - Number(a.affected) ||
+    a.stopCode.localeCompare(b.stopCode),
+  )
+  const placed: MapOverlayRect[] = []
+  const overlaps = (a: MapOverlayRect, b: MapOverlayRect, gap = 0) =>
+    a.x < b.x + b.width + gap && a.x + a.width + gap > b.x &&
+    a.y < b.y + b.height + gap && a.y + a.height + gap > b.y
+
+  for (const stop of orderedStops) {
+    if (stop.x < 0 || stop.x > width || stop.y < 0 || stop.y > height) continue
+
+    const labelWidth = Math.max(32, stop.stopCode.length * 5.5 + 10)
+    const labelHeight = 16
+    const markerRadius = stop.selected ? 16 : 9
+    const offset = markerRadius + 4
+    const candidates = [
+      { x: stop.x + offset, y: stop.y - labelHeight / 2, width: labelWidth, height: labelHeight },
+      { x: stop.x - offset - labelWidth, y: stop.y - labelHeight / 2, width: labelWidth, height: labelHeight },
+      { x: stop.x - labelWidth / 2, y: stop.y - offset - labelHeight, width: labelWidth, height: labelHeight },
+      { x: stop.x - labelWidth / 2, y: stop.y + offset, width: labelWidth, height: labelHeight },
+    ]
+    const otherMarkers = markerRects.filter(marker => marker.stopCode !== stop.stopCode)
+    const position = candidates.find(candidate =>
+      candidate.x >= 2 && candidate.y >= 2 &&
+      candidate.x + candidate.width <= width - 2 && candidate.y + candidate.height <= height - 2 &&
+      !placed.some(label => overlaps(candidate, label, 3)) &&
+      !protectedMarkers.some(marker => overlaps(candidate, marker, 3)) &&
+      !otherMarkers.some(marker => overlaps(candidate, marker, 3)),
+    )
+    if (position) {
+      labels.set(stop.stopCode, position)
+      placed.push(position)
+    }
+  }
+
+  return labels
+}
+
+const STOP_CODE_LABEL_MIN_ZOOM = 15
+
 export function areBusesConfirmedBunched(
   b1: ProjectedBus,
   b2: ProjectedBus,
@@ -418,9 +483,7 @@ export function renderHazardSvg(x: number, y: number, category: HazardCategory) 
       return (
         <g transform={`translate(${x}, ${y})`}>
           <circle r="7.5" fill="#ea580c" stroke="#9a3412" strokeWidth="1" />
-          <path d="M -2.5 3.5 L 1.5 -0.5 M -3 2 L -1.5 3.5" stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round" />
-          <circle cx="2.2" cy="-2.2" r="2.2" fill="none" stroke="#ffffff" strokeWidth="1.3" />
-          <path d="M 1.8 -3.3 L 3.3 -1.8" stroke="#ea580c" strokeWidth="1.2" strokeLinecap="round" />
+          <Wrench x="-4.5" y="-4.5" width={9} height={9} stroke="#ffffff" strokeWidth={2.5} />
         </g>
       )
     case 'accident':
@@ -990,6 +1053,27 @@ export function BunchingMap({
     : []
 
   const busClusters = showBuses ? clusterProjectedBuses(projectedBuses, selectedBuses, incidents, 28) : []
+  const stopCodeLabelPositions = zoom >= STOP_CODE_LABEL_MIN_ZOOM
+    ? computeStopCodeLabelPositions(
+        projectedStops.map(stop => ({
+          stopCode: stop.stopCode,
+          x: stop.x,
+          y: stop.y,
+          affected: stop.affected,
+          selected: selectedStopCodes.has(stop.stopCode),
+        })),
+        width,
+        height,
+        [
+          ...projectedHazards.map(hazard => ({ x: hazard.x - 14, y: hazard.y - 14, width: 28, height: 28 })),
+          ...busClusters.map(cluster => {
+            const markerWidth = cluster.buses.length > 1 ? Math.max(38, cluster.text.length * 8 + 16) + 4 : 32
+            const markerHeight = cluster.buses.length > 1 ? 28 : 32
+            return { x: cluster.x - markerWidth / 2, y: cluster.y - markerHeight / 2, width: markerWidth, height: markerHeight }
+          }),
+        ],
+      )
+    : new Map<string, MapOverlayRect>()
 
   return (
     <div className="overflow-hidden rounded-lg border bg-muted/10">
@@ -1275,6 +1359,7 @@ export function BunchingMap({
             const isDimmed = selectedIncident && !isSelectedStop
             const isAffected = stop.affected
             const hasIncident = isAffected && incidents.some(i => i.stopCodes.includes(stop.stopCode))
+            const labelPosition = stopCodeLabelPositions.get(stop.stopCode)
 
             return (
               <g
@@ -1309,19 +1394,69 @@ export function BunchingMap({
                     className="animate-pulse"
                   />
                 )}
-                <circle
-                  cx={stop.x}
-                  cy={stop.y}
-                  r={isSelectedStop ? 9 : isAffected ? 8 : 4.5}
-                  fill="white"
-                  className="drop-shadow-sm"
-                />
-                <circle
-                  cx={stop.x}
-                  cy={stop.y}
-                  r={isSelectedStop ? 7 : isAffected ? 6 : 3}
-                  fill={isAffected ? '#dc2626' : '#475569'}
-                />
+                {labelPosition ? (
+                  <>
+                    <circle
+                      cx={stop.x}
+                      cy={stop.y}
+                      r={isSelectedStop ? 9 : isAffected ? 8 : 8}
+                      fill={isAffected ? '#dc2626' : '#475569'}
+                      stroke="white"
+                      strokeWidth="1.5"
+                      className="drop-shadow-sm"
+                    />
+                    <BusFront
+                      x={stop.x - 6}
+                      y={stop.y - 6}
+                      width={12}
+                      height={12}
+                      color="white"
+                      strokeWidth={2.5}
+                      aria-hidden="true"
+                    />
+                    <g pointerEvents="none">
+                      <rect
+                        x={labelPosition.x}
+                        y={labelPosition.y}
+                        width={labelPosition.width}
+                        height={labelPosition.height}
+                        rx="5"
+                        fill="white"
+                        fillOpacity="0.96"
+                        stroke={isAffected ? '#fecaca' : '#cbd5e1'}
+                        strokeWidth="1"
+                      />
+                      <text
+                        x={labelPosition.x + labelPosition.width / 2}
+                        y={labelPosition.y + labelPosition.height / 2 + 0.5}
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        fill="#334155"
+                        fontSize="9"
+                        fontWeight="700"
+                        className="select-none"
+                      >
+                        {stop.stopCode}
+                      </text>
+                    </g>
+                  </>
+                ) : (
+                  <>
+                    <circle
+                      cx={stop.x}
+                      cy={stop.y}
+                      r={isSelectedStop ? 9 : isAffected ? 8 : 4.5}
+                      fill="white"
+                      className="drop-shadow-sm"
+                    />
+                    <circle
+                      cx={stop.x}
+                      cy={stop.y}
+                      r={isSelectedStop ? 7 : isAffected ? 6 : 3}
+                      fill={isAffected ? '#dc2626' : '#475569'}
+                    />
+                  </>
+                )}
               </g>
             )
           })}
@@ -2020,7 +2155,14 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
 
   const corridorHazards = useMemo<MapHazard[]>(() => {
     if (!trafficIncidents.length) return []
-    const valid = trafficIncidents.filter(i => validCoord(i.latitude, i.longitude))
+    const isLive = !run?.data
+    const currentDemoRunId = run?.data?.id
+    const valid = trafficIncidents.filter(i => {
+      if (!validCoord(i.latitude, i.longitude)) return false
+      if (isLive && (i.classification === 'SIMULATION' || i.demoRunId)) return false
+      if (!isLive && currentDemoRunId && i.demoRunId && i.demoRunId !== currentDemoRunId) return false
+      return true
+    })
     if (selectedCorridorKey === 'all') {
       return valid.map(i => ({
         id: i.id,
@@ -2041,7 +2183,7 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
         incidentType: i.incidentType,
         message: i.message,
       }))
-  }, [trafficIncidents, selectedCorridorKey, corridorRoutes])
+  }, [trafficIncidents, selectedCorridorKey, corridorRoutes, run])
 
   return <div className="space-y-10">
     <section aria-labelledby="bunching-title" className="space-y-4">
