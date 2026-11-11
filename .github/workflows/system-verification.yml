@@ -68,6 +68,8 @@ jobs:
         if: inputs.suite != 'contracts' && inputs.artifact-run-id == ''
         working-directory: frontend
         run: npm run build
+      - name: Configure hosted runner DNS for image builds
+        run: bash .github/scripts/configure-ci-dns.sh
       - name: Start isolated application stack
         run: |
           set -euo pipefail

@@ -32,8 +32,8 @@ public class AuthController {
     }
 
     @GetMapping(value = "/api/v1/auth/access/{page}", produces = "application/json")
-    @Operation(operationId = "verifyPageAccess", summary = "Verify exclusive controller or captain access",
-            description = "controller requires CONTROLLER; captain requires CAPTAIN. ADMIN has no override.")
+    @Operation(operationId = "verifyPageAccess", summary = "Verify exclusive admin, controller or captain access",
+            description = "admin requires ADMIN; controller requires CONTROLLER; captain requires CAPTAIN. No role has an override.")
     @ApiResponse(responseCode = "200", description = "Role permits this page")
     @ApiResponse(responseCode = "401", description = "Missing, invalid or expired bearer token", content = @Content)
     @ApiResponse(responseCode = "403", description = "Role does not permit this page",

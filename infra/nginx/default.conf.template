@@ -1,6 +1,3 @@
-# Rate limiting keys on the trusted client identity variable that the shared
-# routes define: the socket address on direct TLS, the CloudFront viewer
-# behind the edge.
 limit_req_zone $occ_client_ip zone=occ_api:10m rate=20r/s;
 
 server {

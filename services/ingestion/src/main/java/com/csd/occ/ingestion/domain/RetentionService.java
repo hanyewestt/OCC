@@ -52,7 +52,8 @@ public class RetentionService {
         deletedRows += hazards.deleteExpiredLive(cutoff);
         deletedRows += rawObservations.deleteExpiredLiveObservations(cutoff);
         var protectedRuns = bunching.protectedDemoRuns();
-        for (var run : demos.findExpired(cutoff)) {
+        for (var run : demos.findExpiredForUpdate(cutoff)) {
+            if (!run.expiredAt(cutoff)) continue;
             if (protectedRuns.contains(run.id())) continue;
             deletedRows += arrivals.deleteByDemoRunId(run.id());
             deletedRows += incidents.deleteByDemoRunId(run.id());

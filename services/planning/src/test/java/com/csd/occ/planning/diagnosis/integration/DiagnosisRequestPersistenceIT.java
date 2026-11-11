@@ -17,6 +17,8 @@ import com.csd.occ.planning.diagnosis.domain.RootCauseContext;
 import com.csd.occ.planning.diagnosis.domain.SnapshotCodecPort;
 import com.csd.occ.planning.diagnosis.domain.ConfidenceComponents;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisCompletionService;
+import com.csd.occ.planning.domain.audit.ApplicationAuditRetentionService;
+import com.csd.occ.planning.domain.audit.ApplicationAuditBackfillService;
 import com.csd.occ.planning.diagnosis.domain.ModelInvocationDetails;
 import com.csd.occ.planning.diagnosis.domain.RecommendationDeliveryRepository;
 import com.csd.occ.planning.diagnosis.domain.RootCauseDiagnosis;
@@ -52,6 +54,7 @@ import tools.jackson.databind.json.JsonMapper;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({DiagnosisRequestService.class, DiagnosisRequestPersistenceService.class, DiagnosisCompletionService.class,
+        ApplicationAuditRetentionService.class, ApplicationAuditBackfillService.class,
         JacksonSnapshotCodecAdapter.class, JacksonEventSubmissionFingerprintAdapter.class,
         DiagnosisRequestPersistenceIT.ClockConfiguration.class})
 @Testcontainers(disabledWithoutDocker = true)
@@ -69,6 +72,8 @@ class DiagnosisRequestPersistenceIT {
     @Autowired RecommendationDeliveryRepository deliveries;
     @Autowired DiagnosisCompletionService completion;
     @Autowired JdbcTemplate jdbc;
+    @Autowired ApplicationAuditRetentionService auditRetention;
+    @Autowired ApplicationAuditBackfillService auditBackfill;
     @Autowired EventSubmissionFingerprintPort fingerprints;
     @Autowired SnapshotCodecPort snapshots;
     @org.springframework.test.context.bean.override.mockito.MockitoBean
@@ -78,6 +83,153 @@ class DiagnosisRequestPersistenceIT {
     void clearDiagnosisTables() {
         jdbc.execute("TRUNCATE planning.early_bunching_controller_suggestion, planning.model_invocation_record, "
                 + "planning.recommendation_job, planning.diagnosis_result, planning.planning_request");
+        jdbc.execute("TRUNCATE planning.advisory_model_evidence");
+        jdbc.execute("TRUNCATE planning.application_audit_event");
+    }
+
+    @Test
+    void independentAuditRetentionKeepsStableCollectionStartAndSurvivesOperationalPurge() {
+        UUID requestId = UUID.randomUUID();
+        requests.enqueue(EventType.BUS_BUNCHING, PRODUCER, UUID.randomUUID(), requestId);
+        Instant cutoff = NOW.minus(Duration.ofDays(90));
+        insertAudit(requestId, cutoff.minusNanos(1000), "older");
+        insertAudit(requestId, cutoff, "at-cutoff");
+        insertAudit(requestId, cutoff.plusNanos(1000), "newer");
+
+        assertThat(auditRetention.collectionStartedAt()).isEqualTo(NOW);
+        assertThat(auditRetention.purgeExpired(Duration.ofDays(90))).isEqualTo(1);
+        assertThat(jdbc.queryForList("select source_key from planning.application_audit_event order by source_key", String.class))
+                .containsExactly("at-cutoff", "newer");
+        repository.deleteById(requestId);
+        assertThat(jdbc.queryForObject("select count(*) from planning.application_audit_event where run_id=?", Integer.class, requestId))
+                .isEqualTo(2);
+        jdbc.execute("delete from planning.application_audit_event");
+        assertThat(auditRetention.collectionStartedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void legacyAiBackfillIsSanitizedAndIdempotent() {
+        UUID invocationId = UUID.randomUUID();
+        UUID expiredInvocationId = UUID.randomUUID();
+        UUID requestId = UUID.randomUUID();
+        requests.enqueue(EventType.BUS_BUNCHING, PRODUCER, UUID.randomUUID(), requestId);
+        jdbc.update("insert into planning.model_invocation_record (id, purpose, request_id, attempt_type, attempt_number, provider, model, prompt_version, output_schema_version, started_at, completed_at, latency_millis, outcome, input_snapshot, generated_response) values (?, 'DIAGNOSIS', ?, 'INITIAL', 1, 'GOOGLE_GENAI', 'legacy-model', 'prompt-v1', 'schema-v1', ?, ?, 5, 'INVALID', ?, ?)",
+                invocationId, requestId, java.sql.Timestamp.from(NOW), java.sql.Timestamp.from(NOW),
+                "api_key=legacy-secret", "Authorization: Bearer legacy-secret");
+        jdbc.update("insert into planning.model_invocation_record (id, purpose, request_id, attempt_type, attempt_number, provider, model, prompt_version, output_schema_version, started_at, completed_at, latency_millis, outcome, input_snapshot, generated_response) values (?, 'DIAGNOSIS', ?, 'INITIAL', 1, 'GOOGLE_GENAI', 'expired-model', 'prompt-v1', 'schema-v1', ?, ?, 5, 'INVALID', '{}', '{}')",
+                expiredInvocationId, requestId, java.sql.Timestamp.from(NOW.minus(Duration.ofDays(91))),
+                java.sql.Timestamp.from(NOW.minus(Duration.ofDays(91))));
+        assertThat(auditBackfill.backfillRetainedModelInvocations()).isEqualTo(1);
+        assertThat(auditBackfill.backfillRetainedModelInvocations()).isZero();
+        String details = jdbc.queryForObject("select details::text from planning.application_audit_event where id=?", String.class, invocationId);
+        assertThat(details).contains("[REDACTED]").doesNotContain("legacy-secret");
+        assertThat(jdbc.queryForObject("select backfilled from planning.application_audit_event where id=?", Boolean.class, invocationId)).isTrue();
+        assertThat(jdbc.queryForObject("select count(*) from planning.application_audit_event where id=?", Integer.class, expiredInvocationId)).isZero();
+    }
+
+    @Test
+    void legacyAdvisoryEvidenceBackfillIsSanitizedAndIdempotent() {
+        UUID proposalId = UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
+        UUID runId = UUID.randomUUID();
+        UUID disruptionId = UUID.randomUUID();
+        UUID replacementId = UUID.randomUUID();
+        UUID expiredProposalId = UUID.randomUUID();
+        jdbc.update("insert into planning.advisory_model_evidence (proposal_id, event_id, disruption_id, demo_run_id, bus_id, source_revision_key, candidate_type, model, model_input, model_output, candidate, final_candidate, controller_subject, controller_rationale, replaced_instruction_id, created_at, decided_at) values (?, ?, ?, ?, 'bus-17', 'revision-1', 'HAZARD', 'legacy-model', ?, ?, '{}'::jsonb, '{}'::jsonb, 'controller-subject', ?, ?, ?, ?)",
+                proposalId, eventId, disruptionId, runId, "api_key=legacy-secret", "Authorization: Bearer legacy-secret",
+                "Reviewed response", replacementId, java.sql.Timestamp.from(NOW.minusSeconds(10)), java.sql.Timestamp.from(NOW));
+        UUID siblingProposalId = UUID.randomUUID();
+        jdbc.update("insert into planning.advisory_model_evidence (proposal_id, event_id, disruption_id, demo_run_id, bus_id, source_revision_key, candidate_type, model, model_input, model_output, candidate, created_at) values (?, ?, ?, ?, 'bus-19', 'revision-sibling', 'HAZARD', 'legacy-model', '{}', '{}', '{}'::jsonb, ?)",
+                siblingProposalId, eventId, UUID.randomUUID(), runId, java.sql.Timestamp.from(NOW.minusSeconds(9)));
+        jdbc.update("insert into planning.advisory_model_evidence (proposal_id, event_id, disruption_id, demo_run_id, bus_id, source_revision_key, candidate_type, model, model_input, model_output, candidate, created_at) values (?, ?, ?, ?, 'bus-18', 'revision-old', 'HAZARD', 'legacy-model', '{}', '{}', '{}'::jsonb, ?)",
+                expiredProposalId, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                java.sql.Timestamp.from(NOW.minus(Duration.ofDays(91))));
+
+        assertThat(auditBackfill.backfillRetainedModelInvocations()).isEqualTo(2);
+        assertThat(auditBackfill.backfillRetainedModelInvocations()).isZero();
+        String details = jdbc.queryForObject("select details::text from planning.application_audit_event where source_key=?", String.class,
+                "legacy-advisory-evidence:" + proposalId);
+        assertThat(details).contains("[REDACTED]").doesNotContain("legacy-secret");
+        assertThat(jdbc.queryForObject("select backfilled from planning.application_audit_event where source_key=?", Boolean.class,
+                "legacy-advisory-evidence:" + proposalId)).isTrue();
+        assertThat(jdbc.queryForObject("select actor_subject from planning.application_audit_event where source_key=?", String.class,
+                "legacy-advisory-evidence:" + proposalId)).isEqualTo("controller-subject");
+        assertThat(jdbc.queryForObject("select category from planning.application_audit_event where source_key=?", String.class,
+                "legacy-advisory-evidence:" + proposalId)).isEqualTo("ADVISORIES");
+        assertThat(jdbc.queryForObject("select id from planning.application_audit_event where source_key=?", UUID.class,
+                "legacy-advisory-evidence:" + siblingProposalId)).isEqualTo(UUID.nameUUIDFromBytes(
+                        ("legacy-advisory-evidence:" + siblingProposalId).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        assertThat(jdbc.queryForObject("select correlation_id from planning.application_audit_event where source_key=?", String.class,
+                "legacy-advisory-evidence:" + siblingProposalId)).isEqualTo(eventId.toString());
+        assertThat(jdbc.queryForObject("select count(*) from planning.application_audit_event where source_key=?", Integer.class,
+                "legacy-advisory-evidence:" + expiredProposalId)).isZero();
+    }
+
+    @Test
+    void legacyEvidenceRetentionPurgesExpiredRowsButProtectsCurrentWorkAndAuditSnapshots() {
+        UUID currentRequestId = UUID.randomUUID();
+        UUID completedRequestId = UUID.randomUUID();
+        requests.enqueue(EventType.BUS_BUNCHING, PRODUCER, UUID.randomUUID(), currentRequestId);
+        requests.enqueue(EventType.BUS_BUNCHING, PRODUCER, UUID.randomUUID(), completedRequestId);
+        jdbc.update("update planning.planning_request set status='COMPLETED', updated_at=? where id=?",
+                java.sql.Timestamp.from(NOW.minus(Duration.ofDays(91))), completedRequestId);
+        UUID currentAttemptId = insertLegacyInvocation(currentRequestId, NOW.minus(Duration.ofDays(91)));
+        UUID expiredAttemptId = insertLegacyInvocation(completedRequestId, NOW.minus(Duration.ofDays(91)));
+
+        UUID pendingProposal = UUID.randomUUID();
+        UUID activeProposal = UUID.randomUUID();
+        UUID obsoleteProposal = UUID.randomUUID();
+        insertProposal(pendingProposal, "PENDING", NOW.minus(Duration.ofDays(91)));
+        insertProposal(activeProposal, "APPROVED", NOW.minus(Duration.ofDays(91)));
+        UUID activeCaptain = UUID.randomUUID();
+        insertInstruction(activeProposal, activeCaptain, NOW.minus(Duration.ofDays(91)));
+        insertAdvisoryEvidence(pendingProposal, NOW.minus(Duration.ofDays(91)));
+        insertAdvisoryEvidence(activeProposal, NOW.minus(Duration.ofDays(91)));
+        insertAdvisoryEvidence(obsoleteProposal, NOW.minus(Duration.ofDays(91)));
+        insertAudit(currentRequestId, NOW.minus(Duration.ofDays(30)), "retained-snapshot");
+
+        assertThat(auditRetention.purgeExpired(Duration.ofDays(90))).isEqualTo(2);
+        assertThat(jdbc.queryForObject("select count(*) from planning.model_invocation_record where id=?", Integer.class, currentAttemptId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from planning.model_invocation_record where id=?", Integer.class, expiredAttemptId)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from planning.advisory_model_evidence where proposal_id=?", Integer.class, pendingProposal)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from planning.advisory_model_evidence where proposal_id=?", Integer.class, activeProposal)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from planning.advisory_model_evidence where proposal_id=?", Integer.class, obsoleteProposal)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from planning.application_audit_event where source_key='retained-snapshot'", Integer.class)).isEqualTo(1);
+    }
+
+    private UUID insertLegacyInvocation(UUID requestId, Instant occurredAt) {
+        UUID id = UUID.randomUUID();
+        jdbc.update("insert into planning.model_invocation_record (id, purpose, request_id, attempt_type, attempt_number, provider, model, prompt_version, output_schema_version, started_at, completed_at, latency_millis, outcome, input_snapshot, generated_response) values (?, 'DIAGNOSIS', ?, 'INITIAL', 1, 'GOOGLE_GENAI', 'legacy-model', 'prompt-v1', 'schema-v1', ?, ?, 5, 'INVALID', '{}', '{}')",
+                id, requestId, java.sql.Timestamp.from(occurredAt), java.sql.Timestamp.from(occurredAt));
+        return id;
+    }
+
+    private void insertProposal(UUID id, String status, Instant createdAt) {
+        if ("APPROVED".equals(status)) {
+            jdbc.update("insert into planning.advisory_proposal (id,event_id,disruption_id,demo_run_id,bus_id,status,preview,context,bus,candidate,model,model_input,model_output,created_at,source_revision_key,candidate_type,final_candidate,controller_subject,decided_at) values (?, ?, ?, ?, ?, ?, 'review', '{}'::jsonb, '{}'::jsonb, '{\"type\":\"BE_CAUTIOUS\"}'::jsonb, 'legacy-model', '{}', '{}', ?, 'revision-retention', 'BE_CAUTIOUS', '{\"type\":\"BE_CAUTIOUS\"}'::jsonb, 'controller', ?)",
+                    id, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "bus-" + id, status,
+                    java.sql.Timestamp.from(createdAt), java.sql.Timestamp.from(createdAt));
+        } else {
+            jdbc.update("insert into planning.advisory_proposal (id,event_id,disruption_id,demo_run_id,bus_id,status,preview,context,bus,candidate,model,model_input,model_output,created_at,source_revision_key,candidate_type) values (?, ?, ?, ?, ?, ?, 'review', '{}'::jsonb, '{}'::jsonb, '{\"type\":\"BE_CAUTIOUS\"}'::jsonb, 'legacy-model', '{}', '{}', ?, 'revision-retention', 'BE_CAUTIOUS')",
+                    id, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "bus-" + id, status,
+                    java.sql.Timestamp.from(createdAt));
+        }
+    }
+
+    private void insertAdvisoryEvidence(UUID proposalId, Instant createdAt) {
+        jdbc.update("insert into planning.advisory_model_evidence (proposal_id,event_id,disruption_id,demo_run_id,bus_id,source_revision_key,candidate_type,model,model_input,model_output,candidate,created_at) values (?, ?, ?, ?, 'bus-retention', 'revision-retention', 'HAZARD', 'legacy-model', '{}', '{}', '{}'::jsonb, ?)",
+                proposalId, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), java.sql.Timestamp.from(createdAt));
+    }
+
+    private void insertInstruction(UUID proposalId, UUID captainId, Instant issuedAt) {
+        jdbc.update("insert into planning.issued_instruction (id,proposal_id,disruption_id,demo_run_id,bus_id,captain_user_id,type,parameters,message,hazard_classification,controller_subject,status,issued_at,acknowledgement_deadline) values (?, ?, ?, ?, 'bus-retention', ?, 'BE_CAUTIOUS', '{}'::jsonb, 'Caution', 'OBSERVATION_ONLY', 'controller', 'ISSUED', ?, ?)",
+                UUID.randomUUID(), proposalId, UUID.randomUUID(), UUID.randomUUID(), captainId,
+                java.sql.Timestamp.from(issuedAt), java.sql.Timestamp.from(issuedAt.plus(Duration.ofHours(1))));
+    }
+
+    private void insertAudit(UUID runId, Instant occurredAt, String sourceKey) {
+        jdbc.update("insert into planning.application_audit_event (id, occurred_at, recorded_at, category, event_type, outcome, source_service, actor_type, entity_type, entity_id, run_id, summary, details, source_key) values (?, ?, ?, 'OPERATIONS', 'RETENTION_TEST', 'SUCCESS', 'PLANNING', 'SYSTEM', 'RUN', ?, ?, 'test event', '{}'::jsonb, ?)",
+                UUID.randomUUID(), java.sql.Timestamp.from(occurredAt), java.sql.Timestamp.from(NOW), runId.toString(), runId, sourceKey);
     }
 
     @Test
@@ -388,6 +540,14 @@ class DiagnosisRequestPersistenceIT {
                 Integer.class, requestId)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM planning.recommendation_job", Integer.class))
                 .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM planning.application_audit_event WHERE event_type='AI_DIAGNOSIS_ATTEMPT'", Integer.class))
+                .isEqualTo(1);
+        String auditDetails = jdbc.queryForObject("SELECT details::text FROM planning.application_audit_event WHERE event_type='AI_DIAGNOSIS_ATTEMPT'", String.class);
+        assertThat(auditDetails).contains("[REDACTED]").doesNotContain("synthetic-secret");
+        String legacyResponse = jdbc.queryForObject("SELECT generated_response FROM planning.model_invocation_record WHERE request_id = ?", String.class, requestId);
+        String legacyInput = jdbc.queryForObject("SELECT input_snapshot FROM planning.model_invocation_record WHERE request_id = ?", String.class, requestId);
+        assertThat(legacyResponse).contains("[REDACTED]").doesNotContain("synthetic-secret");
+        assertThat(legacyInput).contains("[REDACTED]").doesNotContain("synthetic-secret");
     }
 
     @Test
@@ -537,10 +697,13 @@ class DiagnosisRequestPersistenceIT {
 
     private ModelInvocationDetails invocation(String provider, String model) {
         return new ModelInvocationDetails(provider, model, "synthetic-response", "prompt-v1", "schema-v1",
-                NOW, NOW, 0, 1, 1, 2, "VALID", null, 1);
+                NOW, NOW, 0, 1, 1, 2, "VALID", null, 1, "api_key=synthetic-secret",
+                "Authorization: Bearer synthetic-secret");
     }
 
     @org.springframework.boot.test.context.TestConfiguration(proxyBeanMethods = false)
+    @org.springframework.boot.context.properties.EnableConfigurationProperties(
+            com.csd.occ.planning.infrastructure.config.AuditRetentionProperties.class)
     static class ClockConfiguration {
         @org.springframework.context.annotation.Bean
         java.time.Clock diagnosisTestClock() {

@@ -21,10 +21,14 @@ function publish(next: AuthState) {
 }
 
 async function verify(session: Session | null) {
+  // The SDK repeats SIGNED_IN on tab focus and emits TOKEN_REFRESHED for the same user. Re-verifying that user
+  // keeps the signed-in page mounted; only a different or first session shows the session check.
+  const verified = state.status === 'ready' && session !== null && state.identity?.subject === session.user.id ? state : null
+  if (verified && verified.session?.access_token === session?.access_token) return
   const attempt = ++revision
   verification?.abort()
   verification = new AbortController()
-  publish({ status: session ? 'loading' : 'signedOut', session, identity: null, message: '' })
+  if (!verified) publish({ status: session ? 'loading' : 'signedOut', session, identity: null, message: '' })
   if (!session) return
   try {
     const identity = await identityRequest('/api/v1/auth/session', session.access_token, verification.signal)
@@ -36,6 +40,9 @@ async function verify(session: Session | null) {
     if (error instanceof ApiError && error.status === 401) {
       // Clear invalid sessions outside the SDK's auth-event callback lock.
       void signOut('Your session has expired. Sign in again.')
+    } else if (verified) {
+      // A transient failure keeps the verified user; the backend still rejects the token if it is invalid.
+      publish({ ...verified, session })
     } else {
       publish({ status: 'error', session, identity: null, message: 'Unable to verify your session. Try again.' })
     }

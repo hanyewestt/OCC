@@ -12,21 +12,17 @@ second copy of the PR checks. Its independent jobs cover:
 | Job | Coverage |
 | --- | --- |
 | Launcher and setup checks | Bash and PowerShell startup, reset/clear, pgAdmin actions and failure handling on Windows and Linux, using fake Docker/npm commands. |
-| Reactor tests and migration checks | All three Java services, unit/slice tests, database integration tests and contract export; no skipped tests allowed. The verified JARs are packaged as run/SHA-bound artifacts and inspected for the committed contracts, shared Swagger UI page, Jackson JavaTime support and the absence of test-only springdoc. |
-| Frontend checks | Reproducible install, lint, TypeScript and production build. The verified dist is packaged as a checksummed artifact. |
-| Packaging | The `package-images` job verifies the artifact bundle against the exact run and SHA, stages narrow build contexts, builds the three runtime images, the web edge image and the combined db-setup image, and saves digest-preserving OCI archives with recorded image IDs. |
-| Configuration and API contract checks | Example Compose configurations, the immutable-image overlay with placeholder digests, OpenAPI validation and API compatibility baselines. |
+| Reactor tests and migration checks | All three Java services, unit/slice tests, database integration tests and contract export; no skipped tests allowed. |
+| Frontend checks | Reproducible install, lint, TypeScript and production build. |
+| Configuration and API contract checks | Example Compose configurations, OpenAPI validation and API compatibility baselines. |
 | Live API contract comparison | Running service definitions match the committed OpenAPI files. |
-| Nginx and authentication smoke | HTTP/HTTPS routes to all three services, assets, 401/403 role rules, hidden endpoints, rate limits, SSE streaming and static hosting with a backend stopped. Smoke and contract runs load the exact packaged images and dist from the same run instead of recompiling them. |
-| Security scans | Repository secrets/configuration plus all application, migration and web images, scanned after loading the exact packaged bytes; the pinned Nginx base image keeps its own scan. |
+| Nginx and authentication smoke | HTTP/HTTPS routes to all three services, assets, 401/403 role rules, hidden endpoints, rate limits, SSE streaming and static hosting with a backend stopped. |
+| Security scans | Repository secrets/configuration and all application, migration and Nginx images. |
 
-The reactor and frontend jobs feed `package-images`; the image scans and the
-system verification callers consume its packaged images. Extended verification
-still builds from source because its runs produce no artifacts, and manual
-system-verification runs keep that source-build fallback. A contract failure
-does not prevent the routing/authentication job from running. Within a job,
-later steps still stop after a failure; security scan reports and
-disposable-stack cleanup use `always()` where needed.
+These jobs do not depend on one another. A contract failure does not prevent
+the routing/authentication job from running. Within a job, later steps still
+stop after a failure; security scan reports and disposable-stack cleanup use
+`always()` where needed.
 
 [`Extended verification`](../.github/workflows/extended-verification.yml) runs
 on PRs changing `services/`, `infra/`, root Compose files, Maven build files,
@@ -166,6 +162,11 @@ Controller browser tests cover dashboard navigation, simulation controls,
 bunching arrival evidence and approve/reject controls. These use mocked APIs
 and do not record decisions in a real database. Edge checks verify that retired
 `/demo.html` and `/auth.js` URLs return 404 and are absent from the build.
+Admin browser tests cover verified admin routing, sidebar navigation, account
+search/details/synchronization, controller/captain provisioning outcomes, audit
+filters and escaped evidence. Mocked
+browser tests exercise workflows and do not replace the PostgreSQL concurrency
+tests or the isolated Nginx role-matrix smoke checks.
 
 ## System verification
 

@@ -3,9 +3,140 @@
 OCC deploys as one Docker Compose stack on a single host: PostgreSQL/PostGIS,
 the three JVM services (ingestion, disruption, planning), the combined
 db-setup migration image and the Nginx edge. This document describes the
-deployment model and the commit triggers that feed it. Infrastructure
-provisioning, lifecycle controls and recovery procedures are added as the
-EC2 CD work lands.
+deployment model, infrastructure provisioning, first release, lifecycle
+controls and recovery procedures.
+
+## First deployment from PowerShell
+
+Run these steps from the repository root. Prerequisites are PowerShell 7,
+Python 3.11+, AWS CLI v2 with authenticated deployment access, and authenticated
+`gh` access to the repository. Select the intended AWS CLI profile first if you
+use more than one account.
+
+### 1. Resolve the current AWS provisioning blockers
+
+The last verified `occ-ec2-cd` stack was `ROLLBACK_COMPLETE`. Inspect it with
+`aws cloudformation list-stack-resources --stack-name occ-ec2-cd --region us-east-1`.
+Only after confirming every old resource is `DELETE_COMPLETE`, remove that
+failed stack record with `aws cloudformation delete-stack`, followed by
+`aws cloudformation wait stack-delete-complete`, supplying the same stack name
+and region to both commands. Preserve unrelated EC2 instances, volumes, the OIDC
+provider and the customer-managed egress list.
+
+Resolve the security-group quotas with AWS Support before recreating the stack.
+The existing egress list reserves 1,000 entries, which leaves no room for its
+two DNS rules. For this single-group design, a reviewed combination is prefix
+capacity **998**, rule quota **1,000**, and groups-per-ENI quota **1**. The quota
+change is regional/account-wide: check existing ENIs before accepting the
+one-group limit. Approval of the old 1,000-rule request alone does not solve it.
+Resize only the reviewed prefix list after the quotas permit it; preserve its
+entries. `bootstrap.ps1` checks the actual values and refuses an invalid fit.
+
+### 2. Prepare settings and review the infrastructure change set
+
+Populate the ignored root `.env` with real database passwords, peer tokens,
+DataMall/Gemini settings, Supabase project/JWKS settings and its public browser
+key. Main's identity integration additionally needs a backend-only modern
+`OCC_IDENTITY_SECRET_KEY=sb_secret_...` when `OCC_IDENTITY_ENABLED=true`.
+Complete the [Supabase identity rollout](../infra/supabase/README.md) before
+enabling that integration. Alternatively, explicitly set
+`OCC_IDENTITY_ENABLED=false` to run without its account-provisioning/directory
+features. These are production settings; dedicated Supabase test accounts are
+not needed. Use the inline backend key for this CD configuration; a workstation
+secret-file path is not automatically mounted onto EC2.
+
+```powershell
+python -m pip install -r scripts/cd/requirements.txt
+gh auth status
+aws sts get-caller-identity
+$Repository = gh repo view --json nameWithOwner --jq .nameWithOwner
+pwsh scripts/cd/bootstrap.ps1 -Repository $Repository -EnvFile .env
+```
+
+Review the printed CloudFormation change set, then apply the reviewed change set:
+
+```powershell
+pwsh scripts/cd/bootstrap.ps1 -Repository $Repository -EnvFile .env -ApplyChangeSet
+```
+
+Bootstrap creates the roles/resources, imports settings into Secrets Manager,
+initializes a new deployment as **paused**, and configures GitHub repository
+variables plus the main-only `production` environment and its role/repository
+secrets. It does not prepare the operating system or run the application yet.
+
+### 3. Prepare the new EC2 host through SSM
+
+Wait until the new instance is Online in Systems Manager. The following sends
+the two local bootstrap files to that instance without SSH or a public SSH port.
+Use `OCC_INITIALIZE_DATA_VOLUME=true` only for the brand-new blank volume that
+this stack created; omit that export when adopting a retained volume.
+
+```powershell
+$Region = 'us-east-1'
+$StackName = 'occ-ec2-cd'
+$outputs = @{}
+$stack = aws cloudformation describe-stacks --stack-name $StackName --region $Region | ConvertFrom-Json
+$stack.Stacks[0].Outputs | ForEach-Object { $outputs[$_.OutputKey] = $_.OutputValue }
+$adoptedVolume = ($stack.Stacks[0].Parameters | Where-Object ParameterKey -eq ExistingDataVolumeId).ParameterValue
+$account = aws sts get-caller-identity --query Account --output text
+$commands = @('set -eu', 'umask 077', 'mkdir -p /opt/occ/bootstrap')
+foreach ($name in @('bootstrap-host.sh', 'volume.py')) {
+    $encoded = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $PWD "scripts/cd/$name")))
+    $commands += "printf '%s' '$encoded' | base64 --decode > /opt/occ/bootstrap/$name"
+}
+$commands += @(
+    "export AWS_DEFAULT_REGION='$Region' OCC_REGION='$Region' OCC_ACCOUNT_ID='$account'",
+    "export OCC_DATA_VOLUME_ID='$($outputs['DataVolumeId'])'",
+    "export OCC_DEPLOYMENT_SECRET_NAME='$($outputs['DeploymentSecretName'])'",
+    "export OCC_ORIGIN_SECRET_NAME='$($outputs['OriginSecretName'])'"
+)
+if ([string]::IsNullOrWhiteSpace($adoptedVolume)) {
+    $commands += 'export OCC_INITIALIZE_DATA_VOLUME=true'
+}
+$commands += 'sh /opt/occ/bootstrap/bootstrap-host.sh'
+$parameters = Join-Path ([IO.Path]::GetTempPath()) ('occ-host-' + [guid]::NewGuid() + '.json')
+try {
+    [IO.File]::WriteAllText($parameters, (@{commands=$commands; executionTimeout=@('1800')} | ConvertTo-Json -Depth 4))
+    aws ssm send-command --region $Region --instance-ids $outputs['InstanceId'] `
+        --document-name AWS-RunShellScript --timeout-seconds 600 `
+        --parameters ("file://" + ($parameters -replace '\\','/')) `
+        --query Command.CommandId --output text
+} finally {
+    Remove-Item -LiteralPath $parameters -Force
+}
+```
+
+Wait for that command's **Success** status in Systems Manager Run Command and
+inspect its output. Verify the UUID-mounted data volume and enabled
+`occ-backup.timer` before proceeding. A failed command must be fixed before a
+resume; do not format an existing filesystem to bypass an identity check.
+
+### 4. Enable the workflows on main and start the application
+
+Push this branch and merge its reviewed PR into the repository's `main` branch.
+Merging `origin/main` into this feature branch alone does not activate CD.
+The first Main verification run builds/tests/scans a candidate; Release and
+deploy publishes it while the paused intent prevents application deployment.
+For an explicit first rebuild or retry after setup, run:
+
+```powershell
+gh workflow run verify.yml --repo $Repository --ref main -f refresh=rebuild
+gh run list --repo $Repository --workflow verify.yml --branch main --limit 3
+```
+
+Wait for **Main verification** and **Release and deploy** to succeed. Then resume:
+
+```powershell
+gh workflow run environment-control.yml --repo $Repository --ref main -f action=resume
+```
+
+After that run succeeds, open the stack's `CloudFrontUrl` output. It provides
+HTTPS with the AWS certificate; no custom domain or certificate is required.
+Subsequent eligible pushes to `main` deploy automatically while running.
+`action=pause` gracefully stops the stack and EC2; `action=resume` starts the
+newest eligible release without rebuilding; `action=status` reports state.
+While paused, pushes can publish releases without waking the host. Recovery
+uses `action=recover -f recovery-operation-id=<the active ID shown by status>`.
 
 ## Deployment triggers
 
@@ -249,8 +380,8 @@ Capacity qualification on the real 2 GiB host (cold/warm start with the
 retained tuning, full reference import/polling, setup with writers stopped,
 image pull/extract, backup/autovacuum/restart, representative authenticated
 and SSE load, MemAvailable, cgroup OOM counters, swap growth, standard-credit
-depletion) remains an authorized-rollout measurement; the historical idle
-sample in [PERFORMANCE.md](PERFORMANCE.md) is not capacity evidence.
+depletion) remains an authorized-rollout measurement; local test results do
+not establish capacity on the EC2 host.
 
 ## Cleanup and security refresh
 

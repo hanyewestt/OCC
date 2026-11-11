@@ -6,6 +6,7 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
 import jakarta.persistence.Column;
+import com.csd.occ.planning.domain.audit.AuditEvidenceSanitizer;
 
 @Entity
 @Table(name = "model_invocation_record", schema = "planning")
@@ -21,8 +22,8 @@ public class ModelInvocationRecord {
         completionTokens = details.completionTokens(); totalTokens = details.totalTokens();
         validationOutcome = details.validationOutcome(); failureCategory = details.failureCategory();
         this.evidenceSnapshotHash = evidenceSnapshotHash;
-        inputSnapshot = details.inputSnapshot();
-        generatedResponse = details.generatedResponse();
+        inputSnapshot = AuditEvidenceSanitizer.sanitizeText(details.inputSnapshot());
+        generatedResponse = AuditEvidenceSanitizer.sanitizeText(details.generatedResponse());
     }
     @Id private UUID id;
     private String purpose;
@@ -54,6 +55,9 @@ public class ModelInvocationRecord {
     public UUID id() { return id; }
     public String purpose() { return purpose; }
     public UUID requestId() { return requestId; }
+    public UUID correlationId() { return correlationId; }
+    public String inputSnapshot() { return inputSnapshot; }
+    public String generatedResponse() { return generatedResponse; }
     public UUID recommendationId() { return recommendationId; }
     public String provider() { return provider; }
     public String configuredModel() { return configuredModel; }

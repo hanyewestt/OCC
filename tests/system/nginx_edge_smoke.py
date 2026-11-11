@@ -16,6 +16,15 @@ import urllib.request
 from collections import Counter
 
 
+ORIGIN_SECRET_HEADERS: dict[str,str] = {}
+
+
+def open_url(base_url: str, path: str):
+    """Open a path with the edge's origin secret when one is configured."""
+    request = urllib.request.Request(base_url + path, headers=ORIGIN_SECRET_HEADERS)
+    return urllib.request.urlopen(request, context=ssl._create_unverified_context(), timeout=10)
+
+
 def request_status(base_url: str, path: str, headers: dict[str, str] | None = None,
                    method: str = "GET") -> int:
     request = urllib.request.Request(base_url + path,
@@ -28,19 +37,11 @@ def request_status(base_url: str, path: str, headers: dict[str, str] | None = No
         return response.code
 
 
-# Populated from --origin-secret-file: the CloudFront origin edge refuses
-# requests that do not carry the deployment's secret header.
-ORIGIN_SECRET_HEADERS: dict[str, str] = {}
-
-
-def open_url(base_url: str, path: str):
-    """Open a path with the edge's origin secret when one is configured."""
-    request = urllib.request.Request(base_url + path, headers=ORIGIN_SECRET_HEADERS)
-    return urllib.request.urlopen(request, context=ssl._create_unverified_context(), timeout=10)
-
-
 def assert_status(base_url: str, label: str, path: str, expected: int,
                   headers: dict[str, str] | None = None, method: str = "GET") -> None:
+    # Keep permission/routing checks below the edge's shared 20 requests/s limit.
+    # request_status stays unpaced for the explicit concurrent burst test.
+    time.sleep(0.06)
     actual = request_status(base_url, path, headers, method)
     if actual != expected:
         raise AssertionError(f"{label}: expected HTTP {expected}, got {actual}")
@@ -105,30 +106,27 @@ def main() -> int:
     parser.add_argument("--base-url", default="https://127.0.0.1:18443")
     parser.add_argument("--token-dir", type=Path)
     parser.add_argument("--static-only", action="store_true")
-    parser.add_argument("--origin-secret-file", type=Path,
-                        help="File holding the CloudFront origin secret; every request "
-                             "carries it as X-OCC-Origin-Secret")
-    parser.add_argument("--max-heartbeat-gap", type=float,
-                        help="Assert the measured SSE heartbeat gap stays below this many seconds")
+    parser.add_argument("--origin-secret-file",type=Path)
+    parser.add_argument("--max-heartbeat-gap",type=float)
     args = parser.parse_args()
     if args.origin_secret_file:
-        ORIGIN_SECRET_HEADERS = {
-            "X-OCC-Origin-Secret": args.origin_secret_file.read_text(encoding="utf-8").strip()
-        }
+        ORIGIN_SECRET_HEADERS = {"X-OCC-Origin-Secret":args.origin_secret_file.read_text(encoding="utf-8").strip()}
     base_url = args.base_url.rstrip("/")
 
     root = Path(__file__).resolve().parents[2]
     html = (root / "frontend/dist/index.html").read_bytes()
     try:
-        open_url(base_url, "/not-a-page")
+        open_url(base_url,"/not-a-page")
         raise AssertionError("Unknown website route did not return 404")
     except urllib.error.HTTPError as response:
         if response.code != 404 or response.read() != (root / "frontend/dist/404.html").read_bytes():
             raise AssertionError("Unknown website route does not serve the custom 404 artifact")
     print("PASS custom website error page retains HTTP 404")
-    for route in ("/", "/login", "/notices", "/controller", "/controller/disruptions",
-                  "/controller/planning", "/controller/notices", "/controller/audit", "/captain", "/401", "/403", "/404"):
-        with open_url(base_url, route) as response:
+    for route in ("/", "/login", "/notices", "/admin", "/admin/audit", "/admin/accounts",
+                  "/admin/accounts/new", "/controller", "/controller/disruptions",
+                  "/controller/planning", "/controller/notices", "/controller/audit", "/controller/captains",
+                  "/captain", "/401", "/403", "/404"):
+        with open_url(base_url,route) as response:
             if response.read() != html or "text/html" not in response.headers.get("Content-Type", ""):
                 raise AssertionError(f"{route}: response differs from the React entry HTML")
             if response.headers.get("X-Content-Type-Options") != "nosniff":
@@ -137,7 +135,7 @@ def main() -> int:
     for asset in (root / "frontend/dist/assets").iterdir():
         if not asset.is_file():
             continue
-        with open_url(base_url, "/assets/" + asset.name) as response:
+        with open_url(base_url,"/assets/"+asset.name) as response:
             if response.read() != asset.read_bytes():
                 raise AssertionError("Built asset mismatch")
             mime = response.headers.get("Content-Type", "")
@@ -148,7 +146,7 @@ def main() -> int:
     for removed_asset in ("demo.html", "auth.js"):
         if (root / "frontend/dist" / removed_asset).exists():
             raise AssertionError(f"Retired asset remains in the build: {removed_asset}")
-    for route in ("/demo.html", "/auth.js", "/obu-pacing.html", "/auth-test", "/auth-test/", "/auth-test/index.html", "/auth-test/callback", "/assets/missing.js", "/admin", "/controller/unknown"):
+    for route in ("/demo.html", "/auth.js", "/obu-pacing.html", "/auth-test", "/auth-test/", "/auth-test/index.html", "/auth-test/callback", "/assets/missing.js", "/admin/unknown", "/controller/unknown"):
         assert_status(base_url, "retired or unknown path " + route, route, 404)
     if args.static_only:
         return 0
@@ -158,7 +156,12 @@ def main() -> int:
         ("public frontend configuration", "/frontend-config", 200, None, "GET"),
         ("verified session requires a token", "/api/v1/auth/session", 401, None, "GET"),
         ("page access requires a token", "/api/v1/auth/access/controller", 401, None, "GET"),
+        ("admin page access requires a token", "/api/v1/auth/access/admin", 401, None, "GET"),
         ("ingestion namespace reaches Ingestion", "/api/v1/ingestion/arrivals?page=0&size=1", 401, None, "GET"),
+        ("account browsing requires a token", "/api/v1/ingestion/admin/users?page=0&size=1", 401, None, "GET"),
+        ("Ingestion audit requires a token", "/api/v1/ingestion/admin/audit-events?page=0&size=1", 401, None, "GET"),
+        ("Disruption audit requires a token", "/api/v1/disruption/admin/audit-events?page=0&size=1", 401, None, "GET"),
+        ("Planning audit requires a token", "/api/v1/planning/admin/audit-events?page=0&size=1", 401, None, "GET"),
         ("ingestion auth alias is blocked", "/api/v1/ingestion/auth/session", 404, None, "GET"),
         ("ingestion auth alias for page access is blocked", "/api/v1/ingestion/auth/access/controller", 404, None, "GET"),
         ("disruption namespace reaches Disruption", "/api/v1/disruption/bunching-alerts?page=0&size=1", 401, None, "GET"),
@@ -181,7 +184,7 @@ def main() -> int:
         ("encoded traversal to internal API blocked", "/api/v1/%2e%2e/internal/v1/arrival-snapshots", 404, None, "GET"),
         ("double-slash internal path blocked", "/internal//v1/arrival-snapshots", 404, None, "GET"),
         ("internal API remains hidden for mutations", "/internal/v1/arrival-snapshots", 404, None, "POST"),
-        ("unknown top-level path hidden", "/admin", 404, None, "GET"),
+        ("unknown top-level path hidden", "/unknown", 404, None, "GET"),
     ]
     for label, path, expected, headers, method in cases:
         assert_status(base_url, label, path, expected, headers, method)
@@ -218,10 +221,37 @@ def main() -> int:
             token = (token_dir / f"{role}.jwt").read_text(encoding="utf-8").strip()
             headers = {"Authorization": f"Bearer {token}"}
             assert_status(base_url, f"{role} verified session", "/api/v1/auth/session", 200, headers)
-            for page, allowed in (("controller", "controller"), ("captain", "captain")):
+            for page, allowed in (("controller", "controller"), ("captain", "captain"), ("admin", "admin")):
                 assert_status(base_url, f"{role} page access {page}", f"/api/v1/auth/access/{page}",
                               200 if role == allowed else 403, headers)
+        for role in ("controller", "captain"):
+            token = (token_dir / f"{role}.jwt").read_text(encoding="utf-8").strip()
+            headers = {"Authorization": f"Bearer {token}"}
+            for path in ("/api/v1/ingestion/admin/users?page=0&size=1",
+                         "/api/v1/ingestion/admin/audit-events?page=0&size=1",
+                         "/api/v1/disruption/admin/audit-events?page=0&size=1",
+                         "/api/v1/planning/admin/audit-events?page=0&size=1"):
+                assert_status(base_url, f"{role} is denied admin namespace {path}", path, 403, headers)
+        admin_token = (token_dir / "admin.jwt").read_text(encoding="utf-8").strip()
         captain_token = (token_dir / "captain.jwt").read_text(encoding="utf-8").strip()
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+        for path in ("/api/v1/ingestion/admin/users?page=0&size=1",
+                     "/api/v1/ingestion/admin/audit-events?page=0&size=1",
+                     "/api/v1/disruption/admin/audit-events?page=0&size=1",
+                     "/api/v1/planning/admin/audit-events?page=0&size=1"):
+            assert_status(base_url, f"admin can access {path}", path, 200, admin_headers)
+        assert_status(base_url, "ADMIN cannot start a simulation",
+                      "/api/v1/demo-runs", 403, admin_headers, "POST")
+        assert_status(base_url, "ADMIN cannot read captain instructions",
+                      "/api/v1/planning/captain/instructions?page=0&size=1", 403, admin_headers)
+        for role in ("admin", "controller"):
+            token = (token_dir / f"{role}.jwt").read_text(encoding="utf-8").strip()
+            assert_status(base_url, f"{role} can browse all captains",
+                          "/api/v1/ingestion/captains?page=0&size=1", 200,
+                          {"Authorization": f"Bearer {token}"})
+        assert_status(base_url, "CAPTAIN cannot enumerate other captains",
+                      "/api/v1/ingestion/captains?page=0&size=1", 403,
+                      {"Authorization": f"Bearer {captain_token}"})
         controller_token = (token_dir / "controller.jwt").read_text(encoding="utf-8").strip()
         assert_status(base_url, "CAPTAIN can read assigned instruction inbox",
                       "/api/v1/planning/captain/instructions?page=0&size=1", 200,

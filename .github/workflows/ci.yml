@@ -320,6 +320,8 @@ jobs:
             --service planning --output "$RUNNER_TEMP/context-planning"
           python3 scripts/cd/stage.py web-context --bundle "$RUNNER_TEMP/bundle" \
             --output "$RUNNER_TEMP/context-web"
+      - name: Configure hosted runner DNS for image builds
+        run: bash .github/scripts/configure-ci-dns.sh
       - name: Package changed owners and import the complete candidate
         run: |
           set -euo pipefail
@@ -396,6 +398,11 @@ jobs:
         run: |
           docker compose --env-file .env.example config -q
           docker compose --env-file .env.example -f compose.yaml -f infra/compose.production.yaml config -q
+          secret_source=$(mktemp)
+          trap 'rm -f "$secret_source"' EXIT
+          printf 'synthetic-invalid-provider-key' > "$secret_source"
+          OCC_IDENTITY_ENABLED=true OCC_IDENTITY_SECRET_SOURCE_FILE="$secret_source" \
+            docker compose --env-file .env.example -f compose.yaml -f infra/compose.identity.yaml config -q
       - name: Validate the immutable-image overlay with placeholder digests
         env:
           OCC_INGESTION_IMAGE: 123456789012.dkr.ecr.us-east-1.amazonaws.com/occ/ingestion@sha256:0000000000000000000000000000000000000000000000000000000000000000

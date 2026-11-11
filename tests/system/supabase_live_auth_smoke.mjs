@@ -58,7 +58,7 @@ const accounts = [
   { name: 'ADMIN', email: process.env.OCC_SUPABASE_TEST_ADMIN_EMAIL, password: process.env.OCC_SUPABASE_TEST_ADMIN_PASSWORD, role: 'ADMIN', status: 200 },
   { name: 'CONTROLLER', email: process.env.OCC_SUPABASE_TEST_CONTROLLER_EMAIL, password: process.env.OCC_SUPABASE_TEST_CONTROLLER_PASSWORD, role: 'CONTROLLER', status: 200 },
   { name: 'CAPTAIN', email: process.env.OCC_SUPABASE_TEST_CAPTAIN_EMAIL, password: process.env.OCC_SUPABASE_TEST_CAPTAIN_PASSWORD, role: 'CAPTAIN', status: 403 },
-  { name: 'UNASSIGNED', email: process.env.OCC_SUPABASE_TEST_UNASSIGNED_EMAIL, password: process.env.OCC_SUPABASE_TEST_UNASSIGNED_PASSWORD, role: null, status: 403 },
+  { name: 'UNASSIGNED', email: process.env.OCC_SUPABASE_TEST_UNASSIGNED_EMAIL, password: process.env.OCC_SUPABASE_TEST_UNASSIGNED_PASSWORD, role: 'UNASSIGNED', status: 403 },
 ];
 const accountsToTest = requestedAccounts.length
   ? accounts.filter((account) => requestedAccounts.includes(account.name))
