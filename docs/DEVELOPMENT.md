@@ -500,23 +500,8 @@ See [testing](TESTING.md) for system tests and CI.
 
 - [Authentication](AUTHENTICATION.md): public configuration, roles and sessions.
 - [Testing](TESTING.md): service tests, browser tests and CI.
-- [Deployment](DEPLOYMENT.md): container topology, production HTTPS, the EC2 CD
-  pipeline (release/deploy on main, lifecycle controls, budget model) and the
-  commit-trigger rules the pipeline consumes.
+- [Deployment](DEPLOYMENT.md): container topology and production HTTPS.
 - [Frontend conventions](frontend-convention.md) and [service conventions](CONVENTIONS.md).
-
-### EC2 CD scripts
-
-The deployment pipeline's tooling lives in `scripts/cd/`:
-`release.py` (release planning/manifest contracts), `stage.py` and
-`inspect_jar.py` (artifact staging and packaged-JAR checks), `deploy.sh` and
-`traffic-gate.sh` (host deployment with the maintenance gate),
-`deploy_remote.py` (SSM dispatch from Actions), `environment.py`
-(pause/start/resume/status), `backup.sh` (database backup and isolated
-restore), `bootstrap.ps1` and `bootstrap-host.sh` (provisioning). Each is
-covered by fixture tests under `tests/cd/`; run
-`python -m unittest discover -s tests/cd -p "test_*.py"` after changing any
-of them.
 
 ### Captain live-auth test configuration
 
