@@ -105,7 +105,7 @@ public class DemoReplayService {
         raw.setPayload(payload); raw.setPayloadChecksum(hash(payload)); raw.setFetchedAt(now); raw.setIngestedAt(now); raw.setHttpStatus(200);
         raw.setClassification("SIMULATION"); raw.setDemoRunId(run.id()); rawObservations.save(raw);
         UUID reference = topology.activeVersion().orElseThrow().id();
-        Instant firstEta = now.plusSeconds(120L - step * 20L);
+        Instant firstEta = now.plusSeconds(600L - step * 20L);
         List<BusArrivalObservation> emittedArrivals = new ArrayList<>();
         Instant eta = firstEta;
         for (int number = 1; number <= configuration.busCount(); number++) {
