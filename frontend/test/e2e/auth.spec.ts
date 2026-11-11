@@ -1805,6 +1805,52 @@ test('changed advisory groups preserve the review and show the server conflict w
   await expect(review.getByText(first.busId, { exact: true })).toBeVisible()
 })
 
+test('planning advisories appear on the periodic refresh without reloading the page', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  await context.route('**/frontend-config', route => route.fulfill({ json: {
+    projectUrl: 'https://example.supabase.co', publishableKey: 'sb_publishable_synthetic',
+    controllerRefreshIntervalSeconds: 1, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20, captainRefreshIntervalSeconds: 5, publicNoticeRefreshIntervalSeconds: 30,
+  } }))
+  const sample = syntheticInstruction(new Date())
+  const advisory: Advisory = { id: 'late-advisory', disruptionId: 'late-hazard', demoRunId: sample.demoRunId, busId: sample.busId,
+    status: 'PENDING', candidate: { type: sample.type, parameters: sample.parameters, rationale: 'Reported hazard.' },
+    finalCandidate: null, preview: sample.message, hazardClassification: 'SIMULATION', limitations: [], createdAt: sample.issuedAt }
+  let available = false
+  await context.route('**/api/v1/planning/advisory-groups?*', route => route.fulfill({ json: {
+    items: available ? [advisoryGroup([advisory])] : [], page: 0, totalItems: available ? 1 : 0, totalPages: available ? 1 : 0,
+  } }))
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  const advisories = page.getByRole('region', { name: 'Multi-hazard advisories', exact: true })
+  await expect(advisories.getByText('No pending captain advisories.')).toBeVisible()
+  available = true
+  await expect(advisories.getByRole('button', { name: 'Review and send to affected captains', exact: true })).toBeVisible()
+})
+
+test('returning to the tab keeps an open advisory review and does not re-verify the same session', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const sample = syntheticInstruction(new Date())
+  const advisory: Advisory = { id: 'focus-advisory', disruptionId: 'focus-hazard', demoRunId: sample.demoRunId, busId: sample.busId,
+    status: 'PENDING', candidate: { type: sample.type, parameters: sample.parameters, rationale: 'Reported hazard.' },
+    finalCandidate: null, preview: sample.message, hazardClassification: 'SIMULATION', limitations: [], createdAt: sample.issuedAt }
+  await context.route('**/api/v1/planning/advisory-groups?*', route => route.fulfill({ json: {
+    items: [advisoryGroup([advisory])], page: 0, totalItems: 1, totalPages: 1,
+  } }))
+  let sessionChecks = 0
+  page.on('request', request => { if (new URL(request.url()).pathname === '/api/v1/auth/session') sessionChecks++ })
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await page.getByRole('button', { name: 'Review and send to affected captains', exact: true }).click()
+  const review = page.getByRole('dialog', { name: 'Send advisory to affected captains', exact: true })
+  await expect(review).toBeVisible()
+  const checksBeforeFocus = sessionChecks
+  await page.evaluate(() => window.dispatchEvent(new Event('visibilitychange')))
+  await page.waitForTimeout(500)
+  await expect(review).toBeVisible()
+  await expect(page.getByText('Checking session…')).toHaveCount(0)
+  expect(sessionChecks).toBe(checksBeforeFocus)
+})
+
 test('controller manages public notices on a dedicated page below planning', async ({ page, context }) => {
   await page.clock.install()
   await mockAuth(context, 'CONTROLLER')
