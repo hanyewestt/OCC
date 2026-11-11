@@ -101,6 +101,14 @@ Fill in the settings described in `.env.example`:
   accounts and `occ_role` hook.
 - `DATAMALL_API_KEY`, `OCC_PLANNING_GEMINI_API_KEY` and the intended Planning
   worker/model settings.
+- `OCC_AUDIT_RETENTION` controls application audit and retained evidence
+  independently from operational cleanup. Planning assignment recovery defaults
+  to `OCC_PLANNING_ASSIGNMENT_RECOVERY_INTERVAL=5s` and batch size `25`.
+- The optional identity adapter defaults off. Do not enable it until the
+  [Supabase role-hook rollout](../infra/supabase/README.md) is complete. Compose
+  deployments use `OCC_IDENTITY_SECRET_SOURCE_FILE` for the host-side secret
+  file, and `infra/compose.identity.yaml` mounts it only into Ingestion. The
+  in-container path is `OCC_IDENTITY_SECRET_KEY_FILE=/run/secrets/occ_supabase_identity_key`.
 
 Keep one entry per environment-variable name. Duplicate example values later
 in `.env` can override real settings. Keep `.env` out of Git. The example file
@@ -129,6 +137,12 @@ resume existing containers; it skips npm and Docker builds and preserves databas
 data. Node is not required for `start`. Start retains the containers' existing
 configuration, so use `up` to apply the Gemini recommendation flag or other `.env`
 changes. Both commands preserve database data.
+
+Enable the identity provider adapter only after completing its external role
+migration and hook checks. Set `OCC_IDENTITY_ENABLED=true`, point
+`OCC_IDENTITY_SECRET_SOURCE_FILE` at a protected host-side key file, then include
+`infra/compose.identity.yaml` with the regular local or production Compose files.
+That overlay mounts the secret into Ingestion only. Do not put the key in `.env`.
 
 **Reset and clear permanently delete the selected project's database and pgAdmin data.**
 Reset requires typing `RESET`, then rebuilds and starts the app. Clear requires
@@ -309,16 +323,27 @@ separately from the normal app and remove their containers afterward.
 ## Open the app
 
 Open [the login page](http://localhost/login) using an existing Supabase account.
-CONTROLLER opens `/controller`; CAPTAIN opens `/captain`. Other roles receive
-an access message. Sessions persist across reloads using the Supabase SDK;
+ADMIN opens `/admin/audit`, CONTROLLER opens `/controller`, and CAPTAIN opens
+`/captain`. Other roles receive an access message. Sessions persist across reloads using the Supabase SDK;
 Ingestion verifies session and role before protected content appears. Set
 `OCC_NGINX_PORT` if port 80 is unavailable. Retired `/demo.html`, `/auth.js`,
 `/auth-test` and `/obu-pacing.html` routes return 404.
 
-The controller dashboard has four routes: `/controller` (overview),
-`/controller/disruptions`, `/controller/planning`, and `/controller/audit`.
-Nginx explicitly allows each route; unknown controller paths still return 404.
-All four share the controller access verification. API permissions remain
+The controller dashboard has six routes: `/controller` (overview),
+`/controller/disruptions`, `/controller/planning`, `/controller/notices`,
+`/controller/captains` and `/controller/audit`. Nginx explicitly allows each
+route; unknown controller paths still return 404. They share the controller
+access verification. Controllers can search every captain in the directory and
+select captains during initial simulation setup without changing the existing
+`captainUserIds` request property.
+
+The Admin workspace has Audit, Accounts, Provision account and Bus assignments
+routes. Audit history is queried from its owning service and retained for
+`OCC_AUDIT_RETENTION` (default `90d`), independently of operational cleanup.
+Assignments are only available for a running or replay-complete demo run;
+outstanding instructions block a change until a controller resolves them.
+Nginx explicitly allows these React routes and keeps its internal API routes
+hidden. API permissions remain
 enforced by the backend.
 
 Dashboard data loads on entry and manual Refresh. Its **Approximate Live Route
