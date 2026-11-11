@@ -81,6 +81,8 @@ async function signIn(page: Page) {
   await page.getByLabel('Email').fill('admin@example.test')
   await page.getByLabel('Password', { exact: true }).fill('synthetic-password')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page).toHaveURL(/\/admin\/audit$/)
+  await expect(page.getByRole('heading', { name: 'Audit', exact: true })).toBeVisible()
 }
 
 test('admin sidebar routes, searchable account directory, synchronization and details', async ({ page, context }) => {
