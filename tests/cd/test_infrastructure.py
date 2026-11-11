@@ -62,6 +62,10 @@ class CloudFormationContractTests(unittest.TestCase):
         self.assertIn("EgressAllowedPrefixListId:", text)
         self.assertIn("DestinationPrefixListId: !Ref EgressAllowedPrefixListId", text)
 
+    def test_security_group_rule_descriptions_are_ec2_safe(self):
+        # EC2 rejects apostrophes in security-group rule descriptions.
+        self.assertNotRegex(template_text(), r"Description:[^\n]*'")
+
     def test_bootstrap_requires_the_egress_allow_list(self):
         bootstrap = BOOTSTRAP_PS1.read_text(encoding="utf-8")
         self.assertIn("occ-ec2-cd-egress", bootstrap)
@@ -78,6 +82,12 @@ class CloudFormationContractTests(unittest.TestCase):
         self.assertIn("list-stacks", bootstrap)
         self.assertIn("REVIEW_IN_PROGRESS", bootstrap)
         self.assertIn("stack-create-complete", bootstrap)
+
+    def test_bootstrap_refuses_failed_stacks(self):
+        bootstrap = BOOTSTRAP_PS1.read_text(encoding="utf-8")
+        # ROLLBACK_COMPLETE cannot be updated; it must be deleted first.
+        self.assertIn("ROLLBACK_COMPLETE", bootstrap)
+        self.assertIn("delete-stack", bootstrap)
 
     def test_storage_is_encrypted_versioned_and_private(self):
         text = template_text()

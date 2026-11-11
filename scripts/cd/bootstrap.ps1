@@ -244,6 +244,9 @@ $parameters = @(
 )
 $stackStatus = Get-StackStatus $StackName
 $stackExists = -not [string]::IsNullOrWhiteSpace($stackStatus)
+if ($stackStatus -in @("ROLLBACK_COMPLETE", "ROLLBACK_FAILED", "CREATE_FAILED", "DELETE_FAILED", "UPDATE_ROLLBACK_FAILED")) {
+    throw "Stack $StackName is in $stackStatus; delete it with 'aws cloudformation delete-stack --stack-name $StackName --region $Region' and rerun."
+}
 $changeSet = "occ-bootstrap-" + (Get-Date -Format "yyyyMMddHHmmss")
 $templatePath = Join-Path $repoRoot "infra/aws/ec2-cd.yaml"
 $templateUri = "file://" + ($templatePath -replace '\\', '/')

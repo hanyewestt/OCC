@@ -132,7 +132,7 @@ Resources:
         # endpoints plus the deployment's Supabase, DataMall, Gemini, image
         # registry and package sources. The stack fails closed when the list is
         # missing; no unrestricted entry is permitted.
-        - Description: HTTPS to the deployment's explicit egress allow-list
+        - Description: HTTPS to the explicit egress allow-list
           IpProtocol: tcp
           FromPort: 443
           ToPort: 443
