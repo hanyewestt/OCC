@@ -258,6 +258,27 @@ class HazardLifecycleIT {
     }
 
     @Test
+    void transitionBackfillPagesPastTwoHundredRowsAndRemainsIdempotent() {
+        process("FLOOD", poll("FLOOD", NOW, "SUCCESS", true, null,
+                List.of(fact("FLOOD", "paged-backfill", "OBSERVED", null, null, List.of()))));
+        jdbc.update("""
+                INSERT INTO disruption.disruption_event
+                    (id, disruption_id, kind, action, classification, fetched_at, triggered_at, evidence,
+                     source_observation_id, poll_run_id)
+                SELECT gen_random_uuid(), disruption_id, kind, action, classification, fetched_at, triggered_at, evidence,
+                       source_observation_id, poll_run_id
+                FROM disruption.disruption_event CROSS JOIN generate_series(1, 200)
+                """);
+        jdbc.update("DELETE FROM disruption.application_audit_event");
+
+        auditBackfill.run(new DefaultApplicationArguments());
+        auditBackfill.run(new DefaultApplicationArguments());
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM disruption.application_audit_event WHERE backfilled", Integer.class))
+                .isEqualTo(201);
+    }
+
+    @Test
     void transitionBackfillRetainsTheNinetyDayBoundaryAndExcludesNinetyOneDayRows() {
         process("FLOOD", poll("FLOOD", NOW, "SUCCESS", true, null,
                 List.of(fact("FLOOD", "boundary-source", "OBSERVED", null, null, List.of()))));

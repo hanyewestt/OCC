@@ -60,10 +60,11 @@ public class ApplicationAuditBackfill implements ApplicationRunner {
         Instant lastAt = null;
         UUID lastId = null;
         while (true) {
+            var cursorAt = lastAt == null ? null : java.sql.Timestamp.from(lastAt);
             List<Transition> batch = jdbc.query(QUERY, (rs, row) -> new Transition(rs.getObject("id", UUID.class),
                     rs.getObject("disruption_id", UUID.class), rs.getString("kind"), rs.getString("action"), rs.getString("classification"),
                     rs.getObject("demo_run_id", UUID.class), rs.getTimestamp("triggered_at").toInstant()),
-                    java.sql.Timestamp.from(cutoff), lastAt, lastAt, lastId);
+                    java.sql.Timestamp.from(cutoff), cursorAt, cursorAt, lastId);
             if (batch.isEmpty()) return;
             jdbc.batchUpdate(INSERT, batch.stream().map(transition -> {
                 String sourceKey = "disruption:" + transition.eventId();
