@@ -16,7 +16,8 @@ class DemoFleetServiceTest {
     private final DemoVehicleAssignmentRepository assignments = mock(DemoVehicleAssignmentRepository.class);
     private final BusArrivalObservationRepository arrivals = mock(BusArrivalObservationRepository.class);
     private final ReferenceTopologyPort topology = mock(ReferenceTopologyPort.class);
-    private final DemoFleetService fleet = new DemoFleetService(runs, assignments, arrivals, topology);
+    private final PollingConfigurationPort polling = mock(PollingConfigurationPort.class);
+    private final DemoFleetService fleet = new DemoFleetService(runs, assignments, arrivals, topology, polling);
 
     @Test
     void exposesOnlyActiveRunAssignmentsWithExplicitUnavailableProgress() {
@@ -59,6 +60,8 @@ class DemoFleetServiceTest {
         arrival.setStopCode("44251");
         arrival.setRouteStopSequence(40);
         arrival.setFetchedAt(Instant.EPOCH.plusSeconds(5));
+        arrival.setEstimatedArrivalAt(Instant.EPOCH.plusSeconds(60));
+        when(polling.staleAfterSeconds()).thenReturn(120);
         var route = new ReferenceTopologyPort.BusRoute("190", List.of(
                 new ReferenceTopologyPort.BusRouteOperator("SBST", "DD", List.of(
                         new ReferenceTopologyPort.BusRouteDirection(1, List.of(
@@ -77,6 +80,9 @@ class DemoFleetServiceTest {
         assertThat(result.items().getFirst().progress()).get().satisfies(progress -> {
             assertThat(progress.stopCode()).isEqualTo("44251");
             assertThat(progress.stopSequence()).isEqualTo(40);
+            assertThat(progress.estimatedArrivalAt()).isEqualTo(Instant.EPOCH.plusSeconds(60));
+            assertThat(progress.freshUntil()).isEqualTo(Instant.EPOCH.plusSeconds(125));
+            assertThat(progress.boardingUntil()).isEqualTo(Instant.EPOCH.plusSeconds(120));
         });
     }
 }

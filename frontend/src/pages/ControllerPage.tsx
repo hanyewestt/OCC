@@ -286,7 +286,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     const runPromise = readResource(apiRequest<DemoRun>('/api/v1/demo-runs/active', token, signal).then(async value =>
       value ? { ...value, alerts: await enrichBunchingStops(value.alerts, token, signal) } : null), signal)
     const [liveRequest, nextRun] = await Promise.all([
-      (pathname === '/controller' || pathname.endsWith('/disruptions')) ? requestLiveData(signal) : Promise.resolve(null), runPromise,
+      (pathname === '/controller' || pathname.endsWith('/disruptions') || pathname.endsWith('/planning')) ? requestLiveData(signal) : Promise.resolve(null), runPromise,
     ])
     if (signal.aborted) return false
     const liveIsCurrent = !liveRequest || liveRequest.generation === liveRequestGenerationRef.current
@@ -307,7 +307,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     }
     runState.current = resolvedRun
     setRun(resolvedRun)
-    if ((pathname === '/controller' || pathname.endsWith('/disruptions')) && activeSimulation) {
+    if ((pathname === '/controller' || pathname.endsWith('/disruptions') || pathname.endsWith('/planning')) && activeSimulation) {
       const simulationPositions = await loadSimulationRoutePositions(token, activeSimulation.id, signal)
       if (!signal.aborted) {
         setRoutePositions(simulationPositions)
@@ -439,8 +439,8 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
               })} />
             </label>
             <label className="grid gap-1.5 text-sm font-medium">Buses in this injection
-              <Input type="number" min="2" max="3" value={simulationConfig.busCount} onChange={event => setSimulationConfig(value => {
-                const busCount = Math.max(2, Math.min(3, Number(event.target.value) || 2))
+              <Input type="number" min="2" max="20" value={simulationConfig.busCount} onChange={event => setSimulationConfig(value => {
+                const busCount = Math.max(2, Math.min(20, Number(event.target.value) || 2))
                 return { ...value, busCount, busGapsSeconds: Array.from({ length: busCount - 1 }, (_, index) => value.busGapsSeconds[index] ?? value.dispatchGapSeconds), captainUserIds: Array.from({ length: busCount }, (_, index) => value.captainUserIds[index] ?? '') }
               })} />
             </label>
@@ -525,9 +525,10 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         {pathname.endsWith('/planning') && <ControllerPlanning recommendations={recommendationCollection} diagnosisRequests={diagnosisCollection}
           loading={loading} modeError={run.error} mode={modeValue} demoRunId={simulation?.id ?? null} token={token}
           detectedAlerts={simulation ? simulation.alerts : alertCollection.items}
+          positions={routePositions.data ?? []}
           routes={routeStops.data ?? []} pollIntervalSeconds={pollIntervalSeconds}
           gapToleranceSeconds={Math.max(30, routeIncidentGapToleranceSeconds)}
-          nowMs={Date.parse(alertCollection.lastSuccessAt ?? '') || 0}
+          nowMs={Date.parse(alertCollection.lastSuccessAt || (simulation ? shellRefreshTime.at : '') || '') || 0}
           onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { void requestRefresh('mutation') }} />}
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} suggestions={suggestionCollection} aiAudits={aiAuditCollection} loading={loading} />}
         {pathname !== '/controller' && !pathname.endsWith('/captains') && loaded === requestKey && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}

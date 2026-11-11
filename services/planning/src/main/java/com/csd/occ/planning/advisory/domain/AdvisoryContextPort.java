@@ -10,6 +10,32 @@ public interface AdvisoryContextPort {
     Fleet fleet(UUID runId);
     Route route(String serviceId);
     Limits limits();
+    BunchingGroup bunchingGroup(UUID demoRunId, UUID bunchingEventId);
+    CurrentBunchingGroup currentBunchingGroup(UUID demoRunId, UUID bunchingEventId);
+    record BunchingGroup(UUID demoRunId, UUID bunchingEventId, String serviceId, int directionId, String stopCode,
+                         List<String> affectedBusReferences, String followingBusReference) {}
+    record CurrentBunchingGroup(UUID demoRunId, UUID bunchingEventId, String serviceId, String stopCode, int directionId,
+                                UUID rawObservationId, Instant fetchedAt, Instant validUntil, List<String> affectedBusReferences,
+                                List<Long> adjacentGapSeconds, List<Boolean> consecutivePairs) {
+        public boolean hasReliableGap(int index) {
+            return adjacentGapSeconds != null && consecutivePairs != null
+                    && adjacentGapSeconds.size() == affectedBusReferences.size() - 1
+                    && consecutivePairs.size() == adjacentGapSeconds.size()
+                    && Boolean.TRUE.equals(consecutivePairs.get(index))
+                    && adjacentGapSeconds.get(index) != null && adjacentGapSeconds.get(index) >= 0;
+        }
+
+        public boolean isFreshAt(Instant now) {
+            return rawObservationId != null && fetchedAt != null && validUntil != null
+                    && !fetchedAt.isAfter(now) && now.isBefore(validUntil);
+        }
+
+        public CurrentBunchingGroup(UUID demoRunId, UUID bunchingEventId, String serviceId, String stopCode, int directionId,
+                UUID rawObservationId, Instant fetchedAt, Instant validUntil, List<String> affectedBusReferences) {
+            this(demoRunId, bunchingEventId, serviceId, stopCode, directionId, rawObservationId, fetchedAt, validUntil,
+                    affectedBusReferences, List.of(), List.of());
+        }
+    }
     record Limits(int maxSpeedReductionKmh, int maxDurationSeconds, int maxSubsequentStops,
                   Duration acknowledgementWindow, Duration retention) {}
     record Hazard(UUID disruptionId, String kind, String status, String inactiveReason, String classification,
@@ -44,8 +70,45 @@ public interface AdvisoryContextPort {
         }
     }
     record Progress(String stopCode, int stopSequence, Instant observedAt, int assumedSpeedKmh,
-                    List<Integer> allowedSpeedReductionsKmh, List<Integer> allowedDurationsSeconds) {}
-    record Route(String serviceId, List<Operator> operators) {}
+                    List<Integer> allowedSpeedReductionsKmh, List<Integer> allowedDurationsSeconds,
+                    Instant estimatedArrivalAt, Instant freshUntil, Instant boardingUntil) {
+        public Progress(String stopCode, int stopSequence, Instant observedAt, int assumedSpeedKmh,
+                List<Integer> allowedSpeedReductionsKmh, List<Integer> allowedDurationsSeconds,
+                Instant estimatedArrivalAt, Instant freshUntil) {
+            this(stopCode, stopSequence, observedAt, assumedSpeedKmh, allowedSpeedReductionsKmh,
+                    allowedDurationsSeconds, estimatedArrivalAt, freshUntil, null);
+        }
+
+        public Progress(String stopCode, int stopSequence, Instant observedAt, int assumedSpeedKmh,
+                List<Integer> allowedSpeedReductionsKmh, List<Integer> allowedDurationsSeconds) {
+            this(stopCode, stopSequence, observedAt, assumedSpeedKmh, allowedSpeedReductionsKmh,
+                    allowedDurationsSeconds, null, null);
+        }
+
+        public boolean isApproachingAt(Instant now) {
+            return isFreshAt(now) && estimatedArrivalAt != null && now.isBefore(estimatedArrivalAt);
+        }
+
+        public boolean isBoardingAt(Stop stop, CurrentBunchingGroup group, Instant now) {
+            return stop.stopCode().equals(stopCode) && stop.stopSequence() == stopSequence
+                    && group.fetchedAt().equals(observedAt) && group.isFreshAt(now) && isFreshAt(now)
+                    && estimatedArrivalAt != null && !now.isBefore(estimatedArrivalAt)
+                    && boardingUntil != null && now.isBefore(boardingUntil);
+        }
+
+        private boolean isFreshAt(Instant now) {
+            return observedAt != null && !observedAt.isAfter(now) && freshUntil != null && now.isBefore(freshUntil);
+        }
+    }
+    record Route(String serviceId, List<Operator> operators) {
+        public java.util.Optional<Stop> upcomingStop(int directionId, String stopCode, int progressSequence) {
+            var stops = operators.stream().flatMap(operator -> operator.directions().stream())
+                    .filter(direction -> direction.directionId() == directionId).flatMap(direction -> direction.stops().stream())
+                    .filter(stop -> stop.stopCode().equals(stopCode) && stop.stopSequence() >= progressSequence)
+                    .toList();
+            return stops.size() == 1 ? java.util.Optional.of(stops.getFirst()) : java.util.Optional.empty();
+        }
+    }
     record Operator(String operator, String category, List<Direction> directions) {}
     record Direction(int directionId, List<Stop> stops) {}
     record Stop(String stopCode, String description, int stopSequence) {}

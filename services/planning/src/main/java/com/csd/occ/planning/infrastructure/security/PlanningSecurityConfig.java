@@ -78,6 +78,7 @@ public class PlanningSecurityConfig {
                                 "/api/v1/planning/advisory-groups",
                                 "/api/v1/planning/advisories")
                         .hasAnyRole("ADMIN", "CONTROLLER")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/planning/recommendations/*/refresh").hasRole("CONTROLLER")
                         .requestMatchers(HttpMethod.POST, "/api/v1/planning/recommendations/*/decision",
                                 "/api/v1/planning/recommendations/*/obu-decisions",
                                 "/api/v1/planning/notices",

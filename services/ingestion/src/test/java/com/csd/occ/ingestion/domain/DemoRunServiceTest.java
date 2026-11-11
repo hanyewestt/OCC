@@ -136,17 +136,23 @@ class DemoRunServiceTest {
         UUID runId = UUID.randomUUID();
         UUID leadingId = UUID.randomUUID();
         UUID followingId = UUID.randomUUID();
+        UUID previousLeadingId = UUID.randomUUID();
+        UUID currentSnapshot = UUID.randomUUID();
         Instant detectedAt = Instant.parse("2026-09-26T00:00:00Z");
         DemoRun run = new DemoRun(runId, detectedAt, "route190-bunching-v1", 190);
         when(runs.findById(runId)).thenReturn(Optional.of(run));
         when(bunching.alerts(runId)).thenReturn(List.of(new DemoBunchingAlert(UUID.randomUUID(), UUID.randomUUID(), "OPENED", "190", "44251", 1,
-                detectedAt, "SIMULATION", leadingId, followingId, null, "saved-simulation-evidence")));
+                detectedAt, "SIMULATION", leadingId, followingId, List.of(previousLeadingId, leadingId, followingId), "saved-simulation-evidence")));
         when(arrivals.findSimulationArrivalDetails(runId, leadingId)).thenReturn(Optional.of(
                 new DemoSimulationArrivalDetails("DEMO-BUS-190-01", "DEMO-OPERATOR", "DD", "DEMO-CAPTAIN-190-01",
                         detectedAt.plusSeconds(120))));
         when(arrivals.findSimulationArrivalDetails(runId, followingId)).thenReturn(Optional.of(
                 new DemoSimulationArrivalDetails("DEMO-BUS-190-02", "DEMO-OPERATOR", "DD", "DEMO-CAPTAIN-190-02",
                         detectedAt.plusSeconds(165))));
+        when(arrivals.findAllById(List.of(previousLeadingId, leadingId, followingId))).thenReturn(List.of(
+                observation(followingId, currentSnapshot, runId, 2, detectedAt.plusSeconds(165)),
+                observation(previousLeadingId, UUID.randomUUID(), runId, 1, detectedAt.plusSeconds(150)),
+                observation(leadingId, currentSnapshot, runId, 1, detectedAt.plusSeconds(120))));
         var version = new ReferenceTopologyPort.ReferenceTopologyVersion(UUID.randomUUID(), "checksum");
         when(topology.activeVersion()).thenReturn(Optional.of(version));
         when(topology.busStop(version.id(), "44251")).thenReturn(Optional.of(
@@ -159,6 +165,57 @@ class DemoRunServiceTest {
         assertEquals("DEMO-CAPTAIN-190-02", alert.followingVehicle().captainCode());
         assertEquals("Teck Whye Secondary School", alert.stopName());
         assertEquals(45L, alert.headwaySeconds());
+        assertEquals(List.of(alert.leadingVehicle(), alert.followingVehicle()), alert.affectedVehicles());
         assertEquals("saved-simulation-evidence", alert.evidence());
+    }
+
+    @Test
+    void incompleteObservationEvidenceDoesNotInventAffectedVehicles() {
+        UUID runId = UUID.randomUUID();
+        UUID leadingId = UUID.randomUUID();
+        UUID followingId = UUID.randomUUID();
+        Instant detectedAt = Instant.parse("2026-09-26T00:00:00Z");
+        when(runs.findById(runId)).thenReturn(Optional.of(new DemoRun(runId, detectedAt, "route190-bunching-v1", 190)));
+        when(bunching.alerts(runId)).thenReturn(List.of(new DemoBunchingAlert(UUID.randomUUID(), UUID.randomUUID(),
+                "OPENED", "190", "44251", 1, detectedAt, "SIMULATION", leadingId, followingId,
+                List.of(leadingId, followingId), "evidence")));
+        when(arrivals.findAllById(List.of(leadingId, followingId))).thenReturn(List.of(
+                observation(leadingId, UUID.randomUUID(), runId, 1, detectedAt.plusSeconds(120))));
+
+        assertTrue(service.status(runId).alerts().getFirst().affectedVehicles().isEmpty());
+    }
+
+    @Test
+    void affectedVehiclesUseOnlyTheConfirmedSnapshotAndArrivalOrder() {
+        UUID runId = UUID.randomUUID();
+        UUID snapshot = UUID.randomUUID();
+        UUID earlierSnapshot = UUID.randomUUID();
+        Instant detectedAt = Instant.parse("2026-09-26T00:00:00Z");
+        var ids = java.util.stream.IntStream.range(0, 5).mapToObj(index -> UUID.randomUUID()).toList();
+        when(runs.findById(runId)).thenReturn(Optional.of(new DemoRun(runId, detectedAt, "route190-bunching-v1", 190)));
+        when(bunching.alerts(runId)).thenReturn(List.of(new DemoBunchingAlert(UUID.randomUUID(), UUID.randomUUID(),
+                "OPENED", "190", "44251", 1, detectedAt, "SIMULATION", ids.get(2), ids.get(3), ids, "evidence")));
+        when(arrivals.findAllById(ids)).thenReturn(List.of(
+                observation(ids.get(0), earlierSnapshot, runId, 1, detectedAt.plusSeconds(100)),
+                observation(ids.get(4), snapshot, runId, 4, detectedAt.plusSeconds(160)),
+                observation(ids.get(2), snapshot, runId, 2, detectedAt.plusSeconds(120)),
+                observation(ids.get(1), snapshot, runId, 1, detectedAt.plusSeconds(100)),
+                observation(ids.get(3), snapshot, runId, 3, detectedAt.plusSeconds(140))));
+        for (int index = 1; index <= 4; index++) {
+            when(arrivals.findSimulationArrivalDetails(runId, ids.get(index))).thenReturn(Optional.of(
+                    new DemoSimulationArrivalDetails("bus-" + index, "DEMO", "DD", "captain-" + index,
+                            detectedAt.plusSeconds(80L + index * 20L))));
+        }
+
+        assertEquals(List.of("bus-1", "bus-2", "bus-3", "bus-4"), service.status(runId).alerts().getFirst()
+                .affectedVehicles().stream().map(DemoVehicleDetails::busId).toList());
+    }
+
+    private BusArrivalObservation observation(UUID id, UUID rawId, UUID runId, int order, Instant estimate) {
+        var value = new BusArrivalObservation();
+        value.setId(id); value.setRawObservationId(rawId); value.setDemoRunId(runId); value.setClassification("SIMULATION");
+        value.setServiceId("190"); value.setStopCode("44251"); value.setDirectionId(1);
+        value.setVisitOrder(order); value.setEstimatedArrivalAt(estimate);
+        return value;
     }
 }

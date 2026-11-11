@@ -76,6 +76,13 @@ public class DemoRunService {
         return details(run);
     }
 
+    public Optional<DemoAlertDetails> bunchingGroup(UUID runId, UUID bunchingEventId) {
+        var matches = status(runId).alerts().stream()
+                .filter(alert -> "OPENED".equals(alert.action()) && bunchingEventId.equals(alert.bunchingEventId()))
+                .toList();
+        return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
+    }
+
     public DemoRunDetails close(UUID id) { return close(id, null); }
 
     public DemoRunDetails close(UUID id, String actorSubject) {
@@ -147,14 +154,40 @@ public class DemoRunService {
             result.add(new DemoAlertDetails(alert.eventId(), alert.bunchingEventId(), alert.action(), alert.classification(), alert.serviceId(), alert.stopCode(),
                     stop.name(), stop.roadName(), alert.directionId(), alert.detectedAt(), headwaySeconds(leading, following),
                     leading == null ? null : leading.vehicle(), following == null ? null : following.vehicle(),
-                    alert.affectedObservationIds().stream().map(id -> arrival(run.id(), id)).flatMap(Optional::stream)
-                            .map(DemoSimulationArrivalDetails::vehicle).toList(), alert.evidence()));
+                    affectedVehicles(run.id(), alert), alert.evidence()));
         }
         return new DemoRunDetails(run.id(), run.status(), run.currentStep(), run.configuration(), result);
     }
 
     private Optional<DemoSimulationArrivalDetails> arrival(UUID runId, UUID observationId) {
         return arrivals.findSimulationArrivalDetails(runId, observationId);
+    }
+
+    private List<DemoVehicleDetails> affectedVehicles(UUID runId, DemoBunchingAlert alert) {
+        var ids = alert.affectedObservationIds().stream().distinct().toList();
+        if (!ids.contains(alert.leadingObservationId()) || !ids.contains(alert.followingObservationId())) return List.of();
+        var found = arrivals.findAllById(ids);
+        if (found.size() != ids.size()) return List.of();
+        var current = found.stream().filter(value -> value.getId().equals(alert.leadingObservationId())).findFirst().orElseThrow();
+        if (current.getRawObservationId() == null || found.stream().anyMatch(value ->
+                !"SIMULATION".equals(value.getClassification()) || !runId.equals(value.getDemoRunId())
+                || !alert.serviceId().equals(value.getServiceId()) || !alert.stopCode().equals(value.getStopCode())
+                || !java.util.Objects.equals(alert.directionId(), value.getDirectionId()))) return List.of();
+        var ordered = found.stream().filter(value -> current.getRawObservationId().equals(value.getRawObservationId()))
+                .sorted(java.util.Comparator.comparing(BusArrivalObservation::getEstimatedArrivalAt,
+                        java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder()))
+                        .thenComparing(BusArrivalObservation::getVisitOrder,
+                                java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
+                .toList();
+        if (ordered.size() < 2 || ordered.stream().noneMatch(value -> value.getId().equals(alert.followingObservationId()))
+                || ordered.stream().anyMatch(value -> value.getEstimatedArrivalAt() == null || value.getVisitOrder() == null)
+                || ordered.stream().map(BusArrivalObservation::getVisitOrder).distinct().count() != ordered.size()) return List.of();
+        var vehicles = ordered.stream().map(value -> arrival(runId, value.getId())).toList();
+        if (vehicles.stream().anyMatch(Optional::isEmpty)) return List.of();
+        var result = vehicles.stream().map(Optional::orElseThrow).map(DemoSimulationArrivalDetails::vehicle).toList();
+        if (result.stream().anyMatch(value -> value.busId() == null || value.busId().isBlank())
+                || result.stream().map(DemoVehicleDetails::busId).distinct().count() != result.size()) return List.of();
+        return result;
     }
 
     private StopDisplay stop(String stopCode) {

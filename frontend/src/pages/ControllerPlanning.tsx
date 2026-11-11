@@ -8,13 +8,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
-import { ApiError, apiRequest, triggerDiagnosis, type BunchingAlert, type ControllerBusInstruction, type Decision, type DiagnosisEvidenceDetail, type EarlyControllerSuggestion, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RouteStop } from '@/lib/api'
+import { ApiError, apiRequest, triggerDiagnosis, type BunchingAlert, type ControllerBusInstruction, type Decision, type DiagnosisEvidenceDetail, type EarlyControllerSuggestion, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RoutePositions, type RouteStop } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { bunchingArrivals } from '@/lib/bunching'
 import { groupRouteIncidents, type RouteIncident } from '@/lib/route-strip'
 import type { Planning } from './ControllerPage'
 import type { PagedCollection } from '@/lib/paged-collection'
-import { DataMessage, timestamp } from './ControllerViews'
+import { BunchingMap, DataMessage, timestamp, type PositionedIncident } from './ControllerViews'
 import { adjacentBunchingGaps, bunchedArrivalGaps, formatGap } from '@/lib/route-strip'
 
 function seconds(value: number) {
@@ -23,9 +23,10 @@ function seconds(value: number) {
   return minutes ? `${minutes}:${String(remainder).padStart(2, '0')}` : `${remainder}s`
 }
 
-function suggestedInstruction(recommendation: PendingRecommendation) {
-  if (recommendation.mitigationType === 'HOLD') return `Hold for ${recommendation.adjustmentSeconds} seconds at stop ${recommendation.controlStopCode}.`
-  if (recommendation.mitigationType === 'DWELL_ADJUSTMENT') return `Adjust dwell by ${recommendation.adjustmentSeconds} seconds at stop ${recommendation.controlStopCode}.`
+function suggestedInstruction(recommendation: PendingRecommendation,
+  { mitigationType, adjustmentSeconds }: { mitigationType: string | null; adjustmentSeconds: number } = recommendation) {
+  if (mitigationType === 'HOLD') return `Hold for ${adjustmentSeconds} seconds at stop ${recommendation.controlStopCode}.`
+  if (mitigationType === 'DWELL_ADJUSTMENT') return `Adjust dwell by ${adjustmentSeconds} seconds at stop ${recommendation.controlStopCode}.`
   return `Dispatch standby support for ${recommendation.targetBusReference} at stop ${recommendation.controlStopCode}.`
 }
 
@@ -40,9 +41,10 @@ function BunchedPairs({ alert }: { alert: BunchingAlert | undefined }) {
     `Buses #${pair.leadingOrder} & #${pair.followingOrder} · ${formatGap(pair.seconds)}`).join(' · ')}</p> : null
 }
 
-function recommendationAlert(recommendation: PendingRecommendation, alerts: BunchingAlert[]) {
-  const byEventId = recommendation.bunchingEventId && alerts.find(alert =>
-    (alert.bunchingEventId ?? alert.alertId) === recommendation.bunchingEventId)
+function recommendationAlert(recommendation: PendingRecommendation, alerts: BunchingAlert[]): BunchingAlert | undefined {
+  const byEventId = recommendation.bunchingEventId
+    ? alerts.find(alert => (alert.bunchingEventId ?? alert.alertId) === recommendation.bunchingEventId)
+    : undefined
   return byEventId ?? alerts.find(alert => alert.serviceId === recommendation.serviceId &&
     alert.directionId === recommendation.directionId && alert.stopCode === recommendation.monitoredStopCode &&
     alert.detectedAt === recommendation.detectedAt)
@@ -52,14 +54,28 @@ function RecommendationBunchingGaps({ recommendation, alerts }: { recommendation
   const alert = recommendationAlert(recommendation, alerts)
   const detectedPairs = alert ? adjacentBunchingGaps(alert) : []
   const buses = affectedBuses(recommendation)
-  const pairs = Array.from({ length: Math.max(1, buses.length - 1) }, (_, index) => {
+  const predictionGaps = recommendation.currentPredictionGaps
+  const pairCount = Math.min(99, detectedPairs.reduce((count, pair) => Math.max(count, pair.followingOrder - 1), Math.max(1, buses.length - 1)))
+  const pairs = Array.from({ length: pairCount }, (_, index) => {
     const leadingOrder = index + 1
     const followingOrder = index + 2
     const detected = detectedPairs.find(pair => pair.leadingOrder === leadingOrder && pair.followingOrder === followingOrder)
     return { leadingOrder, followingOrder, seconds: detected?.isBunched ? detected.seconds : null }
   })
-  return <div><p className="text-xs text-muted-foreground">Observed bunching gaps</p>
-    <ul className="mt-1 space-y-1 font-medium tabular-nums">{pairs.map(pair => <li key={`${pair.leadingOrder}-${pair.followingOrder}`}>Buses #{pair.leadingOrder}–{pair.followingOrder}: {pair.seconds === null ? 'NA' : seconds(pair.seconds)}</li>)}</ul>
+  return <div>{!!predictionGaps?.length && <div className="mb-3">
+    <p className="text-xs text-muted-foreground">Reviewed prediction gaps</p>
+    <ul className="mt-1 space-y-1 font-medium tabular-nums">{predictionGaps.map((gap, index) => {
+      const outcomes = recommendation.suggestedOutcomes
+      const preceding = outcomes?.find(item => item.busReference === buses[index])?.adjustmentSeconds ?? 0
+      const following = outcomes?.find(item => item.busReference === buses[index + 1])?.adjustmentSeconds ?? 0
+      return <li key={buses[index + 1]}>{buses[index]} to {buses[index + 1]} · {seconds(gap)}
+        {(preceding > 0 || following > 0) && <span className="text-muted-foreground"> · {seconds(gap + following - preceding)} projected</span>}
+      </li>
+    })}</ul>
+  </div>}<p className="text-xs text-muted-foreground">{predictionGaps?.length ? 'Historical confirmation gaps' : 'Observed bunching gaps'}</p>
+    <ul className="mt-1 space-y-1 font-medium tabular-nums">{predictionGaps?.length && recommendation.confirmationGaps?.length
+      ? recommendation.confirmationGaps.map((gap, index) => <li key={index}>Confirmation {index + 1} · {seconds(gap)}</li>)
+      : pairs.map(pair => <li key={`${pair.leadingOrder}-${pair.followingOrder}`}>Buses #{pair.leadingOrder}–{pair.followingOrder}: {pair.seconds === null ? 'NA' : seconds(pair.seconds)}</li>)}</ul>
   </div>
 }
 
@@ -77,18 +93,30 @@ function isSgtToday(isoString: string, currentMs = 0): boolean {
   return sgtDateStr === sgtNowStr
 }
 
-type ControllerReplacement = { action: 'HOLD' | 'DWELL_ADJUSTMENT' | 'NONE'; adjustmentSeconds: number }
+type ControllerReplacement = { action: 'HOLD' | 'DWELL_ADJUSTMENT' | 'SKIP_STOP' | 'NONE'; adjustmentSeconds: number; noInstructionReason: string }
 type BusReplacement = ControllerReplacement & { busReference: string }
 
 function initialInstruction(recommendation: PendingRecommendation): ControllerReplacement {
   const action = recommendation.mitigationType === 'DWELL_ADJUSTMENT' ? 'DWELL_ADJUSTMENT' : 'HOLD'
-  return { action, adjustmentSeconds: recommendation.adjustmentSeconds }
+  return { action, adjustmentSeconds: recommendation.adjustmentSeconds, noInstructionReason: '' }
+}
+
+function isBusCaptainAssigned(busReference: string, recommendation: PendingRecommendation): boolean {
+  const outcome = recommendation.suggestedOutcomes?.find(item => item.busReference === busReference)
+  if (!outcome) return true
+  return !outcome.reason?.toLowerCase().includes('no captain')
 }
 
 function initialBusInstructions(recommendation: PendingRecommendation): BusReplacement[] {
-  const references = recommendation.affectedBusReferences.length
-    ? recommendation.affectedBusReferences : [recommendation.targetBusReference]
-  return references.map(busReference => ({ busReference, ...initialInstruction(recommendation) }))
+  const initial = initialInstruction(recommendation)
+  const buses = affectedBuses(recommendation)
+  return buses.map(busReference => {
+    const outcome = recommendation.suggestedOutcomes?.find(item => item.busReference === busReference)
+    if (outcome) return { busReference, action: outcome.mitigationType ?? 'NONE',
+      adjustmentSeconds: outcome.adjustmentSeconds || 30, noInstructionReason: outcome.reason ?? 'No action required by controller' }
+    return buses.length === 1 ? { busReference, ...initial }
+      : { busReference, action: 'NONE', adjustmentSeconds: 30, noInstructionReason: 'No action required by controller' }
+  })
 }
 
 function RecommendationEvidenceList({ items }: { items: DiagnosisEvidenceDetail[] }) {
@@ -98,12 +126,169 @@ function RecommendationEvidenceList({ items }: { items: DiagnosisEvidenceDetail[
       {item.incidentType && <p className="font-medium text-foreground">{item.incidentType}</p>}
       {item.message && <p>{item.message}</p>}
       {item.distanceMetersFromSuppliedBusPosition !== null && <p>Approx. {Math.round(item.distanceMetersFromSuppliedBusPosition).toLocaleString('en-SG')} m from the supplied bus position near stop {item.monitoredStopCode}.</p>}
+      {item.secondsBeforeFirstConfirmed !== null && (
+        <p>
+          {item.secondsBeforeFirstConfirmed > 0
+            ? `Reported ${seconds(item.secondsBeforeFirstConfirmed)} before first confirmed bunching irregularity.`
+            : 'Reported at or after first confirmed bunching irregularity.'}
+        </p>
+      )}
       <p>Incident evidence: {item.evidenceId}{item.busPositionEvidenceId ? ` · Bus-position evidence: ${item.busPositionEvidenceId}` : ''}</p>
     </li>)}
   </ul>
 }
 
 type EditingRecommendation = { identity: string; scopeIdentity: string; recommendation: PendingRecommendation; pending?: boolean }
+
+function extractBusOrders(references: string[], alert?: BunchingAlert): number[] {
+  const orders = new Set<number>()
+  if (alert) {
+    for (const pair of bunchedArrivalGaps(alert)) {
+      orders.add(pair.leadingOrder)
+      orders.add(pair.followingOrder)
+    }
+  }
+  for (const ref of references) {
+    const hashMatch = ref.match(/#(\d+)/)
+    if (hashMatch) {
+      const num = Number(hashMatch[1])
+      if (Number.isInteger(num) && num > 0) orders.add(num)
+      continue
+    }
+    const suffixMatch = ref.match(/-(\d+)$/)
+    if (suffixMatch) {
+      const num = Number(suffixMatch[1])
+      if (Number.isInteger(num) && num > 0) orders.add(num)
+    }
+  }
+  return [...orders].sort((a, b) => a - b)
+}
+
+export function PlanningCorridorMap({
+  routes,
+  positions = [],
+  serviceId,
+  directionId,
+  controlStopCode,
+  monitoredStopCode,
+  corridorStopCodes = [],
+  mitigationType,
+  busReferences = [],
+  alert,
+  title,
+  subtitle,
+}: {
+  routes: RouteDirection[]
+  positions?: RoutePositions[]
+  serviceId: string
+  directionId: number | null
+  controlStopCode?: string | null
+  monitoredStopCode: string
+  corridorStopCodes?: string[]
+  mitigationType?: string | null
+  busReferences?: string[]
+  alert?: BunchingAlert
+  title?: string
+  subtitle?: React.ReactNode
+}) {
+  const [focusIncident, setFocusIncident] = useState(true)
+
+  const corridorRoutes = useMemo(() => {
+    const match = routes.filter(r => r.serviceId === serviceId && (directionId === null || r.directionId === directionId))
+    return match.length ? match : routes.filter(r => r.serviceId === serviceId)
+  }, [routes, serviceId, directionId])
+
+  const targetStopCode = controlStopCode || monitoredStopCode
+  const targetStop = useMemo(() => {
+    return corridorRoutes.flatMap(r => r.stops).find(s => s.stopCode === targetStopCode)
+  }, [corridorRoutes, targetStopCode])
+  const targetStopName = targetStop?.description || (targetStopCode ? `Stop ${targetStopCode}` : 'Corridor stop')
+
+  const affectedStopCodes = useMemo(() => {
+    const set = new Set<string>()
+    if (targetStopCode) set.add(targetStopCode)
+    if (monitoredStopCode) set.add(monitoredStopCode)
+    for (const code of corridorStopCodes) set.add(code)
+    return set
+  }, [targetStopCode, monitoredStopCode, corridorStopCodes])
+
+  const mapBuses = useMemo(() => {
+    return positions.flatMap(snapshot => snapshot.directions
+      .filter(direction => corridorRoutes.some(route =>
+        route.serviceId === snapshot.serviceId && route.directionId === direction.directionId
+      ))
+      .flatMap(direction => direction.buses.map(bus => ({
+        serviceId: snapshot.serviceId,
+        directionId: direction.directionId,
+        routeLengthM: direction.routeLengthM,
+        bus,
+      }))))
+  }, [positions, corridorRoutes])
+
+  const busOrders = useMemo(() => extractBusOrders(busReferences, alert), [busReferences, alert])
+
+  const selectedBusKeys = useMemo(() => {
+    const keys = new Set<string>()
+    for (const order of busOrders) {
+      keys.add(`${serviceId}-${order}`)
+    }
+    if (alert) {
+      for (const pair of bunchedArrivalGaps(alert)) {
+        keys.add(`${serviceId}-${pair.leadingOrder}`)
+        keys.add(`${serviceId}-${pair.followingOrder}`)
+      }
+    }
+    return keys
+  }, [busOrders, alert, serviceId])
+
+  const selectedIncident = useMemo<PositionedIncident>(() => ({
+    id: `planning-${serviceId}-${directionId ?? 1}-${targetStopCode}`,
+    serviceId,
+    directionId,
+    routeKey: `${serviceId}:${directionId ?? 1}`,
+    stopCodes: [...affectedStopCodes],
+    stopNames: [targetStopName],
+    firstDetectedAt: alert?.detectedAt ?? new Date().toISOString(),
+    latestDetectedAt: alert?.detectedAt ?? new Date().toISOString(),
+    gapSeconds: null,
+    ageSeconds: 0,
+    latestStopIndex: 0,
+    historical: false,
+    alerts: alert ? [alert] : [],
+    stripLink: null,
+  }), [serviceId, directionId, targetStopCode, affectedStopCodes, targetStopName, alert])
+
+  if (!corridorRoutes.length) return null
+
+  const defaultTitle = mitigationType ? 'Assigned control stop & corridor' : 'Affected corridor map'
+  const defaultSubtitle = mitigationType ? (
+    <span>
+      Target control stop: <strong className="text-foreground">{targetStopName}</strong> ({targetStopCode}) · Assigned action: {mitigationType.replaceAll('_', ' ')}
+    </span>
+  ) : (
+    <span>
+      Monitored stop: <strong className="text-foreground">{targetStopName}</strong> ({targetStopCode})
+      {affectedStopCodes.size > 1 ? ` · ${affectedStopCodes.size} corridor stops affected` : ''}
+    </span>
+  )
+
+  return (
+    <div className="space-y-1">
+      <BunchingMap
+        routes={corridorRoutes}
+        affectedStopCodes={affectedStopCodes}
+        buses={mapBuses}
+        selectedIncident={focusIncident ? selectedIncident : null}
+        incidents={[selectedIncident]}
+        onSelectIncident={id => setFocusIncident(id !== null)}
+        selectedBusKeys={selectedBusKeys}
+        title={title ?? defaultTitle}
+        subtitle={subtitle ?? defaultSubtitle}
+        mapHeightClassName="h-60 sm:h-64"
+      />
+    </div>
+  )
+}
 
 export type CorridorDiagnosisGroup = {
   id: string
@@ -232,6 +417,7 @@ export function ControllerPlanning({
   demoRunId,
   token,
   detectedAlerts,
+  positions = [],
   routes = [],
   pollIntervalSeconds = 60,
   nowMs = 0,
@@ -248,6 +434,7 @@ export function ControllerPlanning({
   demoRunId: string | null
   token: string
   detectedAlerts: BunchingAlert[]
+  positions?: RoutePositions[]
   routes?: RouteDirection[]
   pollIntervalSeconds?: number
   nowMs?: number
@@ -314,8 +501,8 @@ export function ControllerPlanning({
   // Live corridors computed with identical logic to Disruptions
   const liveCorridorIncidents = useMemo(() => {
     if (!detectedAlerts.length || !routes.length) return []
-    return groupRouteIncidents(detectedAlerts, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds)
-  }, [detectedAlerts, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds])
+    return groupRouteIncidents(detectedAlerts, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds, mode === 'DEMO')
+  }, [detectedAlerts, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds, mode])
 
   // Build corridor groups from diagnosis requests + live corridors
   const allCorridorGroups = useMemo(() => {
@@ -494,8 +681,9 @@ export function ControllerPlanning({
     !editNeedsRevalidation && selectedIdentity !== editingRecommendation.identity)
   const detailRecommendation = selected
   const detailIdentity = detailRecommendation ? `${scopeIdentity}:${detailRecommendation.recommendationId}` : null
-  const selectionIsCurrent = !recommendations.isLoading && recommendationLoadError === null && !modeError && !!selected && recommendationItems.some(item => item.recommendationId === selected.recommendationId &&
-    JSON.stringify(item) === JSON.stringify(selected))
+  const selectionIsCurrent = (!recommendations.isLoading || recommendations.items.length > 0) && recommendationLoadError === null && !modeError && !!selected &&
+    (recommendationItems.some(item => item.recommendationId === selected.recommendationId) ||
+      (editingInScope?.recommendation.recommendationId === selected.recommendationId))
 
   useEffect(() => {
     if (!editingInScope || editingItemIsLoaded || modeError || recommendationIsLoading || recommendationIsLoadingMore ||
@@ -525,6 +713,7 @@ export function ControllerPlanning({
   }, [isRequestSelection, requestedId, requestedRequestId, requestedEventId, requestedIncident, selected, selectedRequest, setSearchParams])
 
   function select(recommendationId: string) {
+    setEditingRecommendation(null)
     setSelectedCorridorId(null)
     setSearchParams(prev => {
       const next = new URLSearchParams(prev)
@@ -537,6 +726,7 @@ export function ControllerPlanning({
   }
 
   function selectCorridor(group: CorridorDiagnosisGroup) {
+    setEditingRecommendation(null)
     setSelectedCorridorId(group.id)
     const rep = group.representativeRequest ?? group.requests[0]
     setSearchParams(prev => {
@@ -567,7 +757,11 @@ export function ControllerPlanning({
 
   async function generateDiagnosis(request: PlanningDiagnosisRequest) {
     if (triggeringRequestId) return
-    setSearchParams({ request: request.requestId }, { replace: true })
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.set('request', request.requestId)
+      return next
+    }, { replace: true })
     setTriggeringRequestId(request.requestId)
     setMessage('')
     const controller = new AbortController()
@@ -690,7 +884,9 @@ export function ControllerPlanning({
             <p className="text-xs text-muted-foreground">Affected buses · {affectedBuses(item).join(', ')}</p>
             <BunchedPairs alert={detectedAlerts.find(alert => alert.serviceId === item.serviceId && alert.directionId === item.directionId &&
               alert.stopCode === item.monitoredStopCode && alert.detectedAt === item.detectedAt)} />
-            <p className="text-xs text-muted-foreground">{item.mitigationType.replaceAll('_', ' ')} · Target: {item.targetBusReference}</p>
+            <p className="text-xs text-muted-foreground">{item.suggestedOutcomes?.length ? `Suggested outcomes for ${item.suggestedOutcomes.length} buses`
+              : affectedBuses(item).length > 1 ? 'Refresh for current suggestions'
+                : `${item.mitigationType.replaceAll('_', ' ')} · Target: ${item.targetBusReference}`}</p>
           </button>)}
           {!visibleWithRetained.length && !visibleCorridors.length && (
             <div className="space-y-2 p-6 text-center text-sm text-muted-foreground">
@@ -715,11 +911,17 @@ export function ControllerPlanning({
       </Card>
 
       {!selectedRequest && detailRecommendation && detailIdentity && <RecommendationDetail key={detailIdentity} selected={detailRecommendation} identity={detailIdentity}
-        scopeIdentity={scopeIdentity} token={token} detectedAlerts={detectedAlerts} isCurrent={selectionIsCurrent} validationFailed={editorUnavailable}
+        scopeIdentity={scopeIdentity} token={token} detectedAlerts={detectedAlerts} routes={routes} positions={positions} isCurrent={selectionIsCurrent} validationFailed={editorUnavailable}
         retryCurrentCheck={modeError ? onRefresh : recommendations.reload}
-        onSaved={onSaved} onMessage={setMessage} onEditorChange={setEditingRecommendation} />}
+        onSaved={onSaved} onMessage={setMessage} onEditorChange={setEditingRecommendation}
+        onRefreshed={item => {
+          select(item.recommendationId)
+          setEditingRecommendation({ identity: `${scopeIdentity}:${item.recommendationId}`, scopeIdentity, recommendation: item })
+          onSaved()
+        }} />}
       {selectedRequest && <DiagnosisRequestDetail request={selectedRequest}
         corridor={selectedCorridor}
+        routes={routes} positions={positions} detectedAlerts={detectedAlerts}
         detectedBusReferences={detectedBusReferences(selectedRequest, detectedAlerts, selectedCorridor)}
         generating={triggeringRequestId === selectedRequest.requestId} suggesting={suggestingRequestId === selectedRequest.requestId}
         token={token} onSuggestionPending={pending => setSuggestingRequestId(pending ? selectedRequest.requestId : null)}
@@ -769,17 +971,25 @@ function detectedBusReferences(request: PlanningDiagnosisRequest | null, alerts:
   const alert = corridorAlerts.find(item => request && (item.eventId === request.eventId ||
     (item.serviceId === request.serviceId && item.stopCode === request.stopCode))) ?? alerts[0]
   if (alert) {
+    const pairs = bunchedArrivalGaps(alert)
+    if (pairs.length) {
+      const orders = [...new Set(pairs.flatMap(p => [p.leadingOrder, p.followingOrder]))].sort((a, b) => a - b)
+      return orders.map((order, idx) => `Bus #${order} (${idx === 0 ? 'Leading' : 'Following'})`)
+    }
     const arrivals = bunchingArrivals(alert)
     const slots: string[] = []
-    if (arrivals[0] && arrivals[0] !== 'Unavailable' && arrivals[0] !== 'No prediction') slots.push('Bus 1 (Leading)')
-    if (arrivals[1] && arrivals[1] !== 'Unavailable' && arrivals[1] !== 'No prediction') slots.push('Bus 2 (Following)')
+    arrivals.forEach((arr, idx) => {
+      if (arr && arr !== 'Unavailable' && arr !== 'No prediction') {
+        slots.push(`Bus #${idx + 1} (${idx === 0 ? 'Leading' : 'Following'})`)
+      }
+    })
     if (slots.length) return slots
   }
   return []
 }
 
-function DiagnosisRequestDetail({ request, corridor, detectedBusReferences, generating, suggesting, token, onSuggestionPending, onSaved, onGenerate }: {
-  request: PlanningDiagnosisRequest; corridor?: CorridorDiagnosisGroup | null; detectedBusReferences: string[]; generating: boolean; suggesting: boolean; token: string
+function DiagnosisRequestDetail({ request, corridor, routes, positions, detectedAlerts, detectedBusReferences, generating, suggesting, token, onSuggestionPending, onSaved, onGenerate }: {
+  request: PlanningDiagnosisRequest; corridor?: CorridorDiagnosisGroup | null; routes: RouteDirection[]; positions: RoutePositions[]; detectedAlerts: BunchingAlert[]; detectedBusReferences: string[]; generating: boolean; suggesting: boolean; token: string
   onSuggestionPending: (pending: boolean) => void; onSaved: () => void; onGenerate: () => void
 }) {
   const retry = request.status.startsWith('FAILED')
@@ -860,6 +1070,17 @@ function DiagnosisRequestDetail({ request, corridor, detectedBusReferences, gene
       </div>
     )}
 
+    <PlanningCorridorMap
+      routes={routes}
+      positions={positions}
+      serviceId={request.serviceId ?? 'unknown'}
+      directionId={request.directionId}
+      monitoredStopCode={request.stopCode ?? ''}
+      corridorStopCodes={corridor?.stopCodes}
+      busReferences={detectedBusReferences}
+      alert={corridor?.corridorIncident?.alerts[0] ?? detectedAlerts.find(a => a.eventId === request.eventId || (a.serviceId === request.serviceId && a.stopCode === request.stopCode))}
+    />
+
     <div><h3 className="text-sm font-medium">Bunching detection</h3>
       <p className="mt-1 text-sm text-muted-foreground">{completed
         ? advisoryOnly
@@ -867,13 +1088,21 @@ function DiagnosisRequestDetail({ request, corridor, detectedBusReferences, gene
           : 'Diagnosis generated. This incident remains open here while you review it or wait for the AI mitigation recommendation.'
         : processing ? 'Diagnosis is being generated.' : retry ? 'The previous diagnosis attempt needs to be retried.' : 'Generate a diagnosis to receive an AI mitigation recommendation for this detected bunching event.'}</p>
       {request.failureCode && <p className="mt-2 text-sm text-destructive">Last attempt: {request.failureCode}</p>}</div>
-    {completed && <div className="rounded-lg border p-4">
-      <h3 className="text-sm font-medium">AI diagnosis</h3>
-      {request.likelyCause
-        ? <p className="mt-2 text-sm">{request.likelyCause}</p>
-        : <p className="mt-2 text-sm text-muted-foreground">No supported contributing cause was identified from the available evidence.</p>}
-      {request.confidence !== null && request.confidence > 0 && <p className="mt-2 text-xs text-muted-foreground">Confidence: {Math.round(request.confidence * 100)}%</p>}
-      {request.limitations.length > 0 && <div className="mt-3">
+    {completed && <div className="rounded-lg border p-4 space-y-3">
+      <div>
+        <h3 className="text-sm font-medium">AI diagnosis</h3>
+        {request.likelyCause
+          ? <p className="mt-2 text-sm">{request.likelyCause}</p>
+          : <p className="mt-2 text-sm text-muted-foreground">No supported contributing cause was identified from the available evidence.</p>}
+        {request.confidence !== null && request.confidence > 0 && <p className="mt-2 text-xs text-muted-foreground">Confidence: {Math.round(request.confidence * 100)}%</p>}
+      </div>
+      {!!request.evidenceDetails?.length && (
+        <div className="border-t pt-3">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Supporting incident evidence</h4>
+          <RecommendationEvidenceList items={request.evidenceDetails} />
+        </div>
+      )}
+      {request.limitations.length > 0 && <div className="border-t pt-3">
         <p className="text-xs font-medium text-muted-foreground">Limitations</p>
         <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-muted-foreground">
           {request.limitations.map(limitation => <li key={limitation}>{limitation}</li>)}
@@ -905,16 +1134,21 @@ function DiagnosisRequestDetail({ request, corridor, detectedBusReferences, gene
   </CardContent></Card>
 }
 
-function RecommendationDetail({ selected, identity, scopeIdentity, token, detectedAlerts, isCurrent, validationFailed, retryCurrentCheck, onSaved, onMessage, onEditorChange }: {
+function RecommendationDetail({ selected, identity, scopeIdentity, token, detectedAlerts, routes, positions, isCurrent, validationFailed, retryCurrentCheck, onSaved, onMessage, onEditorChange, onRefreshed }: {
   selected: PendingRecommendation; identity: string; scopeIdentity: string; token: string
   detectedAlerts: BunchingAlert[]
+  routes: RouteDirection[]
+  positions: RoutePositions[]
   isCurrent: boolean; validationFailed: boolean; retryCurrentCheck: () => void
   onSaved: () => void; onMessage: (message: string) => void; onEditorChange: Dispatch<SetStateAction<EditingRecommendation | null>>
+  onRefreshed: (item: PendingRecommendation) => void
 }) {
   const [pending, setPending] = useState(false)
   const [message, setMessage] = useState('')
   const [editorOpen, setEditorOpen] = useState(false)
   const [discardOpen, setDiscardOpen] = useState(false)
+  const hasBusSuggestions = !!selected.suggestedOutcomes?.length
+  const showsLegacySuggestion = !hasBusSuggestions && affectedBuses(selected).length === 1
   const [instructions, setInstructions] = useState<BusReplacement[]>(() => initialBusInstructions(selected))
   const [rationale, setRationale] = useState('')
   const [openingDraft, setOpeningDraft] = useState<{ instructions: BusReplacement[]; rationale: string } | null>(null)
@@ -960,16 +1194,60 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
 
   function updateInstruction(index: number, changes: Partial<ControllerReplacement>) {
     setMessage('')
-    setInstructions(items => items.map((item, itemIndex) => itemIndex === index ? { ...item, ...changes } : item))
+    setInstructions(items => items.map((item, itemIndex) => {
+      if (itemIndex !== index) return item
+      const updated = { ...item, ...changes }
+      if (changes.action === 'NONE' && !updated.noInstructionReason.trim()) {
+        updated.noInstructionReason = 'No action required by controller'
+      }
+      if ((changes.action === 'HOLD' || changes.action === 'DWELL_ADJUSTMENT') && (!updated.adjustmentSeconds || updated.adjustmentSeconds < 1)) {
+        updated.adjustmentSeconds = 30
+      }
+      return updated
+    }))
+  }
+
+  async function refresh() {
+    if (submitting.current || !isCurrent) return
+    submitting.current = true
+    setPending(true)
+    setMessage('')
+    onEditorChange({ identity, scopeIdentity, recommendation: selected, pending: true })
+    const controller = new AbortController()
+    mutationRef.current = controller
+    try {
+      const item = await apiRequest<PendingRecommendation>(
+        `/api/v1/planning/recommendations/${encodeURIComponent(selected.recommendationId)}/refresh`,
+        token, controller.signal, { method: 'POST' },
+      )
+      if (item && !controller.signal.aborted) onRefreshed(item)
+    } catch (error) {
+      if (controller.signal.aborted) return
+      if (error instanceof ApiError && error.status === 401) void signOut(error.message)
+      else setMessage(error instanceof ApiError ? error.message : 'Unable to refresh the recommendation.')
+    } finally {
+      submitting.current = false
+      if (!controller.signal.aborted) {
+        setPending(false)
+        onEditorChange(value => value?.identity === identity ? null : value)
+      }
+    }
   }
 
   async function decide(action: Decision['action']) {
     if (submitting.current || !isCurrent) return
-    const activeInstructions = instructions.filter(item => item.action !== 'NONE')
-    if (action === 'REJECTED' && (!activeInstructions.length || activeInstructions.some(item =>
-        !Number.isInteger(item.adjustmentSeconds) || item.adjustmentSeconds < 1 || item.adjustmentSeconds > 120))) {
-      setMessage('Enter at least one 1–120 second HOLD or DWELL action.')
-      return
+    if (action === 'REJECTED') {
+      const unassignedWithAction = instructions.find(item => !isBusCaptainAssigned(item.busReference, selected) && item.action !== 'NONE')
+      if (unassignedWithAction) {
+        setMessage(`${unassignedWithAction.busReference} has no captain assigned to receive instructions. Select No instruction for this bus.`)
+        return
+      }
+      if (instructions.some(item => item.action === 'NONE'
+        ? !item.noInstructionReason.trim()
+        : item.action !== 'SKIP_STOP' && (!Number.isInteger(item.adjustmentSeconds) || item.adjustmentSeconds < 1 || item.adjustmentSeconds > 120))) {
+        setMessage('Enter a reason for each bus with no instruction and a 1–120 second duration for each action.')
+        return
+      }
     }
     submitting.current = true; setPending(true); setMessage('')
     onEditorChange({ identity, scopeIdentity, recommendation: selected, pending: true })
@@ -982,23 +1260,26 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
           action,
           replacementAction: null,
           adjustmentSeconds: null,
-          replacementInstructions: action === 'REJECTED' ? activeInstructions.map(item => ({
-            busReference: item.busReference, action: item.action, adjustmentSeconds: item.adjustmentSeconds,
-          })) : null,
+          replacementInstructions: action === 'REJECTED' ? instructions.map(item => item.action === 'NONE'
+            ? { busReference: item.busReference, action: 'NO_INSTRUCTION', adjustmentSeconds: null, noInstructionReason: item.noInstructionReason.trim() }
+            : item.action === 'SKIP_STOP' ? { busReference: item.busReference, action: 'SKIP_STOP', adjustmentSeconds: null }
+            : { busReference: item.busReference, action: item.action, adjustmentSeconds: item.adjustmentSeconds }) : null,
           controllerRationale: action === 'REJECTED' ? rationale.trim() || null : null,
         },
       })
       if (!controller.signal.aborted) {
-        onMessage(action === 'APPROVED' ? 'Recommendation approved and instruction issued to the assigned captain.' : 'Replacement instructions issued to the affected captains.')
+        onMessage(action === 'APPROVED' ? 'Recommendation approved and instruction issued to the assigned captain.'
+          : instructions.some(item => item.action !== 'NONE') ? 'Bus outcomes saved and selected instructions issued.' : 'No-instruction outcomes saved for all affected buses.')
         closeEditor(true)
       }
     } catch (error) {
       if (controller.signal.aborted) return
       if (error instanceof ApiError && error.status === 401) void signOut(error.message)
       else if (error instanceof ApiError && error.status === 409) {
-        onMessage('This recommendation has changed or already has a decision. The latest state has been requested.')
+        onMessage(error.message === 'Unable to load or save this data. Try again.'
+          ? 'This recommendation has changed or already has a decision. The latest state has been requested.' : error.message)
         closeEditor(true)
-      } else setMessage(error instanceof ApiError && error.status === 403 ? 'You do not have permission to record this decision.' : 'Unable to save the decision. Check the instructions and try again.')
+      } else setMessage(error instanceof ApiError && error.status === 403 ? 'You do not have permission to record this decision.' : error instanceof ApiError && error.status === 503 ? `Unable to save the decision. ${error.message}` : 'Unable to save the decision. Check the instructions and try again.')
     } finally {
       submitting.current = false
       if (!controller.signal.aborted) {
@@ -1018,7 +1299,9 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
         <div><h3 className="text-sm font-medium">Affected buses</h3><p className="mt-1 text-sm text-muted-foreground">{affectedBuses(selected).join(', ')}</p></div>
 
         <div className="flex flex-wrap justify-end gap-2 border-b pb-4">
-          <Button disabled={pending || !isCurrent} onClick={() => { void decide('APPROVED') }}>Approve recommendation</Button>
+          {affectedBuses(selected).length > 1 && <p className="w-full text-right text-xs text-muted-foreground">Review an outcome for every affected bus before saving.</p>}
+          <Button variant="outline" disabled={pending || !isCurrent} onClick={() => { void refresh() }}>Refresh bus group</Button>
+          <Button disabled={pending || !isCurrent || affectedBuses(selected).length > 1} onClick={() => { void decide('APPROVED') }}>Approve recommendation</Button>
           <Dialog open={editorOpen} onOpenChange={changeEditorOpen}>
           <DialogTrigger asChild><Button variant="outline" disabled={pending}>Enter controller recommendation</Button></DialogTrigger>
             <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl"
@@ -1028,8 +1311,9 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
               onInteractOutside={event => { event.preventDefault(); requestClose() }}>
               <DialogHeader>
                 <DialogTitle>Enter controller recommendation</DialogTitle>
-                <DialogDescription>Choose HOLD, DWELL, or no instruction for each affected bus. Actions can be adjusted by up to 120 seconds.</DialogDescription>
+                <DialogDescription>Choose hold, dwell, skip stop or no instruction for each affected bus. Timed actions can be adjusted by up to 120 seconds.</DialogDescription>
               </DialogHeader>
+              {affectedBuses(selected).length > 1 && <p className="text-sm text-muted-foreground">Dwell adjustment requires current boarding evidence for the bus.</p>}
               {!isCurrent && <div role="alert" className="rounded-lg border p-3 text-sm">
                 <p>{validationFailed ? 'Unable to confirm this recommendation is current. Your draft is preserved; decisions are paused.'
                   : 'Checking that this recommendation is still pending. Decisions are paused.'}</p>
@@ -1037,14 +1321,70 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
               </div>}
               {message && <p role="alert" className="rounded-lg border p-3 text-sm">{message}</p>}
               <form className="space-y-4" noValidate onSubmit={event => { event.preventDefault(); void decide('REJECTED') }}>
-                {instructions.map((item, index) => <div key={item.busReference} className="grid gap-3 rounded-lg border p-4 sm:grid-cols-[1fr_8rem]">
-                  <div className="space-y-2"><Label htmlFor={`bus-action-${index}`}>Action for {item.busReference}</Label><select ref={index === 0 ? firstAction : undefined} id={`bus-action-${index}`} value={item.action} onChange={event => updateInstruction(index, { action: event.target.value as ControllerReplacement['action'] })} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"><option value="HOLD">Hold at next stop</option><option value="DWELL_ADJUSTMENT">Extend dwell at stop {selected.controlStopCode}</option><option value="NONE">No instruction</option></select></div>
-                  <div className="space-y-2"><Label htmlFor={`bus-adjustment-${index}`}>Seconds</Label><Input id={`bus-adjustment-${index}`} type="number" min="1" max="120" step="1" value={item.adjustmentSeconds} onChange={event => updateInstruction(index, { adjustmentSeconds: Number(event.target.value) })} required={item.action !== 'NONE'} disabled={item.action === 'NONE'} /></div>
-                </div>)}
+                {instructions.map((item, index) => {
+                  const hasCaptain = isBusCaptainAssigned(item.busReference, selected)
+                  const isNone = item.action === 'NONE'
+                  const unassignedError = !hasCaptain && !isNone
+                  const reasonError = isNone && !item.noInstructionReason.trim()
+                  const secondsError = !isNone && item.action !== 'SKIP_STOP' && (!Number.isInteger(item.adjustmentSeconds) || item.adjustmentSeconds < 1 || item.adjustmentSeconds > 120)
+                  return (
+                    <div key={item.busReference} className={`grid gap-3 rounded-lg border p-4 sm:grid-cols-[1fr_8rem] ${unassignedError ? 'border-amber-500/50 bg-amber-500/5' : ''}`}>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label htmlFor={`bus-action-${index}`}>Action for {item.busReference}</Label>
+                          {!hasCaptain && <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">No captain assigned</span>}
+                        </div>
+                        <select
+                          ref={index === 0 ? firstAction : undefined}
+                          id={`bus-action-${index}`}
+                          value={item.action}
+                          onChange={event => updateInstruction(index, { action: event.target.value as ControllerReplacement['action'] })}
+                          className={`h-10 w-full rounded-md border bg-background px-3 text-sm ${unassignedError ? 'border-amber-500' : 'border-input'}`}
+                        >
+                          <option value="HOLD">Hold at next stop</option>
+                          {(affectedBuses(selected).length === 1 || index > 0) && <option value="DWELL_ADJUSTMENT">Extend dwell at stop {selected.controlStopCode}</option>}
+                          <option value="SKIP_STOP">Skip stop {selected.controlStopCode}</option>
+                          <option value="NONE">No instruction</option>
+                        </select>
+                        {!hasCaptain && <p className="text-xs text-muted-foreground">No captain is assigned to this bus; movement instructions cannot be delivered.</p>}
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor={`bus-adjustment-${index}`}>Seconds</Label>
+                        <Input
+                          id={`bus-adjustment-${index}`}
+                          type="number"
+                          min="1"
+                          max="120"
+                          step="1"
+                          value={item.adjustmentSeconds}
+                          onChange={event => updateInstruction(index, { adjustmentSeconds: Number(event.target.value) })}
+                          required={item.action === 'HOLD' || item.action === 'DWELL_ADJUSTMENT'}
+                          disabled={item.action === 'NONE' || item.action === 'SKIP_STOP'}
+                          aria-invalid={secondsError ? 'true' : undefined}
+                          className={secondsError ? 'border-destructive' : ''}
+                        />
+                      </div>
+                      {item.action === 'NONE' && (
+                        <div className="space-y-2 sm:col-span-2">
+                          <Label htmlFor={`bus-no-instruction-reason-${index}`}>Reason no instruction is needed</Label>
+                          <Input
+                            id={`bus-no-instruction-reason-${index}`}
+                            maxLength={480}
+                            value={item.noInstructionReason}
+                            onChange={event => updateInstruction(index, { noInstructionReason: event.target.value })}
+                            required
+                            aria-invalid={reasonError ? 'true' : undefined}
+                            className={reasonError ? 'border-destructive' : ''}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
                 <DialogFooter>
                   <DialogClose asChild><Button type="button" variant="outline" disabled={pending}>Close</Button></DialogClose>
                   <Button type="button" variant="outline" disabled={pending} onClick={requestClose}>Cancel</Button>
-                  <Button type="submit" disabled={pending || !isCurrent}>{pending ? 'Saving…' : 'Reject AI suggestion & save instructions'}</Button>
+                  <Button type="submit" disabled={pending || !isCurrent}>{pending ? 'Saving…' : hasBusSuggestions ? 'Save reviewed outcomes' : 'Reject AI suggestion & save instructions'}</Button>
                 </DialogFooter>
               </form>
             </DialogContent>
@@ -1069,23 +1409,44 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
           <div><p className="text-xs text-muted-foreground">Diagnosis</p><p className="mt-1 font-medium">{selected.explanation.likelyCause}</p></div>
           <div className="grid gap-4 text-sm sm:min-w-40">
             <RecommendationBunchingGaps recommendation={selected} alerts={detectedAlerts} />
-            <div><p className="text-xs text-muted-foreground">Target gap</p><p className="mt-1 font-medium tabular-nums">{seconds(selected.expectedHeadwaySeconds)}</p></div>
+            <div><p className="text-xs text-muted-foreground">Expected headway</p><p className="mt-1 font-medium tabular-nums">{seconds(selected.expectedHeadwaySeconds)}</p></div>
           </div>
         </div>
 
-        <section aria-labelledby="affected-buses" className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 id="affected-buses" className="text-sm font-medium">Buses bunching</h3><span className="text-xs text-muted-foreground">Expected gap {seconds(selected.expectedImpact.headwayAfterSeconds)}</span></div>
+        <PlanningCorridorMap
+          routes={routes}
+          positions={positions}
+          serviceId={selected.serviceId}
+          directionId={selected.directionId}
+          controlStopCode={selected.controlStopCode || selected.monitoredStopCode}
+          monitoredStopCode={selected.monitoredStopCode}
+          mitigationType={selected.mitigationType}
+          busReferences={affectedBuses(selected)}
+          alert={recommendationAlert(selected, detectedAlerts)}
+        />
+
+        <section aria-labelledby="affected-buses" className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 id="affected-buses" className="text-sm font-medium">Buses bunching</h3>{showsLegacySuggestion && <span className="text-xs text-muted-foreground">Expected gap {seconds(selected.expectedImpact.headwayAfterSeconds)}</span>}</div>
+          {!hasBusSuggestions && affectedBuses(selected).length > 1 && <p className="text-sm text-muted-foreground">
+            Current suggestions are unavailable. Select Refresh bus group to calculate recovery timing from current predictions.
+          </p>}
           <div className="divide-y rounded-lg border">{affectedBuses(selected).map(busReference => {
-            const isTarget = busReference === selected.targetBusReference
-            return <div key={busReference} className="grid gap-1 p-4 sm:grid-cols-[minmax(10rem,0.35fr)_1fr] sm:gap-4"><p className="font-medium">{busReference}</p><p className="text-sm text-muted-foreground">{isTarget ? suggestedInstruction(selected) : 'No individual instruction proposed.'}</p></div>
+            const outcome = selected.suggestedOutcomes?.find(item => item.busReference === busReference)
+            const instruction = outcome
+              ? outcome.mitigationType
+                ? suggestedInstruction(selected, outcome)
+                : `No instruction. ${outcome.reason ?? ''}`
+              : showsLegacySuggestion
+                ? suggestedInstruction(selected) : 'No individual instruction proposed.'
+            return <div key={busReference} className="grid gap-1 p-4 sm:grid-cols-[minmax(10rem,0.35fr)_1fr] sm:gap-4"><p className="font-medium">{busReference}</p><p className="text-sm text-muted-foreground">{instruction}</p></div>
           })}</div>
         </section>
 
-        <div className="grid gap-5 border-t pt-4 sm:grid-cols-2"><div><h3 className="text-sm font-medium">Why this action</h3><p className="mt-2 text-sm text-muted-foreground">{selected.explanation.rationale}</p></div><dl className="space-y-2 text-sm"><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Passenger minutes</dt><dd>{selected.expectedImpact.passengerMinutesBefore} → {selected.expectedImpact.passengerMinutesAfter}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Queue passengers</dt><dd>{selected.expectedImpact.queueBeforePassengers} → {selected.expectedImpact.queueAfterPassengers}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Adjustment</dt><dd>{selected.adjustmentSeconds} seconds</dd></div></dl></div>
+        {showsLegacySuggestion && <div className="grid gap-5 border-t pt-4 sm:grid-cols-2"><div><h3 className="text-sm font-medium">Why this action</h3><p className="mt-2 text-sm text-muted-foreground">{selected.explanation.rationale}</p></div><dl className="space-y-2 text-sm"><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Passenger minutes</dt><dd>{selected.expectedImpact.passengerMinutesBefore} → {selected.expectedImpact.passengerMinutesAfter}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Queue passengers</dt><dd>{selected.expectedImpact.queueBeforePassengers} → {selected.expectedImpact.queueAfterPassengers}</dd></div><div className="flex justify-between gap-4"><dt className="text-muted-foreground">Adjustment</dt><dd>{selected.adjustmentSeconds} seconds</dd></div></dl></div>}
 
         <details className="border-t pt-4"><summary className="cursor-pointer text-sm font-medium">Evidence and limitations</summary>
           <div className="mt-4 space-y-4">
             {!!selected.explanation.evidenceDetails?.length && <div><h3 className="text-sm font-medium">Supporting incident evidence</h3><RecommendationEvidenceList items={selected.explanation.evidenceDetails} /></div>}
-            <div className="grid gap-5 sm:grid-cols-2"><div><h3 className="text-sm font-medium">Trade-offs</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.tradeOffs.map((item, index) => <li key={index}>{item}</li>)}</ul></div><div><h3 className="text-sm font-medium">Limitations</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.limitations.map((item, index) => <li key={index}>{item}</li>)}</ul></div></div>
+            <div className="grid gap-5 sm:grid-cols-2">{showsLegacySuggestion && <div><h3 className="text-sm font-medium">Trade-offs</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.tradeOffs.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}<div><h3 className="text-sm font-medium">Limitations</h3><ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted-foreground">{selected.explanation.limitations.map((item, index) => <li key={index}>{item}</li>)}</ul></div></div>
           </div>
         </details>
 

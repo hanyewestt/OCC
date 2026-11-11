@@ -72,6 +72,21 @@ class CaptainRouteServiceTest {
     }
 
     @Test
+    void keepsSimulationPositionAvailableBeyondDefaultStaleAfterWindowDuringActiveRun() {
+        var arrival = new BusArrivalObservation();
+        arrival.setEstimatedArrivalAt(NOW.plusSeconds(600));
+        when(fleet.progress(assignment)).thenReturn(Optional.of(new DemoFleetSnapshot.Progress("44251", 8,
+                NOW.minusSeconds(300), 30, List.of(5), List.of(300))));
+        when(arrivals.findFirstByDemoRunIdAndTripIdAndClassificationOrderByFetchedAtDescIdDesc(runId, "demo-190-b",
+                "SIMULATION")).thenReturn(Optional.of(arrival));
+
+        var route = service.current(CAPTAIN.toString()).orElseThrow();
+
+        assertThat(route.position().source()).isEqualTo(CaptainRoute.Position.Source.SIMULATION);
+        assertThat(route.position().nextStopSequence()).contains(8);
+    }
+
+    @Test
     void includesOnlyThisBusesPacingFromTheLatestCycle() {
         when(fleet.progress(assignment)).thenReturn(Optional.empty());
         var gap = Optional.of(new PacingGap(Duration.ofSeconds(45), PacingState.TOO_CLOSE));

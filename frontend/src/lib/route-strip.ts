@@ -1,5 +1,5 @@
 import type { Arrival, BunchingAlert, RouteDirection, RoutePositionBus, RoutePositionDirection, RoutePositions } from './api'
-import { bunchingArrivals } from './bunching'
+import { allBunchingArrivals, bunchingArrivals } from './bunching'
 
 export const ROUTE_STRIP_GAP_SEVERITY = {
   close: {
@@ -85,12 +85,11 @@ function differenceSeconds(first: string, second: string): number | null {
   return Math.round(Math.abs(secondTime - firstTime) / 1000)
 }
 
-export function arrivalGaps(alert: BunchingAlert): { label: 'Bus 1–2' | 'Bus 2–3'; seconds: number | null }[] {
-  const [first, second, third] = bunchingArrivals(alert)
-  return [
-    { label: 'Bus 1–2', seconds: differenceSeconds(first, second) },
-    { label: 'Bus 2–3', seconds: differenceSeconds(second, third) },
-  ]
+export function arrivalGaps(alert: BunchingAlert): { label: string; seconds: number | null }[] {
+  const arrivals = allBunchingArrivals(alert)
+  return arrivals.slice(1).map((following, index) => ({
+    label: `Bus ${index + 1}–${index + 2}`, seconds: differenceSeconds(arrivals[index], following),
+  }))
 }
 
 export function bunchedArrivalGaps(alert: BunchingAlert): { leadingOrder: number; followingOrder: number; seconds: number }[] {
@@ -190,7 +189,7 @@ function similarGaps(first: number | null, second: number | null, toleranceSecon
 }
 
 export function groupRouteIncidents(alerts: BunchingAlert[], routes: RouteDirection[], nowMs: number,
-  pollIntervalSeconds: number, gapToleranceSeconds: number = 30): RouteIncident[] {
+  pollIntervalSeconds: number, gapToleranceSeconds: number = 30, isSimulation: boolean = false): RouteIncident[] {
   const resolved: ResolvedAlert[] = alerts.map(alert => ({
     alert,
     ...alertRoute(alert, routes),
@@ -252,7 +251,7 @@ export function groupRouteIncidents(alerts: BunchingAlert[], routes: RouteDirect
       latestDetectedAt,
       gapSeconds,
       ageSeconds,
-      historical: ageSeconds > pollIntervalSeconds * 3 || passedPrediction,
+      historical: isSimulation ? false : (ageSeconds > pollIntervalSeconds * 3 || passedPrediction),
       latestStopIndex: latest.stopIndex,
     }
   }).sort((first, second) => Date.parse(second.latestDetectedAt) - Date.parse(first.latestDetectedAt))

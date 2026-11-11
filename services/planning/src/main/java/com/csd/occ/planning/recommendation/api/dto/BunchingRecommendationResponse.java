@@ -17,6 +17,7 @@ public record BunchingRecommendationResponse(
         SourceClassification classification,
         IncidentType incidentType,
         RecommendationStatus status,
+        @Schema(allowableValues = {"HOLD", "DWELL_ADJUSTMENT", "STANDBY_DISPATCH"})
         MitigationType mitigationType,
         String targetBusReference,
         String controlStopCode,

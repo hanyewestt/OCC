@@ -75,24 +75,26 @@ class DemoRunControllerTest {
     @Test
     void startSavesTheRequestedFleetConfiguration() throws Exception {
         UUID runId = UUID.randomUUID();
-        var configuration = new com.csd.occ.ingestion.domain.DemoRunConfiguration("972", 1, 3,
+        var configuration = new com.csd.occ.ingestion.domain.DemoRunConfiguration("972", 1, 4,
                 java.time.Duration.ofSeconds(120), List.of(java.time.Duration.ofSeconds(120),
-                java.time.Duration.ofSeconds(150)), "44251", com.csd.occ.ingestion.domain.DemoScenario.NORMAL,
+                java.time.Duration.ofSeconds(150), java.time.Duration.ofSeconds(180)), "44251", com.csd.occ.ingestion.domain.DemoScenario.NORMAL,
                 List.of(UUID.fromString("10000000-0000-4000-8000-000000000001"),
                         UUID.fromString("10000000-0000-4000-8000-000000000002"),
-                        UUID.fromString("10000000-0000-4000-8000-000000000003")));
+                        UUID.fromString("10000000-0000-4000-8000-000000000003"),
+                        UUID.fromString("10000000-0000-4000-8000-000000000004")));
         when(runs.start(eq(configuration), eq("controller")))
                 .thenReturn(new DemoRunDetails(runId, "RUNNING", 0, configuration, List.of()));
 
         mvc.perform(post("/api/v1/demo-runs").with(user("controller").roles("CONTROLLER"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"serviceId\":\"972\",\"directionId\":1,\"busCount\":3,\"dispatchGapSeconds\":120,\"busGapsSeconds\":[120,150],\"monitoredStopCode\":\"44251\",\"scenario\":\"NORMAL\",\"captainUserIds\":[\"10000000-0000-4000-8000-000000000001\",\"10000000-0000-4000-8000-000000000002\",\"10000000-0000-4000-8000-000000000003\"]}"))
+                        .content("{\"serviceId\":\"972\",\"directionId\":1,\"busCount\":4,\"dispatchGapSeconds\":120,\"busGapsSeconds\":[120,150,180],\"monitoredStopCode\":\"44251\",\"scenario\":\"NORMAL\",\"captainUserIds\":[\"10000000-0000-4000-8000-000000000001\",\"10000000-0000-4000-8000-000000000002\",\"10000000-0000-4000-8000-000000000003\",\"10000000-0000-4000-8000-000000000004\"]}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.serviceId").value("972"))
-                .andExpect(jsonPath("$.busCount").value(3))
+                .andExpect(jsonPath("$.busCount").value(4))
                 .andExpect(jsonPath("$.dispatchGapSeconds").value(120))
                 .andExpect(jsonPath("$.busGapsSeconds[0]").value(120))
                 .andExpect(jsonPath("$.busGapsSeconds[1]").value(150))
+                .andExpect(jsonPath("$.busGapsSeconds[2]").value(180))
                 .andExpect(jsonPath("$.monitoredStopCode").value("44251"))
                 .andExpect(jsonPath("$.scenario").value("NORMAL"));
     }
@@ -132,6 +134,20 @@ class DemoRunControllerTest {
                 .andExpect(jsonPath("$.alerts[0].leadingVehicle.operator").value("DEMO-OPERATOR"))
                 .andExpect(jsonPath("$.alerts[0].leadingVehicle.captainCode").value("DEMO-CAPTAIN-01"))
                 .andExpect(jsonPath("$.alerts[0].followingVehicle.registrationNumber").value("DEMO-190-02"));
+    }
+
+    @Test
+    void statusReturnsAnAlertWhenVehicleIdentityIsUnavailable() throws Exception {
+        UUID runId = UUID.randomUUID();
+        var alert = new DemoAlertDetails(UUID.randomUUID(), UUID.randomUUID(), "OPENED", "SIMULATION", "190", "44251",
+                null, null, 1, Instant.parse("2026-09-26T05:00:00Z"), null, null, null, List.of(), "{}");
+        when(runs.status(runId)).thenReturn(new DemoRunDetails(runId, "RUNNING", 0, List.of(alert)));
+
+        mvc.perform(get("/api/v1/demo-runs/{id}", runId).with(user("controller").roles("CONTROLLER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.alerts.length()").value(1))
+                .andExpect(jsonPath("$.alerts[0].leadingVehicle").doesNotExist())
+                .andExpect(jsonPath("$.alerts[0].affectedVehicles.length()").value(0));
     }
 
     @Test

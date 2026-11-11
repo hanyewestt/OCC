@@ -73,8 +73,8 @@ public record ArrivalSnapshot(
             if (serviceId.isBlank() || stopCode.isBlank()) {
                 throw new IllegalArgumentException("Service and stop must not be blank");
             }
-            if (visitOrder < 1 || visitOrder > 3) {
-                throw new IllegalArgumentException("Visit order must be between 1 and 3");
+            if (visitOrder < 1 || visitOrder > 100) {
+                throw new IllegalArgumentException("Visit order must be between 1 and 100");
             }
             if (directionId.isPresent() && directionId.get() <= 0) {
                 throw new IllegalArgumentException("Mapped direction must be positive");

@@ -48,11 +48,12 @@ public class RecommendationDecisionController {
     @PostMapping("/{recommendationId}/decision")
     @Operation(operationId = "decideBunchingRecommendation",
             summary = "Approve or replace a recommendation",
-            description = "Stores the authenticated controller decision and issues the validated recommendation or one typed replacement to its assigned captain in the same transaction. The target bus and control stop come from the stored recommendation. Repeating the same request returns the existing decision and instruction; conflicting or unsafe requests return 409.")
+            description = "Stores the authenticated controller decision and issues validated instructions atomically. A multi-bus incident requires an outcome for every affected bus, including a reason for each no-instruction outcome. Repeated identical decisions return the recorded result; changed groups or conflicting decisions return 409.")
     @ApiResponse(responseCode = "200", description = "Decision and replacement instruction stored, or the same request replayed")
     @ApiResponse(responseCode = "400", description = "Decision request is invalid")
     @ApiResponse(responseCode = "404", description = "Recommendation not found")
     @ApiResponse(responseCode = "409", description = "A different or ineligible decision was supplied")
+    @ApiResponse(responseCode = "503", description = "A bus instruction could not be delivered and the entire decision was rolled back")
     public RecommendationDecisionResponse decide(
             @PathVariable UUID recommendationId,
             @Valid @RequestBody RecommendationDecisionRequest request,
@@ -78,7 +79,8 @@ public class RecommendationDecisionController {
             UUID recommendationId, PlanningActor actor, RecommendationDecisionRequest request) {
         var replacements = request.normalizedReplacements().stream()
                 .map(item -> new BunchingInstructionService.ReplacementBusInstruction(item.busReference(),
-                        item.action().toMitigationType(), item.adjustmentSeconds())).toList();
+                        item.action().mitigationType(), item.adjustmentSeconds() == null ? 0 : item.adjustmentSeconds(),
+                        item.noInstructionReason())).toList();
         instructions.rejectAndIssue(recommendationId, actor, replacements, request.controllerRationale());
         return decisions.findDecision(recommendationId).orElseThrow();
     }
