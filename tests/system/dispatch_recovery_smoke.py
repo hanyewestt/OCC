@@ -171,7 +171,7 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=180)
     args = parser.parse_args()
     base_url = args.base_url.rstrip("/")
-    token = (args.token_dir / "admin.jwt").read_text(encoding="utf-8").strip()
+    token = (args.token_dir / "controller.jwt").read_text(encoding="utf-8").strip()
 
     port = compose(args.compose_project, "port", "planning-fault-proxy", "8081")
     host, separator, raw_port = port.rpartition(":")

@@ -44,7 +44,7 @@ class HttpAdvisoryContextAdapterTest {
                 .andRespond(withSuccess("""
                         {"demoRunId":"%s","status":"ACTIVE","totalElements":1,"items":[{
                           "busId":"BUS-1","tripId":"TRIP-1","registrationNumber":"BUS-1",
-                          "serviceId":"190","directionId":1,"assignmentStatus":"ASSIGNED",
+                          "serviceId":"190","directionId":1,"assignmentStatus":"ASSIGNED","assignmentRevision":0,
                           "progress":{"stopCode":"44251","stopSequence":4,
                             "observedAt":"2026-09-28T00:00:00Z","assumedSpeedKmh":30,
                             "allowedSpeedReductionsKmh":[],"allowedDurationsSeconds":[],

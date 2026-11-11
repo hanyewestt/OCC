@@ -288,9 +288,9 @@ Three tiers, three locations, three speeds.
 **These are two different things and must not share a code path.**
 
 - **Operational logs**: SLF4J, `private static final Logger log = LoggerFactory.getLogger(X.class)`. For diagnosing the service. Free to be lossy.
-- **Audit records**: retain only AI input/output evidence and active operational recovery state. Do not create a permanent general-purpose audit trail for routine processing.
+- **Audit records**: immutable application evidence in the owning service, with independent 90-day retention. Capture meaningful transitions and outcomes in ADVISORIES, AI_PROCESSING, OPERATIONS and ACCOUNT_ASSIGNMENT; never capture arbitrary logger output or repetitive reads/polls. Success records share the mutation transaction; failure records follow rollback in an independent transaction. Use bounded event-specific safe details and unique source keys, never entire requests or provider objects. Audit reads never mutate operational history.
 
-Configure diagnostic-log retention separately from operational data. Raw, normalized, closed demo, and resolved-alert history use the configured `OCC_INGESTION_RETENTION` window (12h by default); cleanup is irreversible. Retained AI response/input snapshots follow their separate long-lived policy. Label simulation and observation-only records explicitly so retrospective investigations can distinguish them.
+Configure diagnostic-log retention separately from application audit history and operational data. Application audit events and copied AI input/output evidence use `OCC_AUDIT_RETENTION` (90 days by default), independent of operational cleanup. Legacy evidence may remain beyond that cutoff only while it is required by pending operational work. Raw, normalized, closed demo, and resolved-alert history use the configured `OCC_INGESTION_RETENTION` window (12h by default); cleanup is irreversible, while independent audit snapshots survive it. Label simulation and observation-only records explicitly so retrospective investigations can distinguish them.
 
 Never log a password, token, MFA secret, verification code, or session identifier. Never log a full email at INFO. When in doubt, log the stable user ID — that is what it is for.
 

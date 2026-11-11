@@ -3,10 +3,12 @@ package com.csd.occ.planning.advisory.api;
 import com.csd.occ.planning.advisory.api.dto.InstructionResponse;
 import com.csd.occ.planning.advisory.api.dto.ReplaceInstructionRequest;
 import com.csd.occ.planning.advisory.domain.BunchingInstructionService;
+import com.csd.occ.planning.advisory.domain.PlanningActor;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import java.util.UUID;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,11 +20,11 @@ public class BunchingInstructionController {
     public BunchingInstructionController(BunchingInstructionService instructions) { this.instructions = instructions; }
     @PostMapping("/{id}/obu-decisions")
     @Operation(operationId = "approveBunchingObuInstruction", summary = "Approve and issue a validated HOLD/DWELL instruction atomically",
-            description = "Controller/admin only. Available for single-bus recommendations; multi-bus incidents require a reviewed outcome for every bus through the decision endpoint. Optional body may identify replaceInstructionId. Revalidates safety rules, the active run, recipient and upcoming control stop; conflicts return 409.")
+            description = "CONTROLLER only. Available for single-bus recommendations; multi-bus incidents require a reviewed outcome for every bus through the decision endpoint. Optional body may identify replaceInstructionId. Revalidates safety rules, the active run, recipient and upcoming control stop; conflicts return 409.")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "503",
             description = "The bus instruction could not be delivered and the decision was rolled back")
     public InstructionResponse approve(@PathVariable UUID id, @RequestBody(required = false) ReplaceInstructionRequest body,
-                                        @AuthenticationPrincipal Jwt jwt) {
-        return InstructionResponse.from(instructions.approveAndIssue(id, jwt.getSubject(), body == null ? null : body.replaceInstructionId()));
+                                        @AuthenticationPrincipal Jwt jwt, Authentication authentication) {
+        return InstructionResponse.from(instructions.approveAndIssue(id, PlanningActorResolver.from(jwt, authentication), body == null ? null : body.replaceInstructionId()));
     }
 }

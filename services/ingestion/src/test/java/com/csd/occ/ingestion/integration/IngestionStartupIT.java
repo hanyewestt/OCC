@@ -1,6 +1,7 @@
 package com.csd.occ.ingestion.integration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -128,12 +129,64 @@ class IngestionStartupIT {
         when(dataMall.arrivalsAt("44009", "190"))
                 .thenReturn(new BusArrivalSnapshot(200, "{}", java.util.List.of(), java.util.List.of()));
         polling.poll();
-        assertThat(observations.findAll()).singleElement().satisfies(observation -> {
-            assertThat(observation.getPayload()).isEqualTo("{}");
-            assertThat(observation.getPayloadChecksum()).hasSize(64);
-            assertThat(observation.getFetchedAt()).isNotNull();
-        });
+        UUID pollId = jdbc.queryForObject("select id from ingestion.poll_run where scope_key='service:190:stop:44009' order by started_at desc limit 1", UUID.class);
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.raw_observation where poll_run_id=?", Integer.class, pollId))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForMap("select payload::text as payload, payload_checksum, fetched_at from ingestion.raw_observation where poll_run_id=?", pollId))
+                .satisfies(row -> {
+                    assertThat(row.get("payload")).isEqualTo("{}");
+                    assertThat(row.get("payload_checksum").toString()).hasSize(64);
+                    assertThat(row.get("fetched_at")).isNotNull();
+                });
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.application_audit_event where source_key=?",
+                Integer.class, "ingestion-poll:" + pollId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.application_audit_event where source_key=?",
+                Integer.class, "ingestion-feed-health:" + pollId)).isEqualTo(1);
         assertThat(bunchingFeed.page(0, 100).items()).hasSize(1);
+    }
+
+    @Test
+    void terminalPollAndHealthDoNotCommitWhenTheirAuditWriteFails() {
+        jdbc.execute("delete from ingestion.poll_target");
+        jdbc.update("insert into ingestion.poll_target (source, scope_key, stop_code, service_id, enabled, created_at, updated_at) "
+                + "values ('DATAMALL', 'audit-atomic-test', '44009', '190', true, now(), now())");
+        if (topology.activeVersion().isEmpty()) {
+            topology.replaceIfChanged(new BusReferencePort.BusReferenceData(
+                    List.of(new BusReferencePort.BusStopRecord("44009", "Fixture Road", "Fixture Stop",
+                            new java.math.BigDecimal("1.3"), new java.math.BigDecimal("103.8"))),
+                    List.of(new BusReferencePort.BusServiceRecord("190", "SBST", "TRUNK")),
+                    List.of(new BusReferencePort.BusRouteStopRecord("190", "SBST", 1, 1, "44009", java.math.BigDecimal.ZERO))),
+                    "c".repeat(64));
+        }
+        when(dataMall.arrivalsAt("44009", "190"))
+                .thenReturn(new BusArrivalSnapshot(200, "{}", List.of(), List.of()));
+        jdbc.execute("""
+                CREATE FUNCTION ingestion.reject_poll_audit() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.event_type = 'FEED_POLL_COMPLETED' THEN RAISE EXCEPTION 'synthetic audit failure'; END IF;
+                    RETURN NEW;
+                END
+                $$
+                """);
+        jdbc.execute("CREATE TRIGGER reject_poll_audit BEFORE INSERT ON ingestion.application_audit_event "
+                + "FOR EACH ROW EXECUTE FUNCTION ingestion.reject_poll_audit()");
+        try {
+            assertThatThrownBy(polling::poll)
+                    .isInstanceOf(org.springframework.orm.jpa.JpaSystemException.class)
+                    .hasRootCauseInstanceOf(org.postgresql.util.PSQLException.class)
+                    .hasMessageContaining("synthetic audit failure");
+        } finally {
+            jdbc.execute("DROP TRIGGER reject_poll_audit ON ingestion.application_audit_event");
+            jdbc.execute("DROP FUNCTION ingestion.reject_poll_audit()");
+        }
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.poll_run where scope_key='audit-atomic-test' and outcome='RUNNING'",
+                Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.feed_status where source='DATAMALL' and scope_key='audit-atomic-test'",
+                Integer.class)).isZero();
+        UUID incompletePollId = jdbc.queryForObject("select id from ingestion.poll_run where scope_key='audit-atomic-test' order by started_at desc limit 1",
+                UUID.class);
+        assertThat(jdbc.queryForObject("select count(*) from ingestion.application_audit_event where source_key=?",
+                Integer.class, "ingestion-poll:" + incompletePollId)).isZero();
     }
 
     @Test

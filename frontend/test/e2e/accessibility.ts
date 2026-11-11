@@ -94,11 +94,14 @@ export async function auditFocus(page: Page, maxTabs = 60): Promise<string[]> {
     const problem = await page.evaluate(async () => {
       const element = document.activeElement
       if (!element || element === document.body) return null
+      // Native date/time controls focus an internal segment; their parent may own the visible ring.
+      const focusTarget = element.matches(':focus') ? element
+        : element.parentElement?.matches(':focus-within') ? element.parentElement : element
       // Focus rings often fade in; judge the finished state, not the first frame of the transition.
-      await Promise.all(element.getAnimations().map(animation => animation.finished.catch(() => undefined)))
-      const style = getComputedStyle(element)
+      await Promise.all(focusTarget.getAnimations().map(animation => animation.finished.catch(() => undefined)))
+      const style = getComputedStyle(focusTarget)
       const text = (element.getAttribute('aria-label') ?? element.textContent ?? '').trim().replace(/\s+/g, ' ').slice(0, 50)
-      const label = `<${element.tagName.toLowerCase()}> "${text}"`
+      const label = `<${element.tagName.toLowerCase()}${element.id ? `#${element.id}` : ''}> "${text}"`
       // The outline wins when present; otherwise the box-shadow layer with the widest spread is the ring.
       // A ring offset is a narrower background-coloured layer drawn under it, so it must not be measured.
       let indicator: string | null = null
@@ -122,7 +125,7 @@ export async function auditFocus(page: Page, maxTabs = 60): Promise<string[]> {
         .reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
       // The ring is drawn just outside the element, over its parent's background.
       const backgrounds: string[] = []
-      for (let node = element.parentElement; node; node = node.parentElement) backgrounds.unshift(getComputedStyle(node).backgroundColor)
+      for (let node = focusTarget.parentElement; node; node = node.parentElement) backgrounds.unshift(getComputedStyle(node).backgroundColor)
       const [ring, background] = [luminance(paint([...backgrounds, indicator])), luminance(paint(backgrounds))]
       const ratio = (Math.max(ring, background) + 0.05) / (Math.min(ring, background) + 0.05)
       return ratio < 3 ? `focus indicator contrast ${ratio.toFixed(2)}:1 on ${label}` : null

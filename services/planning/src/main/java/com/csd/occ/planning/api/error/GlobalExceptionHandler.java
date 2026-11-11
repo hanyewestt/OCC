@@ -8,6 +8,8 @@ import com.csd.occ.planning.recommendation.domain.RecommendationDecisionService;
 import com.csd.occ.planning.advisory.domain.AdvisoryProposalRepository;
 import com.csd.occ.planning.advisory.domain.IssuedInstructionRepository;
 import com.csd.occ.planning.advisory.domain.InstructionType;
+import com.csd.occ.planning.advisory.domain.AdvisoryForbiddenException;
+import com.csd.occ.planning.domain.audit.ApplicationAuditNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.util.List;
@@ -40,6 +42,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(com.csd.occ.planning.advisory.domain.AdvisoryNotFoundException.class)
     ProblemDetail advisoryNotFound(HttpServletRequest request) {
         return problem(HttpStatus.NOT_FOUND, "Advisory not found", "The requested advisory is not available.", "urn:occ:problem:advisory-not-found", request);
+    }
+    @ExceptionHandler(AdvisoryForbiddenException.class)
+    ProblemDetail handleDomainForbidden(HttpServletRequest request) {
+        return problem(HttpStatus.FORBIDDEN, "Forbidden", "The authenticated role cannot perform this action.",
+                "urn:occ:problem:forbidden", request);
     }
     @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
     ProblemDetail concurrentAdvisoryConflict(org.springframework.dao.DataIntegrityViolationException exception,
@@ -86,6 +93,12 @@ public class GlobalExceptionHandler {
     ProblemDetail handleNotFound(HttpServletRequest request) {
         return problem(HttpStatus.NOT_FOUND, "Resource not found", "The requested planning resource does not exist.",
                 "urn:occ:problem:not-found", request);
+    }
+
+    @ExceptionHandler(ApplicationAuditNotFoundException.class)
+    ProblemDetail handleApplicationAuditNotFound(HttpServletRequest request) {
+        return problem(HttpStatus.NOT_FOUND, "Audit event not found", "The requested audit event is not available.",
+                "urn:occ:problem:audit-event-not-found", request);
     }
 
     @ExceptionHandler(com.csd.occ.planning.diagnosis.domain.EarlyBunchingControllerSuggestionService.SuggestionConflictException.class)
