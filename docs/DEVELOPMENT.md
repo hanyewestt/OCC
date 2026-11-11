@@ -72,9 +72,6 @@ the workload, then run `VM.native_memory summary.diff scale=MB`. Keep the helper
 JDK version aligned with `BUILD_IMAGE` in `infra/java.Dockerfile`. NMT supplements
 health checks; it does not expose a network management endpoint.
 
-See [the measured memory comparison](PERFORMANCE.md) for the workload, before/after
-results, native-memory breakdown and limits of the measurement.
-
 ## First-time configuration
 
 Create the ignored root `.env` only if it does not already exist:
@@ -235,7 +232,7 @@ cd ..
 
 Rebuild after frontend source changes when testing through Nginx. Node and Vite
 do not run in the deployed app. Deployment must stage the complete `dist/`
-artifact; see [deployment](DEPLOYMENT.md) for the production Compose setup.
+artifact; see [the production Compose configuration](../infra/compose.production.yaml) for the production Compose setup.
 
 ### Routes and error handling
 
@@ -500,7 +497,6 @@ See [testing](TESTING.md) for system tests and CI.
 
 - [Authentication](AUTHENTICATION.md): public configuration, roles and sessions.
 - [Testing](TESTING.md): service tests, browser tests and CI.
-- [Deployment](DEPLOYMENT.md): container topology and production HTTPS.
 - [Frontend conventions](frontend-convention.md) and [service conventions](CONVENTIONS.md).
 
 ### Captain live-auth test configuration
