@@ -1,0 +1,7 @@
+# Production data overlay: PostgreSQL must write to the retained EBS volume
+# that bootstrap-host.sh mounts, not to a named volume on the root disk.
+# Local development keeps the base named volume via compose.override.yaml.
+services:
+  postgres:
+    volumes: !override
+      - ${OCC_DATA_MOUNT:?set OCC_DATA_MOUNT to the mounted durable data volume}:/var/lib/postgresql
