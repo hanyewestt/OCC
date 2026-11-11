@@ -122,7 +122,7 @@ The OpenAPI security identifiers are `SupabaseJWT` and `DisruptionPeerToken`;
 these describe the existing bearer/peer-header authentication and do not change
 the API routes, role checks or header names.
 
-Start the local database using [the local setup guide](../../docs/LOCAL-DEVELOPMENT.md),
+Start the local database using [the local setup guide](../../docs/DEVELOPMENT.md),
 then run Planning from its service directory:
 
 ```powershell

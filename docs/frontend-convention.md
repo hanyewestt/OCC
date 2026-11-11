@@ -207,7 +207,7 @@ prove production compatibility.
   and useful feedback when configuration or APIs are unavailable.
 - Update existing edge tests for React and remove expectations that retired
   pages remain available. See [TESTING.md](TESTING.md) and
-  [DEPLOYMENT.md](DEPLOYMENT.md) for existing checks and hosting details.
+  [DEVELOPMENT.md](DEVELOPMENT.md) for existing checks and hosting details.
 
 Defer generated clients, elaborate feature layers, global stores, comprehensive
 component suites, advanced caching and performance tuning until a concrete need
