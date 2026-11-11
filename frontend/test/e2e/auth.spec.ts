@@ -2447,7 +2447,9 @@ test('corridor map reveals collision-safe stop codes at high zoom and preserves 
     page: 0, totalItems: 1, totalPages: 1,
   } }))
 
-  await login(page, '/controller/disruptions?service=190&direction=1')
+  await login(page)
+  await page.getByRole('link', { name: 'Disruptions', exact: true }).click()
+  await page.getByRole('button', { name: 'Svc 190 · to Stop 44003', exact: true }).click()
   const map = page.getByRole('region', { name: 'Interactive affected corridor map. Use arrow keys to pan, plus and minus to zoom.' })
   await expect(map).toBeVisible()
   const mapSvg = map.locator('svg[aria-label="OneMap of affected bus stops and estimated buses"]')

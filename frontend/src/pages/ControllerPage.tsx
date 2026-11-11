@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { RefreshCw, TriangleAlert } from 'lucide-react'
+import { RefreshCw, TriangleAlert, X } from 'lucide-react'
 import { formatSgtDateTime } from '@/lib/time'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -17,6 +17,7 @@ import { usePagedCollection } from '@/lib/paged-collection'
 import { usePageRefresh } from '@/lib/page-refresh'
 import { PageRefreshStatus } from '@/components/PageRefreshStatus'
 import { bunchedArrivalGaps } from '@/lib/route-strip'
+import { haversineDistanceM } from '@/lib/route-geometry'
 
 export type Resource<T> = { data: T | null; error: string }
 export type Planning = { recommendations: PageResult<PendingRecommendation> & { mode: string; demoRunId: string | null }; decisions: PageResult<Decision> }
@@ -103,6 +104,40 @@ async function loadLiveData(token: string, signal: AbortSignal): Promise<LiveDat
     loadRoutePositions(token, signal),
   ])
   return { routeArrivals, positions }
+}
+
+function findNearestCorridorStop(
+  incidentLat: number | null | undefined,
+  incidentLon: number | null | undefined,
+  routes: RouteDirection[],
+  maxDistanceM = 2500
+): { serviceId: string; directionId: number; stopCode: string; description: string | null; roadName: string | null; distanceM: number } | null {
+  if (incidentLat == null || incidentLon == null || Number.isNaN(incidentLat) || Number.isNaN(incidentLon)) {
+    return null
+  }
+  let best: { serviceId: string; directionId: number; stopCode: string; description: string | null; roadName: string | null; distanceM: number } | null = null
+
+  for (const route of routes) {
+    for (const stop of route.stops) {
+      if (stop.latitude == null || stop.longitude == null || Number.isNaN(stop.latitude) || Number.isNaN(stop.longitude)) continue
+      const dist = haversineDistanceM(
+        { latitude: incidentLat, longitude: incidentLon },
+        { latitude: stop.latitude, longitude: stop.longitude }
+      )
+      if (dist <= maxDistanceM && (!best || dist < best.distanceM)) {
+        best = {
+          serviceId: route.serviceId,
+          directionId: route.directionId,
+          stopCode: stop.stopCode,
+          description: stop.description,
+          roadName: stop.roadName,
+          distanceM: Math.round(dist),
+        }
+      }
+    }
+  }
+
+  return best
 }
 
 export function ControllerPage({ email, token, controllerRefreshIntervalSeconds, ingestionPollIntervalSeconds,
@@ -300,7 +335,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         id: top.eventId,
         kind: 'bunching',
         title: `Bunching on Service ${top.serviceId}${top.directionId ? ` (Dir ${top.directionId})` : ''}`,
-        subtitle: `Stop ${top.stopCode}`,
+        subtitle: `Monitored Stop: ${top.stopName || top.stopCode}`,
         detail: `Headway gap degraded to ${topGap ? `${topGap}s` : 'critical threshold'}. Directives required to restore corridor pacing.`,
         severity: (topGap ?? 999) < 60 ? 'critical' : 'warning',
         serviceId: top.serviceId,
@@ -315,21 +350,30 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
 
     const newTraffic = currentTraffic.filter((t: TrafficIncident) => !knownTrafficIdsRef.current.has(t.id))
     if (newTraffic.length > 0) {
-      newTraffic.forEach(t => knownTrafficIdsRef.current.add(t.id))
-      const top = newTraffic[0]
-      setActiveNewIncidentAlert({
-        id: top.id,
-        kind: 'traffic',
-        title: `${top.incidentType || 'Traffic Hazard'} Reported`,
-        subtitle: top.message || 'Road disruption along transit corridor',
-        detail: top.message || 'A new traffic incident has been reported along monitored corridors.',
-        severity: 'warning',
-        incidentType: top.incidentType,
-        detectedAt: top.observedAt ?? top.updatedAt ?? undefined,
-      })
-      setDirectiveAlertOpen(true)
+      newTraffic.forEach((t: TrafficIncident) => knownTrafficIdsRef.current.add(t.id))
+      const routes = routeStops.data ?? []
+      for (const candidate of newTraffic) {
+        const nearest = findNearestCorridorStop(candidate.latitude, candidate.longitude, routes, 2500)
+        if (nearest) {
+          setActiveNewIncidentAlert({
+            id: candidate.id,
+            kind: 'traffic',
+            title: `${candidate.incidentType || 'Traffic Hazard'} Reported`,
+            subtitle: `Near ${nearest.description || nearest.stopCode} (Service ${nearest.serviceId} corridor ~${nearest.distanceM}m away)`,
+            detail: candidate.message || 'Traffic disruption reported along transit corridor.',
+            severity: 'warning',
+            serviceId: nearest.serviceId,
+            directionId: nearest.directionId,
+            stopCode: nearest.stopCode,
+            incidentType: candidate.incidentType,
+            detectedAt: candidate.observedAt ?? candidate.updatedAt ?? undefined,
+          })
+          setDirectiveAlertOpen(true)
+          break
+        }
+      }
     }
-  }, [currentAlerts, currentTraffic])
+  }, [currentAlerts, currentTraffic, routeStops.data])
 
   const awaitingDirectiveCount = currentAlerts.length
   const topAlertGap = currentAlerts[0] ? bunchedArrivalGaps(currentAlerts[0])[0]?.seconds ?? null : null
@@ -337,7 +381,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     id: currentAlerts[0].eventId,
     kind: 'bunching' as const,
     title: `Bunching on Service ${currentAlerts[0].serviceId}${currentAlerts[0].directionId ? ` (Dir ${currentAlerts[0].directionId})` : ''}`,
-    subtitle: `Stop ${currentAlerts[0].stopCode}`,
+    subtitle: `Monitored Stop: ${currentAlerts[0].stopName || currentAlerts[0].stopCode}`,
     detail: `Headway gap degraded to ${topAlertGap ? `${topAlertGap}s` : 'critical threshold'}. Directives required to restore corridor pacing.`,
     severity: (topAlertGap ?? 999) < 60 ? 'critical' : 'warning',
     serviceId: currentAlerts[0].serviceId,
@@ -587,57 +631,70 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           <DialogFooter><Button variant="outline" onClick={() => setSimulationDialogOpen(false)}>Cancel</Button><Button disabled={captainAssignmentInvalid} onClick={startSimulation}>Start simulation</Button></DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={directiveAlertOpen} onOpenChange={setDirectiveAlertOpen}>
-        <DialogContent className="sm:max-w-md border-amber-500/60 shadow-xl">
-          <DialogHeader className="space-y-2">
-            <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-800 dark:bg-red-950/70 dark:text-red-300 border border-red-300 dark:border-red-800 animate-pulse">
-                <TriangleAlert className="size-3.5" />
-                ACTION REQUIRED · NEW DISRUPTION
+      {directiveAlertOpen && displayedAlert && (
+        <aside
+          role="alert"
+          aria-live="assertive"
+          className="fixed bottom-6 right-6 z-50 w-full max-w-md rounded-xl border border-amber-500/50 bg-background/95 p-4 shadow-2xl backdrop-blur-md transition-all animate-in slide-in-from-bottom-5 duration-200"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-red-100 text-red-800 dark:bg-red-950/70 dark:text-red-300 border border-red-300 dark:border-red-800 animate-pulse">
+              <TriangleAlert className="size-3.5" />
+              ACTION REQUIRED · DIRECTIVE NOTICE
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6 text-muted-foreground hover:text-foreground"
+              onClick={() => setDirectiveAlertOpen(false)}
+              aria-label="Dismiss directive notice"
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+
+          <div className="mt-2.5 space-y-1">
+            <h3 className="text-base font-bold leading-snug tracking-tight text-foreground">
+              {displayedAlert.title}
+            </h3>
+            <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+              {displayedAlert.subtitle}
+            </p>
+          </div>
+
+          <div className="mt-2.5 rounded-lg border bg-muted/40 p-2.5 text-xs text-muted-foreground space-y-1.5">
+            <p className="text-xs font-normal text-foreground leading-relaxed">
+              {displayedAlert.detail}
+            </p>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-1.5 text-[11px]">
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-800 dark:text-amber-300 font-medium">
+                Status: Awaiting Directive
               </span>
-            </div>
-            <DialogTitle className="text-lg font-bold leading-tight">
-              {displayedAlert?.title ?? 'Operational Disruption Detected'}
-            </DialogTitle>
-            <DialogDescription className="text-xs text-muted-foreground">
-              Awaiting controller directive. Please review the disruption facts and dispatch appropriate mitigation instructions.
-            </DialogDescription>
-          </DialogHeader>
-
-          {displayedAlert && (
-            <div className="space-y-3 rounded-lg border bg-muted/40 p-3.5 text-sm">
-              <div className="flex items-center justify-between text-xs text-muted-foreground border-b pb-2">
-                <span className="font-medium text-foreground">{displayedAlert.subtitle}</span>
-                {displayedAlert.detectedAt && <span>{formatSgtDateTime(displayedAlert.detectedAt)}</span>}
-              </div>
-              <p className="text-sm font-medium text-foreground leading-snug">
-                {displayedAlert.detail}
-              </p>
-              <div className="flex items-center gap-2 pt-1 text-xs">
-                <span className="inline-flex items-center px-2 py-0.5 rounded bg-amber-500/10 text-amber-800 dark:text-amber-300 border border-amber-500/30 font-medium">
-                  Status: Awaiting Directive
+              {displayedAlert.gapSeconds !== undefined && displayedAlert.gapSeconds !== null && (
+                <span>
+                  Gap: <strong className="text-foreground">{displayedAlert.gapSeconds}s</strong>
                 </span>
-                {displayedAlert.gapSeconds !== undefined && displayedAlert.gapSeconds !== null && (
-                  <span className="text-muted-foreground">
-                    Headway gap: <strong className="text-foreground">{displayedAlert.gapSeconds}s</strong>
-                  </span>
-                )}
-              </div>
+              )}
+              {displayedAlert.detectedAt && (
+                <span>{formatSgtDateTime(displayedAlert.detectedAt)}</span>
+              )}
             </div>
-          )}
+          </div>
 
-          <DialogFooter className="flex-col sm:flex-row gap-2 pt-2">
+          <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="outline"
               size="sm"
+              className="h-8 text-xs"
               onClick={() => setDirectiveAlertOpen(false)}
             >
               Acknowledge
             </Button>
-            {displayedAlert?.serviceId && (
+            {displayedAlert.serviceId && (
               <Button
                 variant="outline"
                 size="sm"
+                className="h-8 text-xs"
                 onClick={() => {
                   setDirectiveAlertOpen(false)
                   const [svc, dir] = [displayedAlert.serviceId, displayedAlert.directionId]
@@ -649,10 +706,10 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
             )}
             <Button
               size="sm"
-              className="bg-amber-600 hover:bg-amber-700 text-white font-medium shadow-sm"
+              className="h-8 text-xs bg-amber-600 hover:bg-amber-700 text-white font-medium shadow-sm"
               onClick={() => {
                 setDirectiveAlertOpen(false)
-                if (displayedAlert?.serviceId) {
+                if (displayedAlert.serviceId) {
                   const [svc, dir] = [displayedAlert.serviceId, displayedAlert.directionId]
                   navigate(`/controller/planning?service=${svc}${dir ? `&direction=${dir}` : ''}&incident=${displayedAlert.id}`)
                 } else {
@@ -662,9 +719,9 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
             >
               Give Directive / Plan Mitigation →
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </div>
+        </aside>
+      )}
       <div className="mx-auto max-w-7xl space-y-7 p-5 md:p-8">
         <PageRefreshStatus lastSuccessAt={lastPageRefresh} intervalSeconds={controllerRefreshIntervalSeconds} />
         {run.error && !loading && <p role="alert" className="text-sm text-destructive">{run.error} Simulation state could not be verified.</p>}
