@@ -48,7 +48,6 @@ docs/*
 !docs/AUTHENTICATION.md
 !docs/TESTING.md
 !docs/DEVELOPMENT.md
-!docs/DEPLOYMENT.md
 !docs/PERFORMANCE.md
 !docs/performance-memory-results.json
 !docs/frontend-convention.md

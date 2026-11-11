@@ -20,28 +20,16 @@ git commit -m"<b><a href="#types">&lt;type&gt;</a></b></font>(<b><a href="#scope
 
 ### CI Skip Convention
 
-Classify by behavior, not file extension. Deployment-affecting commits must
-run CI/CD even when they edit no service or frontend source. Do not append
-`[skip ci]` to commits that change any of:
+Append `[skip ci]` to the commit subject when no service or frontend code is
+edited. This includes documentation, agent instructions and local development
+launcher changes. Review the complete staged diff before choosing the marker;
+do not use it for mixed commits that also change service or frontend code.
+Run checks relevant to the changed files even when CI is skipped.
 
-- GitHub Actions workflows and CI configuration
-- Dockerfiles and build tooling, including the Maven wrapper and root POM
-- runtime Compose, Nginx or CloudFront configuration
-- database setup, migrations and bootstrap SQL
-- CD/lifecycle and deployment scripts, such as `scripts/cd/` and `infra/aws/`
-
-Keep the marker for commits that are exclusively documentation, agent
-instructions or local development launcher changes with no deployment
-effect. Mixed commits follow the deployment-affecting rule. Review the
-complete staged diff before choosing the marker, and run checks relevant to
-the changed files even when CI is skipped.
-
-GitHub suppresses push workflows when a human supplies an explicit skip
-directive. If one is used on a deployment-affecting commit by mistake,
-manually dispatch the verification workflow for that commit; do not bypass
-the suppression with privileged trigger events. If a docs-only skipped run
-leaves required checks pending on a pull request, resolve it with a normal
-non-skipped commit or manual validation according to branch protection.
+```text
+docs: clarify local setup [skip ci]
+ops: add no-build launcher action [skip ci]
+```
 
 ### General Commit
 
