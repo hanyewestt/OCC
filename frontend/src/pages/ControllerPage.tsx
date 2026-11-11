@@ -177,7 +177,11 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       updatedAt: hazard.updatedAt,
     }
     setLocatedHazard(mapHazard)
-    document.getElementById('corridor-map')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    if (!pathname.endsWith('/disruptions')) {
+      navigate(`/controller/disruptions?incident=${hazardId}`)
+    } else {
+      document.getElementById('corridor-map')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
   }
   const [routeArrivals, setRouteArrivals] = useState<Resource<Arrival[]>>(empty)
   const [routeStops, setRouteStops] = useState<Resource<RouteDirection[]>>(empty)
@@ -192,6 +196,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const [simulationDialogOpen, setSimulationDialogOpen] = useState(false)
   const [simulationConfig, setSimulationConfig] = useState({ serviceId: '190', directionId: 1, busCount: 3, dispatchGapSeconds: 90, busGapsSeconds: [90, 90], monitoredStopCode: '44251', scenario: 'BUNCHING' as 'NORMAL' | 'BUNCHING', captainUserIds: ['', '', ''] })
   const [directiveAlertOpen, setDirectiveAlertOpen] = useState(false)
+  const [dismissedAlertIds, setDismissedAlertIds] = useState<Set<string>>(() => new Set())
   const [activeNewIncidentAlert, setActiveNewIncidentAlert] = useState<{
     id: string
     kind: 'bunching' | 'traffic'
@@ -208,6 +213,17 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   } | null>(null)
   const knownAlertIdsRef = useRef<Set<string>>(new Set())
   const knownTrafficIdsRef = useRef<Set<string>>(new Set())
+
+
+  const handleDismissAlert = useCallback((id: string) => {
+    setDismissedAlertIds(prev => {
+      const next = new Set(prev)
+      next.add(id)
+      return next
+    })
+    setActiveNewIncidentAlert(current => (current?.id === id ? null : current))
+    setDirectiveAlertOpen(false)
+  }, [])
   const isInitialAlertCheckRef = useRef(true)
   const [captainSearch, setCaptainSearch] = useState('')
   const [availableCaptains, setAvailableCaptains] = useState<DirectoryUser[]>([])
@@ -220,6 +236,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const loading = loaded !== requestKey || switching
   const scopeVerified = loaded === requestKey && !run.error
   const simulation = run.data && run.data.status !== 'CLOSED' ? run.data : null
+
   const captainAssignmentInvalid = !captainSelectionIsValid(simulationConfig.captainUserIds, simulationConfig.busCount)
   const simulationDirections = routeStops.data?.filter(route => route.serviceId === simulationConfig.serviceId) ?? []
   const simulationStops = simulationDirections.find(route => route.directionId === simulationConfig.directionId)?.stops ?? []
@@ -420,21 +437,33 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     }
   }, [currentAlerts, currentTraffic, routeStops.data])
 
-  const awaitingDirectiveCount = currentAlerts.length
-  const topAlertGap = currentAlerts[0] ? bunchedArrivalGaps(currentAlerts[0])[0]?.seconds ?? null : null
-  const displayedAlert = activeNewIncidentAlert ?? (currentAlerts[0] ? {
-    id: currentAlerts[0].eventId,
-    kind: 'bunching' as const,
-    title: `Bunching on Service ${currentAlerts[0].serviceId}${currentAlerts[0].directionId ? ` (Dir ${currentAlerts[0].directionId})` : ''}`,
-    subtitle: `Monitored Stop: ${currentAlerts[0].stopName || currentAlerts[0].stopCode}`,
-    detail: `Headway gap degraded to ${topAlertGap ? `${topAlertGap}s` : 'critical threshold'}. Directives required to restore corridor pacing.`,
-    severity: (topAlertGap ?? 999) < 60 ? 'critical' : 'warning',
-    serviceId: currentAlerts[0].serviceId,
-    directionId: currentAlerts[0].directionId,
-    stopCode: currentAlerts[0].stopCode,
-    gapSeconds: topAlertGap,
-    detectedAt: currentAlerts[0].detectedAt,
-  } : null)
+  const activeAlerts = useMemo(() => {
+    const decidedBunchingEventIds = new Set<string>()
+    for (const d of decisionCollection.items) {
+      const rec = recommendationCollection.items.find(r => r.recommendationId === d.recommendationId)
+      if (rec?.bunchingEventId) decidedBunchingEventIds.add(rec.bunchingEventId)
+    }
+    return currentAlerts.filter(a => !dismissedAlertIds.has(a.eventId) && !decidedBunchingEventIds.has(a.eventId))
+  }, [currentAlerts, dismissedAlertIds, decisionCollection.items, recommendationCollection.items])
+
+  const awaitingDirectiveCount = activeAlerts.length
+  const topActiveAlert = activeAlerts[0]
+  const topAlertGap = topActiveAlert ? bunchedArrivalGaps(topActiveAlert)[0]?.seconds ?? null : null
+  const displayedAlert = (activeNewIncidentAlert && !dismissedAlertIds.has(activeNewIncidentAlert.id))
+    ? activeNewIncidentAlert
+    : (topActiveAlert ? {
+        id: topActiveAlert.eventId,
+        kind: 'bunching' as const,
+        title: `Bunching on Service ${topActiveAlert.serviceId}${topActiveAlert.directionId ? ` (Dir ${topActiveAlert.directionId})` : ''}`,
+        subtitle: `Monitored Stop: ${topActiveAlert.stopName || topActiveAlert.stopCode}`,
+        detail: `Headway gap degraded to ${topAlertGap ? `${topAlertGap}s` : 'critical threshold'}. Directives required to restore corridor pacing.`,
+        severity: (topAlertGap ?? 999) < 60 ? 'critical' : 'warning',
+        serviceId: topActiveAlert.serviceId,
+        directionId: topActiveAlert.directionId,
+        stopCode: topActiveAlert.stopCode,
+        gapSeconds: topAlertGap,
+        detectedAt: topActiveAlert.detectedAt,
+      } : null)
 
   const requestLiveData = useCallback(async (signal: AbortSignal) => {
     const generation = ++liveRequestGenerationRef.current
@@ -506,7 +535,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       setShellRefreshTime({ key: requestKey, at: new Date().toISOString() })
     }
     return previousMode !== (resolvedRun.data?.id ?? 'LIVE')
-  }, [token, pathname, requestKey, requestLiveData])
+  }, [token, pathname, requestKey, requestLiveData, setRouteArrivals, setRoutePositions, setRun, setRouteStops, setLoaded, setShellRefreshTime])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -705,7 +734,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
               variant="ghost"
               size="icon"
               className="size-6 text-muted-foreground hover:text-foreground"
-              onClick={() => setDirectiveAlertOpen(false)}
+              onClick={() => displayedAlert && handleDismissAlert(displayedAlert.id)}
               aria-label="Dismiss directive notice"
             >
               <X className="size-4" />
@@ -745,7 +774,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
               variant="outline"
               size="sm"
               className="h-8 text-xs"
-              onClick={() => setDirectiveAlertOpen(false)}
+              onClick={() => displayedAlert && handleDismissAlert(displayedAlert.id)}
             >
               Acknowledge
             </Button>
@@ -824,7 +853,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           gapToleranceSeconds={Math.max(30, routeIncidentGapToleranceSeconds)}
           trafficIncidents={currentTraffic}
           nowMs={Date.parse(alertCollection.lastSuccessAt || (simulation ? shellRefreshTime.at : '') || '') || 0}
-          onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { void requestRefresh('mutation') }} />}
+          onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { if (displayedAlert?.id) { handleDismissAlert(displayedAlert.id) } void requestRefresh('mutation') }} />}
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} suggestions={suggestionCollection} aiAudits={aiAuditCollection} loading={loading} />}
         {pathname !== '/controller' && !pathname.endsWith('/captains') && loaded === requestKey && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
           registerRefresh={registerAdvisoryRefresh} onRefresh={() => { void requestRefresh('mutation') }} onPendingChange={setAdvisoryPending} onRefreshTimeChange={reportAdvisoryRefresh}

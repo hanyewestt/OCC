@@ -280,4 +280,7 @@ export type AdvisoryCandidate = { type: InstructionType; parameters: Instruction
 export type Advisory = { id: string; disruptionId: string; demoRunId: string; busId: string; status: string;
   candidate: AdvisoryCandidate; finalCandidate: AdvisoryCandidate | null; preview: string; hazardClassification: string; limitations: string[]; createdAt: string }
 export type AdvisoryGroup = { id: string; disruptionId: string; demoRunId: string; serviceId: string; directionId: number;
-  hazardTitle: string; hazardClassification: string; candidate: AdvisoryCandidate; preview: string; members: Advisory[] }
+  hazardTitle: string; hazardDescription?: string; hazardKind?: string; hazardClassification: string;
+  latitude?: number | null; longitude?: number | null; hazardLocation?: string | null;
+  affectedStopName?: string | null; affectedStopCode?: string | null;
+  candidate: AdvisoryCandidate; preview: string; members: Advisory[] }
