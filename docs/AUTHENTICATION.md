@@ -28,6 +28,17 @@ routes them directly. Operational reads permit ADMIN and CONTROLLER. Operational
 CONTROLLER; the explicit admin namespaces require ADMIN. CAPTAIN retains only
 the owner-scoped route, instruction and acknowledgement permissions.
 
+The Admin workspace provides `/admin/audit`, `/admin/accounts`,
+`/admin/accounts/new` and `/admin/assignments`. Controllers can also browse the
+read-only `/controller/captains` directory; it contains every captain and does
+not apply controller ownership filters. Initial simulation setup keeps the
+existing `captainUserIds` request shape while selecting captains from this
+directory.
+
+Audit history is stored independently by each service and is retained for
+`OCC_AUDIT_RETENTION` (default `90d`), regardless of simulation cleanup. It does
+not include infrastructure, provider authentication or deployment logs.
+
 ## Administrator provisioning
 
 `POST /api/v1/admin/users` accepts displayName, email, role and password with a
@@ -52,6 +63,10 @@ password using a NEW key to create a new operation. A timed-out original creatio
 may still win later; if its original operation then completes, use the original
 attempt password. The newer attempt cannot adopt that account or claim its new
 password applied. Keep the original operation reference until resolved.
+At the Nginx edge, these Ingestion-owned endpoints use the existing alias prefix
+`/api/v1/ingestion/`, for example `/api/v1/ingestion/admin/users`. The Admin
+Accounts page can request immediate directory synchronization; failed scans
+retain the last complete projection and checkpoint.
 
 ## Persistent browser sessions
 
@@ -76,10 +91,13 @@ Use root `.env.example` as the single inventory. Ingestion publishes only
 JWT validation uses the separate JWKS URL, allowed algorithms and audience.
 
 The optional backend identity directory reads a private key from an Ingestion-only
-mounted secret file. It remains disabled until the existing trusted roles have
+mounted Docker secret file using `infra/compose.identity.yaml`. It remains disabled until the existing trusted roles have
 been migrated to server-managed `app_metadata.occ_role` and the provider hook has
 been verified. See [identity rollout](../infra/supabase/README.md) before enabling
 it. Directory snapshots never grant permissions or replace JWT validation.
+`OCC_IDENTITY_SECRET_SOURCE_FILE` points to the host-side secret source, and
+`OCC_IDENTITY_SECRET_KEY_FILE` points to the fixed in-container mount. Never put
+the key value in `.env`.
 
 See [development guide](DEVELOPMENT.md) for builds, Vite proxy settings and
 browser tests. Nginx serves the React build. Simulation controls and

@@ -1,0 +1,13 @@
+# Opt in only after completing the external Supabase role-hook rollout.
+# The host source file is a Docker secret and is mounted into Ingestion only.
+services:
+  ingestion:
+    environment:
+      OCC_IDENTITY_ENABLED: ${OCC_IDENTITY_ENABLED:?set OCC_IDENTITY_ENABLED=true before including this overlay}
+      OCC_IDENTITY_SECRET_KEY_FILE: /run/secrets/occ_supabase_identity_key
+    secrets:
+      - occ_supabase_identity_key
+
+secrets:
+  occ_supabase_identity_key:
+    file: ${OCC_IDENTITY_SECRET_SOURCE_FILE:?set OCC_IDENTITY_SECRET_SOURCE_FILE to the mounted secret source file}

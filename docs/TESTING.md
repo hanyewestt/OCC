@@ -96,6 +96,11 @@ Controller browser tests cover dashboard navigation, simulation controls,
 bunching arrival evidence and approve/reject controls. These use mocked APIs
 and do not record decisions in a real database. Edge checks verify that retired
 `/demo.html` and `/auth.js` URLs return 404 and are absent from the build.
+Admin browser tests cover verified admin routing, sidebar navigation, account
+search/details/synchronization, controller/captain provisioning outcomes, audit
+filters and escaped evidence, and blocked/pending/recovered assignments. Mocked
+browser tests exercise workflows and do not replace the PostgreSQL concurrency
+tests or the isolated Nginx role-matrix smoke checks.
 
 ## System verification
 

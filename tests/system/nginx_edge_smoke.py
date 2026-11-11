@@ -83,8 +83,10 @@ def main() -> int:
         if response.code != 404 or response.read() != (root / "frontend/dist/404.html").read_bytes():
             raise AssertionError("Unknown website route does not serve the custom 404 artifact")
     print("PASS custom website error page retains HTTP 404")
-    for route in ("/", "/login", "/notices", "/controller", "/controller/disruptions",
-                  "/controller/planning", "/controller/notices", "/controller/audit", "/captain", "/401", "/403", "/404"):
+    for route in ("/", "/login", "/notices", "/admin", "/admin/audit", "/admin/accounts",
+                  "/admin/accounts/new", "/admin/assignments", "/controller", "/controller/disruptions",
+                  "/controller/planning", "/controller/notices", "/controller/audit", "/controller/captains",
+                  "/captain", "/401", "/403", "/404"):
         with urllib.request.urlopen(base_url + route, context=ssl._create_unverified_context(), timeout=10) as response:
             if response.read() != html or "text/html" not in response.headers.get("Content-Type", ""):
                 raise AssertionError(f"{route}: response differs from the React entry HTML")
@@ -105,7 +107,7 @@ def main() -> int:
     for removed_asset in ("demo.html", "auth.js"):
         if (root / "frontend/dist" / removed_asset).exists():
             raise AssertionError(f"Retired asset remains in the build: {removed_asset}")
-    for route in ("/demo.html", "/auth.js", "/obu-pacing.html", "/auth-test", "/auth-test/", "/auth-test/index.html", "/auth-test/callback", "/assets/missing.js", "/admin", "/controller/unknown"):
+    for route in ("/demo.html", "/auth.js", "/obu-pacing.html", "/auth-test", "/auth-test/", "/auth-test/index.html", "/auth-test/callback", "/assets/missing.js", "/admin/unknown", "/controller/unknown"):
         assert_status(base_url, "retired or unknown path " + route, route, 404)
     if args.static_only:
         return 0
@@ -115,7 +117,14 @@ def main() -> int:
         ("public frontend configuration", "/frontend-config", 200, None, "GET"),
         ("verified session requires a token", "/api/v1/auth/session", 401, None, "GET"),
         ("page access requires a token", "/api/v1/auth/access/controller", 401, None, "GET"),
+        ("admin page access requires a token", "/api/v1/auth/access/admin", 401, None, "GET"),
         ("ingestion namespace reaches Ingestion", "/api/v1/ingestion/arrivals?page=0&size=1", 401, None, "GET"),
+        ("account browsing requires a token", "/api/v1/ingestion/admin/users?page=0&size=1", 401, None, "GET"),
+        ("active assignment browsing requires a token", "/api/v1/ingestion/admin/demo-runs/active/assignments", 401, None, "GET"),
+        ("Ingestion audit requires a token", "/api/v1/ingestion/admin/audit-events?page=0&size=1", 401, None, "GET"),
+        ("Disruption audit requires a token", "/api/v1/disruption/admin/audit-events?page=0&size=1", 401, None, "GET"),
+        ("Planning audit requires a token", "/api/v1/planning/admin/audit-events?page=0&size=1", 401, None, "GET"),
+        ("admin assignment requires a token", "/api/v1/planning/admin/demo-runs/00000000-0000-0000-0000-000000000001/buses/test/assignment", 401, None, "PUT"),
         ("ingestion auth alias is blocked", "/api/v1/ingestion/auth/session", 404, None, "GET"),
         ("ingestion auth alias for page access is blocked", "/api/v1/ingestion/auth/access/controller", 404, None, "GET"),
         ("disruption namespace reaches Disruption", "/api/v1/disruption/bunching-alerts?page=0&size=1", 401, None, "GET"),
@@ -138,7 +147,7 @@ def main() -> int:
         ("encoded traversal to internal API blocked", "/api/v1/%2e%2e/internal/v1/arrival-snapshots", 404, None, "GET"),
         ("double-slash internal path blocked", "/internal//v1/arrival-snapshots", 404, None, "GET"),
         ("internal API remains hidden for mutations", "/internal/v1/arrival-snapshots", 404, None, "POST"),
-        ("unknown top-level path hidden", "/admin", 404, None, "GET"),
+        ("unknown top-level path hidden", "/unknown", 404, None, "GET"),
     ]
     for label, path, expected, headers, method in cases:
         assert_status(base_url, label, path, expected, headers, method)
@@ -173,10 +182,42 @@ def main() -> int:
             token = (token_dir / f"{role}.jwt").read_text(encoding="utf-8").strip()
             headers = {"Authorization": f"Bearer {token}"}
             assert_status(base_url, f"{role} verified session", "/api/v1/auth/session", 200, headers)
-            for page, allowed in (("controller", "controller"), ("captain", "captain")):
+            for page, allowed in (("controller", "controller"), ("captain", "captain"), ("admin", "admin")):
                 assert_status(base_url, f"{role} page access {page}", f"/api/v1/auth/access/{page}",
                               200 if role == allowed else 403, headers)
+        for role in ("controller", "captain"):
+            token = (token_dir / f"{role}.jwt").read_text(encoding="utf-8").strip()
+            headers = {"Authorization": f"Bearer {token}"}
+            for path in ("/api/v1/ingestion/admin/users?page=0&size=1",
+                         "/api/v1/ingestion/admin/audit-events?page=0&size=1",
+                         "/api/v1/disruption/admin/audit-events?page=0&size=1",
+                         "/api/v1/planning/admin/audit-events?page=0&size=1",
+                         "/api/v1/ingestion/admin/demo-runs/active/assignments"):
+                assert_status(base_url, f"{role} is denied admin namespace {path}", path, 403, headers)
+            assert_status(base_url, f"{role} cannot reassign active buses",
+                          "/api/v1/planning/admin/demo-runs/00000000-0000-0000-0000-000000000001/buses/test/assignment",
+                          403, headers, "PUT")
+        admin_token = (token_dir / "admin.jwt").read_text(encoding="utf-8").strip()
         captain_token = (token_dir / "captain.jwt").read_text(encoding="utf-8").strip()
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+        for path in ("/api/v1/ingestion/admin/users?page=0&size=1",
+                     "/api/v1/ingestion/admin/audit-events?page=0&size=1",
+                     "/api/v1/disruption/admin/audit-events?page=0&size=1",
+                     "/api/v1/planning/admin/audit-events?page=0&size=1",
+                     "/api/v1/ingestion/admin/demo-runs/active/assignments"):
+            assert_status(base_url, f"admin can access {path}", path, 200, admin_headers)
+        assert_status(base_url, "ADMIN cannot start a simulation",
+                      "/api/v1/demo-runs", 403, admin_headers, "POST")
+        assert_status(base_url, "ADMIN cannot read captain instructions",
+                      "/api/v1/planning/captain/instructions?page=0&size=1", 403, admin_headers)
+        for role in ("admin", "controller"):
+            token = (token_dir / f"{role}.jwt").read_text(encoding="utf-8").strip()
+            assert_status(base_url, f"{role} can browse all captains",
+                          "/api/v1/ingestion/captains?page=0&size=1", 200,
+                          {"Authorization": f"Bearer {token}"})
+        assert_status(base_url, "CAPTAIN cannot enumerate other captains",
+                      "/api/v1/ingestion/captains?page=0&size=1", 403,
+                      {"Authorization": f"Bearer {captain_token}"})
         controller_token = (token_dir / "controller.jwt").read_text(encoding="utf-8").strip()
         assert_status(base_url, "CAPTAIN can read assigned instruction inbox",
                       "/api/v1/planning/captain/instructions?page=0&size=1", 200,

@@ -40,21 +40,24 @@ no private key or secret mount. The browser continues using only the existing
    console. Store it using the deployment's secret mechanism in a backend-only
    mounted file, for example `/run/secrets/occ_supabase_identity_key`. Never put
    the value in `.env`, image layers, frontend configuration, logs or the repository.
-7. Set `OCC_IDENTITY_SECRET_KEY_FILE` to that mounted path and explicitly set
-   `OCC_IDENTITY_ENABLED=true` only after the external role migration and hook
-   verification above. `SUPABASE_PROJECT_URL` keeps its existing name and project.
-   The opt-in deployment override must mount the file only into Ingestion; the
-   default stack must not require a missing secret file. Compose wiring is a
-   separate deployment change.
+7. Set `OCC_IDENTITY_SECRET_SOURCE_FILE` to the host-side secret file,
+   `OCC_IDENTITY_SECRET_KEY_FILE=/run/secrets/occ_supabase_identity_key`, and
+   `OCC_IDENTITY_ENABLED=true`. `SUPABASE_PROJECT_URL` keeps its existing name
+   and project. For Compose, include `infra/compose.identity.yaml` after the
+   regular local or production Compose files. This overlay mounts the Docker
+   secret into Ingestion only; the default stack does not require a secret file.
 
 The configuration validates the origin, readable mounted path and positive timing
 settings at startup when enabled. The adapter reads the file at request time so
 mounted-key rotation does not require copying a credential into application
 configuration. It accepts modern secret keys in the `apikey` header only and
 does not send a bearer header. Timeout defaults to 5 seconds and full scans to
-5 minutes. Intentional operational overrides use Spring property binding
-`OCC_IDENTITY_TIMEOUT` and `OCC_IDENTITY_DIRECTORYINTERVAL`, supplied directly to
-the service environment when needed. Internal response limits remain in code.
+5 minutes. Bounded operational overrides are `OCC_IDENTITY_TIMEOUT` and
+`OCC_IDENTITY_DIRECTORY_INTERVAL`; assignment recovery uses
+`OCC_PLANNING_ASSIGNMENT_RECOVERY_INTERVAL` and
+`OCC_PLANNING_ASSIGNMENT_RECOVERY_BATCH_SIZE`. Their safe defaults are listed in
+`.env.example` and passed only to their owning services. Internal response limits
+remain in code.
 
 ## Directory behavior and verification
 
