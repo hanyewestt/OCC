@@ -265,6 +265,14 @@ class PlanOwnershipTests(ReleaseTestCase):
         for service in JAVA:
             self.assertNotEqual(before[service], plan["inputHashes"][service])
 
+    def test_setup_input_inventory_tracks_actual_migration_files(self):
+        repo = self.make_repo()
+        head = self.git(repo, "rev-parse", "HEAD")
+        plan = self.plan_json(repo, head, head)
+        self.assertIn("services/ingestion/src/main/resources/db/migration/V001__init.sql", plan.get("setupInputFiles", {}))
+        manifest = self.manifest_json(plan, None, all_digests(), "rel-1", "unknown")
+        self.assertEqual(json.loads(manifest.stdout)["setupInputFiles"], plan["setupInputFiles"])
+
     def test_build_definition_change_invalidates_image_owners(self):
         repo = self.make_repo()
         base = self.git(repo, "rev-parse", "HEAD")
@@ -599,10 +607,14 @@ class ManifestValidationTests(ReleaseTestCase):
 class PointerAndStateTests(unittest.TestCase):
     def test_pointer_requires_immutable_reference_fields(self):
         pointer = {"releaseId": "rel-1", "revision": "a" * 40,
-                   "releaseKey": "releases/rel-1.zip", "version": "v1", "checksum": "sha256:x"}
+                   "releaseKey": "releases/rel-1.json", "version": "v1", "checksum": "sha256:" + "a" * 64}
         release.validate_pointer(pointer)
         with self.assertRaises(release.ContractError):
             release.validate_pointer({"releaseId": "rel-1", "revision": "a" * 40})
+        for invalid in (dict(pointer, version="-"), dict(pointer, checksum="-"),
+                        dict(pointer, releaseKey="releases/other.json")):
+            with self.assertRaises(release.ContractError):
+                release.validate_pointer(invalid)
 
     def test_control_state_validates_modes(self):
         release.validate_control({"desiredMode": "running", "operationId": "op-1",
@@ -615,8 +627,8 @@ class PointerAndStateTests(unittest.TestCase):
 
     def test_cas_rejects_older_and_equal_sequences(self):
         current = {"releaseId": "rel-1", "revision": "a" * 40, "sequence": 5,
-                   "releaseKey": "k", "version": "v", "checksum": "c"}
-        release.reject_older_overwrite(current, dict(current, sequence=6, releaseId="rel-2"))
+                   "releaseKey": "releases/rel-1.json", "version": "v", "checksum": "sha256:" + "a" * 64}
+        release.reject_older_overwrite(current, dict(current, sequence=6, releaseId="rel-2", releaseKey="releases/rel-2.json"))
         with self.assertRaises(release.ContractError):
             release.reject_older_overwrite(current, dict(current, sequence=5, releaseId="rel-2"))
         with self.assertRaises(release.ContractError):
@@ -624,8 +636,8 @@ class PointerAndStateTests(unittest.TestCase):
 
     def test_cas_rejects_ancestor_revisions_even_with_higher_sequence(self):
         current = {"releaseId": "rel-2", "revision": "b" * 40, "sequence": 5,
-                   "releaseKey": "k", "version": "v", "checksum": "c"}
-        candidate = dict(current, sequence=9, revision="a" * 40, releaseId="rel-1")
+                   "releaseKey": "releases/rel-2.json", "version": "v", "checksum": "sha256:" + "a" * 64}
+        candidate = dict(current, sequence=9, revision="a" * 40, releaseId="rel-1", releaseKey="releases/rel-1.json")
         with self.assertRaises(release.ContractError):
             release.reject_older_overwrite(current, candidate,
                                            is_ancestor=lambda candidate_rev, current_rev: True)

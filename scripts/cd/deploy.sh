@@ -57,30 +57,12 @@ BUNDLE="$RELEASE_DIR/bundle"
 [ -d "$BUNDLE" ] || die "release bundle not found: $BUNDLE"
 
 mkdir -p "$STATE" "$JOURNAL" "$RUNTIME"
-OPERATION_ID="$ACTION-$RELEASE_ID-$(date +%Y%m%d%H%M%S)-$$"
+OPERATION_ID="${OCC_OPERATION_ID:-$ACTION-$RELEASE_ID-$(date +%Y%m%d%H%M%S)-$$}"
+REFERENCE_FILE="${OCC_RELEASE_REFERENCE_FILE:-$RELEASE_DIR/reference.json}"
 
-# One deploy at a time: an atomic mkdir lock with a live-owner check. A hard
-# killed run leaves the lock with a dead owner, which the next run steals;
-# a live owner blocks the new operation.
-LOCK_DIR="$STATE/deploy.lock"
-if mkdir "$LOCK_DIR" 2>/dev/null; then
-    printf '%s\n' "$$" > "$LOCK_DIR/owner"
-    trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM HUP
-else
-    OWNER_PID=$(cat "$LOCK_DIR/owner" 2>/dev/null || true)
-    if [ -n "$OWNER_PID" ] && ! kill -0 "$OWNER_PID" 2>/dev/null; then
-        log "stealing the deploy lock from the dead owner $OWNER_PID"
-        rm -rf "$LOCK_DIR"
-        if mkdir "$LOCK_DIR" 2>/dev/null; then
-            printf '%s\n' "$$" > "$LOCK_DIR/owner"
-            trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM HUP
-        else
-            die "another deploy operation holds the deploy lock"
-        fi
-    else
-        die "another deploy operation holds the deploy lock; refusing to run concurrently"
-    fi
-fi
+# A kernel lock is released even if the process or host dies.
+exec 9>"$STATE/deploy.lock"
+flock -n 9 || die "another deploy operation holds the deploy lock"
 
 [ -f "$STATE/outstanding-operation.json" ] && die \
     "an outstanding operation $(cat "$STATE/outstanding-operation.json") has ambiguous state; \
@@ -122,14 +104,26 @@ PY
     die "bundle checksums do not match the published release; refusing to deploy"
 validate_manifest || die "manifest validation failed: $?"
 
-# The durable data volume must be the mounted retained volume; a missing
-# mount is a hard stop, never a root-disk fallback.
-[ -f "$OCC_DATA_MOUNT/.occ-data-marker" ] || \
-    die "the durable data volume is not mounted at $OCC_DATA_MOUNT; blocking startup"
-
-FREE_MB=$(df -Pm "$OCC_DATA_MOUNT" | awk 'NR==2 {print $4}')
-[ "${FREE_MB:-0}" -ge "$OCC_MIN_FREE_MB" ] || \
-    die "insufficient disk space on the data volume: ${FREE_MB}MB free, ${OCC_MIN_FREE_MB}MB required"
+# A marker alone is not a mount. Require its verified UUID on an actual mountpoint.
+[ -f "$OCC_DATA_MOUNT/.occ-data-marker" ] || die "durable data volume is not mounted"
+MOUNT_UUID=$(findmnt --mountpoint "$OCC_DATA_MOUNT" --noheadings --output UUID) || die "durable data mount is absent"
+python3 - "$OCC_DATA_MOUNT/.occ-data-marker" "$MOUNT_UUID" <<'PY'
+import json,sys
+marker=json.load(open(sys.argv[1]))
+if marker.get('uuid')!=sys.argv[2].strip() or not marker.get('volumeId'): sys.exit('durable mount identity mismatch')
+PY
+for disk in "$OCC_DATA_MOUNT" "$OCC_HOME"; do
+    FREE_MB=$(df -Pm "$disk" | awk 'NR==2 {print $4}')
+    [ "${FREE_MB:-0}" -ge "$OCC_MIN_FREE_MB" ] || die "insufficient disk space"
+done
+python3 - "$REFERENCE_FILE" "$BUNDLE/manifest.json" "$OPERATION_ID" <<'PY'
+import hashlib,json,re,sys
+reference=json.load(open(sys.argv[1])); raw=open(sys.argv[2],'rb').read(); manifest=json.loads(raw)
+if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,99}',sys.argv[3]): sys.exit('unsafe operation ID')
+if reference.get('releaseId')!=manifest['releaseId'] or reference.get('revision')!=manifest['revision']: sys.exit('release reference mismatch')
+if reference.get('version') in (None,'','-','null'): sys.exit('immutable version required')
+if reference.get('checksum')!='sha256:'+hashlib.sha256(raw).hexdigest(): sys.exit('manifest reference checksum mismatch')
+PY
 
 set -a
 # shellcheck disable=SC1090
@@ -171,25 +165,14 @@ ROLE_IDENTITY=$(printf '%s\n' \
 SETUP_FINGERPRINT=$(printf '%s\n%s\n' "$DB_SETUP_INPUT_HASH" "$ROLE_IDENTITY" \
     | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')
 
-# Runtime environment: deployment settings plus this release's exact images.
-# The rendered deployment file uses `export KEY='value'` lines (safe to
-# source); Compose's --env-file wants bare KEY=value, so strip the prefix
-# before filtering. Single-quoted values stay literal to Compose.
+# Secrets already exist as literal exported shell values. Only image pins need
+# a Compose dotenv file; copying shell quoting into dotenv corrupts valid values.
 COMPOSE_ENV="$RUNTIME/env"
-{
-    sed -E 's/^export[[:space:]]+//' "${OCC_DEPLOYMENT_ENV:?}" 2>/dev/null \
-        | grep -E '^(POSTGRES_|SUPABASE_|OCC_[A-Z_]+|DATAMALL_API_KEY)' \
-        | grep -vE '^OCC_[A-Z_]+_IMAGE=' || true
-    python3 - "$BUNDLE/manifest.json" <<'PY'
-import json
-import sys
-
-manifest = json.load(open(sys.argv[1], encoding="utf-8"))
-for component, reference in manifest["images"].items():
-    key = "OCC_" + component.upper().replace("-", "_") + "_IMAGE"
-    print(f"{key}={reference}")
+python3 - "$BUNDLE/manifest.json" > "$COMPOSE_ENV" <<'PY'
+import json,sys
+for component, reference in json.load(open(sys.argv[1]))['images'].items():
+    print('OCC_'+component.upper().replace('-','_')+'_IMAGE='+reference)
 PY
-} > "$COMPOSE_ENV"
 chmod 0600 "$COMPOSE_ENV"
 
 APPLIED_SETUP="$STATE/applied-setup.json"
@@ -203,99 +186,102 @@ record_phase() {
 OCC_GATE_DIR="${OCC_GATE_DIR:?set OCC_GATE_DIR to the rendered traffic-gate include directory}"
 export OCC_GATE_DIR
 
+# An immutable prior manifest is never rewritten to mint rollback permission.
+PREVIOUS_SETUP_FINGERPRINT=""
+[ ! -f "$APPLIED_SETUP" ] || PREVIOUS_SETUP_FINGERPRINT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["fingerprint"])' "$APPLIED_SETUP")
 if [ "$ACTION" = rollback ]; then
-    # Application rollback only: never the old db-setup, never SQL downgrades.
-    [ -f "$ACTIVE_RELEASE" ] || die "no previous release on this host; nothing to roll back to"
-    TARGET_COMPAT=$(python3 - "$BUNDLE/manifest.json" "$ACTIVE_RELEASE" "$APPLIED_SETUP" 2>&1 <<'PY'
-import json
-import sys
-
-manifest = json.load(open(sys.argv[1], encoding="utf-8"))
-evidence = manifest.get("compatibilityEvidence")
-active = json.load(open(sys.argv[2], encoding="utf-8"))
-applied = json.load(open(sys.argv[3], encoding="utf-8"))
-if manifest.get("migrationCompatibility") != "backward-compatible" or not evidence:
-    sys.exit("rollback compatibility is unknown; it cannot authorize automatic rollback")
-if evidence.get("rollbackReleaseId") != active.get("releaseId"):
-    sys.exit("rollback evidence does not cover the actually deployed release")
-if evidence.get("setupFingerprint") != applied.get("fingerprint"):
-    sys.exit("rollback evidence does not cover the applied setup fingerprint")
-print("ok")
+    [ -f "$ACTIVE_RELEASE" ] || die "no previous release on this host"
+    python3 - "$ACTIVE_RELEASE" "$APPLIED_SETUP" "$BUNDLE/manifest.json" "$RELEASES" "$REFERENCE_FILE" "$STATE/failed-release.json" <<'PY'
+import hashlib,json,pathlib,sys
+active=json.load(open(sys.argv[1])); applied=json.load(open(sys.argv[2])); target=json.load(open(sys.argv[3])); ref=json.load(open(sys.argv[5]))
+if target['releaseId']==active['releaseId']:
+    if not pathlib.Path(sys.argv[6]).exists(): sys.exit('rollback compatibility has no failed candidate to recover')
+    source_ref=json.load(open(sys.argv[6])); baseline=active.get('setupFingerprint'); expected_ref=active.get('reference')
+elif active.get('previous')==target['releaseId']:
+    source_ref=active['reference']; baseline=active.get('previousSetupFingerprint'); expected_ref=active.get('previousReference')
+else: sys.exit('rollback compatibility target is not the previous deployed release')
+if ref!=expected_ref: sys.exit('rollback reference differs from pinned deployed history')
+if applied['fingerprint']==baseline: sys.exit(0)
+source_path=pathlib.Path(sys.argv[4])/source_ref['releaseId']/'bundle/manifest.json'
+raw=source_path.read_bytes()
+if 'sha256:'+hashlib.sha256(raw).hexdigest()!=source_ref['checksum']: sys.exit('rollback source manifest checksum mismatch')
+current=json.loads(raw); evidence=current.get('compatibilityEvidence',{})
+old=target.get('setupInputFiles'); new=current.get('setupInputFiles')
+if old is None or new is None: sys.exit('rollback compatibility has no verified migration range')
+changed=sorted(k for k in set(old)|set(new) if old.get(k)!=new.get(k))
+if current.get('migrationCompatibility')!='backward-compatible' or evidence.get('rollbackReleaseId')!=target['releaseId'] or evidence.get('setupFingerprint')!=baseline or sorted(evidence.get('migrations',[]))!=changed:
+    sys.exit('rollback compatibility does not cover actual deployed baseline and migration range')
 PY
-    ) || die "$TARGET_COMPAT"
-    record_phase "rollback-authorized"
-    log "rollback authorized: compatible app/web images only, database untouched"
-    # Pull before any mutation so a pull failure cannot leave the stack down.
-    for image in $(python3 - "$BUNDLE/manifest.json" <<'PY'
-import json
-import sys
+    # Rollback changes applications, not the successfully applied database identity.
+    SETUP_FINGERPRINT="$PREVIOUS_SETUP_FINGERPRINT"
+fi
+OCC_GATE_DIR="${OCC_GATE_DIR:?set OCC_GATE_DIR}"
+OCC_GATE_TOKEN=$(cat "$OCC_GATE_DIR/gate-token")
+export OCC_GATE_DIR OCC_GATE_TOKEN
+mkdir -p "$STATE/receipts"
+RECEIPT="$STATE/receipts/$OPERATION_ID.json"
+OUTSTANDING="$STATE/outstanding-operation.json"
+HOST_VERIFIED=0
 
-manifest = json.load(open(sys.argv[1], encoding="utf-8"))
-for reference in sorted(manifest["images"].values()):
-    print(reference)
-PY
-    ); do
-        docker pull "$image" >/dev/null
-    done
-    compose stop nginx ingestion disruption planning >/dev/null 2>&1 || true
-    compose up -d --no-build --wait
-    record_phase "rollback-applied"
-    python3 - "$ACTIVE_RELEASE" "$RELEASE_ID" "$REVISION" <<'PY'
-import json
-import sys
-
-path, release_id, revision = sys.argv[1], sys.argv[2], sys.argv[3]
-active = json.load(open(path, encoding="utf-8"))
-previous = {
-    "releaseId": release_id,
-    "revision": revision,
-    "previous": active.get("releaseId"),
-    "rollbackOf": active.get("releaseId"),
-}
-with open(path + ".new", "w", encoding="utf-8") as handle:
-    json.dump(previous, handle)
-PY
-    mv "$ACTIVE_RELEASE.new" "$ACTIVE_RELEASE"
-    # The deployed pointer must reflect the rollback, or status and the
-    # remote CAS would keep reporting the failed release as deployed.
-    DEPLOYED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    ROLLBACK_SHA=$(sha256sum "$BUNDLE/manifest.json" | awk '{print $1}')
-    printf '{"releaseId":"%s","revision":"%s","releaseKey":"releases/%s","version":"%s","checksum":"sha256:%s","deployedAt":"%s"}\n' \
-        "$RELEASE_ID" "$REVISION" "$RELEASE_ID" "$DEPLOYED_AT" "$ROLLBACK_SHA" \
-        "$DEPLOYED_AT" > "$STATE/last-deployed.json"
-    if [ -n "${OCC_RELEASE_BUCKET:-}" ]; then
-        aws s3 cp "$STATE/last-deployed.json" \
-            "s3://$OCC_RELEASE_BUCKET/state/last-deployed.json" \
-            || echo "deploy: warning: the remote deployed pointer could not be updated" >&2
+publish_receipt() {
+    [ -n "${OCC_RELEASE_BUCKET:-}" ] || return 0
+    if aws s3api put-object --bucket "$OCC_RELEASE_BUCKET" --key "state/receipts/$(basename "$RECEIPT")" \
+        --body "$RECEIPT" --if-none-match '*' >/dev/null; then
+        return 0
     fi
-    record_phase "rollback-state-advanced"
-    log "rollback complete; the failed deployment remains recorded as failed"
+    # A retry may encounter the identical already-published immutable receipt.
+    aws s3api get-object --bucket "$OCC_RELEASE_BUCKET" --key "state/receipts/$(basename "$RECEIPT")" \
+        "$RECEIPT.remote" >/dev/null && cmp -s "$RECEIPT" "$RECEIPT.remote"
+}
+write_receipt() {
+    python3 - "$RECEIPT" "$REFERENCE_FILE" "$ACTION" "$OPERATION_ID" "$1" "$2" "$SETUP_FINGERPRINT" <<'PY'
+import json,os,sys
+path,ref,action,operation,outcome,closed,fingerprint=sys.argv[1:]
+reference=json.load(open(ref))
+value=dict(operationId=operation,action=action,releaseId=reference['releaseId'],reference=reference,
+           outcome=outcome,phase='verified' if outcome=='success' else 'failed',gateClosed=closed=='true',setupFingerprint=fingerprint)
+with open(path+'.new','w') as handle:
+    json.dump(value,handle,sort_keys=True); handle.flush(); os.fsync(handle.fileno())
+os.replace(path+'.new',path)
+PY
+}
+on_exit() {
+    result=$?
+    trap - EXIT INT TERM HUP
+    if [ "$result" -ne 0 ] && [ "$HOST_VERIFIED" -eq 0 ]; then
+        set +e
+        closed=false
+        if sh "$GATE_SCRIPT" close; then closed=true
+        elif compose stop nginx; then closed=true
+        fi
+        cp "$REFERENCE_FILE" "$STATE/failed-release.json"
+        write_receipt failed "$closed"
+        publish_receipt
+        rm -f "$OUTSTANDING"
+        exit "$result"
+    fi
+    exit "$result"
+}
+trap on_exit EXIT
+trap 'exit 143' INT TERM HUP
+# A receipt-pending retry only republishes the exact completed receipt.
+if [ -f "$STATE/pointer-pending.json" ]; then
+    PENDING_RELEASE=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["releaseId"])' "$STATE/pointer-pending.json")
+    [ "$PENDING_RELEASE" = "$RELEASE_ID" ] || die "another release has pending receipt recovery"
+    PENDING_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["operationId"])' "$STATE/pointer-pending.json")
+    RECEIPT="$STATE/receipts/$PENDING_ID.json"
+    HOST_VERIFIED=1
+    publish_receipt || die "receipt publication still pending; do not repeat setup"
+    rm -f "$STATE/pointer-pending.json"
+    log "completed host receipt reconciled; remote driver must CAS the deployed pointer"
     exit 0
 fi
-
-# --- apply -----------------------------------------------------------------
-
-if [ -f "$STATE/pointer-pending.json" ] && [ -f "$ACTIVE_RELEASE" ]; then
-    PENDING_RELEASE=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["releaseId"])' \
-        "$STATE/pointer-pending.json")
-    ACTIVE_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["releaseId"])' \
-        "$ACTIVE_RELEASE")
-    if [ "$PENDING_RELEASE" = "$RELEASE_ID" ] && [ "$ACTIVE_ID" = "$RELEASE_ID" ]; then
-        log "reconciling the remote state pointer only; the host already runs this release"
-        if [ -n "${OCC_RELEASE_BUCKET:-}" ]; then
-            aws s3 cp "$STATE/last-deployed.json" "s3://$OCC_RELEASE_BUCKET/state/last-deployed.json" || \
-                die "remote pointer write failed again; pointer-pending state retained"
-        fi
-        rm -f "$STATE/pointer-pending.json"
-        log "pointer reconciled"
-        exit 0
-    fi
-fi
-
-if [ -n "${OCC_RELEASE_BUCKET:-}" ] && [ ! -f "$STATE/last-deployed.json" ]; then
-    # First pointer write happens after success; nothing to reconcile.
-    :
-fi
+[ ! -f "$STATE/setup-recovery-required.json" ] || die "partial setup requires explicit recovery before retry"
+# ECR credentials expire; the instance role refreshes immediately before pulls.
+REGISTRY=$(python3 -c 'import json,sys; print(next(iter(json.load(open(sys.argv[1]))["images"].values())).split("/")[0])' "$BUNDLE/manifest.json")
+ECR_PASSWORD=$(aws ecr get-login-password)
+printf '%s' "$ECR_PASSWORD" | docker login --username AWS --password-stdin "$REGISTRY" >/dev/null
+unset ECR_PASSWORD
 
 # Operation intent is journaled before the first mutation.
 OUTSTANDING="$STATE/outstanding-operation.json"
@@ -324,23 +310,24 @@ if [ -f "$APPLIED_SETUP" ]; then
     [ "$APPLIED_FINGERPRINT" = "$SETUP_FINGERPRINT" ] && NEED_SETUP=0
 fi
 
-if [ "$NEED_SETUP" -eq 1 ]; then
+if [ "$ACTION" = apply ] && [ "$NEED_SETUP" -eq 1 ]; then
     log "setup or role-config identity changed: closing the gate and running the aggregate setup"
     OCC_GATE_TOKEN=$(cat "$OCC_GATE_DIR/gate-token")
     export OCC_GATE_TOKEN
     sh "$GATE_SCRIPT" close
     GATE_WAS_CLOSED=1
     record_phase "gate-closed"
-    compose stop nginx ingestion disruption planning >/dev/null 2>&1 || true
+    compose stop nginx ingestion disruption planning >/dev/null 2>&1
     record_phase "writers-stopped"
     # PostgreSQL stays up (and is started on first install); the aggregate
     # setup requires it healthy before any schema work.
-    compose up -d --no-build --wait postgres
+    compose up -d --no-build --wait --wait-timeout "$OCC_READINESS_TIMEOUT" postgres
     compose exec -T postgres sh -c 'pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
         >/dev/null || die "PostgreSQL is not healthy; setup refused"
     log "running the combined db-setup once (ingestion -> disruption -> planning)"
     if ! compose --profile setup run --rm --no-deps db-setup; then
         record_phase "setup-failed"
+        printf '{"operationId":"%s","releaseId":"%s"}\n' "$OPERATION_ID" "$RELEASE_ID" > "$STATE/setup-recovery-required.json"
         rm -f "$OUTSTANDING"
         die "aggregate setup failed; the gate stays closed and the schema state needs recovery"
     fi
@@ -353,7 +340,7 @@ else
 fi
 
 log "applying the exact base/images/cloudfront files with --no-build"
-compose up -d --no-build --wait
+compose up -d --no-build --wait --wait-timeout "$OCC_READINESS_TIMEOUT"
 record_phase "stack-up"
 
 # Backend readiness first: nginx health alone proves nothing. Each service's
@@ -369,7 +356,7 @@ for service in ingestion disruption planning; do
     log "waiting for $service readiness on port $port"
     while :; do
         if compose exec -T "$service" sh -c \
-            "curl --fail --silent http://127.0.0.1:$port/actuator/health/readiness" \
+            "curl --fail --silent --max-time 5 http://127.0.0.1:$port/actuator/health/readiness" \
             >/dev/null 2>&1; then
             break
         fi
@@ -399,7 +386,7 @@ esac
 for check in "_occ_gate_readiness:204" "_occ_edge_health:$edge_expect"; do
     path=${check%%:*}
     expected=${check##*:}
-    STATUS=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    STATUS=$(curl --connect-timeout 5 --max-time 20 --silent --output /dev/null --write-out '%{http_code}' \
         --header "X-OCC-Origin-Secret: $ORIGIN_SECRET_HEADER" \
         --header "X-OCC-Gate-Token: $GATE_TOKEN" "$OCC_PUBLIC_URL/$path" || printf '000')
     [ "$STATUS" = "$expected" ] || {
@@ -419,8 +406,7 @@ if [ "$GATE_STATE" != "open" ]; then
 fi
 record_phase "gate-open"
 for path in "" "frontend-config" "login"; do
-    STATUS=$(OCC_CURL_PHASE=public curl --silent --output /dev/null --write-out '%{http_code}' \
-        --header "X-OCC-Origin-Secret: $ORIGIN_SECRET_HEADER" \
+    STATUS=$(OCC_CURL_PHASE=public curl --connect-timeout 5 --max-time 20 --silent --output /dev/null --write-out '%{http_code}' \
         "$OCC_PUBLIC_URL/$path" || printf '000')
     [ "$STATUS" = "200" ] || {
         record_phase "public-smoke-failed"
@@ -433,46 +419,29 @@ record_phase "public-smoke-passed"
 # Full routing/auth/hidden-path and SSE verification through the edge is the
 # system-verification suite's job; this host check never substitutes for it.
 
-# Advance active/previous state atomically, then the remote pointer.
-python3 - "$ACTIVE_RELEASE" "$RELEASE_ID" "$REVISION" <<'PY'
-import json
-import sys
-
-path, release_id, revision = sys.argv[1], sys.argv[2], sys.argv[3]
-previous = None
-try:
-    previous = json.load(open(path, encoding="utf-8")).get("releaseId")
-except FileNotFoundError:
-    pass
-with open(path + ".new", "w", encoding="utf-8") as handle:
-    json.dump({"releaseId": release_id, "revision": revision,
-               "previous": previous}, handle)
+# Commit local host state only after all readiness/public checks have passed.
+python3 - "$ACTIVE_RELEASE" "$RELEASE_ID" "$REVISION" "$SETUP_FINGERPRINT" "$PREVIOUS_SETUP_FINGERPRINT" "$REFERENCE_FILE" <<'PY'
+import json,os,sys
+path,release_id,revision,fingerprint,prior_fingerprint,ref=sys.argv[1:]
+try: old=json.load(open(path))
+except FileNotFoundError: old={}
+value=dict(releaseId=release_id,revision=revision,setupFingerprint=fingerprint,reference=json.load(open(ref)))
+if old.get('releaseId')==release_id:
+    value.update(previous=old.get('previous'),previousReference=old.get('previousReference'),previousSetupFingerprint=old.get('previousSetupFingerprint'))
+else:
+    value.update(previous=old.get('releaseId'),previousReference=old.get('reference'),previousSetupFingerprint=prior_fingerprint)
+with open(path+'.new','w') as handle:
+    json.dump(value,handle); handle.flush(); os.fsync(handle.fileno())
+os.replace(path+'.new',path)
 PY
-mv "$ACTIVE_RELEASE.new" "$ACTIVE_RELEASE"
-
-DEPLOYED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-MANIFEST_SHA=$(sha256sum "$BUNDLE/manifest.json" | awk '{print $1}')
-# The last-deployed pointer carries the same immutable fields the remote
-# CAS contract validates (releaseId, revision, releaseKey, version,
-# checksum) so the driver's compare-and-set reads it cleanly.
-printf '{"releaseId":"%s","revision":"%s","releaseKey":"releases/%s","version":"%s","checksum":"sha256:%s","deployedAt":"%s"}\n' \
-    "$RELEASE_ID" "$REVISION" "$RELEASE_ID" "$DEPLOYED_AT" "$MANIFEST_SHA" \
-    "$DEPLOYED_AT" > "$STATE/last-deployed.json"
-
-POINTER_FAILURE=""
-if [ -n "${OCC_RELEASE_BUCKET:-}" ]; then
-    if ! aws s3 cp "$STATE/last-deployed.json" "s3://$OCC_RELEASE_BUCKET/state/last-deployed.json"; then
-        POINTER_FAILURE=1
-    fi
-fi
-if [ -n "$POINTER_FAILURE" ]; then
-    printf '{"releaseId":"%s","reason":"s3-write-failed"}\n' "$RELEASE_ID" \
-        > "$STATE/pointer-pending.json"
+cp "$REFERENCE_FILE" "$STATE/last-deployed.json"
+write_receipt success false
+HOST_VERIFIED=1
+if ! publish_receipt; then
+    printf '{"operationId":"%s","releaseId":"%s"}\n' "$OPERATION_ID" "$RELEASE_ID" > "$STATE/pointer-pending.json"
     rm -f "$OUTSTANDING"
-    record_phase "pointer-pending"
-    die "the host succeeded but the remote state pointer write failed; rerun apply to reconcile"
+    die "host verified but receipt publication failed; reconcile without repeating setup"
 fi
-
 rm -f "$OUTSTANDING"
 record_phase "success"
-log "release $RELEASE_ID deployed and verified"
+log "release $RELEASE_ID verified; remote driver owns conditional deployed-pointer advancement"

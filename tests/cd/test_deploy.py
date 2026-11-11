@@ -43,7 +43,8 @@ class DeploySandbox:
         for directory in (self.state, self.releases, self.runtime, self.bin):
             directory.mkdir(parents=True)
         (self.root / "data" / "postgresql").mkdir(parents=True)
-        (self.root / "data" / "postgresql" / ".occ-data-marker").write_text("durable")
+        (self.root / "data" / "postgresql" / ".occ-data-marker").write_text(
+            json.dumps({"volumeId": "vol-0123456789abcdef0", "uuid": "verified-data-uuid"}))
         self.calls = self.root / "calls.log"
         self.calls.write_text("", encoding="utf-8")
         self.docker_env: dict[str, str] = {}
@@ -63,6 +64,8 @@ class DeploySandbox:
 
     def _write_stubs(self) -> None:
         calls = self.calls.as_posix()
+        self._stub("findmnt", 'echo "${OCC_FAKE_MOUNT_UUID:-verified-data-uuid}"\n')
+        self._stub("flock", 'exit 0\n')
         self._stub("docker", f'''
 printf '%s\\n' "docker $*" >> {calls}
 case " $* " in
@@ -123,7 +126,7 @@ echo "stub 1024 512 ${{OCC_FAKE_DF_FREE_MB:-10240}} 5% /data"
         self._stub("aws", f'''
 printf '%s\\n' "aws $*" >> {calls}
 case "$*" in
-  *"s3 cp"*)
+  *"s3 cp"*|*"s3api put-object"*)
     if [ "${{OCC_FAKE_S3_FAIL:-}}" = "yes" ]; then exit 1; fi
     ;;
 esac
@@ -166,7 +169,16 @@ exit 0
             checksums.append(f"{hashlib.sha256(blob).hexdigest()}  {name}")
         (directory / "bundle" / "checksums.txt").write_text(
             "\n".join(checksums) + "\n", encoding="utf-8", newline="\n")
+        self.write_reference(directory)
         return directory
+
+    def write_reference(self, directory: Path):
+        raw = (directory / "bundle/manifest.json").read_bytes()
+        manifest = json.loads(raw)
+        (directory / "reference.json").write_text(json.dumps({
+            "releaseId": manifest["releaseId"], "revision": manifest["revision"],
+            "releaseKey": f'releases/{manifest["releaseId"]}.json', "version": "fixture-version",
+            "checksum": "sha256:" + hashlib.sha256(raw).hexdigest()}), encoding="utf-8")
 
     def reseal(self, release: Path) -> None:
         """Recompute checksums after intentionally editing a bundle."""
@@ -179,6 +191,7 @@ exit 0
             checksums.append(f"{hashlib.sha256(blob).hexdigest()}  {name}")
         (directory / "checksums.txt").write_text(
             "\n".join(checksums) + "\n", encoding="utf-8", newline="\n")
+        self.write_reference(release)
 
     @staticmethod
     def _to_msys(entry: str) -> str:
@@ -344,7 +357,7 @@ class ApplyTests(DeployTestBase):
         self.assertNotIn("registry.example.invalid", compose_env)
         self.assertIn("OCC_INGESTION_IMAGE=", compose_env)
 
-    def test_public_smoke_sends_the_origin_secret(self):
+    def test_public_smoke_relies_on_cloudfront_injecting_the_origin_secret(self):
         release = self.sandbox.write_release("rel-a-1", REVISION_A)
         result = self.sandbox.deploy(release)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -352,9 +365,9 @@ class ApplyTests(DeployTestBase):
                   if line.startswith("curl ")
                   and ("/frontend-config" in line or "/login" in line)]
         self.assertTrue(public)
-        # The restricted CloudFront origin returns 403 without this header.
+        # Browsers do not possess the origin secret; CloudFront must inject it.
         for line in public:
-            self.assertIn("X-OCC-Origin-Secret", line)
+            self.assertNotIn("X-OCC-Origin-Secret", line)
 
     def test_first_install_starts_postgres_before_aggregate_setup(self):
         release = self.sandbox.write_release("rel-a-1", REVISION_A)
@@ -362,7 +375,7 @@ class ApplyTests(DeployTestBase):
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = self.sandbox.docker_calls()
         postgres_up = next(position for position, line in enumerate(calls)
-                           if " up -d --no-build --wait postgres" in line)
+                           if " up -d --no-build --wait" in line and line.endswith(" postgres"))
         setup = next(position for position, line in enumerate(calls)
                      if " run --rm --no-deps db-setup" in line)
         self.assertLess(postgres_up, setup)
@@ -435,6 +448,50 @@ class ApplyTests(DeployTestBase):
         result = self.sandbox.deploy(release)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.sandbox.state / "active-release.json").exists())
+        gate = (self.sandbox.runtime / "nginx-gate/traffic-gate.inc").read_text()
+        self.assertIn('"closed"', gate)
+
+    def test_verified_apply_emits_receipt_without_writing_remote_deployed_pointer(self):
+        candidate = self.sandbox.write_release("rel-a-1", REVISION_A)
+        result = self.sandbox.deploy(candidate)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipts = list((self.sandbox.state / "receipts").glob("*.json"))
+        self.assertEqual(len(receipts), 1)
+        receipt = json.loads(receipts[0].read_text())
+        self.assertEqual(receipt["outcome"], "success")
+        self.assertEqual(receipt["reference"]["version"], "fixture-version")
+        self.assertNotIn("s3://occ-test-releases/state/last-deployed.json", "\n".join(self.sandbox.read_calls()))
+
+    def test_app_only_readiness_failure_closes_previously_open_traffic(self):
+        first = self.sandbox.write_release("rel-a-1", REVISION_A)
+        self.assertEqual(self.sandbox.deploy(first).returncode, 0)
+        second = self.sandbox.write_release("rel-b-1", REVISION_B)
+        path = second / "bundle/manifest.json"
+        value = json.loads(path.read_text())
+        value["dbSetupInputHash"] = "hash-rel-a-1-db-setup"
+        path.write_text(json.dumps(value))
+        self.sandbox.reseal(second)
+        self.sandbox.docker_env.update(OCC_FAKE_EXEC_FAIL="yes", OCC_READINESS_TIMEOUT="1")
+        result = self.sandbox.deploy(second)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('"closed"', (self.sandbox.runtime / "nginx-gate/traffic-gate.inc").read_text())
+        self.assertEqual(json.loads((self.sandbox.state / "active-release.json").read_text())["releaseId"], "rel-a-1")
+
+    def test_wrong_mount_uuid_blocks_all_container_mutation(self):
+        candidate = self.sandbox.write_release("rel-a-1", REVISION_A)
+        self.sandbox.docker_env["OCC_FAKE_MOUNT_UUID"] = "wrong-volume"
+        result = self.sandbox.deploy(candidate)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.sandbox.docker_calls(), [])
+
+    def test_ecr_authentication_is_refreshed_before_image_pulls(self):
+        candidate = self.sandbox.write_release("rel-a-1", REVISION_A)
+        result = self.sandbox.deploy(candidate)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.sandbox.read_calls()
+        login = next(i for i, line in enumerate(calls) if "ecr get-login-password" in line)
+        pull = next(i for i, line in enumerate(calls) if "docker pull" in line)
+        self.assertLess(login, pull)
 
     def test_pointer_write_failure_is_recoverable_without_repeating_setup(self):
         release = self.sandbox.write_release("rel-a-1", REVISION_A)
@@ -455,7 +512,7 @@ class ApplyTests(DeployTestBase):
         self.assertNotIn("run --rm --no-deps db-setup", new_calls)
         self.assertNotIn("up -d", new_calls)
         self.assertEqual(self.sandbox.gate_log(), gate_before)
-        self.assertIn("s3 cp", new_calls)
+        self.assertIn("s3api put-object", new_calls)
         self.assertFalse((self.sandbox.state / "pointer-pending.json").exists())
 
     def test_runner_loss_leaves_ambiguous_state_blocked(self):
@@ -512,27 +569,18 @@ class ReadinessPointerTests(DeployTestBase):
 
 class RollbackPointerTests(DeployTestBase):
     def test_rollback_advances_the_deployed_pointer(self):
-        release = self.sandbox.write_release("rel-a-1", REVISION_A)
-        result = self.sandbox.deploy(release)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        second = self.sandbox.write_release(
-            "rel-b-1", REVISION_B, compatibility="backward-compatible",
-            evidence={"rollbackReleaseId": "rel-a-1",
-                      "setupFingerprint": "hash-rel-b-1-db-setup",
-                      "migrations": []},
-            baseline=REVISION_A)
+        first = self.sandbox.write_release("rel-a-1", REVISION_A)
+        self.assertEqual(self.sandbox.deploy(first).returncode, 0)
+        second = self.sandbox.write_release("rel-b-1", REVISION_B)
+        manifest_path = second / "bundle/manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["dbSetupInputHash"] = "hash-rel-a-1-db-setup"
+        manifest_path.write_text(json.dumps(manifest))
+        self.sandbox.reseal(second)
         self.assertEqual(self.sandbox.deploy(second).returncode, 0)
-        applied = json.loads(
-            (self.sandbox.state / "applied-setup.json").read_text(encoding="utf-8"))
-        first = self.sandbox.write_release(
-            "rel-a-1", REVISION_A, compatibility="backward-compatible",
-            evidence={"rollbackReleaseId": "rel-b-1",
-                      "setupFingerprint": applied["fingerprint"],
-                      "migrations": []})
         result = self.sandbox.deploy(first, action="rollback")
         self.assertEqual(result.returncode, 0, result.stderr)
-        pointer = json.loads(
-            (self.sandbox.state / "last-deployed.json").read_text(encoding="utf-8"))
+        pointer = json.loads((self.sandbox.state / "last-deployed.json").read_text())
         self.assertEqual(pointer["releaseId"], "rel-a-1")
 
 
@@ -544,27 +592,23 @@ class RollbackTests(DeployTestBase):
         return release
 
     def test_compatible_rollback_restores_previous_images_without_setup(self):
-        self.deploy_a()
-        second = self.sandbox.write_release(
-            "rel-b-1", REVISION_B, compatibility="backward-compatible",
-            evidence={"rollbackReleaseId": "rel-a-1",
-                      "setupFingerprint": "hash-rel-b-1-db-setup",
-                      "migrations": []},
-            baseline=REVISION_A)
+        first = self.deploy_a()
+        original = (first / "bundle/manifest.json").read_bytes()
+        second = self.sandbox.write_release("rel-b-1", REVISION_B)
+        manifest_path = second / "bundle/manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["dbSetupInputHash"] = "hash-rel-a-1-db-setup"
+        manifest_path.write_text(json.dumps(manifest))
+        self.sandbox.reseal(second)
         self.assertEqual(self.sandbox.deploy(second).returncode, 0)
-        applied = json.loads((self.sandbox.state / "applied-setup.json").read_text(encoding="utf-8"))
-        first = self.sandbox.write_release(
-            "rel-a-1", REVISION_A, compatibility="backward-compatible",
-            evidence={"rollbackReleaseId": "rel-b-1",
-                      "setupFingerprint": applied["fingerprint"],
-                      "migrations": []})
         calls_before = len(self.sandbox.read_calls())
         result = self.sandbox.deploy(first, action="rollback")
         self.assertEqual(result.returncode, 0, result.stderr)
         new_calls = "\n".join(self.sandbox.read_calls()[calls_before:])
         self.assertNotIn("run --rm --no-deps db-setup", new_calls)
         self.assertNotIn("down --volumes", new_calls)
-        active = json.loads((self.sandbox.state / "active-release.json").read_text(encoding="utf-8"))
+        self.assertEqual((first / "bundle/manifest.json").read_bytes(), original)
+        active = json.loads((self.sandbox.state / "active-release.json").read_text())
         self.assertEqual(active["releaseId"], "rel-a-1")
 
     def test_rollback_without_previous_release_is_refused(self):

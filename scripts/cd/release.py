@@ -319,6 +319,8 @@ def build_plan(repo: Path, head: str, base: str | None, published: dict | None,
         "refresh": bool(refresh),
         "rebuild": bool(rebuild),
         "inputHashes": hashes,
+        "setupInputFiles": {path: blob for path, blob in list_tree(repo, head)
+                            if "db-setup" in ownership_for(path)},
     }
 
 
@@ -416,6 +418,8 @@ def build_manifest(plan: dict, previous: dict | None, digests: dict, release_id:
         "dbSetupInputHash": input_hashes["db-setup"],
         "migrationCompatibility": compatibility,
     }
+    if "setupInputFiles" in plan:
+        manifest["setupInputFiles"] = plan["setupInputFiles"]
     if evidence is not None:
         manifest["compatibilityEvidence"] = evidence
     return manifest
@@ -496,6 +500,13 @@ def validate_pointer(pointer: dict) -> None:
     missing = [field for field in POINTER_FIELDS if not pointer.get(field)]
     if missing:
         raise ContractError(f"deployment pointer is missing immutable fields: {missing}")
+    validate_release_id(pointer["releaseId"])
+    if not re.fullmatch(r"[0-9a-f]{40}", pointer["revision"]):
+        raise ContractError("pointer revision must be a full SHA")
+    if pointer["releaseKey"] != f'releases/{pointer["releaseId"]}.json':
+        raise ContractError("pointer release key does not match its identity")
+    if pointer["version"] in ("-", "null") or not re.fullmatch(r"sha256:[0-9a-f]{64}", pointer["checksum"]):
+        raise ContractError("pointer needs real immutable version/checksum metadata")
 
 
 def reject_older_overwrite(current: dict, candidate: dict,

@@ -97,7 +97,7 @@ systemctl enable --now docker
 
 # Proof that the retained volume is the one mounted where PostgreSQL writes.
 # deploy.sh treats a missing marker as "not mounted" and blocks startup.
-printf 'durable\n' > "$DATA_MOUNT_POINT/.occ-data-marker"
+printf '{"volumeId":"%s","uuid":"%s"}\n' "$OCC_DATA_VOLUME_ID" "$ACTUAL_UUID" > "$DATA_MOUNT_POINT/.occ-data-marker"
 chmod 0600 "$DATA_MOUNT_POINT/.occ-data-marker"
 
 echo "Writing host secrets (values are never logged)..."
