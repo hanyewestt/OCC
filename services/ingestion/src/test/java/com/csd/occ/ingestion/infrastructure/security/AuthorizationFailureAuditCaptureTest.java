@@ -3,9 +3,11 @@ package com.csd.occ.ingestion.infrastructure.security;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.csd.occ.ingestion.domain.ApplicationAuditEvent;
 import com.csd.occ.ingestion.domain.ApplicationAuditEventRepository;
+import jakarta.servlet.DispatcherType;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -19,6 +21,14 @@ class AuthorizationFailureAuditCaptureTest {
     private final ApplicationAuditEventRepository events = mock(ApplicationAuditEventRepository.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-11-11T01:02:03Z"), ZoneOffset.UTC);
     private final AuthorizationFailureAuditCapture capture = new AuthorizationFailureAuditCapture(events, clock);
+
+    @Test
+    void labelsDeniedSimulationLifecycleWritesWithoutExposingRequestValues() {
+        assertThat(AuthorizationFailureAuditCapture.routeLabel("POST", "/api/v1/demo-runs"))
+                .isEqualTo("SIMULATION_START");
+        assertThat(AuthorizationFailureAuditCapture.routeLabel("POST",
+                "/api/v1/demo-runs/secret-run-id/close")).isEqualTo("SIMULATION_CLOSE");
+    }
 
     @Test
     void capturesOnlyBoundedRouteAndVerifiedActorForAuthorizationDenial() {
@@ -55,5 +65,17 @@ class AuthorizationFailureAuditCaptureTest {
         assertThat(event.getValue().actorType()).isEqualTo("ANONYMOUS");
         assertThat(event.getValue().entityId()).isEqualTo("ADMIN_USERS_LIST");
         assertThat(event.getValue().summary()).doesNotContain("unverified-claim", "token");
+    }
+
+    @Test
+    void doesNotRecordInternalErrorDispatchAsUserAuthorizationFailure() {
+        var request = new MockHttpServletRequest("POST", "/error");
+        request.setDispatcherType(DispatcherType.ERROR);
+        var actor = UsernamePasswordAuthenticationToken.authenticated("verified-user", "ignored-credentials",
+                List.of(new SimpleGrantedAuthority("ROLE_CONTROLLER")));
+
+        capture.record(request, true, actor);
+
+        verifyNoInteractions(events);
     }
 }
