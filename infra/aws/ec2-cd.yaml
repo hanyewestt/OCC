@@ -120,7 +120,7 @@ Resources:
 
   # The only inbound path is the CloudFront origin-facing managed prefix list
   # to the plain HTTP edge port. No SSH, no database, no direct service ports.
-  # trivy:ignore:AWS-0104
+  #trivy:ignore:AWS-0104
   # Trivy flags every /0 destination; this deployment intentionally needs
   # outbound TCP 443 to dynamic external APIs and registries. Other ports and
   # protocols remain denied, and inbound access remains CloudFront-only.
