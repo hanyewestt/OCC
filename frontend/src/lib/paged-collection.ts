@@ -40,6 +40,7 @@ export function usePagedCollection<T, P extends PagedResult<T>>(
   const itemIdRef = useRef(itemId)
   const generation = useRef(0)
   const activeRequest = useRef<{ generation: number; controller: AbortController } | null>(null)
+  const pendingNext = useRef(false)
   const viewport = useRef<HTMLDivElement | null>(null)
 
   const publish = useCallback((next: CollectionState<T, P>) => {
@@ -53,6 +54,7 @@ export function usePagedCollection<T, P extends PagedResult<T>>(
       const response = await loadPageRef.current(page, controller.signal)
       if (controller.signal.aborted || requestGeneration !== generation.current || key !== latestKey.current) return
 
+      if (activeRequest.current?.controller === controller) activeRequest.current = null
       const current = stateRef.current.collectionKey === key ? stateRef.current : emptyState<T, P>(key, false)
       const items = page === 0 ? [] : current.items
       const ids = new Set(items.map(itemIdRef.current))
@@ -68,6 +70,7 @@ export function usePagedCollection<T, P extends PagedResult<T>>(
       if (page === 0 && viewport.current) viewport.current.scrollTop = 0
     } catch (error) {
       if (!controller.signal.aborted && requestGeneration === generation.current && key === latestKey.current) {
+        if (activeRequest.current?.controller === controller) activeRequest.current = null
         const current = stateRef.current.collectionKey === key ? stateRef.current : emptyState<T, P>(key, false)
         publish({ ...current, isLoading: false, isLoadingMore: false, error, refreshError: page === 0 })
       }
@@ -100,8 +103,11 @@ export function usePagedCollection<T, P extends PagedResult<T>>(
 
   const loadNext = useCallback(() => {
     const current = stateRef.current
-    if (current.collectionKey !== collectionKey || !current.hasMore ||
-      activeRequest.current?.generation === generation.current) return
+    if (current.collectionKey !== collectionKey || !current.hasMore) return
+    if (activeRequest.current?.generation === generation.current) {
+      if (current.isLoading && !current.isLoadingMore) pendingNext.current = true
+      return
+    }
 
     const requestGeneration = generation.current
     const controller = new AbortController()
@@ -118,6 +124,7 @@ export function usePagedCollection<T, P extends PagedResult<T>>(
   }, [loadNext])
 
   useEffect(() => {
+    if (latestKey.current !== collectionKey) pendingNext.current = false
     latestKey.current = collectionKey
     loadPageRef.current = loadPage
     itemIdRef.current = itemId
@@ -134,6 +141,13 @@ export function usePagedCollection<T, P extends PagedResult<T>>(
   }, [enabled, refresh])
 
   const current = state.collectionKey === collectionKey ? state : emptyState<T, P>(collectionKey, enabled)
+  useEffect(() => {
+    if (!pendingNext.current || !enabled || state.collectionKey !== collectionKey || state.isLoading ||
+      state.isLoadingMore || !state.hasMore) return
+    pendingNext.current = false
+    loadNext()
+  }, [enabled, state.collectionKey, state.isLoading, state.isLoadingMore, state.hasMore, collectionKey, loadNext])
+
   return { ...current, isLoading: enabled && current.isLoading, isLoadingMore: enabled && current.isLoadingMore,
     reload, refresh, loadNext, updateItem, onScroll }
 }

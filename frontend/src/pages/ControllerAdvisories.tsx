@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { MapPin, Construction, CloudRain, TrainFront, Car, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -8,7 +9,9 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { PagedCollectionControls } from '@/components/PagedCollectionControls'
-import { ApiError, apiRequest, type Advisory, type AdvisoryGroup, type AdvisoryCandidate, type CaptainInstruction, type Hazard, type ManagedNotice, type NoticeSuggestion, type PageResult, type PlanningHazardHistory } from '@/lib/api'
+import { ApiError, apiRequest, type Advisory, type AdvisoryGroup, type AdvisoryCandidate, type CaptainInstruction, type Hazard, type ManagedNotice, type NoticeSuggestion, type PageResult, type PlanningHazardHistory, type TrafficIncident } from '@/lib/api'
+import { cn } from '@/lib/utils'
+import { validCoord } from '@/pages/ControllerViews'
 import { signOut } from '@/lib/auth'
 import { dataClassificationLabel } from '@/lib/presentation'
 import { formatSgtDateTime, sgtDateTimeInputFromUtc, sgtDateTimeInputToUtc } from '@/lib/time'
@@ -17,13 +20,55 @@ import { usePagedCollection } from '@/lib/paged-collection'
 type Edit = { advisory: Advisory; type: AdvisoryCandidate['type']; stopSequence: string; speed: string; minutes: string; count: string; rationale: string; replacement: string }
 type Draft = { id: string; previousId?: string; disruptionId: string; title: string; message: string; services: string; locations: string; from: string; until: string }
 type HazardPageResponse = Omit<PageResult<Hazard>, 'totalItems' | 'totalPages'> & { size: number; totalElements: number }
+
+function getHazardBadgeInfo(kind?: string, title?: string) {
+  const k = (kind || '').toUpperCase()
+  const t = (title || '').toLowerCase()
+  if (k === 'RAIL_DISRUPTION' || t.includes('rail') || t.includes('train') || t.includes('mrt') || t.includes('lrt') || t.includes('bpl')) {
+    return {
+      label: 'Rail Disruption',
+      icon: <TrainFront className="size-3 text-indigo-600 dark:text-indigo-400" />,
+      className: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/70 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800',
+    }
+  }
+  if (k === 'FLOOD' || t.includes('flood') || t.includes('rain') || t.includes('weather')) {
+    return {
+      label: 'Flood',
+      icon: <CloudRain className="size-3 text-sky-600 dark:text-sky-400" />,
+      className: 'bg-sky-100 text-sky-800 dark:bg-sky-950/70 dark:text-sky-300 border border-sky-200 dark:border-sky-800',
+    }
+  }
+  if (k === 'ROADWORKS' || t.includes('roadwork') || t.includes('works') || t.includes('construction')) {
+    return {
+      label: 'Roadwork',
+      icon: <Construction className="size-3 text-amber-600 dark:text-amber-400" />,
+      className: 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-200 dark:border-amber-800',
+    }
+  }
+  if (k === 'TRAFFIC_INCIDENT' || t.includes('traffic') || t.includes('accident') || t.includes('breakdown') || t.includes('vehicle')) {
+    return {
+      label: 'Traffic Disruption',
+      icon: <Car className="size-3 text-rose-600 dark:text-rose-400" />,
+      className: 'bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300 border border-rose-200 dark:border-rose-800',
+    }
+  }
+  return {
+    label: 'Hazard Alert',
+    icon: <AlertTriangle className="size-3 text-amber-600 dark:text-amber-400" />,
+    className: 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-200 dark:border-amber-800',
+  }
+}
+
 const instructionLabels = { BE_CAUTIOUS: 'Be cautious', REDUCE_SPEED: 'Reduce speed', SLOW_DOWN_NEAR_STOPS: 'Slow down near stops', HOLD: 'Hold', DWELL_ADJUSTMENT: 'Adjust dwell', SKIP_STOP: 'Skip stop' }
 
-export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPendingChange, onRefreshTimeChange, view }: {
+export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPendingChange, onRefreshTimeChange, view, selectedHazardId, onLocateHazard, trafficIncidents }: {
   token: string; registerRefresh: (callback: (signal: AbortSignal) => Promise<void>) => void
   onRefresh: () => void; onPendingChange: (pending: boolean) => void
   onRefreshTimeChange: (at: string | null) => void
   view: 'hazards' | 'planning' | 'notices' | 'audit'
+  selectedHazardId?: string | null
+  onLocateHazard?: (hazardId: string, lat: number, lon: number, hazard: Hazard) => void
+  trafficIncidents?: TrafficIncident[]
 }) {
   const [actionError, setActionError] = useState('')
   const [pending, setPending] = useState(false)
@@ -251,13 +296,61 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       {!hazards.isLoading && hazards.error === null && hazards.latestPage && !hazards.items.length && <p className="text-sm text-muted-foreground">{kind ? 'No hazards found for the selected type.' : 'No hazards found.'}</p>}
       {!!hazards.items.length && <ScrollArea role="region" aria-label="Hazard conditions" tabIndex={0} className="h-[32rem] rounded-lg border"
         viewportProps={{ onScroll: hazards.onScroll }}>
-        <div className="space-y-3 p-1 pr-3.5">{hazards.items.map(h => <Card key={h.disruptionId} className="min-h-28"><CardContent className="space-y-3">
-          <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{h.facts.title}</h3><p className="text-xs text-muted-foreground">{h.status} · {dataClassificationLabel(h.classification)}</p></div>
-          <p className="text-sm">{h.facts.description}</p>{h.facts.instruction && <p className="text-sm font-medium">{h.facts.instruction}</p>}
-          <p className="text-xs text-muted-foreground">Updated {formatSgtDateTime(h.updatedAt)} · Exposure uses simulated progress.</p>
-          {h.exposures.length > 0 ? <p className="text-sm">Candidate stops: {h.exposures.map(e => `${e.serviceId} · ${e.stopName} (${e.basis})`).join('; ')}</p> : <p className="text-sm text-muted-foreground">No resolved upcoming bus exposure.</p>}
-          {!!h.limitations.length && <details className="text-xs text-muted-foreground"><summary className="cursor-pointer font-medium">Evidence and limitations</summary><ul className="mt-2 space-y-1">{h.limitations.map(value => <li key={value}>{value}</li>)}</ul></details>}
-        </CardContent></Card>)}</div>
+        <div className="space-y-3 p-1 pr-3.5">{hazards.items.map(h => {
+          const explicitLoc = h.facts.locations?.find(l => typeof l.latitude === 'number' && typeof l.longitude === 'number' && validCoord(l.latitude, l.longitude))
+          const matchedTraffic = !explicitLoc && trafficIncidents
+            ? trafficIncidents.find(t => t.disruptionId === h.disruptionId || t.id === h.disruptionId)
+            : undefined
+          const lat = explicitLoc?.latitude ?? matchedTraffic?.latitude ?? null
+          const lon = explicitLoc?.longitude ?? matchedTraffic?.longitude ?? null
+          const hasCoords = typeof lat === 'number' && typeof lon === 'number' && validCoord(lat, lon)
+          const isSelected = selectedHazardId === h.disruptionId || (matchedTraffic && selectedHazardId === matchedTraffic.id)
+
+          return (
+            <Card
+              key={h.disruptionId}
+              id={`hazard-${h.disruptionId}`}
+              className={cn("min-h-28 transition-all", isSelected && "ring-2 ring-amber-500 bg-amber-500/5 shadow-md")}
+            >
+              <CardContent className="space-y-3">
+                <div className="flex flex-wrap justify-between gap-2">
+                  <h3 className="font-semibold">{h.facts.title}</h3>
+                  <p className="text-xs text-muted-foreground">{h.status} · {dataClassificationLabel(h.classification)}</p>
+                </div>
+                <p className="text-sm">{h.facts.description}</p>
+                {h.facts.instruction && <p className="text-sm font-medium">{h.facts.instruction}</p>}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs text-muted-foreground">
+                  <span>Updated {formatSgtDateTime(h.updatedAt)} · Exposure uses simulated progress.</span>
+                  {hasCoords ? (
+                    <Button
+                      type="button"
+                      variant={isSelected ? "secondary" : "outline"}
+                      size="sm"
+                      className={cn("h-7 gap-1.5 text-xs", isSelected && "font-semibold text-amber-700 dark:text-amber-400 border-amber-500/50")}
+                      onClick={() => onLocateHazard?.(h.disruptionId, lat, lon, h)}
+                    >
+                      <MapPin className="h-3.5 w-3.5 text-amber-600" />
+                      {isSelected ? 'Focused on map' : 'Locate on map'}
+                    </Button>
+                  ) : (
+                    <span className="text-[11px] text-muted-foreground/70 italic">Coordinates unmapped</span>
+                  )}
+                </div>
+                {h.exposures.length > 0 ? (
+                  <p className="text-sm">Candidate stops: {h.exposures.map(e => `${e.serviceId} · ${e.stopName} (${e.basis})`).join('; ')}</p>
+                ) : (
+                  <p className="text-sm text-muted-foreground">No resolved upcoming bus exposure.</p>
+                )}
+                {!!h.limitations.length && (
+                  <details className="text-xs text-muted-foreground">
+                    <summary className="cursor-pointer font-medium">Evidence and limitations</summary>
+                    <ul className="mt-2 space-y-1">{h.limitations.map(value => <li key={value}>{value}</li>)}</ul>
+                  </details>
+                )}
+              </CardContent>
+            </Card>
+          )
+        })}</div>
       </ScrollArea>}
       <PagedCollectionControls label="hazards" hasItems={!!hazards.items.length} hasMore={hazards.hasMore}
         isLoadingMore={hazards.isLoadingMore} error={hazards.error} refreshError={hazards.refreshError} reload={hazards.reload} loadNext={hazards.loadNext} />
@@ -287,31 +380,145 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
       {!advisories.isLoading && advisories.error === null && advisories.latestPage && !pendingAdvisories.length && <p className="text-sm text-muted-foreground">No pending captain advisories.</p>}
       {!!pendingAdvisories.length && <ScrollArea role="region" aria-label="Pending captain advisories" tabIndex={0}
         className="max-h-[28rem]" viewportProps={{ onScroll: advisories.onScroll }}>
-        <div className="space-y-3 p-1 pr-3.5">{pendingAdvisories.map(group =>
-        <Card key={group.id} className="min-h-28"><CardContent className="space-y-4">
-          <div className="space-y-1"><h3 className="text-lg font-semibold">Service {group.serviceId} · Direction {group.directionId}</h3>
-            <p className="text-sm font-medium">{group.hazardTitle} · {instructionLabels[group.candidate.type]}</p>
-            <p className="text-xs text-muted-foreground">Simulation · {group.members.length} affected {group.members.length === 1 ? 'bus' : 'buses'} · Hazard: {dataClassificationLabel(group.hazardClassification)}</p></div>
-          <p className="text-sm">{group.preview}</p>
-          <Button disabled={pending} aria-label="Review and send to affected captains" onClick={() => { setActionError(''); setGroupReview(group) }}>Review and send</Button>
-          <details open={group.members.length === 1} className="space-y-3 text-sm"><summary className="cursor-pointer font-medium">Individual bus instructions</summary>
-            <div className="space-y-3">{group.members.map(a => <div key={a.id} className="space-y-2 rounded-lg border p-3">
-              <p className="font-medium">{a.busId}</p><p className="text-xs text-muted-foreground">{a.candidate.rationale}</p>
-              <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={pending} onClick={() => void submit(`/api/v1/planning/advisories/${a.id}/decisions`, {})}>Send to this bus</Button>
-              <Button variant="outline" disabled={pending} onClick={() => setEdit({ advisory: a, type: a.candidate.type, stopSequence: String(a.candidate.parameters.stopSequence ?? ''), speed: String(a.candidate.parameters.speedReductionKmh ?? ''), minutes: a.candidate.parameters.durationSeconds ? String(a.candidate.parameters.durationSeconds / 60) : '', count: String(a.candidate.parameters.subsequentStopCount ?? 0), rationale: '', replacement: '' })}>Edit instruction</Button></div>
-            </div>)}</div>
-          </details>
-        </CardContent></Card>)}</div>
+        <div className="space-y-3 p-1 pr-3.5">{pendingAdvisories.map(group => {
+          const badgeInfo = getHazardBadgeInfo(group.hazardKind, group.hazardTitle)
+          const linkedHazard = hazards.items.find(h => h.disruptionId === group.disruptionId)
+          const explicitLoc = (typeof group.latitude === 'number' && typeof group.longitude === 'number' && validCoord(group.latitude, group.longitude))
+            ? { lat: group.latitude, lon: group.longitude }
+            : undefined
+          const hazardLoc = explicitLoc ?? (linkedHazard?.facts.locations?.find(l => typeof l.latitude === 'number' && typeof l.longitude === 'number' && validCoord(l.latitude, l.longitude))
+            ? { lat: linkedHazard!.facts.locations!.find(l => typeof l.latitude === 'number' && typeof l.longitude === 'number' && validCoord(l.latitude, l.longitude))!.latitude!,
+                lon: linkedHazard!.facts.locations!.find(l => typeof l.latitude === 'number' && typeof l.longitude === 'number' && validCoord(l.latitude, l.longitude))!.longitude! }
+            : undefined)
+          const hasCoords = Boolean(hazardLoc)
+          const isSelected = selectedHazardId === group.disruptionId
+
+          return (
+            <Card key={group.id} className={cn("min-h-28 transition-all", isSelected && "ring-2 ring-amber-500 bg-amber-500/5 shadow-md")}>
+              <CardContent className="space-y-3.5 pt-5">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-bold text-base text-foreground">Service {group.serviceId} · Direction {group.directionId}</span>
+                    <span className={cn("inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold", badgeInfo.className)}>
+                      {badgeInfo.icon}
+                      {badgeInfo.label}
+                    </span>
+                  </div>
+                  <span className="text-xs text-muted-foreground font-medium">
+                    Simulation · {group.members.length} affected {group.members.length === 1 ? 'bus' : 'buses'} · Hazard: {dataClassificationLabel(group.hazardClassification)}
+                  </span>
+                </div>
+
+                {/* Rich Disruption & Hazard Context Box */}
+                <div className="rounded-lg border bg-muted/40 p-3 space-y-2 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="font-semibold text-sm text-foreground flex items-center gap-1.5">
+                      <span>{group.hazardTitle}</span>
+                    </h4>
+                    {hasCoords && (
+                      <Button
+                        type="button"
+                        variant={isSelected ? "secondary" : "outline"}
+                        size="sm"
+                        className={cn("h-6 px-2 gap-1 text-[11px] font-medium border-amber-500/40 text-amber-800 dark:text-amber-300 hover:bg-amber-500/10",
+                          isSelected && "font-semibold text-amber-700 dark:text-amber-400 border-amber-500/80 bg-amber-500/10"
+                        )}
+                        onClick={() => onLocateHazard?.(group.disruptionId, hazardLoc!.lat, hazardLoc!.lon, linkedHazard ?? {
+                          disruptionId: group.disruptionId,
+                          demoRunId: group.demoRunId ?? null,
+                          status: 'ACTIVE',
+                          classification: group.hazardClassification,
+                          facts: { title: group.hazardTitle, description: group.hazardDescription || group.hazardTitle, instruction: null, effectiveUntil: null },
+                          kind: group.hazardKind || 'TRAFFIC_INCIDENT',
+                          updatedAt: new Date().toISOString(),
+                          exposures: [],
+                          limitations: []
+                        })}
+                      >
+                        <MapPin className="size-3 text-amber-600" />
+                        {isSelected ? 'Focused on map' : 'Locate hazard on map'}
+                      </Button>
+                    )}
+                  </div>
+
+                  {group.hazardDescription && group.hazardDescription !== group.hazardTitle && (
+                    <p className="text-foreground/90 font-normal leading-relaxed">{group.hazardDescription}</p>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-muted-foreground text-[11px] border-t pt-1.5">
+                    {group.hazardLocation && (
+                      <span>Location: <strong className="text-foreground font-medium">{group.hazardLocation}</strong></span>
+                    )}
+                    {group.affectedStopName && (
+                      <span>Affected Stop: <strong className="text-foreground font-medium">{group.affectedStopName}</strong>{group.affectedStopCode ? ` (${group.affectedStopCode})` : ''}</span>
+                    )}
+                    <span>Disruption ID: <code className="text-[10px] font-mono text-foreground/80">{group.disruptionId.slice(0, 8)}…</code></span>
+                  </div>
+                </div>
+
+                {/* Proposed Directive & Message */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Proposed Directive ({instructionLabels[group.candidate.type]})</span>
+                  </div>
+                  <p className="text-sm font-medium bg-background border rounded-md p-2.5 leading-relaxed">{group.preview}</p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <Button disabled={pending} aria-label="Review and send to affected captains" onClick={() => { setActionError(''); setGroupReview(group) }}>
+                    Review and send
+                  </Button>
+                </div>
+
+                <details open={group.members.length === 1} className="space-y-3 text-sm pt-1">
+                  <summary className="cursor-pointer font-medium text-xs text-muted-foreground hover:text-foreground">
+                    Individual bus instructions ({group.members.length} {group.members.length === 1 ? 'bus' : 'buses'})
+                  </summary>
+                  <div className="space-y-3 pt-1">{group.members.map(a => <div key={a.id} className="space-y-2 rounded-lg border p-3">
+                    <p className="font-medium text-sm">{a.busId}</p>
+                    <p className="text-xs text-muted-foreground">{a.candidate.rationale}</p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="outline" size="sm" disabled={pending} onClick={() => void submit(`/api/v1/planning/advisories/${a.id}/decisions`, {})}>Send to this bus</Button>
+                      <Button variant="outline" size="sm" disabled={pending} onClick={() => setEdit({ advisory: a, type: a.candidate.type, stopSequence: String(a.candidate.parameters.stopSequence ?? ''), speed: String(a.candidate.parameters.speedReductionKmh ?? ''), minutes: a.candidate.parameters.durationSeconds ? String(a.candidate.parameters.durationSeconds / 60) : '', count: String(a.candidate.parameters.subsequentStopCount ?? 0), rationale: '', replacement: '' })}>Edit instruction</Button>
+                    </div>
+                  </div>)}</div>
+                </details>
+              </CardContent>
+            </Card>
+          )
+        })}</div>
       </ScrollArea>}
       <PagedCollectionControls label="pending advisories" hasItems={!!advisories.items.length} hasMore={advisories.hasMore}
         isLoadingMore={advisories.isLoadingMore} error={advisories.error} refreshError={advisories.refreshError} reload={advisories.reload} loadNext={advisories.loadNext} />
       <Dialog open={groupReview !== null} onOpenChange={open => { if (!open && !pending) setGroupReview(null) }}>
         {groupReview && <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
           <DialogHeader><DialogTitle>Send advisory to affected captains</DialogTitle><DialogDescription>Each captain receives an individual instruction and acknowledges separately. If any bus is no longer eligible, nothing is sent.</DialogDescription></DialogHeader>
-          <div className="space-y-2"><p className="font-semibold">Service {groupReview.serviceId} · Direction {groupReview.directionId}</p>
-            <p className="text-sm">{groupReview.hazardTitle} · {instructionLabels[groupReview.candidate.type]}</p>
-            <p className="text-xs text-muted-foreground">Simulation delivery · Hazard: {dataClassificationLabel(groupReview.hazardClassification)}</p>
-            <p className="rounded-lg border p-3 text-sm">{groupReview.preview}</p></div>
+          <div className="space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
+              <p className="font-semibold text-base">Service {groupReview.serviceId} · Direction {groupReview.directionId}</p>
+              <span className={cn("inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold", getHazardBadgeInfo(groupReview.hazardKind, groupReview.hazardTitle).className)}>
+                {getHazardBadgeInfo(groupReview.hazardKind, groupReview.hazardTitle).icon}
+                {getHazardBadgeInfo(groupReview.hazardKind, groupReview.hazardTitle).label}
+              </span>
+            </div>
+            <div className="rounded-lg border bg-muted/40 p-3 space-y-1.5 text-xs">
+              <p className="font-semibold text-foreground text-sm">{groupReview.hazardTitle}</p>
+              {groupReview.hazardDescription && groupReview.hazardDescription !== groupReview.hazardTitle && (
+                <p className="text-foreground/90 font-normal leading-relaxed">{groupReview.hazardDescription}</p>
+              )}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-muted-foreground text-[11px] border-t pt-1.5">
+                {groupReview.hazardLocation && (
+                  <span>Location: <strong className="text-foreground font-medium">{groupReview.hazardLocation}</strong></span>
+                )}
+                {groupReview.affectedStopName && (
+                  <span>Affected Stop: <strong className="text-foreground font-medium">{groupReview.affectedStopName}</strong></span>
+                )}
+                <span>Disruption ID: <code className="text-[10px] font-mono">{groupReview.disruptionId.slice(0, 8)}…</code></span>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground font-medium">Simulation delivery · Directive: {instructionLabels[groupReview.candidate.type]}</p>
+            <p className="rounded-lg border bg-background p-3 text-sm font-medium leading-relaxed">{groupReview.preview}</p>
+          </div>
           <ScrollArea className="max-h-64 rounded-lg border" tabIndex={0} aria-label="Broadcast recipients"><ul className="divide-y">{groupReview.members.map(member => <li key={member.id} className="px-3 py-2 text-sm">{member.busId}</li>)}</ul></ScrollArea>
           {actionError && <p role="alert" className="text-sm text-destructive">{actionError}</p>}
           <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" disabled={pending} onClick={() => setGroupReview(null)}>Cancel</Button>

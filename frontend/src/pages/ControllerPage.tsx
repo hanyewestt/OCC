@@ -1,20 +1,23 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
-import { RefreshCw } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { RefreshCw, TriangleAlert, X } from 'lucide-react'
+import { formatSgtDateTime } from '@/lib/time'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type AiAuditRecord, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type DirectoryPage, type DirectoryUser, type EarlyControllerSuggestion, type PageResult, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RoutePositions } from '@/lib/api'
+import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type AiAuditRecord, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type DirectoryPage, type DirectoryUser, type EarlyControllerSuggestion, type PageResult, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RoutePositions, type TrafficIncident, type TrafficIncidentPageResponse, type Hazard } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { ControllerSidebar, controllerPages } from '@/components/ControllerSidebar'
-import { ControllerOverview, ControllerDisruptions, ControllerAudit } from '@/pages/ControllerViews'
+import { ControllerOverview, ControllerDisruptions, ControllerAudit, type MapHazard } from '@/pages/ControllerViews'
 import { ControllerRouteStrip } from '@/pages/ControllerRouteStrip'
 import { ControllerPlanning } from '@/pages/ControllerPlanning'
 import { ControllerAdvisories } from '@/pages/ControllerAdvisories'
 import { usePagedCollection } from '@/lib/paged-collection'
 import { usePageRefresh } from '@/lib/page-refresh'
 import { PageRefreshStatus } from '@/components/PageRefreshStatus'
+import { bunchedArrivalGaps } from '@/lib/route-strip'
+import { haversineDistanceM } from '@/lib/route-geometry'
 import { ControllerCaptainsPage } from '@/pages/ControllerCaptainsPage'
 import { captainDirectoryPath, captainSelectionIsValid, selectedCaptainIds } from '@/pages/controller-captains'
 
@@ -105,6 +108,40 @@ async function loadLiveData(token: string, signal: AbortSignal): Promise<LiveDat
   return { routeArrivals, positions }
 }
 
+function findNearestCorridorStop(
+  incidentLat: number | null | undefined,
+  incidentLon: number | null | undefined,
+  routes: RouteDirection[],
+  maxDistanceM = 2500
+): { serviceId: string; directionId: number; stopCode: string; description: string | null; roadName: string | null; distanceM: number } | null {
+  if (incidentLat == null || incidentLon == null || Number.isNaN(incidentLat) || Number.isNaN(incidentLon)) {
+    return null
+  }
+  let best: { serviceId: string; directionId: number; stopCode: string; description: string | null; roadName: string | null; distanceM: number } | null = null
+
+  for (const route of routes) {
+    for (const stop of route.stops) {
+      if (stop.latitude == null || stop.longitude == null || Number.isNaN(stop.latitude) || Number.isNaN(stop.longitude)) continue
+      const dist = haversineDistanceM(
+        { latitude: incidentLat, longitude: incidentLon },
+        { latitude: stop.latitude, longitude: stop.longitude }
+      )
+      if (dist <= maxDistanceM && (!best || dist < best.distanceM)) {
+        best = {
+          serviceId: route.serviceId,
+          directionId: route.directionId,
+          stopCode: stop.stopCode,
+          description: stop.description,
+          roadName: stop.roadName,
+          distanceM: Math.round(dist),
+        }
+      }
+    }
+  }
+
+  return best
+}
+
 export function ControllerPage({ email, token, controllerRefreshIntervalSeconds, ingestionPollIntervalSeconds,
   routeIncidentGapToleranceSeconds }: {
   email: string; token: string; controllerRefreshIntervalSeconds: number; ingestionPollIntervalSeconds: number
@@ -121,6 +158,31 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const [arrivalStopName, setArrivalStopName] = useState('')
   const [arrivalSortBy, setArrivalSortBy] = useState<'arrival' | 'stopName'>('arrival')
   const [arrivalSortDirection, setArrivalSortDirection] = useState<'asc' | 'desc'>('asc')
+  const [selectedHazardId, setSelectedHazardId] = useState<string | null>(null)
+  const [focusHazardCoord, setFocusHazardCoord] = useState<{ lat: number; lng: number } | null>(null)
+  const [locatedHazard, setLocatedHazard] = useState<MapHazard | null>(null)
+
+  const handleLocateHazard = (hazardId: string, lat: number, lon: number, hazard: Hazard) => {
+    setSelectedHazardId(hazardId)
+    setFocusHazardCoord({ lat, lng: lon })
+    const mapHazard: MapHazard = {
+      id: hazardId,
+      disruptionId: hazardId,
+      latitude: lat,
+      longitude: lon,
+      incidentType: hazard.kind === 'FLOOD' ? 'Flood' : hazard.kind === 'RAIL_DISRUPTION' ? 'Rail Disruption' : hazard.kind === 'ROADWORKS' ? 'Roadwork' : hazard.facts.title,
+      message: hazard.facts.description,
+      title: hazard.facts.title,
+      status: hazard.status,
+      updatedAt: hazard.updatedAt,
+    }
+    setLocatedHazard(mapHazard)
+    if (!pathname.endsWith('/disruptions')) {
+      navigate(`/controller/disruptions?incident=${hazardId}`)
+    } else {
+      document.getElementById('corridor-map')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }
   const [routeArrivals, setRouteArrivals] = useState<Resource<Arrival[]>>(empty)
   const [routeStops, setRouteStops] = useState<Resource<RouteDirection[]>>(empty)
   const [routePositions, setRoutePositions] = useState<Resource<RoutePositions[]>>(empty)
@@ -130,8 +192,39 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const [loaded, setLoaded] = useState('')
   const [switching, setSwitching] = useState(false)
   const [modeError, setModeError] = useState('')
+  const navigate = useNavigate()
   const [simulationDialogOpen, setSimulationDialogOpen] = useState(false)
   const [simulationConfig, setSimulationConfig] = useState({ serviceId: '190', directionId: 1, busCount: 3, dispatchGapSeconds: 90, busGapsSeconds: [90, 90], monitoredStopCode: '44251', scenario: 'BUNCHING' as 'NORMAL' | 'BUNCHING', captainUserIds: ['', '', ''] })
+  const [directiveAlertOpen, setDirectiveAlertOpen] = useState(false)
+  const [dismissedAlertIds, setDismissedAlertIds] = useState<Set<string>>(() => new Set())
+  const [activeNewIncidentAlert, setActiveNewIncidentAlert] = useState<{
+    id: string
+    kind: 'bunching' | 'traffic'
+    title: string
+    subtitle: string
+    detail: string
+    severity?: 'critical' | 'warning'
+    serviceId?: string
+    directionId?: number | null
+    stopCode?: string
+    gapSeconds?: number | null
+    incidentType?: string
+    detectedAt?: string
+  } | null>(null)
+  const knownAlertIdsRef = useRef<Set<string>>(new Set())
+  const knownTrafficIdsRef = useRef<Set<string>>(new Set())
+
+
+  const handleDismissAlert = useCallback((id: string) => {
+    setDismissedAlertIds(prev => {
+      const next = new Set(prev)
+      next.add(id)
+      return next
+    })
+    setActiveNewIncidentAlert(current => (current?.id === id ? null : current))
+    setDirectiveAlertOpen(false)
+  }, [])
+  const isInitialAlertCheckRef = useRef(true)
   const [captainSearch, setCaptainSearch] = useState('')
   const [availableCaptains, setAvailableCaptains] = useState<DirectoryUser[]>([])
   const [captainSearchError, setCaptainSearchError] = useState('')
@@ -143,6 +236,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const loading = loaded !== requestKey || switching
   const scopeVerified = loaded === requestKey && !run.error
   const simulation = run.data && run.data.status !== 'CLOSED' ? run.data : null
+
   const captainAssignmentInvalid = !captainSelectionIsValid(simulationConfig.captainUserIds, simulationConfig.busCount)
   const simulationDirections = routeStops.data?.filter(route => route.serviceId === simulationConfig.serviceId) ?? []
   const simulationStops = simulationDirections.find(route => route.directionId === simulationConfig.directionId)?.stops ?? []
@@ -251,6 +345,126 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       throw error
     }
   }, record => record.invocationId, pathname === '/controller/audit')
+  const trafficIncidentCollection = usePagedCollection<TrafficIncident, TrafficIncidentPageResponse>(
+    token,
+    async (page, signal) => {
+      try {
+        const result = await apiRequest<TrafficIncidentPageResponse>(
+          `/api/v1/disruption/traffic-incidents?page=${page}&size=100`,
+          token,
+          signal
+        )
+        if (!result) throw new Error('Traffic incidents response was empty.')
+        return result
+      } catch (failure) {
+        if (failure instanceof ApiError && failure.status === 401 && !signal.aborted) void signOut(failure.message)
+        throw failure
+      }
+    },
+    incident => incident.id,
+    pathname.endsWith('/disruptions') || pathname.endsWith('/planning')
+  )
+  const currentAlerts = simulation ? simulation.alerts : alertCollection.items
+  const currentTraffic: TrafficIncident[] = useMemo(() => {
+    return trafficIncidentCollection.items.filter((t: TrafficIncident) => {
+      if (!simulation && (t.classification === 'SIMULATION' || t.demoRunId)) return false
+      if (simulation && t.demoRunId && t.demoRunId !== simulation.id) return false
+      return true
+    })
+  }, [trafficIncidentCollection.items, simulation])
+
+  useEffect(() => {
+    if (isInitialAlertCheckRef.current) {
+      if (currentAlerts.length > 0 || currentTraffic.length > 0) {
+        currentAlerts.forEach(a => knownAlertIdsRef.current.add(a.eventId))
+        currentTraffic.forEach((t: TrafficIncident) => knownTrafficIdsRef.current.add(t.id))
+        isInitialAlertCheckRef.current = false
+      }
+      return
+    }
+
+    const newAlerts = currentAlerts.filter(a => !knownAlertIdsRef.current.has(a.eventId))
+    if (newAlerts.length > 0) {
+      newAlerts.forEach(a => knownAlertIdsRef.current.add(a.eventId))
+      const sorted = newAlerts.slice().sort((a, b) => {
+        const gapA = bunchedArrivalGaps(a)[0]?.seconds ?? 999
+        const gapB = bunchedArrivalGaps(b)[0]?.seconds ?? 999
+        return gapA - gapB
+      })
+      const top = sorted[0]
+      const topGap = bunchedArrivalGaps(top)[0]?.seconds ?? null
+      setActiveNewIncidentAlert({
+        id: top.eventId,
+        kind: 'bunching',
+        title: `Bunching on Service ${top.serviceId}${top.directionId ? ` (Dir ${top.directionId})` : ''}`,
+        subtitle: `Monitored Stop: ${top.stopName || top.stopCode}`,
+        detail: `Headway gap degraded to ${topGap ? `${topGap}s` : 'critical threshold'}. Directives required to restore corridor pacing.`,
+        severity: (topGap ?? 999) < 60 ? 'critical' : 'warning',
+        serviceId: top.serviceId,
+        directionId: top.directionId,
+        stopCode: top.stopCode,
+        gapSeconds: topGap,
+        detectedAt: top.detectedAt,
+      })
+      setDirectiveAlertOpen(true)
+      return
+    }
+
+    const newTraffic = currentTraffic.filter((t: TrafficIncident) => !knownTrafficIdsRef.current.has(t.id))
+    if (newTraffic.length > 0) {
+      newTraffic.forEach((t: TrafficIncident) => knownTrafficIdsRef.current.add(t.id))
+      const routes = routeStops.data ?? []
+      for (const candidate of newTraffic) {
+        const nearest = findNearestCorridorStop(candidate.latitude, candidate.longitude, routes, 2500)
+        if (nearest) {
+          setActiveNewIncidentAlert({
+            id: candidate.id,
+            kind: 'traffic',
+            title: `${candidate.incidentType || 'Traffic Hazard'} Reported`,
+            subtitle: `Near ${nearest.description || nearest.stopCode} (Service ${nearest.serviceId} corridor ~${nearest.distanceM}m away)`,
+            detail: candidate.message || 'Traffic disruption reported along transit corridor.',
+            severity: 'warning',
+            serviceId: nearest.serviceId,
+            directionId: nearest.directionId,
+            stopCode: nearest.stopCode,
+            incidentType: candidate.incidentType,
+            detectedAt: candidate.observedAt ?? candidate.updatedAt ?? undefined,
+          })
+          setDirectiveAlertOpen(true)
+          break
+        }
+      }
+    }
+  }, [currentAlerts, currentTraffic, routeStops.data])
+
+  const activeAlerts = useMemo(() => {
+    const decidedBunchingEventIds = new Set<string>()
+    for (const d of decisionCollection.items) {
+      const rec = recommendationCollection.items.find(r => r.recommendationId === d.recommendationId)
+      if (rec?.bunchingEventId) decidedBunchingEventIds.add(rec.bunchingEventId)
+    }
+    return currentAlerts.filter(a => !dismissedAlertIds.has(a.eventId) && !decidedBunchingEventIds.has(a.eventId))
+  }, [currentAlerts, dismissedAlertIds, decisionCollection.items, recommendationCollection.items])
+
+  const awaitingDirectiveCount = activeAlerts.length
+  const topActiveAlert = activeAlerts[0]
+  const topAlertGap = topActiveAlert ? bunchedArrivalGaps(topActiveAlert)[0]?.seconds ?? null : null
+  const displayedAlert = (activeNewIncidentAlert && !dismissedAlertIds.has(activeNewIncidentAlert.id))
+    ? activeNewIncidentAlert
+    : (topActiveAlert ? {
+        id: topActiveAlert.eventId,
+        kind: 'bunching' as const,
+        title: `Bunching on Service ${topActiveAlert.serviceId}${topActiveAlert.directionId ? ` (Dir ${topActiveAlert.directionId})` : ''}`,
+        subtitle: `Monitored Stop: ${topActiveAlert.stopName || topActiveAlert.stopCode}`,
+        detail: `Headway gap degraded to ${topAlertGap ? `${topAlertGap}s` : 'critical threshold'}. Directives required to restore corridor pacing.`,
+        severity: (topAlertGap ?? 999) < 60 ? 'critical' : 'warning',
+        serviceId: topActiveAlert.serviceId,
+        directionId: topActiveAlert.directionId,
+        stopCode: topActiveAlert.stopCode,
+        gapSeconds: topAlertGap,
+        detectedAt: topActiveAlert.detectedAt,
+      } : null)
+
   const requestLiveData = useCallback(async (signal: AbortSignal) => {
     const generation = ++liveRequestGenerationRef.current
     return { generation, data: await loadLiveData(token, signal) }
@@ -321,7 +535,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       setShellRefreshTime({ key: requestKey, at: new Date().toISOString() })
     }
     return previousMode !== (resolvedRun.data?.id ?? 'LIVE')
-  }, [token, pathname, requestKey, requestLiveData])
+  }, [token, pathname, requestKey, requestLiveData, setRouteArrivals, setRoutePositions, setRun, setRouteStops, setLoaded, setShellRefreshTime])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -346,6 +560,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     if (!simulation && (pathname === '/controller' || pathname.endsWith('/disruptions') || pathname.endsWith('/planning'))) requests.push(alertCollection.refresh(signal))
     if (pathname === '/controller/planning') requests.push(recommendationCollection.refresh(signal), diagnosisCollection.refresh(signal))
     if (pathname === '/controller/audit') requests.push(decisionCollection.refresh(signal), suggestionCollection.refresh(signal), aiAuditCollection.refresh(signal))
+    if (pathname.endsWith('/disruptions') || pathname.endsWith('/planning')) requests.push(trafficIncidentCollection.refresh(signal))
     if (pathname !== '/controller') requests.push(refreshAdvisories.current(signal))
     await Promise.allSettled(requests)
   }, loading || collectionsLoading || advisoryPending || planningPending || switching, requestKey)
@@ -414,6 +629,18 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           </Button>
           <span role="status" className={`flex items-center gap-2 text-xs font-medium ${simulation ? 'text-amber-700 dark:text-amber-400' : !loading && !run.error ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground'}`}><span className="size-1.5 rounded-full bg-current" />{mode}</span>
           {simulation && <span className="text-xs text-muted-foreground">Injection stop {simulation.monitoredStopCode}</span>}
+          {awaitingDirectiveCount > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDirectiveAlertOpen(true)}
+              className="h-8 gap-1.5 border-amber-500/60 bg-amber-500/10 text-amber-900 dark:text-amber-200 hover:bg-amber-500/20 text-xs font-semibold"
+              title="Click to review disruption and issue operational directive"
+            >
+              <TriangleAlert className="size-3.5 text-amber-600 animate-pulse" />
+              <span>{awaitingDirectiveCount} {awaitingDirectiveCount === 1 ? 'disruption' : 'disruptions'} awaiting directive</span>
+            </Button>
+          )}
           <Button variant="outline" disabled={loading || isRefreshing || advisoryPending || planningPending || !!run.error}
             onClick={() => simulation ? void switchMode() : setSimulationDialogOpen(true)}>{switching ? 'Switching…' : simulation ? 'Return to live' : 'Start simulation'}</Button>
         </div>
@@ -492,6 +719,97 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           <DialogFooter><Button variant="outline" onClick={() => setSimulationDialogOpen(false)}>Cancel</Button><Button disabled={captainAssignmentInvalid} onClick={startSimulation}>Start simulation</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+      {directiveAlertOpen && displayedAlert && (
+        <aside
+          role="alert"
+          aria-live="assertive"
+          className="fixed bottom-6 right-6 z-50 w-full max-w-md rounded-xl border border-amber-500/50 bg-background/95 p-4 shadow-2xl backdrop-blur-md transition-all animate-in slide-in-from-bottom-5 duration-200"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-red-100 text-red-800 dark:bg-red-950/70 dark:text-red-300 border border-red-300 dark:border-red-800 animate-pulse">
+              <TriangleAlert className="size-3.5" />
+              ACTION REQUIRED · DIRECTIVE NOTICE
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6 text-muted-foreground hover:text-foreground"
+              onClick={() => displayedAlert && handleDismissAlert(displayedAlert.id)}
+              aria-label="Dismiss directive notice"
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+
+          <div className="mt-2.5 space-y-1">
+            <h3 className="text-base font-bold leading-snug tracking-tight text-foreground">
+              {displayedAlert.title}
+            </h3>
+            <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+              {displayedAlert.subtitle}
+            </p>
+          </div>
+
+          <div className="mt-2.5 rounded-lg border bg-muted/40 p-2.5 text-xs text-muted-foreground space-y-1.5">
+            <p className="text-xs font-normal text-foreground leading-relaxed">
+              {displayedAlert.detail}
+            </p>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-1.5 text-[11px]">
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-800 dark:text-amber-300 font-medium">
+                Status: Awaiting Directive
+              </span>
+              {displayedAlert.gapSeconds !== undefined && displayedAlert.gapSeconds !== null && (
+                <span>
+                  Gap: <strong className="text-foreground">{displayedAlert.gapSeconds}s</strong>
+                </span>
+              )}
+              {displayedAlert.detectedAt && (
+                <span>{formatSgtDateTime(displayedAlert.detectedAt)}</span>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => displayedAlert && handleDismissAlert(displayedAlert.id)}
+            >
+              Acknowledge
+            </Button>
+            {displayedAlert.serviceId && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => {
+                  setDirectiveAlertOpen(false)
+                  const [svc, dir] = [displayedAlert.serviceId, displayedAlert.directionId]
+                  navigate(`/controller/disruptions?service=${svc}${dir ? `&direction=${dir}` : ''}&incident=${displayedAlert.id}`)
+                }}
+              >
+                Locate on Map
+              </Button>
+            )}
+            <Button
+              size="sm"
+              className="h-8 text-xs bg-amber-600 hover:bg-amber-700 text-white font-medium shadow-sm"
+              onClick={() => {
+                setDirectiveAlertOpen(false)
+                if (displayedAlert.serviceId) {
+                  const [svc, dir] = [displayedAlert.serviceId, displayedAlert.directionId]
+                  navigate(`/controller/planning?service=${svc}${dir ? `&direction=${dir}` : ''}&incident=${displayedAlert.id}`)
+                } else {
+                  navigate('/controller/planning')
+                }
+              }}
+            >
+              Give Directive / Plan Mitigation →
+            </Button>
+          </div>
+        </aside>
+      )}
       <div className="mx-auto max-w-7xl space-y-7 p-5 md:p-8">
         <PageRefreshStatus lastSuccessAt={lastPageRefresh} intervalSeconds={controllerRefreshIntervalSeconds} />
         {run.error && !loading && <p role="alert" className="text-sm text-destructive">{run.error} Simulation state could not be verified.</p>}
@@ -521,19 +839,28 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         </>}
         {pathname.endsWith('/disruptions') && <ControllerDisruptions liveAlerts={alertCollection} run={run} loading={loading}
           routes={routeStops.data ?? []} positions={routePositions.data ?? []} pollIntervalSeconds={pollIntervalSeconds}
-          gapToleranceSeconds={Math.max(30, routeIncidentGapToleranceSeconds)} />}
+          gapToleranceSeconds={Math.max(30, routeIncidentGapToleranceSeconds)}
+          trafficIncidents={currentTraffic}
+          selectedHazardId={selectedHazardId}
+          onSelectHazard={setSelectedHazardId}
+          focusCoord={focusHazardCoord}
+          extraHazards={locatedHazard ? [locatedHazard] : []} />}
         {pathname.endsWith('/planning') && <ControllerPlanning recommendations={recommendationCollection} diagnosisRequests={diagnosisCollection}
           loading={loading} modeError={run.error} mode={modeValue} demoRunId={simulation?.id ?? null} token={token}
           detectedAlerts={simulation ? simulation.alerts : alertCollection.items}
           positions={routePositions.data ?? []}
           routes={routeStops.data ?? []} pollIntervalSeconds={pollIntervalSeconds}
           gapToleranceSeconds={Math.max(30, routeIncidentGapToleranceSeconds)}
+          trafficIncidents={currentTraffic}
           nowMs={Date.parse(alertCollection.lastSuccessAt || (simulation ? shellRefreshTime.at : '') || '') || 0}
-          onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { void requestRefresh('mutation') }} />}
+          onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { if (displayedAlert?.id) { handleDismissAlert(displayedAlert.id) } void requestRefresh('mutation') }} />}
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} suggestions={suggestionCollection} aiAudits={aiAuditCollection} loading={loading} />}
         {pathname !== '/controller' && !pathname.endsWith('/captains') && loaded === requestKey && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
           registerRefresh={registerAdvisoryRefresh} onRefresh={() => { void requestRefresh('mutation') }} onPendingChange={setAdvisoryPending} onRefreshTimeChange={reportAdvisoryRefresh}
-          view={pathname.endsWith('/disruptions') ? 'hazards' : pathname.endsWith('/planning') ? 'planning' : pathname.endsWith('/notices') ? 'notices' : 'audit'} />}
+          view={pathname.endsWith('/disruptions') ? 'hazards' : pathname.endsWith('/planning') ? 'planning' : pathname.endsWith('/notices') ? 'notices' : 'audit'}
+          selectedHazardId={selectedHazardId}
+          onLocateHazard={handleLocateHazard}
+          trafficIncidents={currentTraffic} />}
       </div>
     </div>
   </div>
