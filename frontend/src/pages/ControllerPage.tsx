@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type AiAuditRecord, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type EarlyControllerSuggestion, type PageResult, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RoutePositions } from '@/lib/api'
+import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type AiAuditRecord, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type DirectoryPage, type DirectoryUser, type EarlyControllerSuggestion, type PageResult, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RoutePositions } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { ControllerSidebar, controllerPages } from '@/components/ControllerSidebar'
 import { ControllerOverview, ControllerDisruptions, ControllerAudit } from '@/pages/ControllerViews'
@@ -15,6 +15,8 @@ import { ControllerAdvisories } from '@/pages/ControllerAdvisories'
 import { usePagedCollection } from '@/lib/paged-collection'
 import { usePageRefresh } from '@/lib/page-refresh'
 import { PageRefreshStatus } from '@/components/PageRefreshStatus'
+import { ControllerCaptainsPage } from '@/pages/ControllerCaptainsPage'
+import { captainDirectoryPath, captainSelectionIsValid, selectedCaptainIds } from '@/pages/controller-captains'
 
 export type Resource<T> = { data: T | null; error: string }
 export type Planning = { recommendations: PageResult<PendingRecommendation> & { mode: string; demoRunId: string | null }; decisions: PageResult<Decision> }
@@ -130,6 +132,10 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const [modeError, setModeError] = useState('')
   const [simulationDialogOpen, setSimulationDialogOpen] = useState(false)
   const [simulationConfig, setSimulationConfig] = useState({ serviceId: '190', directionId: 1, busCount: 3, dispatchGapSeconds: 90, busGapsSeconds: [90, 90], monitoredStopCode: '44251', scenario: 'BUNCHING' as 'NORMAL' | 'BUNCHING', captainUserIds: ['', '', ''] })
+  const [captainSearch, setCaptainSearch] = useState('')
+  const [availableCaptains, setAvailableCaptains] = useState<DirectoryUser[]>([])
+  const [captainSearchError, setCaptainSearchError] = useState('')
+  const [captainsLoading, setCaptainsLoading] = useState(false)
   const modeRequestRef = useRef<AbortController | null>(null)
   const liveRequestGenerationRef = useRef(0)
   const switchingRef = useRef(false)
@@ -137,12 +143,30 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const loading = loaded !== requestKey || switching
   const scopeVerified = loaded === requestKey && !run.error
   const simulation = run.data && run.data.status !== 'CLOSED' ? run.data : null
-  const captainIds = simulationConfig.captainUserIds.slice(0, simulationConfig.busCount)
-  const captainIdFormat = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  const captainAssignmentInvalid = captainIds.some(Boolean) && (captainIds.some(id => !captainIdFormat.test(id.trim()))
-    || new Set(captainIds.map(id => id.trim().toLowerCase())).size !== captainIds.length)
+  const captainAssignmentInvalid = !captainSelectionIsValid(simulationConfig.captainUserIds, simulationConfig.busCount)
   const simulationDirections = routeStops.data?.filter(route => route.serviceId === simulationConfig.serviceId) ?? []
   const simulationStops = simulationDirections.find(route => route.directionId === simulationConfig.directionId)?.stops ?? []
+
+  useEffect(() => {
+    if (!simulationDialogOpen) return
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      setCaptainsLoading(true)
+      setCaptainSearchError('')
+      void apiRequest<DirectoryPage>(captainDirectoryPath(captainSearch, 0, true), token, controller.signal)
+        .then(result => {
+          if (!result) throw new Error('Captain search response was empty.')
+          if (!controller.signal.aborted) setAvailableCaptains(result.items)
+        })
+        .catch(error => {
+          if (controller.signal.aborted) return
+          if (error instanceof ApiError && error.status === 401) void signOut(error.message)
+          setCaptainSearchError(error instanceof ApiError && error.status === 403 ? 'You do not have permission to search captains.' : 'Unable to load available captains.')
+        })
+        .finally(() => { if (!controller.signal.aborted) setCaptainsLoading(false) })
+    }, captainSearch ? 200 : 0)
+    return () => { window.clearTimeout(timer); controller.abort() }
+  }, [captainSearch, simulationDialogOpen, token])
   const refreshScope = `${requestKey}:${simulation?.id ?? 'LIVE'}`
   const reportAdvisoryRefresh = useCallback((at: string | null) => {
     setAdvisoryRefreshTime(previous => previous.key === refreshScope && previous.at === at ? previous : { key: refreshScope, at })
@@ -322,7 +346,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     if (!simulation && (pathname === '/controller' || pathname.endsWith('/disruptions') || pathname.endsWith('/planning'))) requests.push(alertCollection.refresh(signal))
     if (pathname === '/controller/planning') requests.push(recommendationCollection.refresh(signal), diagnosisCollection.refresh(signal))
     if (pathname === '/controller/audit') requests.push(decisionCollection.refresh(signal), suggestionCollection.refresh(signal), aiAuditCollection.refresh(signal))
-    if (pathname !== '/controller' && !pathname.endsWith('/planning')) requests.push(refreshAdvisories.current(signal))
+    if (pathname !== '/controller' && !pathname.endsWith('/planning') && !pathname.endsWith('/captains')) requests.push(refreshAdvisories.current(signal))
     await Promise.allSettled(requests)
   }, loading || collectionsLoading || advisoryPending || planningPending || switching, requestKey)
 
@@ -331,7 +355,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       : pathname.endsWith('/planning') ? [recommendationCollection.lastSuccessAt, diagnosisCollection.lastSuccessAt]
       : pathname.endsWith('/audit') ? [decisionCollection.lastSuccessAt, suggestionCollection.lastSuccessAt, aiAuditCollection.lastSuccessAt] : []),
     ...(!simulation && (pathname === '/controller' || pathname.endsWith('/disruptions') || pathname.endsWith('/planning')) ? [alertCollection.lastSuccessAt] : []),
-    ...(pathname !== '/controller' && !pathname.endsWith('/planning') ? [advisoryRefreshTime.key === refreshScope ? advisoryRefreshTime.at : null] : [])]
+    ...(pathname !== '/controller' && !pathname.endsWith('/planning') && !pathname.endsWith('/captains') ? [advisoryRefreshTime.key === refreshScope ? advisoryRefreshTime.at : null] : [])]
   const lastPageRefresh = refreshTimes.includes(null) ? null : [...refreshTimes].sort()[0] ?? null
 
   const modeValue = simulation ? 'DEMO' : 'LIVE'
@@ -355,7 +379,8 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     try {
       await apiRequest<DemoRun>(path, token, controller.signal, { method: 'POST', ...(configuration ? { body: {
         ...configuration,
-        ...(configuration.captainUserIds.every(id => id.trim()) ? { captainUserIds: configuration.captainUserIds.map(id => id.trim()) } : { captainUserIds: undefined }),
+        ...(selectedCaptainIds(configuration.captainUserIds, configuration.busCount).every(Boolean)
+          ? { captainUserIds: selectedCaptainIds(configuration.captainUserIds, configuration.busCount) } : { captainUserIds: undefined }),
       } } : {}) })
     } catch (error) {
       if (controller.signal.aborted) return
@@ -420,12 +445,25 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
               })} />
             </label>
             <fieldset className="grid gap-2"><legend className="text-sm font-medium">Captain account for each bus</legend>
-              <p className="text-xs text-muted-foreground">Enter each captain’s Supabase Auth UUID. Assign all buses or leave all blank.</p>
-              {simulationConfig.captainUserIds.slice(0, simulationConfig.busCount).map((userId, index) => <label key={index} className="grid gap-1.5 text-sm">Bus {index + 1} captain user ID
-                <Input value={userId} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" aria-invalid={!!userId && !captainIdFormat.test(userId.trim())}
-                  onChange={event => setSimulationConfig(value => ({ ...value, captainUserIds: value.captainUserIds.map((id, itemIndex) => itemIndex === index ? event.target.value : id) }))} />
-              </label>)}
-              {captainAssignmentInvalid && <p role="alert" className="text-xs text-destructive">Enter a valid, unique UUID for every bus, or clear all captain IDs.</p>}
+              <p className="text-xs text-muted-foreground">Search available captain accounts. Assign one to every bus or leave all buses unassigned.</p>
+              <label className="grid gap-1.5 text-sm" htmlFor="simulation-captain-search">Search available captains</label>
+              <Input id="simulation-captain-search" placeholder="Name or email" value={captainSearch} onChange={event => setCaptainSearch(event.target.value)} />
+              {captainsLoading && <p role="status" className="text-xs text-muted-foreground">Searching captains…</p>}
+              {captainSearchError && <p role="alert" className="text-xs text-destructive">{captainSearchError}</p>}
+              {!captainsLoading && !captainSearchError && !availableCaptains.length && <p className="text-xs text-muted-foreground">No available captains match this search.</p>}
+              {simulationConfig.captainUserIds.slice(0, simulationConfig.busCount).map((userId, index) => {
+                const usedByAnotherBus = new Set(simulationConfig.captainUserIds.filter((id, otherIndex) => otherIndex !== index && id))
+                const options = availableCaptains.filter(captain => captain.id === userId || !usedByAnotherBus.has(captain.id))
+                const selectedMissing = userId && !options.some(captain => captain.id === userId)
+                return <label key={index} className="grid gap-1.5 text-sm">Bus {index + 1} captain
+                  <select aria-label={`Bus ${index + 1} captain`} value={userId} onChange={event => setSimulationConfig(value => ({ ...value, captainUserIds: value.captainUserIds.map((id, itemIndex) => itemIndex === index ? event.target.value : id) }))} className="h-10 rounded-md border bg-background px-3">
+                    <option value="">Unassigned</option>
+                    {selectedMissing && <option value={userId}>Selected captain ({userId})</option>}
+                    {options.map(captain => <option key={captain.id} value={captain.id}>{captain.displayName || captain.name || captain.email} · {captain.email}</option>)}
+                  </select>
+                </label>
+              })}
+              {captainAssignmentInvalid && <p role="alert" className="text-xs text-destructive">Choose a different captain for every bus, or leave all buses unassigned.</p>}
             </fieldset>
             <label className="grid gap-1.5 text-sm font-medium">Injection stop
               {simulationStops.length ? <select value={simulationConfig.monitoredStopCode} onChange={event => setSimulationConfig(value => ({ ...value, monitoredStopCode: event.target.value }))} className="h-10 rounded-md border bg-background px-3">
@@ -458,6 +496,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         <PageRefreshStatus lastSuccessAt={lastPageRefresh} intervalSeconds={controllerRefreshIntervalSeconds} />
         {run.error && !loading && <p role="alert" className="text-sm text-destructive">{run.error} Simulation state could not be verified.</p>}
         {modeError && <p role="alert" className="text-sm text-destructive">{modeError}</p>}
+        {pathname.endsWith('/captains') && <ControllerCaptainsPage token={token} />}
         {pathname === '/controller' && <>
           <div className="grid gap-4 sm:grid-cols-3">
             {[
@@ -491,7 +530,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           nowMs={Date.parse(alertCollection.lastSuccessAt ?? '') || 0}
           onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { void requestRefresh('mutation') }} />}
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} suggestions={suggestionCollection} aiAudits={aiAuditCollection} loading={loading} />}
-        {pathname !== '/controller' && loaded === requestKey && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
+        {pathname !== '/controller' && !pathname.endsWith('/captains') && loaded === requestKey && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
           registerRefresh={registerAdvisoryRefresh} onRefresh={() => { void requestRefresh('mutation') }} onPendingChange={setAdvisoryPending} onRefreshTimeChange={reportAdvisoryRefresh}
           view={pathname.endsWith('/disruptions') ? 'hazards' : pathname.endsWith('/planning') ? 'planning' : pathname.endsWith('/notices') ? 'notices' : 'audit'} />}
       </div>
