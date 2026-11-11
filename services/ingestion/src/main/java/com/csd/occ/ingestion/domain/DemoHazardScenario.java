@@ -4,7 +4,11 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
-/** Deterministic synthetic facts sharing the existing service-190/972 replay geography. */
+/**
+ * Deterministic synthetic facts sharing the existing service-190/972 replay geography. Every replay step reports
+ * the hazards as active so controllers can review and send advisories; flood and roadworks expire one hour after the
+ * run starts and the rail disruption remains scoped to its run.
+ */
 public final class DemoHazardScenario {
     private DemoHazardScenario() {}
     public static List<HazardFeedPort.Fact> observations(int step, Instant startedAt, Instant now) {
@@ -15,17 +19,17 @@ public final class DemoHazardScenario {
                 new BigDecimal("103.7550750"), new BigDecimal("0.5"), "BROADCAST_COVERAGE", "PROVIDER_SUPPLIED");
         var station = new HazardLocation("STATION", "BP4", "Choa Chu Kang", null, null, null,
                 "STATION_REFERENCE", "PROVIDER_SUPPLIED");
+        var expiresAt = startedAt.plusSeconds(3600);
         return List.of(
-                new HazardFeedPort.Fact(HazardKind.FLOOD, step == 2 ? "demo-flood-cancel" : "demo-flood",
-                        step == 2 ? "CANCEL" : "OBSERVED", now, null, startedAt.plusSeconds(3600), "DEMO: Flood alert",
+                new HazardFeedPort.Fact(HazardKind.FLOOD, "demo-flood", "OBSERVED", now, null, expiresAt,
+                        "DEMO: Flood alert",
                         step == 0 ? "Synthetic flooding near Teck Whye Ave" : "Synthetic flood update",
-                        "Severe", "Avoid the affected area", step == 2 ? List.of("demo-flood") : List.of(),
-                        null, null, "Actual", null, List.of(coverage)),
-                new HazardFeedPort.Fact(HazardKind.RAIL_DISRUPTION, "BPL|Both", step == 2 ? "RECOVERED" : "OBSERVED",
+                        "Severe", "Avoid the affected area", List.of(), null, null, "Actual", null, List.of(coverage)),
+                new HazardFeedPort.Fact(HazardKind.RAIL_DISRUPTION, "BPL|Both", "OBSERVED",
                         now, null, null, "DEMO: BPL disruption", "Synthetic rail disruption near connecting bus services",
-                        null, null, List.of(), "BPL", "Both", step == 2 ? "1" : "2", null, List.of(station)),
+                        null, null, List.of(), "BPL", "Both", "2", null, List.of(station)),
                 new HazardFeedPort.Fact(HazardKind.ROADWORKS, "demo-roadworks", "OBSERVED", null,
-                        startedAt, step == 2 ? now : startedAt.plusSeconds(3600), "DEMO: Approved works",
+                        startedAt, expiresAt, "DEMO: Approved works",
                         "Synthetic approved roadworks; road closure not established", null, null, List.of(),
                         null, null, null, "DEMO department", List.of(road)));
     }
