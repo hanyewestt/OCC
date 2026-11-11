@@ -668,6 +668,7 @@ jobs:
           scan-type: fs
           scan-ref: .
           version: v0.76.0
+          trivyignores: .trivyignore.yaml
           scanners: secret,misconfig
           severity: HIGH,CRITICAL
           format: json
