@@ -1,6 +1,7 @@
 package com.csd.occ.disruption.hazard.domain;
 
 import com.csd.occ.disruption.bunching.domain.*;
+import com.csd.occ.disruption.domain.audit.ApplicationAuditRecorder;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -20,10 +21,12 @@ public class HazardSyncService {
     private final DiagnosisOutboxRepository outbox;
     private final PlanningEventSubmissionPort codec;
     private final Clock clock;
+    private final ApplicationAuditRecorder audit;
     public HazardSyncService(HazardCheckpointRepository checkpoints, HazardFeedHealthRepository feedHealth, HazardStateRepository hazards,
-            DisruptionRepository disruptions, DiagnosisOutboxRepository outbox, PlanningEventSubmissionPort codec, Clock clock) {
+            DisruptionRepository disruptions, DiagnosisOutboxRepository outbox, PlanningEventSubmissionPort codec, Clock clock,
+            ApplicationAuditRecorder audit) {
         this.checkpoints = checkpoints; this.feedHealth = feedHealth; this.hazards = hazards; this.disruptions = disruptions;
-        this.outbox = outbox; this.codec = codec; this.clock = clock;
+        this.outbox = outbox; this.codec = codec; this.clock = clock; this.audit = audit;
     }
     @Transactional(readOnly = true)
     public HazardCheckpoint cursor(String kind) { return checkpoints.findById(kind).orElseThrow(); }
@@ -105,10 +108,15 @@ public class HazardSyncService {
                 }
             }
         }
-        var health = feedHealth.findAll().stream().filter(value -> value.matches(poll)).findFirst()
-                .orElseGet(() -> new HazardFeedHealth(poll, staleAfter));
+        var existingHealth = feedHealth.findAll().stream().filter(value -> value.matches(poll)).findFirst();
+        String previousHealth = existingHealth.map(value -> value.health(now).status()).orElse("UNKNOWN");
+        var health = existingHealth.orElseGet(() -> new HazardFeedHealth(poll, staleAfter));
         health.advance(poll, staleAfter);
         feedHealth.save(health);
+        audit.feedPoll(poll.pollRunId(), kind, poll.demoRunId(), poll.completedAt(), poll.outcome(), poll.complete());
+        String currentHealth = health.health(now).status();
+        if (!previousHealth.equals(currentHealth))
+            audit.feedHealthChange(poll.pollRunId(), kind, poll.demoRunId(), poll.completedAt(), previousHealth, currentHealth);
         cursor.advance(poll, staleAfter);
     }
 
@@ -134,5 +142,6 @@ public class HazardSyncService {
         hazards.recordEvent(eventId, state.disruptionId(), state.kind(), action, state.classification(), state.demoRunId(),
                 state.sourceObservationId(), poll.pollRunId(), state.lastSeenAt(), now, encoded.payloadJson());
         outbox.save(new DiagnosisOutbox(eventId, eventId, encoded.payloadJson(), encoded.payloadFingerprint(), encoded.schemaVersion(), now));
+        audit.disruptionTransition(eventId, state.disruptionId(), state.demoRunId(), now, state.kind(), action, state.status());
     }
 }

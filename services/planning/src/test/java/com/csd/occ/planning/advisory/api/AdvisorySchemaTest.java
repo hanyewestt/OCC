@@ -28,9 +28,11 @@ class AdvisorySchemaTest {
         assertThat(NoticeController.class.getMethod("published", String.class, java.util.UUID.class, int.class, int.class)
                 .getAnnotation(SecurityRequirements.class)).isNotNull();
         assertProblem(AdvisoryController.class.getMethod("decide", java.util.UUID.class, DecideAdvisoryRequest.class,
-                org.springframework.security.oauth2.jwt.Jwt.class).getAnnotation(ApiResponses.class), "400", "404", "409");
+                org.springframework.security.oauth2.jwt.Jwt.class, org.springframework.security.core.Authentication.class)
+                .getAnnotation(ApiResponses.class), "400", "404", "409");
         assertProblem(AdvisoryController.class.getMethod("acknowledge", java.util.UUID.class,
-                org.springframework.security.oauth2.jwt.Jwt.class).getAnnotation(ApiResponses.class), "404", "409");
+                org.springframework.security.oauth2.jwt.Jwt.class, org.springframework.security.core.Authentication.class)
+                .getAnnotation(ApiResponses.class), "404", "409");
         assertProblem(NoticeController.class.getMethod("publish", java.util.UUID.class,
                 org.springframework.security.oauth2.jwt.Jwt.class).getAnnotation(ApiResponses.class), "404", "409");
         assertNullable(InstructionResponse.class, "acknowledgedAt");

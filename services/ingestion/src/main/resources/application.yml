@@ -43,6 +43,15 @@ springdoc:
     version: OPENAPI_3_1
 
 occ:
+  audit:
+    retention: ${OCC_AUDIT_RETENTION:90d}
+  identity:
+    enabled: ${OCC_IDENTITY_ENABLED:true}
+    project-url: ${SUPABASE_PROJECT_URL:}
+    secret-key-file: ${OCC_IDENTITY_SECRET_KEY_FILE:}
+    secret-key: ${OCC_IDENTITY_SECRET_KEY:}
+    timeout: ${OCC_IDENTITY_TIMEOUT:5s}
+    directory-interval: ${OCC_IDENTITY_DIRECTORY_INTERVAL:5m}
   frontend:
     project-url: ${occ.security.supabase.project-url}
     publishable-key: ${SUPABASE_SB_PUBLISHABLE:}
@@ -96,7 +105,7 @@ occ:
         initial-delay: ${OCC_INGESTION_ROADWORKS_INITIAL_DELAY:30s}
         stale-after: ${OCC_INGESTION_ROADWORKS_STALE_AFTER:48h}
     monitored-services: ${OCC_INGESTION_MONITORED_SERVICES:190,972}
-    stale-after-seconds: ${OCC_INGESTION_STALE_AFTER_SECONDS:180}
+    stale-after-seconds: ${OCC_INGESTION_STALE_AFTER_SECONDS:600}
     retention: ${OCC_INGESTION_RETENTION:12h}
     schedule:
       bus-arrival-enabled: ${OCC_INGESTION_BUS_ARRIVAL_ENABLED:true}

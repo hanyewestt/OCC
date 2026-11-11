@@ -13,6 +13,9 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class DemoReplayService {
@@ -28,28 +31,47 @@ public class DemoReplayService {
     private final DemoModeService mode;
     private final DemoReplayConfiguration settings;
     private final DemoHazardReplayService hazards;
+    private final ApplicationAuditEventRepository auditEvents;
+    private final IdentityProviderPort identities;
     private final ObjectMapper json = new ObjectMapper();
 
+    @Autowired
     public DemoReplayService(DemoRunRepository runs, DemoVehicleAssignmentRepository assignments,
             PollRunRepository pollRuns, RawObservationRepository rawObservations,
             BusArrivalObservationRepository arrivals, TrafficIncidentObservationRepository incidents,
             ReferenceTopologyPort topology, Clock clock, DemoModeService mode, DemoReplayConfiguration settings,
-            DemoHazardReplayService hazards) {
+            DemoHazardReplayService hazards, ApplicationAuditEventRepository auditEvents, IdentityProviderPort identities) {
         this.runs = runs; this.assignments = assignments; this.pollRuns = pollRuns; this.rawObservations = rawObservations;
         this.arrivals = arrivals; this.incidents = incidents; this.topology = topology; this.clock = clock;
         this.mode = mode; this.settings = settings;
         this.hazards = hazards;
+        this.auditEvents = auditEvents;
+        this.identities = identities;
+    }
+
+    /** Compatibility constructor for focused domain tests that do not assign authenticated captains. */
+    public DemoReplayService(DemoRunRepository runs, DemoVehicleAssignmentRepository assignments,
+            PollRunRepository pollRuns, RawObservationRepository rawObservations,
+            BusArrivalObservationRepository arrivals, TrafficIncidentObservationRepository incidents,
+            ReferenceTopologyPort topology, Clock clock, DemoModeService mode, DemoReplayConfiguration settings,
+            DemoHazardReplayService hazards, ApplicationAuditEventRepository auditEvents) {
+        this(runs, assignments, pollRuns, rawObservations, arrivals, incidents, topology, clock, mode, settings,
+                hazards, auditEvents, null);
     }
 
     @Transactional
-    public DemoRun start() { return start(DemoRunConfiguration.defaults()); }
+    public DemoRun start() { return start(DemoRunConfiguration.defaults(), null); }
 
     @Transactional
-    public DemoRun start(DemoRunConfiguration configuration) {
+    public DemoRun start(DemoRunConfiguration configuration) { return start(configuration, null); }
+
+    @Transactional
+    public DemoRun start(DemoRunConfiguration configuration, String actorSubject) {
         if (runs.findActive().isPresent()) throw new IllegalStateException("A demo run is already active");
         if (configuration.scenario() == DemoScenario.NORMAL
                 && configuration.busGaps().stream().anyMatch(gap -> gap.compareTo(settings.bunchingThreshold()) <= 0))
             throw new IllegalArgumentException("Normal operation needs a dispatch gap above the bunching threshold");
+        validateInitialCaptains(configuration);
         var version = topology.activeVersion().orElseThrow(() -> new IllegalStateException("Demo requires active bus topology"));
         var route = topology.busRoute(version.id(), configuration.serviceId()).orElseThrow(() -> new IllegalArgumentException("Selected bus service is unavailable"));
         if (route.operators().stream().flatMap(operator -> operator.directions().stream())
@@ -57,6 +79,7 @@ public class DemoReplayService {
                 .noneMatch(direction -> direction.stops().stream().anyMatch(stop -> stop.stopCode().equals(configuration.monitoredStopCode()))))
             throw new IllegalArgumentException("Selected stop is unavailable on this route direction");
         DemoRun run = runs.save(new DemoRun(UUID.randomUUID(), clock.instant(), settings.scenario(), settings.seed(), configuration));
+        recordRunEvent(run, "SIMULATION_STARTED", "SUCCESS", "Simulation run started", actorSubject);
         String seed = Long.toString(settings.seed());
         assignments.saveAll(java.util.stream.IntStream.rangeClosed(1, configuration.busCount())
                 .mapToObj(number -> assignment(run.id(), configuration, seed, number)).toList());
@@ -66,23 +89,66 @@ public class DemoReplayService {
     @Transactional
     public void replayNext() {
         if (!mode.enabled()) return;
-        runs.findActive().filter(run -> "RUNNING".equals(run.status())).ifPresent(this::emit);
+        runs.findActiveId().flatMap(runs::findByIdForUpdate)
+                .filter(run -> "RUNNING".equals(run.status())).ifPresent(this::emit);
     }
 
     @Transactional
-    public void activate(UUID runId) {
-        DemoRun run = runs.findById(runId).orElseThrow(() -> new IllegalStateException("Demo run not found"));
+    public void activate(UUID runId) { activate(runId, null); }
+
+    @Transactional
+    public void activate(UUID runId, String actorSubject) {
+        DemoRun run = runs.findByIdForUpdate(runId).orElseThrow(() -> new IllegalStateException("Demo run not found"));
         run.startReplay();
+        recordRunEvent(run, "SIMULATION_ACTIVATED", "SUCCESS", "Simulation run activated", actorSubject);
     }
 
     @Transactional
-    public void fail(UUID runId, String reason) {
-        runs.findById(runId).ifPresent(run -> run.fail(reason));
+    public void fail(UUID runId, String reason) { fail(runId, reason, null); }
+
+    @Transactional
+    public void fail(UUID runId, String reason, String actorSubject) {
+        runs.findByIdForUpdate(runId).ifPresent(run -> {
+            if ("FAILED".equals(run.status())) return;
+            run.fail(reason);
+            recordRunEvent(run, "SIMULATION_FAILED", "FAILURE", "Simulation run failed", actorSubject);
+        });
     }
 
     @Transactional
-    public void close(UUID runId, Instant now) {
-        runs.findById(runId).ifPresent(run -> run.close(now));
+    public void close(UUID runId, Instant now) { close(runId, now, null); }
+
+    @Transactional
+    public void close(UUID runId, Instant now, String actorSubject) {
+        runs.findByIdForUpdate(runId).ifPresent(run -> {
+            if ("CLOSED".equals(run.status())) return;
+            run.close(now);
+            recordRunEvent(run, "SIMULATION_CLOSED", "SUCCESS", "Simulation run closed", actorSubject);
+        });
+    }
+
+    private void validateInitialCaptains(DemoRunConfiguration configuration) {
+        var ids = configuration.captainUserIds().isEmpty()
+                ? settings.captainUserId().stream().toList() : configuration.captainUserIds().stream().filter(java.util.Objects::nonNull).toList();
+        if (ids.isEmpty()) return;
+        if (identities == null) throw new IdentityProviderException(IdentityProviderException.Reason.UNAVAILABLE);
+        for (UUID id : ids) {
+            IdentityProviderPort.User user;
+            try {
+                user = identities.get(id).orElse(null);
+            } catch (RuntimeException unavailable) {
+                throw new IdentityProviderException(IdentityProviderException.Reason.UNAVAILABLE);
+            }
+            if (user == null || !user.available() || user.role() != OccRole.CAPTAIN)
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "An initial demo captain is not eligible");
+        }
+    }
+
+    private void recordRunEvent(DemoRun run, String type, String outcome, String summary, String actorSubject) {
+        Instant now = clock.instant();
+        auditEvents.save(new ApplicationAuditEvent(UUID.randomUUID(), now, now, "OPERATIONS", type, outcome,
+                "INGESTION", actorSubject, actorSubject == null ? "SYSTEM" : "CONTROLLER", "DEMO_RUN", run.id().toString(), run.id(), null, null, null,
+                summary, java.util.Map.of("status", run.status()), "simulation:" + run.id() + ":" + type));
     }
 
     private void emit(DemoRun run) {
@@ -105,7 +171,7 @@ public class DemoReplayService {
         raw.setPayload(payload); raw.setPayloadChecksum(hash(payload)); raw.setFetchedAt(now); raw.setIngestedAt(now); raw.setHttpStatus(200);
         raw.setClassification("SIMULATION"); raw.setDemoRunId(run.id()); rawObservations.save(raw);
         UUID reference = topology.activeVersion().orElseThrow().id();
-        Instant firstEta = now.plusSeconds(120L - step * 20L);
+        Instant firstEta = now.plusSeconds(600L - step * 20L);
         List<BusArrivalObservation> emittedArrivals = new ArrayList<>();
         Instant eta = firstEta;
         for (int number = 1; number <= configuration.busCount(); number++) {

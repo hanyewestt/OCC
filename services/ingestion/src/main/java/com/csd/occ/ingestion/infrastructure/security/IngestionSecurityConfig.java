@@ -1,5 +1,6 @@
 package com.csd.occ.ingestion.infrastructure.security;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,6 +18,10 @@ import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
 import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.web.BearerTokenAuthenticationEntryPoint;
+import org.springframework.security.oauth2.server.resource.web.access.BearerTokenAccessDeniedHandler;
+import org.springframework.security.web.AuthenticationEntryPoint;
+import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.intercept.AuthorizationFilter;
 
@@ -26,9 +31,13 @@ import org.springframework.security.web.access.intercept.AuthorizationFilter;
 public class IngestionSecurityConfig {
     @Bean
     SecurityFilterChain ingestionSecurityFilterChain(HttpSecurity http, JwtDecoder jwtDecoder,
-            SupabaseRoleConverter roleConverter, PeerCapabilityProperties peerProperties) throws Exception {
+            SupabaseRoleConverter roleConverter, PeerCapabilityProperties peerProperties,
+            ObjectProvider<AuthenticationEntryPoint> auditEntryPoints,
+            ObjectProvider<AccessDeniedHandler> auditDeniedHandlers) throws Exception {
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
         converter.setJwtGrantedAuthoritiesConverter(roleConverter);
+        AuthenticationEntryPoint auditEntryPoint = auditEntryPoints.getIfAvailable(BearerTokenAuthenticationEntryPoint::new);
+        AccessDeniedHandler auditDeniedHandler = auditDeniedHandlers.getIfAvailable(BearerTokenAccessDeniedHandler::new);
         return http.csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
@@ -53,14 +62,45 @@ public class IngestionSecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/v1/auth/session", "/api/v1/auth/access/*")
                         .authenticated()
                         // A captain reads only their own assigned bus (route and its pacing); the actor is always the
-                        // token subject. Fleet-wide pacing snapshots stay controller-only with every other API.
+                        // token subject. Fleet-wide pacing snapshots remain readable only by ADMIN and CONTROLLER.
                         .requestMatchers(HttpMethod.GET, "/api/v1/captain-routes/current").hasRole("CAPTAIN")
-                        .requestMatchers("/api/v1/**").hasAnyRole("ADMIN", "CONTROLLER")
+                        .requestMatchers(HttpMethod.GET, "/api/v1/admin/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/admin/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/api/v1/admin/**").denyAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/captains", "/api/v1/demo-mode",
+                                "/api/v1/route-positions",
+                                "/api/v1/reference-topology",
+                                "/api/v1/poll-runs",
+                                "/api/v1/pacing-snapshots/stream",
+                                "/api/v1/pacing-snapshots/latest",
+                                "/api/v1/live-bunching-alerts",
+                                "/api/v1/feed-status",
+                                "/api/v1/demo-runs/*",
+                                "/api/v1/demo-runs/*/recommendation",
+                                "/api/v1/demo-runs/*/route-positions",
+                                "/api/v1/demo-runs/active",
+                                "/api/v1/bus-stops",
+                                "/api/v1/bus-stops/*",
+                                "/api/v1/bus-routes",
+                                "/api/v1/bus-routes/*",
+                                "/api/v1/arrivals",
+                                "/api/v1/arrivals/history")
+                        .hasAnyRole("ADMIN", "CONTROLLER")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/demo-runs",
+                                "/api/v1/demo-runs/*/close")
+                        .hasRole("CONTROLLER")
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/demo-mode")
+                        .hasRole("CONTROLLER")
+                        .requestMatchers("/api/v1/**").denyAll()
                         .requestMatchers("/v3/**", "/swagger-ui/**", "/swagger-ui.html", "/webjars/**")
                         .hasAnyRole("ADMIN", "CONTROLLER")
                         .anyRequest().denyAll())
-                .oauth2ResourceServer(server -> server.jwt(jwt -> jwt.decoder(jwtDecoder)
-                        .jwtAuthenticationConverter(converter)))
+                .exceptionHandling(errors -> errors.authenticationEntryPoint(auditEntryPoint)
+                        .accessDeniedHandler(auditDeniedHandler))
+                .oauth2ResourceServer(server -> server.authenticationEntryPoint(auditEntryPoint)
+                        .accessDeniedHandler(auditDeniedHandler)
+                        .jwt(jwt -> jwt.decoder(jwtDecoder).jwtAuthenticationConverter(converter)))
                 .addFilterBefore(new PeerCapabilityAuthenticationFilter(peerProperties), AuthorizationFilter.class)
                 .build();
     }

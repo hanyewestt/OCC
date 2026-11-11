@@ -13,6 +13,8 @@ services:
         OCC_SERVICE: ingestion
         OCC_SERVICE_INTERNAL_PORT: ${OCC_INGESTION_INTERNAL_PORT:-8001}
     environment:
+      # This disposable stack uses local JWT fixtures and no Supabase admin key.
+      OCC_IDENTITY_ENABLED: "false"
       OCC_INGESTION_IMPORT_REFERENCE_ON_STARTUP: "false"
       OCC_INGESTION_SEED_TARGETS_ON_STARTUP: "false"
       OCC_INGESTION_BUS_ARRIVAL_ENABLED: "false"

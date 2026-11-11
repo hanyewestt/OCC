@@ -11,6 +11,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import com.csd.occ.planning.domain.audit.ApplicationAuditEventRepository;
 import org.junit.jupiter.api.Test;
 
 class PublicNoticeServiceTest {
@@ -19,7 +20,8 @@ class PublicNoticeServiceTest {
     private final PublicNoticeRepository notices = mock(PublicNoticeRepository.class);
     private final AdvisoryContextPort context = mock(AdvisoryContextPort.class);
     private final AdvisoryDraftPort drafts = mock(AdvisoryDraftPort.class);
-    private final PublicNoticeService service = new PublicNoticeService(notices, context, drafts, Clock.fixed(NOW, ZoneOffset.UTC));
+    private final ApplicationAuditEventRepository auditEvents = mock(ApplicationAuditEventRepository.class);
+    private final PublicNoticeService service = new PublicNoticeService(notices, context, drafts, Clock.fixed(NOW, ZoneOffset.UTC), auditEvents);
 
     @Test
     void reviewedContentIsSavedOnlyAsADraftWithSourceProvenance() {
@@ -34,6 +36,16 @@ class PublicNoticeServiceTest {
         assertThat(saved.message()).isEqualTo("Water reported. Use caution.");
         assertThat(saved.publishedAt()).isNull();
         verifyNoInteractions(drafts);
+        verify(auditEvents).save(org.mockito.ArgumentMatchers.argThat(event ->
+                event.category().equals("ADVISORIES")
+                        && event.eventType().equals("NOTICE_DRAFT_CREATED") && event.actorSubject().equals("verified-controller")
+                        && event.entityId().equals(saved.id().toString())
+                        && event.details().get("title").equals("Reviewed title")
+                        && event.details().get("message").equals("Water reported. Use caution.")
+                        && event.details().get("services").equals(List.of("190"))
+                        && event.details().get("locations").equals(List.of("Example Stop"))
+                        && event.details().get("effectiveFrom").equals(NOW.toString())
+                        && event.details().get("effectiveUntil").equals(NOW.plusSeconds(3600).toString())));
     }
 
     @Test
@@ -126,6 +138,37 @@ class PublicNoticeServiceTest {
         assertThat(notice.status()).isEqualTo("PUBLISHED");
         assertThat(notice.publishedAt()).isEqualTo(NOW);
         verify(context, times(1)).hazard(disruptionId);
+        verify(auditEvents).save(org.mockito.ArgumentMatchers.argThat(event ->
+                event.category().equals("ADVISORIES")
+                        && event.eventType().equals("NOTICE_PUBLISHED") && event.actorSubject().equals("controller")
+                        && event.details().get("status").equals("PUBLISHED")
+                        && event.details().get("publishedAt").equals(NOW.toString())));
+    }
+
+    @Test
+    void withdrawalAndReplacementEventsRetainContentAndTransitionSnapshot() {
+        var previous = draft(UUID.randomUUID());
+        previous.publish("prior-controller", NOW.minusSeconds(30));
+        var replacement = draft(UUID.randomUUID());
+        when(notices.findForUpdate(previous.id())).thenReturn(Optional.of(previous));
+        when(notices.findById(replacement.id())).thenReturn(Optional.of(replacement));
+        when(context.hazard(disruptionId)).thenReturn(hazard("ACTIVE", null, NOW.plusSeconds(3600)));
+
+        service.replace(previous.id(), replacement.id(), disruptionId, replacement.title(), replacement.message(),
+                replacement.services(), replacement.locations(), replacement.effectiveFrom(), replacement.effectiveUntil(), "verified-controller");
+
+        verify(auditEvents).save(org.mockito.ArgumentMatchers.argThat(event ->
+                event.eventType().equals("NOTICE_REPLACED") && event.actorSubject().equals("verified-controller")
+                        && event.entityId().equals(previous.id().toString())
+                        && event.details().get("status").equals("WITHDRAWN")
+                        && event.details().get("replacementId").equals(replacement.id().toString())
+                        && event.details().get("message").equals(previous.message())));
+        verify(auditEvents).save(org.mockito.ArgumentMatchers.argThat(event ->
+                event.eventType().equals("NOTICE_PUBLISHED") && event.actorSubject().equals("verified-controller")
+                        && event.entityId().equals(replacement.id().toString())
+                        && event.details().get("status").equals("PUBLISHED")
+                        && event.details().get("publishedAt").equals(NOW.toString())
+                        && event.details().get("message").equals(replacement.message())));
     }
 
     @Test
@@ -174,7 +217,7 @@ class PublicNoticeServiceTest {
         when(notices.findForUpdate(notice.id())).thenReturn(Optional.of(notice));
         when(context.hazard(disruptionId)).thenReturn(hazard("ACTIVE", null, NOW.plusSeconds(3600)));
         var precise = new PublicNoticeService(notices, context, drafts,
-                Clock.fixed(NOW.plusNanos(123456789), ZoneOffset.UTC));
+                Clock.fixed(NOW.plusNanos(123456789), ZoneOffset.UTC), auditEvents);
         assertThat(precise.publish(notice.id(), "controller").publishedAt()).isEqualTo(NOW.plusNanos(123456000));
         assertThat(precise.withdraw(notice.id()).withdrawnAt()).isEqualTo(NOW.plusNanos(123456000));
     }
@@ -189,7 +232,7 @@ class PublicNoticeServiceTest {
         next.withdraw(NOW.plusSeconds(1));
         when(notices.findForUpdate(previous.id())).thenReturn(Optional.of(previous));
         when(notices.findById(next.id())).thenReturn(Optional.of(next));
-        var later = new PublicNoticeService(notices, context, drafts, Clock.fixed(NOW.plusSeconds(3600), ZoneOffset.UTC));
+        var later = new PublicNoticeService(notices, context, drafts, Clock.fixed(NOW.plusSeconds(3600), ZoneOffset.UTC), auditEvents);
         var replay = later.replace(previous.id(), next.id(), disruptionId, next.title(), next.message(), next.services(),
                 next.locations(), next.effectiveFrom(), next.effectiveUntil(), "another-controller");
         assertThat(replay).isSameAs(next);

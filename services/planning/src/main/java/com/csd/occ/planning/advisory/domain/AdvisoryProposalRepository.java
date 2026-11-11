@@ -11,6 +11,17 @@ import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 
 public interface AdvisoryProposalRepository extends JpaRepository<AdvisoryProposal, UUID> {
+    interface ProposalKey { UUID getDemoRunId(); String getBusId(); }
+    @Query("select p.demoRunId as demoRunId, p.busId as busId from AdvisoryProposal p where p.disruptionId=:id and p.status='PENDING' order by p.demoRunId, p.busId")
+    List<ProposalKey> findPendingKeysByDisruptionId(UUID id);
+    @Query("select p.demoRunId as demoRunId, p.busId as busId from AdvisoryProposal p where p.demoRunId=:runId and p.status='PENDING' order by p.busId")
+    List<ProposalKey> findPendingKeysByDemoRunId(UUID runId);
+    @Query("select distinct p.demoRunId from AdvisoryProposal p where p.status='PENDING'")
+    List<UUID> findPendingDemoRunIds();
+    @Query("select p.demoRunId as demoRunId, p.busId as busId from AdvisoryProposal p where p.createdAt<:cutoff and not exists (select i from IssuedInstruction i where i.proposalId=p.id) order by p.demoRunId, p.busId")
+    List<ProposalKey> findUnreferencedKeysBefore(java.time.Instant cutoff);
+    @Query("select p.demoRunId as demoRunId, p.busId as busId from AdvisoryProposal p where p.id=:id")
+    Optional<ProposalKey> findKeyById(UUID id);
     String PENDING_GROUPS = """
         from planning.advisory_proposal p where p.demo_run_id=:runId and p.status='PENDING'
         group by p.disruption_id,p.source_revision_key,p.bus->>'serviceId',p.bus->>'directionId',
@@ -38,12 +49,19 @@ public interface AdvisoryProposalRepository extends JpaRepository<AdvisoryPropos
             UUID disruptionId, UUID demoRunId, String busId, String sourceRevisionKey, String candidateType);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select p from AdvisoryProposal p where p.id=:id")
     Optional<AdvisoryProposal> findForUpdate(UUID id);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select p from AdvisoryProposal p where p.demoRunId=:runId and p.status='PENDING' order by p.id")
+    List<AdvisoryProposal> findPendingByDemoRunIdForUpdate(UUID runId);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select p from AdvisoryProposal p where p.createdAt<:cutoff and not exists (select i from IssuedInstruction i where i.proposalId=p.id) order by p.id")
+    List<AdvisoryProposal> findUnreferencedBeforeForUpdate(java.time.Instant cutoff);
     @org.springframework.data.jpa.repository.Modifying
     @Query("update AdvisoryProposal p set p.status='EXPIRED',p.version=p.version+1 where p.disruptionId=:disruptionId and p.demoRunId=:runId and p.busId=:busId and p.status='PENDING' and p.id<>:keepId")
     int expireSuperseded(UUID disruptionId, UUID runId, String busId, UUID keepId);
     @org.springframework.data.jpa.repository.Modifying
     @Query("update AdvisoryProposal p set p.status='EXPIRED',p.version=p.version+1 where p.demoRunId=:runId and p.status='PENDING'")
     int expirePendingByDemoRunId(UUID runId);
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("update AdvisoryProposal p set p.status='EXPIRED',p.version=p.version+1 where p.disruptionId=:disruptionId and p.status='PENDING'")
+    int expirePendingByDisruptionId(UUID disruptionId);
     @org.springframework.data.jpa.repository.Modifying
     @Query("delete from AdvisoryProposal p where p.createdAt<:cutoff and not exists (select i from IssuedInstruction i where i.proposalId=p.id)")
     int deleteUnreferencedBefore(java.time.Instant cutoff);

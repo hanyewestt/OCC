@@ -9,6 +9,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.csd.occ.planning.domain.audit.ApplicationAuditEvent;
+import com.csd.occ.planning.domain.audit.ApplicationAuditEventRepository;
 
 @Service
 public class PublicNoticeService {
@@ -16,8 +18,10 @@ public class PublicNoticeService {
     private final AdvisoryContextPort context;
     private final AdvisoryDraftPort drafts;
     private final Clock clock;
-    public PublicNoticeService(PublicNoticeRepository notices, AdvisoryContextPort context, AdvisoryDraftPort drafts, Clock clock) {
-        this.notices = notices; this.context = context; this.drafts = drafts; this.clock = clock;
+    private final ApplicationAuditEventRepository auditEvents;
+    public PublicNoticeService(PublicNoticeRepository notices, AdvisoryContextPort context, AdvisoryDraftPort drafts,
+            Clock clock, ApplicationAuditEventRepository auditEvents) {
+        this.notices = notices; this.context = context; this.drafts = drafts; this.clock = clock; this.auditEvents = auditEvents;
     }
     public AdvisoryDraftPort.NoticeSuggestion suggest(UUID disruptionId) {
         var hazard = context.hazard(disruptionId);
@@ -49,19 +53,33 @@ public class PublicNoticeService {
         if (hazard.facts().instruction() != null && !hazard.facts().instruction().isBlank()
                 && !message.contains(hazard.facts().instruction().strip()))
             throw new IllegalArgumentException("Notice must preserve the source instruction");
-        return notices.save(new PublicNotice(id, hazard, title, message, services, locations, from, until, actor, clock.instant()));
+        var saved = notices.save(new PublicNotice(id, hazard, title, message, services, locations, from, until, actor, clock.instant()));
+        recordNotice(saved, "NOTICE_DRAFT_CREATED", actor);
+        return saved;
     }
     @Transactional
     public PublicNotice publish(UUID id, String actor) {
         var notice = notices.findForUpdate(id).orElseThrow(AdvisoryNotFoundException::new);
         if ("PUBLISHED".equals(notice.status())) return notice;
         validatePublicationSource(notice);
-        notice.publish(actor, clock.instant().truncatedTo(ChronoUnit.MICROS)); return notice;
+        notice.publish(actor, clock.instant().truncatedTo(ChronoUnit.MICROS)); recordNotice(notice, "NOTICE_PUBLISHED", actor); return notice;
     }
     @Transactional
-    public PublicNotice withdraw(UUID id) {
+    public PublicNotice withdraw(UUID id) { return withdraw(id, null); }
+    @Transactional
+    public PublicNotice withdraw(UUID id, String actor) {
         var notice = notices.findForUpdate(id).orElseThrow(AdvisoryNotFoundException::new);
-        notice.withdraw(clock.instant().truncatedTo(ChronoUnit.MICROS)); return notice;
+        if (!"WITHDRAWN".equals(notice.status())) {
+            notice.withdraw(clock.instant().truncatedTo(ChronoUnit.MICROS)); recordNotice(notice, "NOTICE_WITHDRAWN", actor);
+        }
+        return notice;
+    }
+    @Transactional
+    public void withdrawSource(UUID disruptionId) {
+        for (var notice : notices.findNotWithdrawnByDisruptionIdForUpdate(disruptionId)) {
+            notice.withdraw(clock.instant().truncatedTo(ChronoUnit.MICROS));
+            recordNotice(notice, "NOTICE_WITHDRAWN", null);
+        }
     }
     @Transactional
     public PublicNotice replace(UUID previousId, UUID nextId, UUID disruptionId, String title, String message,
@@ -82,7 +100,9 @@ public class PublicNoticeService {
         if (!"DRAFT".equals(replacement.status())) throw new AdvisoryConflictException("Replacement must be an unpublished draft");
         validatePublicationSource(replacement);
         Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
-        replacement.publish(actor, now); previous.replace(nextId, now); return replacement;
+        replacement.publish(actor, now); previous.replace(nextId, now);
+        recordNotice(previous, "NOTICE_REPLACED", actor); recordNotice(replacement, "NOTICE_PUBLISHED", actor);
+        return replacement;
     }
     public Page<PublicNotice> managed(int page, int size) { validatePage(page, size); return notices.findAllByOrderByCreatedAtDesc(PageRequest.of(page, size)); }
     public Page<PublicNotice> current(String classification, UUID runId, int page, int size) {
@@ -92,6 +112,23 @@ public class PublicNoticeService {
         return notices.findCurrent(classification, runId, clock.instant(), PageRequest.of(page, size));
     }
     private void validatePage(int page, int size) { if (page < 0 || size < 1 || size > 100) throw new IllegalArgumentException("Invalid notice page"); }
+    private void recordNotice(PublicNotice notice, String type, String actor) {
+        var now = clock.instant();
+        var details = new java.util.LinkedHashMap<String, Object>();
+        details.put("status", notice.status()); details.put("title", notice.title());
+        details.put("message", notice.message()); details.put("services", notice.services());
+        details.put("locations", notice.locations());
+        details.put("effectiveFrom", notice.effectiveFrom() == null ? null : notice.effectiveFrom().toString());
+        details.put("effectiveUntil", notice.effectiveUntil() == null ? null : notice.effectiveUntil().toString());
+        details.put("publishedAt", notice.publishedAt() == null ? null : notice.publishedAt().toString());
+        details.put("withdrawnAt", notice.withdrawnAt() == null ? null : notice.withdrawnAt().toString());
+        details.put("replacementId", notice.replacementId() == null ? null : notice.replacementId().toString());
+        auditEvents.save(new ApplicationAuditEvent(UUID.randomUUID(), now, now, "ADVISORIES", type,
+                notice.status(), actor, actor == null ? "SYSTEM" : "CONTROLLER", "PUBLIC_NOTICE",
+                notice.id().toString(), notice.demoRunId(), null, null, notice.disruptionId().toString(),
+                "Public notice state changed", details,
+                "public-notice:" + notice.id() + ":" + type));
+    }
     private void validatePublicationSource(PublicNotice notice) {
         var source = context.hazard(notice.disruptionId());
         if ("CLEARED".equals(source.status())) throw new AdvisoryConflictException("Source was withdrawn");

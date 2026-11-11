@@ -26,7 +26,8 @@ import org.springframework.security.web.access.intercept.AuthorizationFilter;
 public class DisruptionSecurityConfig {
     @Bean
     SecurityFilterChain disruptionSecurityFilterChain(HttpSecurity http, JwtDecoder jwtDecoder,
-            SupabaseRoleConverter roleConverter, PeerCapabilityProperties peerProperties) throws Exception {
+            SupabaseRoleConverter roleConverter, PeerCapabilityProperties peerProperties,
+            AuditAuthenticationEntryPoint auditEntryPoint, AuditAccessDeniedHandler auditDeniedHandler) throws Exception {
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
         converter.setJwtGrantedAuthoritiesConverter(roleConverter);
         return http.csrf(csrf -> csrf.disable())
@@ -43,12 +44,24 @@ public class DisruptionSecurityConfig {
                                 "/internal/v1/disruption/hazards/*")
                         .hasAuthority(PeerCapabilityAuthenticationFilter.PLANNING_AUTHORITY)
                         .requestMatchers("/internal/v1/**").denyAll()
-                        .requestMatchers("/api/v1/**").hasAnyRole("ADMIN", "CONTROLLER")
+                        .requestMatchers(HttpMethod.GET, "/api/v1/disruption/admin/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/disruption/admin/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/disruption/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/api/v1/disruption/admin/**").denyAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/disruption/bunching-alerts",
+                                "/api/v1/disruption/traffic-incidents",
+                                "/api/v1/disruption/hazards",
+                                "/api/v1/disruption/hazards/*")
+                        .hasAnyRole("ADMIN", "CONTROLLER")
+                        .requestMatchers("/api/v1/**").denyAll()
                         .requestMatchers("/v3/**", "/swagger-ui/**", "/swagger-ui.html", "/webjars/**")
                         .hasAnyRole("ADMIN", "CONTROLLER")
                         .anyRequest().denyAll())
-                .oauth2ResourceServer(server -> server.jwt(jwt -> jwt.decoder(jwtDecoder)
-                        .jwtAuthenticationConverter(converter)))
+                .exceptionHandling(errors -> errors.authenticationEntryPoint(auditEntryPoint)
+                        .accessDeniedHandler(auditDeniedHandler))
+                .oauth2ResourceServer(server -> server.authenticationEntryPoint(auditEntryPoint)
+                        .accessDeniedHandler(auditDeniedHandler)
+                        .jwt(jwt -> jwt.decoder(jwtDecoder).jwtAuthenticationConverter(converter)))
                 .addFilterBefore(new PeerCapabilityAuthenticationFilter(peerProperties), AuthorizationFilter.class)
                 .build();
     }

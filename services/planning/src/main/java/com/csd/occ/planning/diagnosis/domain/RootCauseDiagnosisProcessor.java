@@ -153,7 +153,8 @@ public class RootCauseDiagnosisProcessor {
                         ? incident.fetchedAt() : incident.observedAt()))
                 .toList();
         List<String> missingFields = new ArrayList<>(context.missingFields());
-        if (incidents.isEmpty() && !missingFields.contains("traffic-incidents-within-lookback"))
+        if (incidents.isEmpty() && !missingFields.contains("traffic-incidents-within-lookback")
+                && !missingFields.contains("traffic-incidents"))
             missingFields.add("traffic-incidents-within-lookback");
         List<String> distinctMissingFields = missingFields.stream().distinct().toList();
         if (distinctMissingFields.size() > 20)
@@ -186,8 +187,19 @@ public class RootCauseDiagnosisProcessor {
         values.addAll(association.limitations());
         if ("OBSERVATION_ONLY".equals(context.classification()))
             values.add("Live diagnosis only: validated vehicle assignments, control stops and crowd-safety inputs are unavailable; no operational instruction is issued.");
-        if ("UNKNOWN".equals(output.causeCode())) values.add("No contextual evidence supported a specific cause.");
-        values.addAll(output.limitations());
+        if ("UNKNOWN".equals(output.causeCode()) && !values.contains("Available evidence does not identify a supported contributing incident or operational cause.")) {
+            values.add("No contextual evidence supported a specific cause.");
+        }
+        for (String lim : output.limitations()) {
+            if (lim != null && !lim.isBlank()) {
+                boolean redundant = values.stream().anyMatch(v ->
+                        v.equalsIgnoreCase(lim) ||
+                        (v.contains("traffic-incidents") && lim.toLowerCase(java.util.Locale.ROOT).contains("traffic incident data was supplied")));
+                if (!redundant) {
+                    values.add(lim);
+                }
+            }
+        }
         return values.stream().filter(value -> value != null && !value.isBlank()).distinct().limit(20).toList();
     }
 

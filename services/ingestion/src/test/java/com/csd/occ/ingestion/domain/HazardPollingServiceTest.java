@@ -17,13 +17,15 @@ class HazardPollingServiceTest {
         var evidence = mock(HazardEvidencePort.class);
         var polls = mock(PollRunRepository.class);
         var statuses = mock(FeedStatusRepository.class);
+        var auditEvents = mock(ApplicationAuditEventRepository.class);
         var raw = mock(RawObservationRepository.class);
         when(provider.fetch(HazardKind.FLOOD)).thenThrow(new IllegalStateException("synthetic failure"));
         when(provider.fetch(HazardKind.ROADWORKS)).thenReturn(new HazardFeedPort.Batch(200, List.of("{\"value\":[]}"), List.of(), List.of()));
         when(evidence.encodePages(any())).thenReturn("[\"empty snapshot\"]");
         when(evidence.checksum(any())).thenReturn("a".repeat(64));
         var service = new HazardPollingService(provider, evidence, polls, raw, mock(HazardObservationRepository.class),
-                statuses, Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
+                statuses, Clock.fixed(Instant.EPOCH, ZoneOffset.UTC),
+                new PollCompletionAuditService(polls, statuses, auditEvents, Clock.fixed(Instant.EPOCH, ZoneOffset.UTC)));
         service.poll(HazardKind.FLOOD, Duration.ofMinutes(10));
         service.poll(HazardKind.ROADWORKS, Duration.ofDays(2));
         var capture = ArgumentCaptor.forClass(FeedStatus.class);
@@ -32,5 +34,44 @@ class HazardPollingServiceTest {
         assertThat(capture.getAllValues().getFirst().getLastSuccessAt()).isNull();
         assertThat(capture.getAllValues().getLast().getLastSuccessAt()).isEqualTo(Instant.EPOCH);
         verify(raw, times(1)).save(any());
+        ArgumentCaptor<ApplicationAuditEvent> audit = ArgumentCaptor.forClass(ApplicationAuditEvent.class);
+        verify(auditEvents, times(4)).save(audit.capture());
+        assertThat(audit.getAllValues().stream().filter(event -> event.eventType().equals("FEED_POLL_COMPLETED")))
+                .extracting(ApplicationAuditEvent::outcome).containsExactly("FAILURE", "SUCCESS");
+        assertThat(audit.getAllValues().stream().filter(event -> event.eventType().equals("FEED_HEALTH_CHANGED")))
+                .extracting(event -> event.details().get("current")).containsExactly("FAILED", "HEALTHY");
+    }
+
+    @Test
+    void repeatedHazardFailuresKeepOneHealthTransitionButRecordEachDistinctPoll() {
+        var provider = mock(HazardFeedPort.class);
+        var evidence = mock(HazardEvidencePort.class);
+        var polls = mock(PollRunRepository.class);
+        var statuses = mock(FeedStatusRepository.class);
+        var auditEvents = mock(ApplicationAuditEventRepository.class);
+        var current = new java.util.concurrent.atomic.AtomicReference<FeedStatus>();
+        when(provider.fetch(HazardKind.FLOOD)).thenThrow(new IllegalStateException("private provider message"));
+        when(statuses.findById(any(FeedStatusId.class))).thenAnswer(invocation -> java.util.Optional.ofNullable(current.get()));
+        when(statuses.save(any(FeedStatus.class))).thenAnswer(invocation -> {
+            var status = invocation.getArgument(0, FeedStatus.class);
+            current.set(status);
+            return status;
+        });
+        var service = new HazardPollingService(provider, evidence, polls, mock(RawObservationRepository.class),
+                mock(HazardObservationRepository.class), statuses, Clock.fixed(Instant.EPOCH, ZoneOffset.UTC),
+                new PollCompletionAuditService(polls, statuses, auditEvents, Clock.fixed(Instant.EPOCH, ZoneOffset.UTC)));
+
+        service.poll(HazardKind.FLOOD, Duration.ofMinutes(5));
+        service.poll(HazardKind.FLOOD, Duration.ofMinutes(5));
+
+        ArgumentCaptor<ApplicationAuditEvent> audit = ArgumentCaptor.forClass(ApplicationAuditEvent.class);
+        verify(auditEvents, times(3)).save(audit.capture());
+        assertThat(audit.getAllValues().stream().filter(event -> event.eventType().equals("FEED_POLL_COMPLETED")))
+                .hasSize(2).allSatisfy(event -> {
+                    assertThat(event.outcome()).isEqualTo("FAILURE");
+                    assertThat(event.details().toString()).doesNotContain("private provider message");
+                });
+        assertThat(audit.getAllValues().stream().filter(event -> event.eventType().equals("FEED_HEALTH_CHANGED")))
+                .singleElement().satisfies(event -> assertThat(event.details()).containsEntry("current", "FAILED"));
     }
 }

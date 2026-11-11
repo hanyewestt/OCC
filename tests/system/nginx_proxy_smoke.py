@@ -33,7 +33,7 @@ http {
     client_body_temp_path /tmp/client_body;
     proxy_temp_path /tmp/proxy;
     fastcgi_temp_path /tmp/fastcgi;
-    uwsgi_temp_path /tmp/uwsgi_temp;
+    uwsgi_temp_path /tmp/uwsgi;
     scgi_temp_path /tmp/scgi;
     limit_req_zone $binary_remote_addr zone=occ_api:1m rate=20r/s;
     server { listen 8080; include /fixture/routes.inc; }
@@ -69,6 +69,9 @@ http {
                 ("GET", "/api/v1/auth/access/captain", "18001", "/api/v1/auth/access/captain"),
                 ("GET", "/api/v1/arrivals?page=2&size=1", "18001", "/api/v1/arrivals?page=2&size=1"),
                 ("PUT", "/api/v1/ingestion/demo-mode?enabled=true", "18001", "/api/v1/demo-mode?enabled=true"),
+                ("GET", "/api/v1/ingestion/admin/users?page=0&size=20", "18001", "/api/v1/admin/users?page=0&size=20"),
+                ("GET", "/api/v1/ingestion/admin/audit-events?category=ACCOUNT&page=0", "18001", "/api/v1/admin/audit-events?category=ACCOUNT&page=0"),
+                ("GET", "/api/v1/ingestion/captains?available=true&size=100", "18001", "/api/v1/captains?available=true&size=100"),
                 ("GET", "/api/v1/disruption/bunching-alerts?size=1", "18002", "/api/v1/disruption/bunching-alerts?size=1"),
                 ("POST", "/api/v1/planning/advisory-groups/decisions", "18003", "/api/v1/planning/advisory-groups/decisions"),
                 ("GET", "/api/v1/pacing-snapshots/stream?serviceId=190", "18001", "/api/v1/pacing-snapshots/stream?serviceId=190"),

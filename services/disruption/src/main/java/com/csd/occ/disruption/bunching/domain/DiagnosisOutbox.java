@@ -38,6 +38,7 @@ public class DiagnosisOutbox {
     public UUID id() { return id; }
     public UUID eventId() { return eventId; }
     public int attemptCount() { return attemptCount; }
+    public Instant createdAt() { return createdAt; }
     public String payloadJson() { return payloadJson; }
     public String payloadFingerprint() { return payloadFingerprint; }
     public String schemaVersion() { return schemaVersion; }

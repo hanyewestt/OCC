@@ -29,6 +29,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import tools.jackson.databind.json.JsonMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,6 +49,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 
 @SpringBootTest(properties = {
         "OCC_PLANNING_DB_USERNAME=occ_planning", "OCC_PLANNING_DB_PASSWORD=synthetic-planning",
+        "occ.security.peer.ingestion-to-planning-token=synthetic-ingestion-peer-token",
         "OCC_DISRUPTION_INTERNAL_URL=http://127.0.0.1:1", "OCC_INGESTION_INTERNAL_URL=http://127.0.0.1:1",
         "OCC_PLANNING_DIAGNOSIS_WORKER_ENABLED=false", "OCC_PLANNING_RECOMMENDATION_AI_ENABLED=false",
         "OCC_PLANNING_GEMINI_API_KEY=test-no-network", "SUPABASE_PROJECT_URL=https://issuer.test",
@@ -58,7 +60,10 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @Testcontainers(disabledWithoutDocker = true)
 class AdvisoryPersistenceIT {
     private static final Instant NOW = Instant.parse("2026-10-25T02:00:00Z");
+    private static final PlanningActor CONTROLLER = new PlanningActor("controller", PlanningActor.Role.CONTROLLER);
+    private PlanningActor captainActor() { return new PlanningActor(captain.toString(), PlanningActor.Role.CAPTAIN); }
     private static final String MESSAGE = "Service 190 may be delayed near School.";
+    private static final JsonMapper JSON = JsonMapper.builder().build();
     @Container
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18.6-alpine")
             .withDatabaseName("occ").withUsername("occ_admin").withPassword("synthetic-admin")
@@ -96,6 +101,8 @@ class AdvisoryPersistenceIT {
 
     @BeforeEach
     void resetRowsAndExternalContext() {
+        jdbc.execute("TRUNCATE planning.application_audit_event");
+        jdbc.execute("TRUNCATE planning.bus_assignment_guard CASCADE");
         jdbc.execute("TRUNCATE planning.issued_instruction, planning.advisory_proposal, planning.advisory_model_evidence, planning.public_notice");
         jdbc.execute("TRUNCATE planning.recommendation_decision, planning.model_invocation_record, planning.recommendation");
         sources.clear();
@@ -110,6 +117,7 @@ class AdvisoryPersistenceIT {
         when(context.hazard(any())).thenAnswer(invocation -> sources.get(invocation.getArgument(0)));
         when(context.limits()).thenReturn(new AdvisoryContextPort.Limits(10, 900, 10, Duration.ofMinutes(5), Duration.ofHours(12)));
     }
+
 
     @Test
     void groupsWholeServiceDirectionsBeforePagination() {
@@ -140,15 +148,15 @@ class AdvisoryPersistenceIT {
     void groupSendCreatesIndependentDeliveriesAndIdenticalRetriesReuseThem() {
         var fleet = groupedFleet();
         var ids = fleet.stream().limit(3).map(value -> proposalFor(value, InstructionType.BE_CAUTIOUS).id()).toList();
-        var sent = advisoryGroups.decide(ids, "controller");
+        var sent = advisoryGroups.decide(ids, CONTROLLER);
         assertThat(sent).hasSize(3);
         assertThat(issued.count()).isEqualTo(3);
-        assertThat(advisoryGroups.decide(ids.reversed(), "controller")).extracting(IssuedInstruction::id)
+        assertThat(advisoryGroups.decide(ids.reversed(), CONTROLLER)).extracting(IssuedInstruction::id)
                 .containsExactlyInAnyOrderElementsOf(sent.stream().map(IssuedInstruction::id).toList());
         assertThat(issued.count()).isEqualTo(3);
         var one = sent.getFirst();
         var captainId = fleet.stream().filter(value -> value.busId().equals(one.busId())).findFirst().orElseThrow().captainUserId();
-        instructions.acknowledge(one.id(), captainId.toString());
+        instructions.acknowledge(one.id(), new PlanningActor(captainId.toString(), PlanningActor.Role.CAPTAIN));
         assertThat(issued.findAll().stream().filter(value -> value.acknowledgedAt() != null).count()).isEqualTo(1);
     }
 
@@ -162,7 +170,7 @@ class AdvisoryPersistenceIT {
         var groups = advisoryGroups.pending(0, 1);
         assertThat(groups.getTotalElements()).isEqualTo(1);
         assertThat(groups.getContent().getFirst().members()).hasSize(101);
-        assertThat(advisoryGroups.decide(ids, "controller")).hasSize(101);
+        assertThat(advisoryGroups.decide(ids, CONTROLLER)).hasSize(101);
         assertThat(issued.count()).isEqualTo(101);
     }
 
@@ -175,7 +183,7 @@ class AdvisoryPersistenceIT {
                 ? new AdvisoryContextPort.Bus(value.busId(), value.tripId(), value.registrationNumber(), value.serviceId(),
                         value.directionId(), null, "UNASSIGNED", value.progress()) : value).toList();
         when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING", current, current.size()));
-        assertThatThrownBy(() -> advisoryGroups.decide(captured.stream().map(AdvisoryProposal::id).toList(), "controller"))
+        assertThatThrownBy(() -> advisoryGroups.decide(captured.stream().map(AdvisoryProposal::id).toList(), CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class);
         assertThat(issued.count()).isZero();
         assertThat(proposals.findAll()).allSatisfy(value -> assertThat(value.status()).isEqualTo("PENDING"));
@@ -185,15 +193,15 @@ class AdvisoryPersistenceIT {
     void groupSendRejectsMixedDirectionsIncompleteMembershipAndChangedRoutes() {
         var fleet = groupedFleet();
         var captured = fleet.stream().map(value -> proposalFor(value, InstructionType.BE_CAUTIOUS)).toList();
-        assertThatThrownBy(() -> advisoryGroups.decide(List.of(captured.get(0).id(), captured.get(3).id()), "controller"))
+        assertThatThrownBy(() -> advisoryGroups.decide(List.of(captured.get(0).id(), captured.get(3).id()), CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class);
-        assertThatThrownBy(() -> advisoryGroups.decide(captured.stream().limit(2).map(AdvisoryProposal::id).toList(), "controller"))
+        assertThatThrownBy(() -> advisoryGroups.decide(captured.stream().limit(2).map(AdvisoryProposal::id).toList(), CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class);
         var changed = fleet.stream().map(value -> value.busId().equals(bus.busId())
                 ? new AdvisoryContextPort.Bus(value.busId(), value.tripId(), value.registrationNumber(), "972", 1,
                         value.captainUserId(), value.assignmentStatus(), value.progress()) : value).toList();
         when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING", changed, changed.size()));
-        assertThatThrownBy(() -> advisoryGroups.decide(captured.stream().limit(3).map(AdvisoryProposal::id).toList(), "controller"))
+        assertThatThrownBy(() -> advisoryGroups.decide(captured.stream().limit(3).map(AdvisoryProposal::id).toList(), CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("route");
         assertThat(issued.count()).isZero();
     }
@@ -202,10 +210,10 @@ class AdvisoryPersistenceIT {
     void conflictingMovementInstructionPreventsTheWholeGroupSend() {
         groupedFleet();
         var previous = proposalFor(bus, InstructionType.REDUCE_SPEED);
-        instructions.decide(previous.id(), null, null, "controller", null);
+        instructions.decide(previous.id(), null, null, CONTROLLER, null);
         hazard = source(true);
         var captured = groupedFleet().stream().limit(3).map(value -> proposalFor(value, InstructionType.REDUCE_SPEED)).toList();
-        assertThatThrownBy(() -> advisoryGroups.decide(captured.stream().map(AdvisoryProposal::id).toList(), "controller"))
+        assertThatThrownBy(() -> advisoryGroups.decide(captured.stream().map(AdvisoryProposal::id).toList(), CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("explicitly replaced");
         assertThat(issued.count()).isEqualTo(1);
         assertThat(proposals.findAll().stream().filter(value -> value.disruptionId().equals(hazard.disruptionId())).toList())
@@ -217,7 +225,7 @@ class AdvisoryPersistenceIT {
         var ids = groupedFleet().stream().limit(3).map(value -> proposalFor(value, InstructionType.BE_CAUTIOUS).id()).toList();
         sources.put(hazard.disruptionId(), new AdvisoryContextPort.Hazard(hazard.disruptionId(), hazard.kind(), "ACTIVE", null,
                 hazard.classification(), run, UUID.randomUUID(), NOW, hazard.facts(), hazard.exposures(), hazard.limitations()));
-        assertThatThrownBy(() -> advisoryGroups.decide(ids, "controller"))
+        assertThatThrownBy(() -> advisoryGroups.decide(ids, CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("evidence changed");
         assertThat(issued.count()).isZero();
     }
@@ -231,7 +239,7 @@ class AdvisoryPersistenceIT {
                 ? new AdvisoryContextPort.Bus(value.busId(), value.tripId(), value.registrationNumber(), value.serviceId(),
                         value.directionId(), value.captainUserId(), value.assignmentStatus(), passed) : value).toList();
         when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING", current, current.size()));
-        assertThatThrownBy(() -> advisoryGroups.decide(ids, "controller"))
+        assertThatThrownBy(() -> advisoryGroups.decide(ids, CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("no current downstream exposure");
         assertThat(issued.count()).isZero();
     }
@@ -239,10 +247,10 @@ class AdvisoryPersistenceIT {
     @Test
     void groupSendRejectsDuplicateRecipientsAndAnotherSimulation() {
         var ids = groupedFleet().stream().limit(3).map(value -> proposalFor(value, InstructionType.BE_CAUTIOUS).id()).toList();
-        assertThatThrownBy(() -> advisoryGroups.decide(List.of(ids.getFirst(), ids.getFirst()), "controller"))
+        assertThatThrownBy(() -> advisoryGroups.decide(List.of(ids.getFirst(), ids.getFirst()), CONTROLLER))
                 .isInstanceOf(IllegalArgumentException.class);
         when(scopes.current()).thenReturn(new PlanningScope("DEMO", UUID.randomUUID()));
-        assertThatThrownBy(() -> advisoryGroups.decide(ids, "controller")).isInstanceOf(AdvisoryConflictException.class);
+        assertThatThrownBy(() -> advisoryGroups.decide(ids, CONTROLLER)).isInstanceOf(AdvisoryConflictException.class);
         assertThat(issued.count()).isZero();
     }
 
@@ -253,7 +261,7 @@ class AdvisoryPersistenceIT {
         try (var workers = Executors.newFixedThreadPool(2)) {
             java.util.concurrent.Callable<List<UUID>> send = () -> {
                 start.await();
-                return advisoryGroups.decide(ids, "controller").stream().map(IssuedInstruction::id).toList();
+                return advisoryGroups.decide(ids, CONTROLLER).stream().map(IssuedInstruction::id).toList();
             };
             var first = workers.submit(send);
             var second = workers.submit(send);
@@ -264,7 +272,7 @@ class AdvisoryPersistenceIT {
     }
 
     @Test
-    void groupEndpointsAllowControllersAndAdminsAndDenyCaptains() throws Exception {
+    void groupEndpointsAllowAdminReadsAndControllerDecisionsAndDenyCaptains() throws Exception {
         var ids = groupedFleet().stream().limit(3).map(value -> proposalFor(value, InstructionType.BE_CAUTIOUS).id()).toList();
         for (String role : List.of("CONTROLLER", "ADMIN")) {
             mvc.perform(get("/api/v1/planning/advisory-groups").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_" + role))))
@@ -272,12 +280,14 @@ class AdvisoryPersistenceIT {
                     .andExpect(jsonPath("$.items[0].members.length()").value(3));
         }
         var body = "{\"proposalIds\":[" + ids.stream().map(id -> "\"" + id + "\"").collect(java.util.stream.Collectors.joining(",")) + "]}";
-        for (String role : List.of("CONTROLLER", "ADMIN")) {
-            mvc.perform(post("/api/v1/planning/advisory-groups/decisions")
-                    .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_" + role)))
-                    .contentType("application/json").content(body))
-                    .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(3));
-        }
+        mvc.perform(post("/api/v1/planning/advisory-groups/decisions")
+                .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                .contentType("application/json").content(body))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(3));
+        mvc.perform(post("/api/v1/planning/advisory-groups/decisions")
+                .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                .contentType("application/json").content(body))
+                .andExpect(status().isForbidden());
         mvc.perform(get("/api/v1/planning/advisory-groups").with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CAPTAIN"))))
                 .andExpect(status().isForbidden());
         mvc.perform(post("/api/v1/planning/advisory-groups/decisions")
@@ -435,7 +445,7 @@ class AdvisoryPersistenceIT {
         assertThat(loadedProposal.context()).isEqualTo(hazard);
         assertThat(loadedProposal.bus()).isEqualTo(bus);
         assertThat(loadedProposal.candidate()).isEqualTo(proposal.candidate());
-        var instruction = instructions.decide(proposal.id(), null, null, "controller", null);
+        var instruction = instructions.decide(proposal.id(), null, null, CONTROLLER, null);
         var reloaded = issued.findById(instruction.id()).orElseThrow();
         assertThat(reloaded.parameters()).isEqualTo(proposal.candidate().parameters());
         assertThat(reloaded.message()).isEqualTo("Reduce speed by 5 km/h for 5 min.");
@@ -492,6 +502,13 @@ class AdvisoryPersistenceIT {
                 .andExpect(jsonPath("$.components.schemas.ProblemDetail.properties.status.type").value("integer"))
                 .andExpect(jsonPath("$.components.schemas.ProblemDetail.properties.detail.type").value("string"));
 
+        var internalContract = mvc.perform(get("/v3/api-docs/planning-internal")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER"))))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        var internalApi = JSON.readTree(internalContract);
+        assertThat(internalApi.path("security").toString()).contains("DisruptionPeerToken")
+                .doesNotContain("SupabaseJWT", "IngestionPeerToken");
+
         mvc.perform(post("/api/v1/planning/advisories/" + UUID.randomUUID() + "/decisions")
                         .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
                         .contentType("application/json").content("{}"))
@@ -525,7 +542,7 @@ class AdvisoryPersistenceIT {
         var proposal = proposal(InstructionType.REDUCE_SPEED);
         jdbc.execute("ALTER TABLE planning.issued_instruction ADD CONSTRAINT test_reject_instruction CHECK(false) NOT VALID");
         try {
-            assertThatThrownBy(() -> instructions.decide(proposal.id(), null, null, "controller", null))
+            assertThatThrownBy(() -> instructions.decide(proposal.id(), null, null, CONTROLLER, null))
                     .isInstanceOf(DataIntegrityViolationException.class);
         } finally {
             jdbc.execute("ALTER TABLE planning.issued_instruction DROP CONSTRAINT test_reject_instruction");
@@ -535,8 +552,8 @@ class AdvisoryPersistenceIT {
         assertThat(unchanged.finalCandidate()).isNull();
         assertThat(modelEvidence.findById(proposal.id()).orElseThrow().finalCandidate()).isNull();
         assertThat(issued.count()).isZero();
-        var first = instructions.decide(proposal.id(), null, null, "controller", null);
-        var repeated = instructions.decide(proposal.id(), null, null, "controller", null);
+        var first = instructions.decide(proposal.id(), null, null, CONTROLLER, null);
+        var repeated = instructions.decide(proposal.id(), null, null, CONTROLLER, null);
         assertThat(repeated.id()).isEqualTo(first.id());
         assertThat(issued.count()).isEqualTo(1);
         assertThat(proposals.findById(proposal.id()).orElseThrow().status()).isEqualTo("APPROVED");
@@ -544,11 +561,11 @@ class AdvisoryPersistenceIT {
 
     @Test
     void concurrentAcknowledgementsPersistOneReceiptAndCannotChangeItsTimestamp() throws Exception {
-        var instruction = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, "controller", null);
+        var instruction = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, CONTROLLER, null);
         CountDownLatch start = new CountDownLatch(1);
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            var first = executor.submit(() -> { start.await(); return instructions.acknowledge(instruction.id(), captain.toString()); });
-            var second = executor.submit(() -> { start.await(); return instructions.acknowledge(instruction.id(), captain.toString()); });
+            var first = executor.submit(() -> { start.await(); return instructions.acknowledge(instruction.id(), captainActor()); });
+            var second = executor.submit(() -> { start.await(); return instructions.acknowledge(instruction.id(), captainActor()); });
             start.countDown();
             assertThat(first.get(20, TimeUnit.SECONDS).acknowledgedAt()).isEqualTo(NOW);
             assertThat(second.get(20, TimeUnit.SECONDS).acknowledgedAt()).isEqualTo(NOW);
@@ -558,7 +575,7 @@ class AdvisoryPersistenceIT {
         assertThat(persisted.applicableUntil()).isEqualTo(NOW.plusSeconds(300));
         assertThat(jdbc.queryForObject("SELECT version FROM planning.issued_instruction", Long.class)).isEqualTo(1L);
         assertThat(jdbc.queryForObject("SELECT acknowledgement_subject FROM planning.issued_instruction", String.class)).isEqualTo(captain.toString());
-        assertThatThrownBy(() -> instructions.acknowledge(instruction.id(), UUID.randomUUID().toString()))
+        assertThatThrownBy(() -> instructions.acknowledge(instruction.id(), new PlanningActor(UUID.randomUUID().toString(), PlanningActor.Role.CAPTAIN)))
                 .isInstanceOf(AdvisoryNotFoundException.class);
     }
 
@@ -818,7 +835,8 @@ class AdvisoryPersistenceIT {
 
     @Test
     void sourceCancellationWithdrawsNoticeAndCancelsInstructionInOneTransaction() {
-        var instruction = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, "controller", null);
+        var instruction = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, CONTROLLER, null);
+        var pending = proposal(InstructionType.BE_CAUTIOUS);
         var notice = draft(hazard, UUID.randomUUID(), MESSAGE); notices.publish(notice.id(), "controller");
         jdbc.execute("ALTER TABLE planning.public_notice ADD CONSTRAINT test_reject_withdrawal CHECK(status <> 'WITHDRAWN') NOT VALID");
         try {
@@ -828,19 +846,26 @@ class AdvisoryPersistenceIT {
             jdbc.execute("ALTER TABLE planning.public_notice DROP CONSTRAINT test_reject_withdrawal");
         }
         assertThat(issued.findById(instruction.id()).orElseThrow().status()).isEqualTo("ISSUED");
+        assertThat(proposals.findById(pending.id()).orElseThrow().status()).isEqualTo("PENDING");
         assertThat(publications.findById(notice.id()).orElseThrow().status()).isEqualTo("PUBLISHED");
         reconciliation.sourceCleared(hazard.disruptionId(), "SOURCE_CANCELLED");
         reconciliation.sourceCleared(hazard.disruptionId(), "SOURCE_CANCELLED");
         assertThat(issued.findById(instruction.id()).orElseThrow().status()).isEqualTo("CANCELLED");
+        assertThat(proposals.findById(pending.id()).orElseThrow().status()).isEqualTo("EXPIRED");
         assertThat(publications.findById(notice.id()).orElseThrow().status()).isEqualTo("WITHDRAWN");
         assertThat(publications.findById(notice.id()).orElseThrow().withdrawnAt()).isEqualTo(NOW);
+        assertThat(jdbc.queryForObject("select count(*) from planning.application_audit_event where source_key=?", Integer.class,
+                "instruction-state:" + instruction.id() + ":CANCELLED:SOURCE_WITHDRAWN")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from planning.application_audit_event where source_key=?", Integer.class,
+                "public-notice:" + notice.id() + ":NOTICE_WITHDRAWN")).isEqualTo(1);
     }
 
     @Test
     void closedRunRetiresAcknowledgedStopInstructionButKeepsModelAndDecisionEvidence() {
         var proposal = proposal(InstructionType.SLOW_DOWN_NEAR_STOPS);
-        var issuedInstruction = instructions.decide(proposal.id(), null, null, "controller", null);
-        instructions.acknowledge(issuedInstruction.id(), captain.toString());
+        var issuedInstruction = instructions.decide(proposal.id(), null, null, CONTROLLER, null);
+        var pendingProposal = proposal(InstructionType.BE_CAUTIOUS);
+        instructions.acknowledge(issuedInstruction.id(), captainActor());
         jdbc.update("UPDATE planning.issued_instruction SET issued_at=?, acknowledgement_deadline=?, acknowledged_at=? WHERE id=?",
                 Timestamp.from(NOW.minus(Duration.ofHours(13))),
                 Timestamp.from(NOW.minus(Duration.ofHours(13)).plus(Duration.ofMinutes(5))),
@@ -851,9 +876,14 @@ class AdvisoryPersistenceIT {
 
         instructionRuns.reconcileClosedRuns();
         assertThat(issued.findById(issuedInstruction.id()).orElseThrow().status()).isEqualTo("CANCELLED");
+        assertThat(proposals.findById(pendingProposal.id()).orElseThrow().status()).isEqualTo("EXPIRED");
+        assertThat(jdbc.queryForObject("select details->>'reason' from planning.application_audit_event where source_key=?", String.class,
+                "advisory-proposal-state:" + pendingProposal.id() + ":EXPIRED")).isEqualTo("RUN_CLOSED");
         retention.purge(Duration.ofHours(12));
 
         assertThat(issued.existsById(issuedInstruction.id())).isFalse();
+        assertThat(jdbc.queryForObject("select details->>'reason' from planning.application_audit_event where source_key=?", String.class,
+                "instruction-state:" + issuedInstruction.id() + ":CANCELLED:RUN_CLOSED")).isEqualTo("RUN_CLOSED");
         assertThat(proposals.existsById(proposal.id())).isFalse();
         var evidence = modelEvidence.findById(proposal.id()).orElseThrow();
         assertThat(evidence.modelInput()).isEqualTo("captured input");
@@ -865,8 +895,39 @@ class AdvisoryPersistenceIT {
     }
 
     @Test
+    void retentionExpiryAuditsInstructionTransitionBeforeOperationalDeletion() {
+        var proposal = proposal(InstructionType.SLOW_DOWN_NEAR_STOPS);
+        var instruction = instructions.decide(proposal.id(), null, null, CONTROLLER, null);
+        jdbc.update("UPDATE planning.issued_instruction SET issued_at=?, acknowledgement_deadline=? WHERE id=?",
+                Timestamp.from(NOW.minus(Duration.ofHours(13))), Timestamp.from(NOW.minusSeconds(1)), instruction.id());
+
+        retention.purge(Duration.ofHours(12));
+
+        assertThat(issued.existsById(instruction.id())).isFalse();
+        assertThat(jdbc.queryForObject("select details->>'reason' from planning.application_audit_event where source_key=?", String.class,
+                "instruction-state:" + instruction.id() + ":EXPIRED:VALIDITY_EXPIRED")).isEqualTo("VALIDITY_EXPIRED");
+        assertThat(jdbc.queryForObject("select details->>'instructionType' from planning.application_audit_event where source_key=?", String.class,
+                "instruction-state:" + instruction.id() + ":EXPIRED:VALIDITY_EXPIRED")).isEqualTo("SLOW_DOWN_NEAR_STOPS");
+    }
+
+    @Test
+    void retentionExpiryAuditsPendingProposalBeforeOperationalDeletion() {
+        var proposal = proposal(InstructionType.BE_CAUTIOUS);
+        jdbc.update("UPDATE planning.advisory_proposal SET created_at=? WHERE id=?",
+                Timestamp.from(NOW.minus(Duration.ofHours(13))), proposal.id());
+
+        retention.purge(Duration.ofHours(12));
+
+        assertThat(proposals.existsById(proposal.id())).isFalse();
+        assertThat(jdbc.queryForObject("select details->>'reason' from planning.application_audit_event where source_key=?", String.class,
+                "advisory-proposal-state:" + proposal.id() + ":EXPIRED:RETENTION_EXPIRED")).isEqualTo("RETENTION_EXPIRED");
+        assertThat(jdbc.queryForObject("select details->>'status' from planning.application_audit_event where source_key=?", String.class,
+                "advisory-proposal-state:" + proposal.id() + ":EXPIRED:RETENTION_EXPIRED")).isEqualTo("EXPIRED");
+    }
+
+    @Test
     void holdAtomicallyReplacesExplicitMovementAndReplaysOnlyTheSamePredecessor() throws Exception {
-        var predecessor = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, "controller", null);
+        var predecessor = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, CONTROLLER, null);
         var id = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
         mvc.perform(post("/api/v1/planning/recommendations/" + id + "/obu-decisions")
                 .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
@@ -874,6 +935,16 @@ class AdvisoryPersistenceIT {
                 .andDo(org.springframework.test.web.servlet.result.MockMvcResultHandlers.print())
                 .andExpect(status().isOk()).andExpect(jsonPath("type").value("HOLD"));
         assertThat(issued.findById(predecessor.id()).orElseThrow().status()).isEqualTo("CANCELLED");
+        assertThat(jdbc.queryForObject("select count(*) from planning.application_audit_event where source_key=?", Integer.class,
+                "bunching-decision:" + id)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select bus_id from planning.application_audit_event where source_key=?", String.class,
+                "bunching-decision:" + id)).isEqualTo("SBS5898U");
+        assertThat(jdbc.queryForObject("select correlation_id from planning.application_audit_event where source_key=?", String.class,
+                "bunching-decision:" + id)).isEqualTo(id.toString());
+        assertThat(jdbc.queryForObject("select count(*) from planning.application_audit_event where source_key=?", Integer.class,
+                "instruction-state:" + predecessor.id() + ":CANCELLED:CONTROLLER_REPLACED")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from planning.application_audit_event where source_key=?", Integer.class,
+                "instruction-state:" + id + ":ISSUED:null")).isEqualTo(1);
         mvc.perform(post("/api/v1/planning/recommendations/" + id + "/obu-decisions")
                 .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_CONTROLLER")))
                 .contentType("application/json").content("{\"replaceInstructionId\":\"" + predecessor.id() + "\"}"))
@@ -903,10 +974,10 @@ class AdvisoryPersistenceIT {
                         ? new BunchingInstructionService.ReplacementBusInstruction(reference, MitigationType.SKIP_STOP, 0)
                         : new BunchingInstructionService.ReplacementBusInstruction(reference, MitigationType.HOLD, 30)).toList();
 
-        var delivered = bunchingInstructions.rejectAndIssue(recommendationId, "controller", replacements, null);
+        var delivered = bunchingInstructions.rejectAndIssue(recommendationId, CONTROLLER, replacements, null);
         assertThat(delivered).extracting(IssuedInstruction::busId)
                 .containsExactlyInAnyOrderElementsOf(buses.stream().map(AdvisoryContextPort.Bus::busId).toList());
-        assertThat(bunchingInstructions.rejectAndIssue(recommendationId, "controller", replacements, null))
+        assertThat(bunchingInstructions.rejectAndIssue(recommendationId, CONTROLLER, replacements, null))
                 .extracting(IssuedInstruction::id).containsExactlyInAnyOrderElementsOf(delivered.stream().map(IssuedInstruction::id).toList());
         assertThat(jdbc.queryForObject("select jsonb_array_length(override_instructions) from planning.recommendation_decision where recommendation_id = ?",
                 Integer.class, recommendationId)).isEqualTo(4);
@@ -930,11 +1001,16 @@ class AdvisoryPersistenceIT {
                 new BunchingInstructionService.ReplacementBusInstruction("bus-3", null, 0, "Already spaced"),
                 new BunchingInstructionService.ReplacementBusInstruction("bus-4", null, 0, "No action needed"));
 
-        assertThatThrownBy(() -> bunchingInstructions.approveAndIssue(id, "controller"))
+        assertThatThrownBy(() -> bunchingInstructions.approveAndIssue(id, CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class);
-        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(id, "controller", outcomes.subList(0, 3), null))
+        mvc.perform(post("/api/v1/planning/recommendations/{id}/decision", id).with(controller())
+                        .contentType("application/json").content("{\"action\":\"APPROVED\"}"))
+                .andExpect(status().isConflict());
+        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(id, CONTROLLER, outcomes.subList(0, 3), null))
                 .isInstanceOf(AdvisoryConflictException.class);
         assertThat(issued.count()).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from planning.recommendation_decision where recommendation_id = ?",
+                Integer.class, id)).isZero();
         String body = """
                 {"action":"REJECTED","replacementInstructions":[
                   {"busReference":"SBS5898U","action":"HOLD","adjustmentSeconds":30},
@@ -966,7 +1042,7 @@ class AdvisoryPersistenceIT {
         var outcomes = List.of(new BunchingInstructionService.ReplacementBusInstruction("SBS5898U", MitigationType.HOLD, 30),
                 new BunchingInstructionService.ReplacementBusInstruction("bus-2", null, 0, "Continue"));
 
-        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(id, "controller", outcomes, null))
+        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(id, CONTROLLER, outcomes, null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("group changed");
         assertThat(issued.count()).isZero();
         assertThat(jdbc.queryForObject("select count(*) from planning.recommendation_decision where recommendation_id = ?",
@@ -986,14 +1062,14 @@ class AdvisoryPersistenceIT {
                 new BunchingInstructionService.ReplacementBusInstruction("bus-2", null, 0, "Continue"));
         when(context.currentBunchingGroup(run, id)).thenReturn(new AdvisoryContextPort.CurrentBunchingGroup(
                 run, id, "190", "44251", 1, UUID.randomUUID(), NOW, NOW.plusSeconds(60), List.of("bus-2", "demo-190-b")));
-        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(id, "controller", outcomes, null))
+        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(id, CONTROLLER, outcomes, null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("group changed");
         when(context.currentBunchingGroup(run, id)).thenReturn(new AdvisoryContextPort.CurrentBunchingGroup(
                 run, id, "190", "44251", 1, UUID.randomUUID(), NOW.minusSeconds(60), NOW, List.of("demo-190-b", "bus-2")));
-        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(id, "controller", outcomes, null))
+        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(id, CONTROLLER, outcomes, null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("expired");
         when(context.currentBunchingGroup(run, id)).thenThrow(new IllegalStateException("synthetic unavailable"));
-        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(id, "controller", outcomes, null))
+        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(id, CONTROLLER, outcomes, null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("unavailable");
         assertThat(issued.count()).isZero();
         assertThat(jdbc.queryForObject("select count(*) from planning.recommendation_decision where recommendation_id = ?", Integer.class, id)).isZero();
@@ -1007,7 +1083,7 @@ class AdvisoryPersistenceIT {
         var id = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
         when(context.currentBunchingGroup(run, id)).thenReturn(new AdvisoryContextPort.CurrentBunchingGroup(
                 run, id, "190", "44251", 1, UUID.randomUUID(), NOW, NOW.plusSeconds(60), List.of("demo-190-b", "bus-2")));
-        assertThatThrownBy(() -> bunchingInstructions.approveAndIssue(id, "controller"))
+        assertThatThrownBy(() -> bunchingInstructions.approveAndIssue(id, CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("group changed");
         assertThat(issued.count()).isZero();
         assertThat(jdbc.queryForObject("select count(*) from planning.recommendation_decision where recommendation_id = ?", Integer.class, id)).isZero();
@@ -1028,7 +1104,7 @@ class AdvisoryPersistenceIT {
         assertThat(records.findPending(0, 20)).extracting(RecommendationRecord::idempotencyKey).containsExactly(nextId);
         assertThat(records.findByBunchingEventId(id)).get().extracting(RecommendationRecord::idempotencyKey).isEqualTo(nextId);
         assertThat(records.supersede(id, replacement, snapshot)).isFalse();
-        assertThatThrownBy(() -> bunchingInstructions.approveAndIssue(id, "controller"))
+        assertThatThrownBy(() -> bunchingInstructions.approveAndIssue(id, CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("superseded");
         assertThat(jdbc.queryForObject("select count(*) from planning.recommendation_decision where recommendation_id = ?", Integer.class, id)).isZero();
         jdbc.update("DELETE FROM planning.recommendation WHERE recommendation_id = ?", id);
@@ -1077,7 +1153,7 @@ class AdvisoryPersistenceIT {
             var revision = executor.submit(() -> { start.await(); return records.supersede(id, replacement, UUID.randomUUID()); });
             var decision = executor.submit(() -> {
                 start.await();
-                try { bunchingInstructions.approveAndIssue(id, "controller"); return true; }
+                try { bunchingInstructions.approveAndIssue(id, CONTROLLER); return true; }
                 catch (AdvisoryConflictException conflict) { return false; }
             });
             start.countDown();
@@ -1108,8 +1184,8 @@ class AdvisoryPersistenceIT {
         var outcomes = List.of(new BunchingInstructionService.ReplacementBusInstruction("SBS5898U", null, 0, "Already spaced"),
                 new BunchingInstructionService.ReplacementBusInstruction("bus-2", null, 0, "Continue"));
 
-        assertThat(bunchingInstructions.rejectAndIssue(id, "controller", outcomes, null)).isEmpty();
-        assertThat(bunchingInstructions.rejectAndIssue(id, "controller", outcomes, null)).isEmpty();
+        assertThat(bunchingInstructions.rejectAndIssue(id, CONTROLLER, outcomes, null)).isEmpty();
+        assertThat(bunchingInstructions.rejectAndIssue(id, CONTROLLER, outcomes, null)).isEmpty();
         assertThat(issued.count()).isZero();
         assertThat(jdbc.queryForObject("select jsonb_array_length(override_instructions) from planning.recommendation_decision where recommendation_id = ?",
                 Integer.class, id)).isEqualTo(2);
@@ -1172,7 +1248,7 @@ class AdvisoryPersistenceIT {
 
     @Test
     void competingReplacementReportsWinningInstructionAndFailedIssueRollsBackCancellation() throws Exception {
-        var predecessor = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, "controller", null);
+        var predecessor = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, CONTROLLER, null);
         var first = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
         var second = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
         var body = "{\"replaceInstructionId\":\"" + predecessor.id() + "\"}";
@@ -1203,8 +1279,8 @@ class AdvisoryPersistenceIT {
             pool.shutdownNow();
         }
 
-        jdbc.execute("TRUNCATE planning.issued_instruction, planning.advisory_proposal, planning.advisory_model_evidence, planning.recommendation_decision, planning.model_invocation_record, planning.recommendation");
-        var rollbackPredecessor = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, "controller", null);
+        jdbc.execute("TRUNCATE planning.application_audit_event, planning.issued_instruction, planning.advisory_proposal, planning.advisory_model_evidence, planning.recommendation_decision, planning.model_invocation_record, planning.recommendation");
+        var rollbackPredecessor = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, CONTROLLER, null);
         var rollbackId = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
         jdbc.execute("ALTER TABLE planning.issued_instruction ADD CONSTRAINT test_reject_bunching_instruction CHECK (id <> '"
                 + rollbackId + "')");
@@ -1258,7 +1334,7 @@ class AdvisoryPersistenceIT {
                 new SuggestedBusOutcome("lead", null, 0, "No preceding gap in the reviewed group."),
                 new SuggestedBusOutcome("middle", null, 0, "The preceding gap already meets the recovery target."),
                 new SuggestedBusOutcome("tail", null, 0, "The preceding gap already meets the recovery target."));
-        assertThatThrownBy(() -> bunchingInstructions.approveAndIssue(originalId, "controller"))
+        assertThatThrownBy(() -> bunchingInstructions.approveAndIssue(originalId, CONTROLLER))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("superseded");
 
         var lead = new BunchingInstructionService.ReplacementBusInstruction("lead", null, 0, "Continue");
@@ -1268,26 +1344,26 @@ class AdvisoryPersistenceIT {
         var newerGroup = new AdvisoryContextPort.CurrentBunchingGroup(
                 run, originalId, "190", "44251", 1, UUID.randomUUID(), NOW, NOW.plusSeconds(60), busReferences, gaps, List.of(true, true));
         when(context.currentBunchingGroup(run, originalId)).thenReturn(newerGroup);
-        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(revisionId, "controller", outcomes, null))
+        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(revisionId, CONTROLLER, outcomes, null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("reviewed prediction snapshot");
 
         var nonconsecutiveGroup = new AdvisoryContextPort.CurrentBunchingGroup(
                 run, originalId, "190", "44251", 1, snapshotId, NOW, NOW.plusSeconds(60),
                 busReferences, gaps, List.of(true, false));
         when(context.currentBunchingGroup(run, originalId)).thenReturn(nonconsecutiveGroup);
-        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(revisionId, "controller", outcomes, null))
+        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(revisionId, CONTROLLER, outcomes, null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("needs manual review");
         assertThat(issued.findAll()).isEmpty();
 
         when(context.currentBunchingGroup(run, originalId)).thenReturn(reviewedGroup);
         var excessiveHold = new BunchingInstructionService.ReplacementBusInstruction("middle", MitigationType.HOLD, 11);
         assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(
-                revisionId, "controller", List.of(lead, excessiveHold, tail), null))
+                revisionId, CONTROLLER, List.of(lead, excessiveHold, tail), null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("gap limit for middle");
         assertThat(issued.findAll()).isEmpty();
 
         var dwell = new BunchingInstructionService.ReplacementBusInstruction("middle", MitigationType.DWELL_ADJUSTMENT, 10);
-        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(revisionId, "controller", List.of(lead, dwell, tail), null))
+        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(revisionId, CONTROLLER, List.of(lead, dwell, tail), null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("boarding evidence for middle");
         var olderProgress = new AdvisoryContextPort.Progress("44251", 10, NOW.minusSeconds(1), 30, List.of(5), List.of(300),
                 NOW.plusSeconds(60), NOW.plusSeconds(120));
@@ -1296,7 +1372,7 @@ class AdvisoryPersistenceIT {
                 "ASSIGNED", olderProgress);
         when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING",
                 List.of(fleet.getFirst(), olderBus, fleet.getLast()), fleet.size()));
-        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(revisionId, "controller", outcomes, null))
+        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(revisionId, CONTROLLER, outcomes, null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("reviewed prediction snapshot for middle");
         assertThat(issued.findAll()).isEmpty();
 
@@ -1304,13 +1380,13 @@ class AdvisoryPersistenceIT {
                 "CAPTAIN_ASSIGNMENT_UNAVAILABLE", progress);
         when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING",
                 List.of(fleet.getFirst(), unassigned, fleet.getLast()), fleet.size()));
-        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(revisionId, "controller", outcomes, null))
+        assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(revisionId, CONTROLLER, outcomes, null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("captain assignment is unavailable for middle");
         when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING", fleet, fleet.size()));
 
         jdbc.execute("ALTER TABLE planning.issued_instruction ADD CONSTRAINT test_reject_middle CHECK(bus_id <> 'middle')");
         try {
-            assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(revisionId, "controller", outcomes, null))
+            assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(revisionId, CONTROLLER, outcomes, null))
                     .isInstanceOf(BunchingInstructionService.DeliveryException.class).hasMessageContaining("delivery failed for middle");
             assertThat(issued.findAll()).isEmpty();
         } finally {
@@ -1325,24 +1401,61 @@ class AdvisoryPersistenceIT {
                 List.of(fleet.getFirst(), boardingBus, fleet.getLast()), fleet.size()));
         var excessiveDwell = new BunchingInstructionService.ReplacementBusInstruction("middle", MitigationType.DWELL_ADJUSTMENT, 11);
         assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(
-                revisionId, "controller", List.of(lead, excessiveDwell, tail), null))
+                revisionId, CONTROLLER, List.of(lead, excessiveDwell, tail), null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("gap limit for middle");
 
         var approachingDwell = new BunchingInstructionService.ReplacementBusInstruction("tail", MitigationType.DWELL_ADJUSTMENT, 10);
         assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(
-                revisionId, "controller", List.of(lead, dwell, approachingDwell), null))
+                revisionId, CONTROLLER, List.of(lead, dwell, approachingDwell), null))
                 .isInstanceOf(AdvisoryConflictException.class).hasMessageContaining("boarding evidence for tail");
 
         var mixed = List.of(lead, dwell, tail);
-        var deliveries = bunchingInstructions.rejectAndIssue(revisionId, "controller", mixed, null);
+        var deliveries = bunchingInstructions.rejectAndIssue(revisionId, CONTROLLER, mixed, null);
         assertThat(deliveries).extracting(IssuedInstruction::type)
                 .containsExactlyInAnyOrder(InstructionType.DWELL_ADJUSTMENT, InstructionType.HOLD);
         assertThat(deliveries).extracting(IssuedInstruction::captainUserId)
                 .containsExactlyInAnyOrder(fleet.get(1).captainUserId(), fleet.get(2).captainUserId());
         when(context.currentBunchingGroup(run, originalId)).thenReturn(newerGroup);
-        assertThat(bunchingInstructions.rejectAndIssue(revisionId, "controller", mixed, null))
+        assertThat(bunchingInstructions.rejectAndIssue(revisionId, CONTROLLER, mixed, null))
                 .extracting(IssuedInstruction::id).containsExactlyInAnyOrderElementsOf(
                         deliveries.stream().map(IssuedInstruction::id).toList());
+    }
+
+    @Test
+    void approvingGroupedSuggestionsIssuesEachStoredOutcomeToItsOwnCaptain() throws Exception {
+        var originalId = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
+        when(recommendationScopes.current()).thenReturn(new PlanningScope("DEMO", run));
+        var busReferences = List.of("lead", "middle", "tail");
+        var group = new AdvisoryContextPort.CurrentBunchingGroup(run, originalId, "190", "44251", 1, UUID.randomUUID(),
+                NOW, NOW.plusSeconds(60), busReferences, List.of(45L, 45L), List.of(true, true));
+        when(context.currentBunchingGroup(run, originalId)).thenReturn(group);
+        var progress = new AdvisoryContextPort.Progress("44251", 10, NOW, 30, List.of(5), List.of(300),
+                NOW.plusSeconds(60), NOW.plusSeconds(120));
+        var fleet = busReferences.stream().map(id -> new AdvisoryContextPort.Bus(
+                id, id, id, "190", 1, UUID.randomUUID(), "ASSIGNED", progress)).toList();
+        when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING", fleet, fleet.size()));
+        mvc.perform(post("/api/v1/planning/recommendations/{id}/refresh", originalId).with(controller()))
+                .andExpect(status().isOk());
+        var revisionId = records.findRevision(originalId).orElseThrow().recommendationId();
+        var suggestions = records.findByIdempotencyKey(revisionId).orElseThrow().recommendation().suggestedOutcomes();
+        var actionable = suggestions.stream().filter(outcome -> outcome.mitigationType() != null).toList();
+        assertThat(suggestions).hasSize(3);
+        assertThat(actionable).isNotEmpty();
+
+        for (int attempt = 0; attempt < 2; attempt++)
+            mvc.perform(post("/api/v1/planning/recommendations/{id}/decision", revisionId).with(controller())
+                            .contentType("application/json").content("{\"action\":\"APPROVED\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.action").value("APPROVED"))
+                    .andExpect(jsonPath("$.overrideInstructions.length()").value(0));
+
+        var delivered = issued.findByProposalIdOrderByIssuedAtAsc(revisionId);
+        assertThat(delivered).extracting(item -> item.busId() + ":" + item.type() + ":" + item.parameters().durationSeconds())
+                .containsExactlyInAnyOrderElementsOf(actionable.stream().map(outcome ->
+                        outcome.busReference() + ":" + outcome.mitigationType() + ":" + outcome.adjustmentSeconds()).toList());
+        for (var item : delivered)
+            assertThat(item.captainUserId()).isEqualTo(fleet.stream()
+                    .filter(bus -> bus.busId().equals(item.busId())).findFirst().orElseThrow().captainUserId());
     }
 
     private UUID bunchingRecommendation(FollowingBusState state) {
@@ -1375,7 +1488,7 @@ class AdvisoryPersistenceIT {
 
     private boolean decideAfter(CountDownLatch start, UUID id) throws InterruptedException {
         start.await();
-        try { instructions.decide(id, null, null, "controller", null); return true; }
+        try { instructions.decide(id, null, null, CONTROLLER, null); return true; }
         catch (AdvisoryConflictException | DataIntegrityViolationException conflict) { return false; }
     }
     private AdvisoryProposal proposal(InstructionType type) {
