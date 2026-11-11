@@ -7,6 +7,7 @@ import {
   clusterProjectedBuses,
   computeBusLatLng,
   computeCorridorFit,
+  computeStopCodeLabelPositions,
   DEFAULT_CENTER,
   filterMapBuses,
   filterMapRoutes,
@@ -152,6 +153,22 @@ test('computeCorridorFit accommodates custom padding when framing an incident co
   expect(generousFit.center.lat).toBeCloseTo((1.340 + 1.345) / 2, 4)
   // Generous padding requires equal or smaller zoom level to ensure margin clearance
   expect(generousFit.zoom).toBeLessThanOrEqual(standardFit.zoom)
+})
+
+test('stop-code labels avoid bunching markers and each other while retaining affected-stop labels', () => {
+  const protectedBusMarker = { x: 112, y: 52, width: 40, height: 16 }
+  const labels = computeStopCodeLabelPositions([
+    { stopCode: '44001', x: 50, y: 60, affected: false, selected: false },
+    { stopCode: '44002', x: 100, y: 60, affected: true, selected: false },
+    { stopCode: '44003', x: 170, y: 60, affected: false, selected: false },
+  ], 240, 120, [protectedBusMarker])
+
+  expect(labels.has('44002')).toBe(true)
+  const rects = [...labels.values()]
+  const overlaps = (a: typeof protectedBusMarker, b: typeof protectedBusMarker) =>
+    a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
+  expect(rects.every(rect => !overlaps(rect, protectedBusMarker))).toBe(true)
+  expect(rects.every((rect, index) => rects.slice(index + 1).every(other => !overlaps(rect, other)))).toBe(true)
 })
 
 test('computeBusLatLng returns null when route lacks valid coordinates', () => {

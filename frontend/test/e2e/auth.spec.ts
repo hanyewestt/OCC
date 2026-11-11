@@ -2427,6 +2427,43 @@ test('hazard conditions show only the collection refresh time', async ({ page, c
   await expect(page.getByText(/SIMULATION · SINGAPORE · simulation · run run-1 · healthy/i)).not.toBeVisible()
 })
 
+test('corridor map reveals collision-safe stop codes at high zoom and preserves affected markers', async ({ page, context }) => {
+  await mockAuth(context, 'CONTROLLER')
+  const stops = [
+    { stopCode: '44001', roadName: 'Synthetic Rd', description: 'Stop 44001', latitude: 1.35, longitude: 103.75, stopSequence: 1, distanceKm: 0 },
+    { stopCode: '44002', roadName: 'Synthetic Rd', description: 'Stop 44002', latitude: 1.39, longitude: 103.79, stopSequence: 2, distanceKm: 5 },
+    { stopCode: '44003', roadName: 'Synthetic Rd', description: 'Stop 44003', latitude: 1.43, longitude: 103.83, stopSequence: 3, distanceKm: 10 },
+  ]
+  await context.route('**/api/v1/bus-routes/190', route => route.fulfill({ json: {
+    serviceId: '190', operators: [{ operator: 'SMRT', category: 'TRUNK', directions: [{ directionId: 1, stops }] }],
+  } }))
+  await context.route('**/api/v1/route-positions?*', route => route.fulfill({ json: {
+    serviceId: new URL(route.request().url()).searchParams.get('service') ?? '190',
+    computedAt: new Date().toISOString(), refreshIntervalSeconds: 60, maxSourceAgeSeconds: 120, directions: [],
+  } }))
+  await context.route('**/api/v1/live-bunching-alerts?*', route => route.fulfill({ json: {
+    items: [{ eventId: 'stop-label-event', action: 'OPENED', classification: 'OBSERVATION_ONLY', serviceId: '190',
+      stopCode: '44002', stopName: 'Stop 44002', directionId: 1, detectedAt: new Date(Date.now() + 60_000).toISOString() }],
+    page: 0, totalItems: 1, totalPages: 1,
+  } }))
+
+  await login(page, '/controller/disruptions?service=190&direction=1')
+  const map = page.getByRole('region', { name: 'Interactive affected corridor map. Use arrow keys to pan, plus and minus to zoom.' })
+  await expect(map).toBeVisible()
+  const mapSvg = map.locator('svg[aria-label="OneMap of affected bus stops and estimated buses"]')
+  const zoomOut = map.getByRole('button', { name: 'Zoom out map' })
+  for (let i = 0; i < 8 && await zoomOut.isEnabled(); i++) await zoomOut.click()
+  await expect(mapSvg.locator('svg.lucide-bus-front')).toHaveCount(0)
+
+  const zoomIn = map.getByRole('button', { name: 'Zoom in map' })
+  for (let i = 0; i < 8 && await zoomIn.isEnabled(); i++) await zoomIn.click()
+  await expect(mapSvg.locator('svg.lucide-bus-front').first()).toBeVisible()
+  await expect(mapSvg.locator('text').filter({ hasText: '44002' })).toBeVisible()
+  await expect(mapSvg.locator('text').filter({ hasText: 'Stop 44002' })).toHaveCount(0)
+  const affectedStop = mapSvg.locator('g[aria-label="Affected stop Stop 44002 (44002)"]')
+  await expect(affectedStop.locator('circle[fill="#dc2626"]')).toHaveCount(1)
+})
+
 test('Disruptions Refresh updates bunching detections and hazards together', async ({ page, context }) => {
   await page.clock.install()
   await mockAuth(context, 'CONTROLLER')

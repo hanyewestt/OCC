@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { RefreshCw, TriangleAlert } from 'lucide-react'
 import { formatSgtDateTime } from '@/lib/time'
@@ -268,13 +268,19 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     pathname.endsWith('/disruptions') || pathname.endsWith('/planning')
   )
   const currentAlerts = simulation ? simulation.alerts : alertCollection.items
-  const currentTraffic = trafficIncidentCollection.items
+  const currentTraffic: TrafficIncident[] = useMemo(() => {
+    return trafficIncidentCollection.items.filter((t: TrafficIncident) => {
+      if (!simulation && (t.classification === 'SIMULATION' || t.demoRunId)) return false
+      if (simulation && t.demoRunId && t.demoRunId !== simulation.id) return false
+      return true
+    })
+  }, [trafficIncidentCollection.items, simulation])
 
   useEffect(() => {
     if (isInitialAlertCheckRef.current) {
       if (currentAlerts.length > 0 || currentTraffic.length > 0) {
         currentAlerts.forEach(a => knownAlertIdsRef.current.add(a.eventId))
-        currentTraffic.forEach(t => knownTrafficIdsRef.current.add(t.id))
+        currentTraffic.forEach((t: TrafficIncident) => knownTrafficIdsRef.current.add(t.id))
         isInitialAlertCheckRef.current = false
       }
       return
@@ -307,7 +313,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       return
     }
 
-    const newTraffic = currentTraffic.filter(t => !knownTrafficIdsRef.current.has(t.id))
+    const newTraffic = currentTraffic.filter((t: TrafficIncident) => !knownTrafficIdsRef.current.has(t.id))
     if (newTraffic.length > 0) {
       newTraffic.forEach(t => knownTrafficIdsRef.current.add(t.id))
       const top = newTraffic[0]
@@ -688,14 +694,14 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         {pathname.endsWith('/disruptions') && <ControllerDisruptions liveAlerts={alertCollection} run={run} loading={loading}
           routes={routeStops.data ?? []} positions={routePositions.data ?? []} pollIntervalSeconds={pollIntervalSeconds}
           gapToleranceSeconds={Math.max(30, routeIncidentGapToleranceSeconds)}
-          trafficIncidents={trafficIncidentCollection.items} />}
+          trafficIncidents={currentTraffic} />}
         {pathname.endsWith('/planning') && <ControllerPlanning recommendations={recommendationCollection} diagnosisRequests={diagnosisCollection}
           loading={loading} modeError={run.error} mode={modeValue} demoRunId={simulation?.id ?? null} token={token}
           detectedAlerts={simulation ? simulation.alerts : alertCollection.items}
           positions={routePositions.data ?? []}
           routes={routeStops.data ?? []} pollIntervalSeconds={pollIntervalSeconds}
           gapToleranceSeconds={Math.max(30, routeIncidentGapToleranceSeconds)}
-          trafficIncidents={trafficIncidentCollection.items}
+          trafficIncidents={currentTraffic}
           nowMs={Date.parse(alertCollection.lastSuccessAt || (simulation ? shellRefreshTime.at : '') || '') || 0}
           onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { void requestRefresh('mutation') }} />}
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} suggestions={suggestionCollection} aiAudits={aiAuditCollection} loading={loading} />}
