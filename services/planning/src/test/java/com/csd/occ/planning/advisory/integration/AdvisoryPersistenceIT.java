@@ -932,9 +932,14 @@ class AdvisoryPersistenceIT {
 
         assertThatThrownBy(() -> bunchingInstructions.approveAndIssue(id, "controller"))
                 .isInstanceOf(AdvisoryConflictException.class);
+        mvc.perform(post("/api/v1/planning/recommendations/{id}/decision", id).with(controller())
+                        .contentType("application/json").content("{\"action\":\"APPROVED\"}"))
+                .andExpect(status().isConflict());
         assertThatThrownBy(() -> bunchingInstructions.rejectAndIssue(id, "controller", outcomes.subList(0, 3), null))
                 .isInstanceOf(AdvisoryConflictException.class);
         assertThat(issued.count()).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from planning.recommendation_decision where recommendation_id = ?",
+                Integer.class, id)).isZero();
         String body = """
                 {"action":"REJECTED","replacementInstructions":[
                   {"busReference":"SBS5898U","action":"HOLD","adjustmentSeconds":30},
@@ -1343,6 +1348,43 @@ class AdvisoryPersistenceIT {
         assertThat(bunchingInstructions.rejectAndIssue(revisionId, "controller", mixed, null))
                 .extracting(IssuedInstruction::id).containsExactlyInAnyOrderElementsOf(
                         deliveries.stream().map(IssuedInstruction::id).toList());
+    }
+
+    @Test
+    void approvingGroupedSuggestionsIssuesEachStoredOutcomeToItsOwnCaptain() throws Exception {
+        var originalId = bunchingRecommendation(FollowingBusState.READY_TO_DEPART);
+        when(recommendationScopes.current()).thenReturn(new PlanningScope("DEMO", run));
+        var busReferences = List.of("lead", "middle", "tail");
+        var group = new AdvisoryContextPort.CurrentBunchingGroup(run, originalId, "190", "44251", 1, UUID.randomUUID(),
+                NOW, NOW.plusSeconds(60), busReferences, List.of(45L, 45L), List.of(true, true));
+        when(context.currentBunchingGroup(run, originalId)).thenReturn(group);
+        var progress = new AdvisoryContextPort.Progress("44251", 10, NOW, 30, List.of(5), List.of(300),
+                NOW.plusSeconds(60), NOW.plusSeconds(120));
+        var fleet = busReferences.stream().map(id -> new AdvisoryContextPort.Bus(
+                id, id, id, "190", 1, UUID.randomUUID(), "ASSIGNED", progress)).toList();
+        when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING", fleet, fleet.size()));
+        mvc.perform(post("/api/v1/planning/recommendations/{id}/refresh", originalId).with(controller()))
+                .andExpect(status().isOk());
+        var revisionId = records.findRevision(originalId).orElseThrow().recommendationId();
+        var suggestions = records.findByIdempotencyKey(revisionId).orElseThrow().recommendation().suggestedOutcomes();
+        var actionable = suggestions.stream().filter(outcome -> outcome.mitigationType() != null).toList();
+        assertThat(suggestions).hasSize(3);
+        assertThat(actionable).isNotEmpty();
+
+        for (int attempt = 0; attempt < 2; attempt++)
+            mvc.perform(post("/api/v1/planning/recommendations/{id}/decision", revisionId).with(controller())
+                            .contentType("application/json").content("{\"action\":\"APPROVED\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.action").value("APPROVED"))
+                    .andExpect(jsonPath("$.overrideInstructions.length()").value(0));
+
+        var delivered = issued.findByProposalIdOrderByIssuedAtAsc(revisionId);
+        assertThat(delivered).extracting(item -> item.busId() + ":" + item.type() + ":" + item.parameters().durationSeconds())
+                .containsExactlyInAnyOrderElementsOf(actionable.stream().map(outcome ->
+                        outcome.busReference() + ":" + outcome.mitigationType() + ":" + outcome.adjustmentSeconds()).toList());
+        for (var item : delivered)
+            assertThat(item.captainUserId()).isEqualTo(fleet.stream()
+                    .filter(bus -> bus.busId().equals(item.busId())).findFirst().orElseThrow().captainUserId());
     }
 
     private UUID bunchingRecommendation(FollowingBusState state) {
