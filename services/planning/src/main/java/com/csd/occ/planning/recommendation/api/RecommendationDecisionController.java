@@ -48,7 +48,7 @@ public class RecommendationDecisionController {
     @PostMapping("/{recommendationId}/decision")
     @Operation(operationId = "decideBunchingRecommendation",
             summary = "Approve or replace a recommendation",
-            description = "Stores the authenticated controller decision and issues validated instructions atomically. A multi-bus incident requires an outcome for every affected bus, including a reason for each no-instruction outcome. Repeated identical decisions return the recorded result; changed groups or conflicting decisions return 409.")
+            description = "Stores the authenticated controller decision and issues validated instructions atomically. A multi-bus incident requires an outcome for every affected bus, including a reason for each no-instruction outcome: APPROVED issues the stored suggested outcome for each bus, and REJECTED supplies replacement outcomes. Repeated identical decisions return the recorded result; changed groups or conflicting decisions return 409.")
     @ApiResponse(responseCode = "200", description = "Decision and replacement instruction stored, or the same request replayed")
     @ApiResponse(responseCode = "400", description = "Decision request is invalid")
     @ApiResponse(responseCode = "404", description = "Recommendation not found")
@@ -86,7 +86,7 @@ public class RecommendationDecisionController {
     }
 
     private com.csd.occ.planning.recommendation.domain.RecommendationDecision issueApproval(UUID recommendationId, PlanningActor actor) {
-        instructions.approveAndIssue(recommendationId, actor);
+        instructions.approveSuggestedAndIssue(recommendationId, actor);
         return decisions.findDecision(recommendationId).orElseThrow();
     }
 
