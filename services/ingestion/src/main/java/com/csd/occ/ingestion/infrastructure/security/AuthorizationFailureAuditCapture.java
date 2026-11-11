@@ -2,6 +2,7 @@ package com.csd.occ.ingestion.infrastructure.security;
 
 import com.csd.occ.ingestion.domain.ApplicationAuditEvent;
 import com.csd.occ.ingestion.domain.ApplicationAuditEventRepository;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletRequest;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -28,6 +29,7 @@ public class AuthorizationFailureAuditCapture {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(HttpServletRequest request, boolean forbidden, Authentication authentication) {
+        if (request.getDispatcherType() == DispatcherType.ERROR) return;
         var now = clock.instant();
         var route = routeLabel(request.getMethod(), request.getRequestURI());
         boolean verified = authentication != null && authentication.isAuthenticated()
@@ -63,6 +65,8 @@ public class AuthorizationFailureAuditCapture {
         if (path.matches("/api/v1/admin/audit-events/[^/]+")) return "ADMIN_AUDIT_DETAIL";
         if (path.equals("/api/v1/admin/demo-runs/active/assignments")) return "ADMIN_ASSIGNMENTS_LIST";
         if (path.matches("/api/v1/demo-runs/[^/]+/buses/[^/]+/assignment")) return "ADMIN_ASSIGNMENT_CHANGE";
+        if (path.equals("/api/v1/demo-runs")) return method.equals("POST") ? "SIMULATION_START" : "SIMULATION_RUNS";
+        if (path.matches("/api/v1/demo-runs/[^/]+/close")) return method.equals("POST") ? "SIMULATION_CLOSE" : "SIMULATION_RUN_CLOSE";
         if (path.equals("/api/v1/captains")) return "CAPTAINS_LIST";
         if (path.equals("/api/v1/auth/access/admin")) return "ADMIN_ACCESS_CHECK";
         if (path.startsWith("/api/v1/")) return "INGESTION_API";

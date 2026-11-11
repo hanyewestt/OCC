@@ -2,6 +2,7 @@ package com.csd.occ.disruption.infrastructure.security;
 
 import com.csd.occ.disruption.domain.audit.ApplicationAuditEvent;
 import com.csd.occ.disruption.domain.audit.ApplicationAuditEventRepository;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletRequest;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -27,6 +28,7 @@ public class AuthorizationFailureAuditCapture {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(HttpServletRequest request, String reason, Authentication authentication) {
+        if (request.getDispatcherType() == DispatcherType.ERROR) return;
         var now = clock.instant();
         var bucket = now.truncatedTo(ChronoUnit.MINUTES);
         var route = routeLabel(request.getMethod(), request.getRequestURI());

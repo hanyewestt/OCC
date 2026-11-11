@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 
 import com.csd.occ.planning.domain.audit.ApplicationAuditEvent;
 import com.csd.occ.planning.domain.audit.ApplicationAuditEventRepository;
+import jakarta.servlet.DispatcherType;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -39,5 +40,18 @@ class ApplicationAuthorizationFailureCaptureTest {
                 .containsEntry("route", "/api/v1/planning/admin/*");
         assertThat(event.getValue().details().toString()).doesNotContain("secret");
         assertThat(event.getValue().sourceKey()).startsWith("planning-auth-denial:");
+    }
+
+    @Test
+    void ignoresInternalErrorDispatchesWhenCapturingAuthorizationFailures() {
+        var repository = mock(ApplicationAuditEventRepository.class);
+        var capture = new ApplicationAuthorizationFailureCapture(repository,
+                Clock.fixed(Instant.parse("2026-10-25T04:00:00Z"), ZoneOffset.UTC));
+        var request = new MockHttpServletRequest("GET", "/error");
+        request.setDispatcherType(DispatcherType.ERROR);
+
+        capture.record(request, 403, null);
+
+        org.mockito.Mockito.verifyNoInteractions(repository);
     }
 }

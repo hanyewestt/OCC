@@ -2,6 +2,7 @@ package com.csd.occ.planning.infrastructure.security;
 
 import com.csd.occ.planning.domain.audit.ApplicationAuditEvent;
 import com.csd.occ.planning.domain.audit.ApplicationAuditEventRepository;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Clock;
 import java.util.Map;
@@ -23,6 +24,7 @@ public class ApplicationAuthorizationFailureCapture {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(HttpServletRequest request, int status, Authentication authentication) {
+        if (request.getDispatcherType() == DispatcherType.ERROR) return;
         var now = clock.instant();
         String method = switch (request.getMethod()) {
             case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS" -> request.getMethod();
