@@ -42,6 +42,22 @@ function Invoke-Aws {
     }
 }
 
+function Invoke-Gh {
+    param([Parameter(ValueFromRemainingArguments = $true)][object[]]$Arguments)
+    & gh @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "gh command failed with exit code $LASTEXITCODE" }
+}
+
+function Invoke-GhJson {
+    param([string]$Endpoint, [string]$Method, [object]$Body)
+    $path = Join-Path ([System.IO.Path]::GetTempPath()) ("occ-gh-" + [guid]::NewGuid().ToString("N") + ".json")
+    try {
+        [System.IO.File]::WriteAllText($path, ($Body | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
+        Invoke-Gh api $Endpoint --method $Method --input $path | Out-Null
+    }
+    finally { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+}
+
 function Get-StackStatus {
     param([Parameter(Mandatory)][string]$Name)
     # list-stacks succeeds whether or not the name exists, so no expected
@@ -111,18 +127,18 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
 Write-Output "Verifying AWS identity..."
 $identity = Invoke-Aws @("sts", "get-caller-identity")
 Write-Output "Verifying GitHub authentication..."
-& gh auth status
+Invoke-Gh auth status
 if ($LASTEXITCODE -ne 0) {
     throw "gh is not authenticated; run 'gh auth login' first."
 }
 Write-Output "Verifying repository access..."
-& gh repo view $Repository --json name | Out-Null
+Invoke-Gh repo view $Repository --json name | Out-Null
 if ($LASTEXITCODE -ne 0) {
     throw "gh cannot read $Repository; check the authenticated account."
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot | Split-Path -Parent
-$envPath = Join-Path $repoRoot $EnvFile
+$envPath = if ([System.IO.Path]::IsPathRooted($EnvFile)) { $EnvFile } else { Join-Path $repoRoot $EnvFile }
 if (-not (Test-Path $envPath)) {
     throw "Environment file not found: $envPath"
 }
@@ -266,7 +282,7 @@ if ($stackStatus -eq "REVIEW_IN_PROGRESS") {
     }
     Invoke-Aws @("cloudformation", "execute-change-set", "--stack-name", $StackName, "--change-set-name", $changeSet)
     Write-Output "Executing change set $changeSet; waiting for the stack..."
-    Invoke-Aws @("cloudformation", "wait", "stack-create-complete")
+    Invoke-Aws @("cloudformation", "wait", "stack-create-complete", "--stack-name", $StackName)
 }
 else {
     $changeSetType = if ($stackExists) { "UPDATE" } else { "CREATE" }
@@ -300,10 +316,10 @@ else {
         Invoke-Aws @("cloudformation", "execute-change-set", "--stack-name", $StackName, "--change-set-name", $changeSet)
         Write-Output "Executing change set $changeSet; waiting for the stack..."
         if ($stackExists) {
-            Invoke-Aws @("cloudformation", "wait", "stack-update-complete")
+            Invoke-Aws @("cloudformation", "wait", "stack-update-complete", "--stack-name", $StackName)
         }
         else {
-            Invoke-Aws @("cloudformation", "wait", "stack-create-complete")
+            Invoke-Aws @("cloudformation", "wait", "stack-create-complete", "--stack-name", $StackName)
         }
     }
 }
@@ -342,17 +358,27 @@ Write-Output "Deployment secret version recorded: $($secretVersion.VersionIdsToS
 # Configure the main-only production environment without per-push reviewers,
 # then scope the role ARNs to it as environment secrets.
 Write-Output "Configuring the GitHub production environment..."
-& gh api "repos/$Repository/environments/production" -X PUT `
-    --input - -H "Content-Type: application/json" `
-    -d '{"deployment_branch_policy":{"protected_branches":true,"custom_branch_policies":false}}'
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to configure the GitHub production environment."
+$environmentEndpoint = "repos/$Repository/environments/production"
+Invoke-GhJson $environmentEndpoint PUT @{
+    deployment_branch_policy = @{ protected_branches = $false; custom_branch_policies = $true }
 }
-& gh secret set OCC_PUBLISH_ROLE_ARN --body $outputs["PublishRoleArn"] --repo $Repository --env production
-& gh secret set OCC_DEPLOY_ROLE_ARN --body $outputs["DeployRoleArn"] --repo $Repository --env production
-& gh secret set OCC_RELEASE_BUCKET --body $outputs["ReleaseBucketName"] --repo $Repository --env production
-& gh secret set OCC_REGION --body $Region --repo $Repository --env production
-& gh secret set OCC_INSTANCE_ID --body $outputs["InstanceId"] --repo $Repository --env production
+$policies = Invoke-Gh api "$environmentEndpoint/deployment-branch-policies" | ConvertFrom-Json
+foreach ($policy in $policies.branch_policies) {
+    if ($policy.name -ne "main" -or $policy.type -ne "branch") {
+        Invoke-Gh api "$environmentEndpoint/deployment-branch-policies/$($policy.id)" --method DELETE | Out-Null
+    }
+}
+if (-not ($policies.branch_policies | Where-Object { $_.name -eq "main" -and $_.type -eq "branch" })) {
+    Invoke-GhJson "$environmentEndpoint/deployment-branch-policies" POST @{ name = "main"; type = "branch" }
+}
+Invoke-Gh variable set OCC_VERIFY_ROLE_ARN --body $outputs["VerifyRoleArn"] --repo $Repository
+Invoke-Gh variable set OCC_REGION --body $Region --repo $Repository
+Invoke-Gh variable set OCC_RELEASE_BUCKET --body $outputs["ReleaseBucketName"] --repo $Repository
+Invoke-Gh secret set OCC_PUBLISH_ROLE_ARN --body $outputs["PublishRoleArn"] --repo $Repository --env production
+Invoke-Gh secret set OCC_DEPLOY_ROLE_ARN --body $outputs["DeployRoleArn"] --repo $Repository --env production
+Invoke-Gh secret set OCC_RELEASE_BUCKET --body $outputs["ReleaseBucketName"] --repo $Repository --env production
+Invoke-Gh secret set OCC_REGION --body $Region --repo $Repository --env production
+Invoke-Gh secret set OCC_INSTANCE_ID --body $outputs["InstanceId"] --repo $Repository --env production
 foreach ($component in @("ingestion", "disruption", "planning", "db-setup", "web")) {
     $key = "OCC_" + ($component.ToUpper() -replace "-", "_") + "_REPOSITORY"
     # CloudFormation outputs are PascalCase without the hyphen (DbSetupRepositoryUri).
@@ -361,9 +387,9 @@ foreach ($component in @("ingestion", "disruption", "planning", "db-setup", "web
     if (-not $outputs.ContainsKey($outputKey)) {
         throw "The stack has no $outputKey output; cannot configure $key."
     }
-    & gh secret set $key --body $outputs[$outputKey] --repo $Repository --env production
+    Invoke-Gh secret set $key --body $outputs[$outputKey] --repo $Repository --env production
 }
-& gh variable set OCC_GITHUB_REPOSITORY --body $Repository --repo $Repository --env production
+Invoke-Gh variable set OCC_GITHUB_REPOSITORY --body $Repository --repo $Repository --env production
 
 Write-Output ""
 Write-Output "Bootstrap complete (change set applied)."

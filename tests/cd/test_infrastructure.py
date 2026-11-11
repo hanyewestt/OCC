@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import yaml
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,6 +31,35 @@ def template_text() -> str:
 
 
 class CloudFormationContractTests(unittest.TestCase):
+    def test_origin_port_and_write_methods_match_the_application(self):
+        resources = yaml.load(template_text(), Loader=yaml.BaseLoader)["Resources"]
+        config = resources["OccCloudFrontDistribution"]["Properties"]["DistributionConfig"]
+        self.assertEqual(config["Origins"][0]["CustomOriginConfig"].get("HTTPPort"), "8080")
+        self.assertEqual(set(config["DefaultCacheBehavior"].get("AllowedMethods", [])),
+                         {"GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"})
+
+    def test_deploy_role_can_poll_and_inspect_but_deletes_only_operations(self):
+        resources = yaml.load(template_text(), Loader=yaml.BaseLoader)["Resources"]
+        statements = resources["OccDeployRole"]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"]
+        for action in ("ssm:GetCommandInvocation", "ec2:DescribeInstances", "ec2:DescribeInstanceStatus"):
+            grants = [s for s in statements if action in s.get("Action", [])]
+            self.assertTrue(any(s["Resource"] == "*" for s in grants), action)
+        deletes = [s for s in statements if "s3:DeleteObject" in s.get("Action", [])]
+        self.assertTrue(deletes)
+        for grant in deletes:
+            self.assertEqual(grant["Resource"], "${OccReleaseBucket.Arn}/state/operations/*")
+
+    def test_verification_role_has_no_production_mutation_or_secret_access(self):
+        resources = yaml.load(template_text(), Loader=yaml.BaseLoader)["Resources"]
+        role = resources.get("OccVerifyRole")
+        self.assertIsNotNone(role)
+        statements = role["Properties"]["Policies"][0]["PolicyDocument"]["Statement"]
+        actions = {a for s in statements for a in s.get("Action", [])}
+        self.assertIn("s3:GetObjectVersion", actions)
+        self.assertIn("ecr:BatchGetImage", actions)
+        self.assertFalse(any(a.startswith(("ssm:", "secretsmanager:")) or
+                             a in ("s3:PutObject", "ecr:PutImage") for a in actions))
+
     def test_template_exists_with_required_parameters(self):
         text = template_text()
         self.assertIn("t3.small", text)

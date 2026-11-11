@@ -192,6 +192,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - s3:GetObject
+                  - s3:GetObjectVersion
                   - s3:ListBucket
                 Resource:
                   - !GetAtt OccReleaseBucket.Arn
@@ -401,6 +402,52 @@ Resources:
         ExcludePunctuation: true
         RequireEachIncludedType: false
 
+  OccVerifyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub occ-ec2-cd-verify-${AWS::Region}
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref OidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "token.actions.githubusercontent.com:aud": sts.amazonaws.com
+                "token.actions.githubusercontent.com:sub": !Sub "repo:${RepositoryName}:ref:refs/heads/main"
+      Policies:
+        - PolicyName: occ-verify-read-only
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ecr:GetAuthorizationToken]
+                Resource: "*"
+              - Effect: Allow
+                Action: [ecr:BatchGetImage, ecr:GetDownloadUrlForLayer, ecr:BatchCheckLayerAvailability, ecr:DescribeImages]
+                Resource:
+                  - !GetAtt OccIngestionRepository.Arn
+                  - !GetAtt OccDisruptionRepository.Arn
+                  - !GetAtt OccPlanningRepository.Arn
+                  - !GetAtt OccDbSetupRepository.Arn
+                  - !GetAtt OccWebRepository.Arn
+              - Effect: Allow
+                Action: [s3:ListBucket]
+                Resource: !GetAtt OccReleaseBucket.Arn
+                Condition:
+                  StringLike:
+                    s3:prefix: [state/latest-published.json, "releases/*"]
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion]
+                Resource:
+                  - !Sub "${OccReleaseBucket.Arn}/state/latest-published.json"
+                  - !Sub "${OccReleaseBucket.Arn}/releases/*"
+              - Effect: Allow
+                Action: [kms:Decrypt]
+                Resource: !GetAtt OccReleaseKey.Arn
+
   OccPublishRole:
     Type: AWS::IAM::Role
     Properties:
@@ -439,6 +486,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - s3:GetObject
+                  - s3:GetObjectVersion
                 Resource: !Sub "${OccReleaseBucket.Arn}/*"
               - Effect: Allow
                 Action:
@@ -478,6 +526,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - s3:GetObject
+                  - s3:GetObjectVersion
                   - s3:ListBucket
                 Resource:
                   - !GetAtt OccReleaseBucket.Arn
@@ -488,29 +537,37 @@ Resources:
                 Resource: !Sub "${OccReleaseBucket.Arn}/state/*"
               - Effect: Allow
                 Action:
+                  - s3:DeleteObject
+                Resource: !Sub "${OccReleaseBucket.Arn}/state/operations/*"
+              - Effect: Allow
+                Action:
                   - kms:Decrypt
                   - kms:GenerateDataKey
                 Resource: !GetAtt OccReleaseKey.Arn
               - Effect: Allow
                 Action:
                   - ssm:SendCommand
-                  - ssm:GetCommandInvocation
-                  - ssm:ListCommandInvocations
                 Resource:
                   - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}::document/AWS-RunShellScript"
                   - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${OccHost.InstanceId}"
               - Effect: Allow
                 Action:
                   - ssm:ListCommands
+                  - ssm:GetCommandInvocation
+                  - ssm:ListCommandInvocations
+                  - ssm:DescribeInstanceInformation
                 Resource: "*"
               - Effect: Allow
                 Action:
                   - ec2:StartInstances
                   - ec2:StopInstances
-                  - ec2:DescribeInstances
-                  - ec2:DescribeInstanceStatus
                 Resource:
                   - !Sub "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${OccHost.InstanceId}"
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeInstanceStatus
+                Resource: "*"
 
   # CloudFront-scoped WAF resources must live in us-east-1, which is the only
   # region the bootstrap tooling targets.
@@ -562,6 +619,7 @@ Resources:
         DefaultCacheBehavior:
           TargetOriginId: OccOrigin
           ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, POST, PUT, PATCH, DELETE]
           # No caching at all initially: never serve stale private responses
           # or stale content while the origin is paused.
           CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
@@ -577,6 +635,7 @@ Resources:
             ConnectionAttempts: 3
             ConnectionTimeout: 10
             CustomOriginConfig:
+              HTTPPort: 8080
               OriginProtocolPolicy: http-only
               OriginKeepaliveTimeout: 5
               # Long enough above the measured pacing heartbeat gap; the live
@@ -616,6 +675,8 @@ Outputs:
     Value: !Ref OriginSecretName
   PublishRoleArn:
     Value: !GetAtt OccPublishRole.Arn
+  VerifyRoleArn:
+    Value: !GetAtt OccVerifyRole.Arn
   DeployRoleArn:
     Value: !GetAtt OccDeployRole.Arn
   HostRoleName:
