@@ -1134,6 +1134,7 @@ test('recommendation editor keeps edits on API failure and cannot close or submi
 
 test('saving pauses polling and reconciles the decision after the response', async ({ page, context }) => {
   await page.clock.install()
+  await page.clock.pauseAt(new Date(Date.now() + 1000))
   await mockDashboard(context)
   let saving = false
   let pollsWhileSaving = 0
@@ -3025,6 +3026,7 @@ for (const role of ['CONTROLLER', 'CAPTAIN']) {
   test(`${role} cannot open admin home`, async ({ page, context }) => {
     await mockAuth(context, role)
     await login(page)
+    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
     await page.goto('/admin')
     await expect(page.getByRole('heading', { name: 'Access denied' })).toBeVisible()
   })
