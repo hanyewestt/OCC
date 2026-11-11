@@ -28,7 +28,7 @@ From the repository root, verify the service with the root Maven Wrapper:
 
 For a host-native local run, create the ignored root `.env` using
 [`.env.example`](../../.env.example), then start the local PostgreSQL stack from
-the root using [the local setup guide](../../docs/LOCAL-DEVELOPMENT.md). Run the app
+the root using [the local setup guide](../../docs/DEVELOPMENT.md). Run the app
 from its service directory so `application-local.yml` imports the root `.env`:
 
 ```powershell
