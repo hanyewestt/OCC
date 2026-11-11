@@ -271,13 +271,42 @@ def main() -> int:
     print("PASS retry reuses the same key, fingerprint, payload and single durable Planning request")
 
     recommendation_path = f"{run_path}/recommendation"
-    recommendation = wait_until(
-        "queryable recommendation after restart recovery",
-        lambda: (lambda result: result[1] if result[0] == 200 and isinstance(result[1], dict)
-                 and result[1].get("recommendationId") and isinstance(result[1].get("expectedImpact"), dict)
-                 else None)(request(base_url, recommendation_path, token)),
-        args.timeout,
-    )
+    try:
+        recommendation = wait_until(
+            "queryable recommendation after restart recovery",
+            lambda: (lambda result: result[1] if result[0] == 200 and isinstance(result[1], dict)
+                     and result[1].get("recommendationId") and isinstance(result[1].get("expectedImpact"), dict)
+                     else None)(request(base_url, recommendation_path, token)),
+            args.timeout,
+        )
+    except AssertionError:
+        key = str(request_id)
+        query = f"""
+            SELECT COALESCE((
+                SELECT request.status || '|' || request.attempt_count::text || '|'
+                    || COALESCE(request.failure_code, '') || '|'
+                    || COALESCE(diagnosis.id::text, '')
+                FROM planning.planning_request request
+                LEFT JOIN planning.diagnosis_result diagnosis ON diagnosis.request_id = request.id
+                WHERE request.id = '{key}'::uuid
+            ), 'MISSING') || '|' || COALESCE((
+                SELECT job.status || '|' || job.attempt_count::text || '|'
+                    || COALESCE(job.failure_code, '') || '|'
+                    || COALESCE(job.last_http_status::text, '')
+                FROM planning.recommendation_job job
+                JOIN planning.diagnosis_result diagnosis ON diagnosis.id = job.diagnosis_id
+                WHERE diagnosis.request_id = '{key}'::uuid
+            ), 'NO_JOB')
+        """
+        try:
+            state = compose(args.compose_project, "exec", "-T", "postgres", "psql", "--no-psqlrc",
+                            "--username=occ_admin", "--dbname=occ", "--set=ON_ERROR_STOP=1",
+                            "--tuples-only", "--no-align", f"--command={query}", timeout=20)
+        except (RuntimeError, subprocess.SubprocessError) as error:
+            print(f"DIAGNOSTIC planning lifecycle query unavailable: {error}")
+        else:
+            print(f"DIAGNOSTIC planning request/diagnosis/recommendation status: {state}")
+        raise
     if recommendation.get("status") not in {"RECOMMENDED", "NO_ACTIONABLE_RECOMMENDATION"}:
         raise AssertionError(f"unexpected recovered recommendation status: {recommendation.get('status')!r}")
     recommendation_id = recommendation["recommendationId"]
