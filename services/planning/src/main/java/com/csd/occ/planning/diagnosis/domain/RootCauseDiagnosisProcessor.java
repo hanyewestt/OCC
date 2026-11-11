@@ -194,7 +194,10 @@ public class RootCauseDiagnosisProcessor {
             if (lim != null && !lim.isBlank()) {
                 boolean redundant = values.stream().anyMatch(v ->
                         v.equalsIgnoreCase(lim) ||
-                        (v.contains("traffic-incidents") && lim.toLowerCase(java.util.Locale.ROOT).contains("traffic incident data was supplied")));
+                        (v.contains("traffic-incidents") && lim.toLowerCase(java.util.Locale.ROOT).contains("traffic incident data was supplied")) ||
+                        (v.contains("Corridor traffic signal timings") && lim.contains("Corridor traffic signal timings")) ||
+                        (v.contains("Passenger load categories") && lim.contains("Passenger load categories")) ||
+                        (v.contains("External traffic incident logs") && lim.contains("External traffic incident logs")));
                 if (!redundant) {
                     values.add(lim);
                 }

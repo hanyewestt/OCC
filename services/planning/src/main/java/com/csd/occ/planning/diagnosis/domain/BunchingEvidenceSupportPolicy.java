@@ -154,7 +154,28 @@ public final class BunchingEvidenceSupportPolicy {
         int expected = event.expectedHeadwaySeconds();
         facts.add(String.format(Locale.ROOT, "Headway compressed to %ss against scheduled %ss at stop %s.",
                 observed != null ? observed : "unknown", expected, event.monitoredStopCode()));
-        facts.add("No active external traffic incident was identified within the corridor proximity window.");
+
+        var position = busPositionFor(event, context);
+        if (context.incidents().isEmpty()) {
+            facts.add("No active external traffic incident was identified within the corridor proximity window.");
+        } else if (position.isPresent()) {
+            var arrival = position.get();
+            double minDistanceKm = context.incidents().stream()
+                    .filter(i -> hasValidCoordinates(i.latitude(), i.longitude()))
+                    .mapToDouble(i -> distanceKm(i.latitude().doubleValue(), i.longitude().doubleValue(),
+                            arrival.latitude().doubleValue(), arrival.longitude().doubleValue()))
+                    .min().orElse(Double.MAX_VALUE);
+            if (minDistanceKm < Double.MAX_VALUE) {
+                facts.add(String.format(Locale.ROOT,
+                        "Nearest reported traffic incident was %.1f km away, outside direct corridor impact proximity.",
+                        minDistanceKm));
+            } else {
+                facts.add("External traffic incident logs lack valid coordinates and show no proximity to the monitored corridor.");
+            }
+            limitations.add("External traffic incident logs do not show clear proximity or direct impact to the service route monitored.");
+        } else {
+            facts.add("No active external traffic incident was identified within the corridor proximity window.");
+        }
 
         ZonedDateTime sgtTime = event.firstConfirmedAt() != null
                 ? event.firstConfirmedAt().atZone(ZoneId.of("Asia/Singapore")) : null;
@@ -186,6 +207,17 @@ public final class BunchingEvidenceSupportPolicy {
         } else {
             facts.add("Cumulative off-peak spacing drift compounded along route corridor.");
         }
+
+        String leadLoad = arrivals.size() >= 1 ? arrivals.get(0).loadCategory() : null;
+        String followLoad = arrivals.size() >= 2 ? arrivals.get(1).loadCategory() : null;
+        if (leadLoad != null && followLoad != null && leadLoad.equalsIgnoreCase(followLoad)) {
+            int headwayDeficit = Math.max(0, expected - (observed != null ? observed : expected));
+            facts.add(String.format(Locale.ROOT,
+                    "Uniform passenger load category (%s) across arrivals: intra-tier passenger boarding variations (accounting for up to %ds headway deficit) compounded dwell times across corridor stops without shifting telemetry tiers.",
+                    leadLoad, headwayDeficit));
+            limitations.add("Passenger load categories (SEA/SDA/LSD) reflect coarse occupancy tiers; intra-tier passenger boarding volumes were estimated from headway variance.");
+        }
+
         limitations.add("Corridor traffic signal timings and micro-segment vehicle trajectories were not directly telemetered.");
 
         List<String> ids = java.util.stream.Stream.concat(event.evidenceIds().stream(),
