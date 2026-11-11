@@ -260,6 +260,16 @@ export function areBusesConfirmedBunched(
         return true
       }
     }
+    for (const alert of inc.alerts) {
+      for (const pair of bunchedArrivalGaps(alert)) {
+        if (
+          (pair.leadingOrder === b1.order && pair.followingOrder === b2.order) ||
+          (pair.leadingOrder === b2.order && pair.followingOrder === b1.order)
+        ) {
+          return true
+        }
+      }
+    }
   }
 
   return false
@@ -302,12 +312,17 @@ export function clusterProjectedBuses(
     const avgY = group.reduce((sum, b) => sum + b.y, 0) / group.length
     const isSelected = group.some(b => selectedBuses.has(`${b.serviceId}-${b.order}`))
     const hasIncident = group.length > 1 || group.some(b =>
-      incidents.some(inc =>
-        inc.stripLink &&
-        (!inc.historical || selectedBuses.has(`${b.serviceId}-${b.order}`)) &&
-        (inc.stripLink.frontOrder === b.order || inc.stripLink.followingOrder === b.order) &&
-        inc.serviceId === b.serviceId
-      )
+      incidents.some(inc => {
+        if (inc.historical && !selectedBuses.has(`${b.serviceId}-${b.order}`)) return false
+        if (inc.serviceId !== b.serviceId) return false
+        if (inc.directionId !== null && inc.directionId !== b.directionId) return false
+        if (inc.stripLink && (inc.stripLink.frontOrder === b.order || inc.stripLink.followingOrder === b.order)) {
+          return true
+        }
+        return inc.alerts.some(alert =>
+          bunchedArrivalGaps(alert).some(pair => pair.leadingOrder === b.order || pair.followingOrder === b.order)
+        )
+      })
     )
     const text = group.map(b => b.order).join(' · ')
     const label = group.length === 1
@@ -375,6 +390,10 @@ export interface BunchingMapProps {
   onSelectIncident?: (incidentId: string | null) => void
   routeGeometries?: Record<string, LatLng[]>
   isAllCorridors?: boolean
+  selectedBusKeys?: Set<string>
+  mapHeightClassName?: string
+  title?: string
+  subtitle?: React.ReactNode
 }
 
 export function BunchingMap({
@@ -386,17 +405,32 @@ export function BunchingMap({
   onSelectIncident,
   routeGeometries,
   isAllCorridors = false,
+  selectedBusKeys,
+  mapHeightClassName,
+  title,
+  subtitle,
 }: BunchingMapProps) {
   const incidentBusKeys = useMemo(() => {
     const keys = new Set<string>()
     for (const inc of incidents) {
-      if (inc.stripLink && (!inc.historical || inc.id === selectedIncident?.id)) {
-        keys.add(`${inc.serviceId}-${inc.stripLink.frontOrder}`)
-        keys.add(`${inc.serviceId}-${inc.stripLink.followingOrder}`)
+      if (!inc.historical || inc.id === selectedIncident?.id) {
+        if (inc.stripLink) {
+          keys.add(`${inc.serviceId}-${inc.stripLink.frontOrder}`)
+          keys.add(`${inc.serviceId}-${inc.stripLink.followingOrder}`)
+        }
+        for (const alert of inc.alerts) {
+          for (const pair of bunchedArrivalGaps(alert)) {
+            keys.add(`${inc.serviceId}-${pair.leadingOrder}`)
+            keys.add(`${inc.serviceId}-${pair.followingOrder}`)
+          }
+        }
       }
     }
+    if (selectedBusKeys) {
+      selectedBusKeys.forEach(k => keys.add(k))
+    }
     return keys
-  }, [incidents, selectedIncident])
+  }, [incidents, selectedIncident, selectedBusKeys])
 
   const disruptedRouteKeys = useMemo(() => {
     const set = new Set<string>()
@@ -475,12 +509,24 @@ export function BunchingMap({
   }, [selectedIncident, routes])
 
   const selectedBuses = useMemo(() => {
-    if (!selectedIncident || !selectedIncident.stripLink) return new Set<string>()
     const set = new Set<string>()
-    set.add(`${selectedIncident.serviceId}-${selectedIncident.stripLink.frontOrder}`)
-    set.add(`${selectedIncident.serviceId}-${selectedIncident.stripLink.followingOrder}`)
+    if (selectedIncident) {
+      if (selectedIncident.stripLink) {
+        set.add(`${selectedIncident.serviceId}-${selectedIncident.stripLink.frontOrder}`)
+        set.add(`${selectedIncident.serviceId}-${selectedIncident.stripLink.followingOrder}`)
+      }
+      for (const alert of selectedIncident.alerts) {
+        for (const pair of bunchedArrivalGaps(alert)) {
+          set.add(`${selectedIncident.serviceId}-${pair.leadingOrder}`)
+          set.add(`${selectedIncident.serviceId}-${pair.followingOrder}`)
+        }
+      }
+    }
+    if (selectedBusKeys) {
+      selectedBusKeys.forEach(k => set.add(k))
+    }
     return set
-  }, [selectedIncident])
+  }, [selectedIncident, selectedBusKeys])
 
   const allStops = useMemo(() => {
     const map = new Map<string, { stopCode: string; description: string | null; latitude: number; longitude: number; affected: boolean }>()
@@ -805,7 +851,7 @@ export function BunchingMap({
       <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
         <div className="space-y-0.5">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="font-medium">Affected corridor map</h3>
+            <h3 className="font-medium">{title ?? 'Affected corridor map'}</h3>
             {selectedIncident && (
               <span className={cn(
                 "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
@@ -822,29 +868,31 @@ export function BunchingMap({
             )}
           </div>
           <p className="text-xs text-muted-foreground">
-            {selectedIncident
-              ? selectedIncident.historical
-                ? `Historical incident · Buses have already departed the affected stop${selectedIncident.stopCodes.length === 1 ? '' : 's'}. Map reflects current live bus positions.`
-                : !selectedIncident.stripLink
-                  ? `Active detection · No current bus position estimate is linked to this corridor segment (buses have traversed this segment or observation cycle has rolled over).`
-                  : `Focusing on ${selectedIncident.stopCodes.length} affected stop${selectedIncident.stopCodes.length === 1 ? '' : 's'}. Click any stop or bus to select or switch incident.`
-              : isAllCorridors
-                ? (incidents.some(i => !i.historical)
-                    ? 'Showing active bunching hotspots across all corridors. Select a corridor to inspect all fleet buses.'
-                    : 'No active bunching hotspots across corridors. Select a corridor to inspect all fleet buses.')
-                : 'Stops are sourced from route topology; buses are current position estimates. Click a stop or bus to focus.'}
+            {subtitle !== undefined
+              ? subtitle
+              : selectedIncident
+                ? selectedIncident.historical
+                  ? `Historical incident · Buses have already departed the affected stop${selectedIncident.stopCodes.length === 1 ? '' : 's'}. Map reflects current live bus positions.`
+                  : !selectedIncident.stripLink && selectedBuses.size === 0
+                    ? `Active detection · No current bus position estimate is linked to this corridor segment (buses have traversed this segment or observation cycle has rolled over).`
+                    : `Focusing on ${selectedIncident.stopCodes.length} affected stop${selectedIncident.stopCodes.length === 1 ? '' : 's'}. Click any stop or bus to select or switch incident.`
+                : isAllCorridors
+                  ? (incidents.some(i => !i.historical)
+                      ? 'Showing active bunching hotspots across all corridors. Select a corridor to inspect all fleet buses.'
+                      : 'No active bunching hotspots across corridors. Select a corridor to inspect all fleet buses.')
+                  : 'Stops are sourced from route topology; buses are current position estimates. Click a stop or bus to focus.'}
           </p>
         </div>
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          {selectedIncident && onSelectIncident && (
+          {onSelectIncident && (
             <Button
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => onSelectIncident(null)}
+              onClick={() => onSelectIncident(selectedIncident ? null : 'focus')}
               className="h-7 text-xs"
             >
-              Fit corridor
+              {selectedIncident ? 'Fit corridor' : 'Focus bunched buses'}
             </Button>
           )}
           <span className="inline-flex items-center gap-1.5">
@@ -877,7 +925,8 @@ export function BunchingMap({
         role="region"
         aria-label="Interactive affected corridor map. Use arrow keys to pan, plus and minus to zoom."
         className={cn(
-          "relative h-[24rem] touch-none overflow-hidden bg-slate-100 dark:bg-slate-900 select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "relative touch-none overflow-hidden bg-slate-100 dark:bg-slate-900 select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          mapHeightClassName ?? "h-[24rem]",
           isDragging ? "cursor-grabbing" : "cursor-grab"
         )}
         onPointerDown={onPointerDown}
@@ -1189,7 +1238,7 @@ export function BunchingMap({
       <p className="border-t px-4 py-2 text-right text-[11px] text-muted-foreground">
         Basemap © <a className="underline underline-offset-2" href="https://www.onemap.gov.sg/" target="_blank" rel="noreferrer">OneMap</a> · SLA
       </p>
-      {selectedIncident && !selectedIncident.stripLink && (
+      {selectedIncident && !selectedIncident.stripLink && selectedBuses.size === 0 && subtitle === undefined && (
         <p className="border-t px-4 py-3 text-xs text-muted-foreground">
           {selectedIncident.historical
             ? 'This incident has resolved and bunched buses have departed. No active bunched bus position estimate is present for this past stop.'
@@ -1317,11 +1366,11 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
     ? [] : simulation ? simulation.alerts : liveAlerts.items), [loading, error, simulation, liveAlerts.isLoading, liveAlerts.latestPage, liveAlerts.items])
 
   // Compute grouped incidents
-  const nowMs = Date.parse(liveAlerts.lastSuccessAt ?? '') || 0
+  const nowMs = Date.parse(liveAlerts.lastSuccessAt ?? items[0]?.detectedAt ?? '') || 0
   const incidents = useMemo(() => {
     if (viewMode !== 'grouped' || !items.length) return []
-    return groupRouteIncidents(items, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds)
-  }, [viewMode, items, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds])
+    return groupRouteIncidents(items, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds, Boolean(simulation))
+  }, [viewMode, items, routes, nowMs, pollIntervalSeconds, gapToleranceSeconds, simulation])
 
   type PositionSnapshot = {
     position: RoutePositions['directions'][number]
@@ -1342,11 +1391,11 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
     const snapshot = route ? positionByRoute.get(routeKey(route)) : undefined
     return {
       ...incident,
-      stripLink: !simulation && route && snapshot
+      stripLink: route && snapshot
         ? linkIncidentToPosition(incident, route, snapshot.position,
           (snapshot.sourceObservedAt || snapshot.computedAt) ?? undefined, snapshot.maxSourceAgeSeconds) : null,
     }
-  }), [incidents, routes, positionByRoute, simulation])
+  }), [incidents, routes, positionByRoute])
 
   const selectedIncident = useMemo(() => {
     if (incidentParam) {
@@ -1605,7 +1654,7 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
                 This detection has resolved. The bunched buses have already passed this stop, so live position tracking is no longer active for this stop.
               </p>
             )}
-            {!incident.stripLink && !incident.historical && isSelected && (
+            {!incident.stripLink && !bunchedPairs.length && !incident.historical && isSelected && (
               <p className="text-xs text-muted-foreground bg-muted/40 rounded px-2.5 py-1.5 border border-muted-foreground/20">
                 No active bus position linked for this incident. This incident was detected from arrival forecasts; the bunched buses have already traversed this corridor segment or the observation cycle has rolled over.
               </p>
@@ -1785,7 +1834,10 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
                 >
                   <span>{label}</span>
                   {alertCount > 0 && (
-                    <span className="rounded-full bg-destructive px-1.5 py-0.2 text-[10px] font-bold text-white">
+                    <span className={cn(
+                      "rounded-full px-1.5 py-0.2 text-[10px] font-bold",
+                      activeCorridorIncidents.length > 0 ? "bg-destructive text-white" : "bg-muted-foreground/20 text-muted-foreground"
+                    )}>
                       {alertCount}
                     </span>
                   )}
