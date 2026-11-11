@@ -381,6 +381,9 @@ Write-Output "Deployment secret version recorded: $($secretVersion.VersionIdsToS
 
 # Configure the main-only production environment without per-push reviewers,
 # then scope the role ARNs to it as environment secrets.
+# Initialize paused before making the repaired workflow's settings available.
+python (Join-Path $PSScriptRoot "state.py") --bucket $outputs["ReleaseBucketName"] --region $Region
+if ($LASTEXITCODE -ne 0) { throw "Could not initialize paused control; GitHub setup refused." }
 Write-Output "Configuring the GitHub production environment..."
 $environmentEndpoint = "repos/$Repository/environments/production"
 Invoke-GhJson $environmentEndpoint PUT @{

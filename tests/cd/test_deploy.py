@@ -585,6 +585,31 @@ class RollbackPointerTests(DeployTestBase):
 
 
 class RollbackTests(DeployTestBase):
+    def test_changed_setup_rollback_requires_exact_pinned_baseline_and_range(self):
+        first = self.sandbox.write_release("rel-a-1", REVISION_A)
+        path = first / "bundle/manifest.json"
+        value = json.loads(path.read_text())
+        value["setupInputFiles"] = {"migration.sql": "old-blob"}
+        path.write_text(json.dumps(value))
+        self.sandbox.reseal(first)
+        self.assertEqual(self.sandbox.deploy(first).returncode, 0)
+        baseline = json.loads((self.sandbox.state / "applied-setup.json").read_text())["fingerprint"]
+        second = self.sandbox.write_release("rel-b-1", REVISION_B)
+        path = second / "bundle/manifest.json"
+        value = json.loads(path.read_text())
+        value.update(setupInputFiles={"migration.sql": "new-blob"},
+                     migrationCompatibility="backward-compatible",
+                     compatibilityEvidence={"rollbackReleaseId": "rel-a-1",
+                                            "setupFingerprint": baseline,
+                                            "migrations": ["migration.sql"]})
+        path.write_text(json.dumps(value))
+        self.sandbox.reseal(second)
+        self.assertEqual(self.sandbox.deploy(second).returncode, 0)
+        applied = (self.sandbox.state / "applied-setup.json").read_bytes()
+        result = self.sandbox.deploy(first, action="rollback")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.sandbox.state / "applied-setup.json").read_bytes(), applied)
+
     def deploy_a(self) -> Path:
         release = self.sandbox.write_release("rel-a-1", REVISION_A)
         result = self.sandbox.deploy(release)

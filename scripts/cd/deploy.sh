@@ -16,7 +16,7 @@
 # state only advances after readiness and the public smoke pass.
 set -eu
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 OCC_HOME="${OCC_HOME:-/opt/occ}"
 OCC_DATA_MOUNT="${OCC_DATA_MOUNT:-/var/lib/postgresql}"
 # Compose interpolates the retained-volume bind mount from the environment.
@@ -303,6 +303,14 @@ PY
 done
 record_phase "pulled"
 
+# Resume catches a missed daily backup before setup or application writers run.
+# A brand-new database has no applied setup and nothing useful to back up yet.
+if [ "${OCC_CHECK_OVERDUE_BACKUP:-false}" = true ] && [ -f "$APPLIED_SETUP" ]; then
+    sh "$GATE_SCRIPT" close
+    compose up -d --no-build --wait --wait-timeout "$OCC_READINESS_TIMEOUT" postgres
+    python3 "$SCRIPT_DIR/backup.py" overdue
+fi
+
 NEED_SETUP=1
 if [ -f "$APPLIED_SETUP" ]; then
     APPLIED_FINGERPRINT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["fingerprint"])' \
@@ -315,13 +323,14 @@ if [ "$ACTION" = apply ] && [ "$NEED_SETUP" -eq 1 ]; then
     OCC_GATE_TOKEN=$(cat "$OCC_GATE_DIR/gate-token")
     export OCC_GATE_TOKEN
     sh "$GATE_SCRIPT" close
-    GATE_WAS_CLOSED=1
     record_phase "gate-closed"
     compose stop nginx ingestion disruption planning >/dev/null 2>&1
     record_phase "writers-stopped"
     # PostgreSQL stays up (and is started on first install); the aggregate
     # setup requires it healthy before any schema work.
     compose up -d --no-build --wait --wait-timeout "$OCC_READINESS_TIMEOUT" postgres
+    # Variables are expanded by the container shell.
+    # shellcheck disable=SC2016
     compose exec -T postgres sh -c 'pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
         >/dev/null || die "PostgreSQL is not healthy; setup refused"
     log "running the combined db-setup once (ingestion -> disruption -> planning)"

@@ -22,6 +22,8 @@ TOUCH_TERM="101:101"
 
 case "$1" in
     close)
+        # Nginx variables must remain literal.
+        # shellcheck disable=SC2016
         printf 'set $occ_traffic_gate "closed";\nset $occ_gate_token "%s";\n' "$OCC_GATE_TOKEN" \
             > "$OCC_GATE_DIR/traffic-gate.inc.new"
         mv "$OCC_GATE_DIR/traffic-gate.inc.new" "$OCC_GATE_DIR/traffic-gate.inc"
@@ -31,6 +33,7 @@ case "$1" in
     open)
         # The token stays defined even while open: the readiness location
         # references it at configuration parse time.
+        # shellcheck disable=SC2016
         printf 'set $occ_traffic_gate "open";\nset $occ_gate_token "%s";\n' "$OCC_GATE_TOKEN" \
             > "$OCC_GATE_DIR/traffic-gate.inc.new"
         mv "$OCC_GATE_DIR/traffic-gate.inc.new" "$OCC_GATE_DIR/traffic-gate.inc"

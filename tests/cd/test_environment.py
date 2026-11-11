@@ -63,6 +63,7 @@ class EnvironmentTests(unittest.TestCase):
         self.assertLess(online, dispatch)
         self.assertTrue(any(a[:3] == ["ec2", "wait", "instance-status-ok"] for a in calls))
         self.assertNotIn("docker build", str(self.cloud.commands))
+        self.assertIn("OCC_CHECK_OVERDUE_BACKUP=true", str(self.cloud.commands))
         self.assertEqual(self.control()["phase"], "running")
         self.assertEqual(self.cloud.read("", "state/last-deployed.json", "")["value"]["releaseId"], "rel-b")
 

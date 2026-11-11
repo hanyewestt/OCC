@@ -80,6 +80,14 @@ class StateTests(unittest.TestCase):
     def test_a_missing_key_is_explicitly_absent(self):
         self.assertIsNone(self.state.read_json("bucket", "missing", "us-east-1")["value"])
 
+    def test_initial_control_pauses_once_without_overwriting_running_intent(self):
+        self.state.initialize_control("bucket", "us-east-1")
+        record = self.state.read_json("bucket", "state/control.json", "us-east-1")
+        self.assertEqual(record["value"]["desiredMode"], "paused")
+        self.state.compare_and_set_json("bucket", "state/control.json", {"desiredMode":"running"}, record["etag"], "us-east-1")
+        self.state.initialize_control("bucket", "us-east-1")
+        self.assertEqual(self.state.read_json("bucket", "state/control.json", "us-east-1")["value"]["desiredMode"], "running")
+
 
 if __name__ == "__main__":
     unittest.main()

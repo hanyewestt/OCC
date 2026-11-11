@@ -77,9 +77,34 @@ job names. In branch protection:
   deployment role secrets; pull-request jobs never see them. Its mutation
   runs are serialized in one concurrency group and are never cancelled.
 
-The Extended verification workflow keeps its path-filtered, non-universal
-semantics, and its runs still build from source with their isolated synthetic
-providers.
+The path-filtered Extended verification workflow still builds from source.
+Core CI additionally runs `Candidate workflows and recovery / System
+verification` against the complete candidate images. Main verification must
+finish that check before CD can publish. This adds a required-check name;
+inspect one actual PR and main run before changing branch protection.
+
+The packaging job uses the main-only `OCC_VERIFY_ROLE_ARN` repository variable
+for read-only published-baseline/ECR access. Pull requests build all five
+images without assuming production roles. `occ-candidate` freezes the producing
+run, SHA, owner plan, input hashes, reused sources and OCI/config/archive
+digests. The post-verification pipeline publishes built OCI bytes with
+`--preserve-digests`, verifies all final ECR digests, then scans and produces an
+SBOM for each exact final digest. Failed, skipped or incomplete scan jobs block
+publication. Main's manual `refresh` is `none`, `rescan` or `rebuild`.
+
+CD tests run on Linux; Windows also executes portable policy tests and the real
+PowerShell bootstrap CLI fixture. `python tests/cd/host_integration.py all`
+requires Docker and fails when it is unavailable. It exercises real isolated
+PostGIS backup/restore (spatial data, roles, ownership and grants) and Buildx
+OCI transfer/import. Its S3 boundary is a local fixture; AWS IAM, EC2 boot,
+systemd, CloudFront and quota acceptance require a reviewed live rollout.
+
+Publication has its own queue. Deploy, pause and resume share
+`occ-production-mutation`, `cancel-in-progress: false`, `queue: max`; status is
+outside it. GitHub permits 100 pending entries; overflow/cancelled jobs must be
+retried explicitly. Durable S3 operation ownership still applies after runner
+loss. Actionlint 1.7.12 has no `queue` support: ignore only that exact diagnostic
+when running it, and check the parsed concurrency contracts separately.
 
 All system jobs reuse
 [`system-verification.yml`](../.github/workflows/system-verification.yml).

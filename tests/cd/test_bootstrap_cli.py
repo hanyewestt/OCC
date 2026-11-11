@@ -62,6 +62,18 @@ function global:gh {
     Add-Content $env:OCC_CLI_LOG (ConvertTo-Json -Depth 8 -Compress -InputObject @{tool="gh";args=$a;payload=$payload})
     if (($a -join " ") -match "deployment-branch-policies" -and -not ($a -contains "POST")) { '{"branch_policies":[]}' }
 }
+function global:python {
+    $a = @($args)
+    if ($a[0] -like "*egress-prefix-list.py") {
+        & (Get-Command python -CommandType Application | Select-Object -First 1).Source @a
+        return
+    }
+    if (-not ($a[0] -like "*state.py") -or -not ($a -contains "--bucket") -or -not ($a -contains "--region")) {
+        throw "unexpected Python boundary"
+    }
+    Add-Content $env:OCC_CLI_LOG (ConvertTo-Json -Compress -InputObject @{tool="python";args=$a})
+    $global:LASTEXITCODE = 0
+}
 & $env:OCC_BOOTSTRAP -EnvFile $env:OCC_FIXTURE_ENV -StackName fixture-stack -ApplyChangeSet
 ''', encoding="utf-8")
             env = dict(os.environ, OCC_CLI_LOG=str(log),

@@ -7,13 +7,22 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      refresh:
+        description: 'none: ordinary owners; rescan: same bytes; rebuild: all five'
+        type: choice
+        options: [none, rescan, rebuild]
+        default: none
 
 permissions:
   contents: read
   # The reusable verification downloads artifacts from its own run.
   actions: read
+  id-token: write
 
 jobs:
   verify:
     name: Main verification
     uses: ./.github/workflows/ci.yml
+    with:
+      refresh: ${{ inputs.refresh || 'none' }}
