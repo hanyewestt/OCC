@@ -284,7 +284,7 @@ class RootCauseDiagnosisProcessorTest {
         verify(completion).complete(eq(requestId), diagnosis.capture(), anyList(), anyString(), eq("persisted-recommendation-payload"), any(UUID.class));
         assertThat(diagnosis.getValue().causeCode()).isEqualTo("HEADWAY_DECAY");
         assertThat(diagnosis.getValue().causeSubtype()).isEqualTo("PEAK_CONGESTION");
-        assertThat(diagnosis.getValue().likelyCause()).contains("Peak arterial traffic friction");
+        assertThat(diagnosis.getValue().likelyCause()).contains("Rush hour traffic");
     }
 
     @Test

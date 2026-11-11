@@ -163,16 +163,16 @@ class DiagnosisSummaryPolicyTest {
         var snapshot = new EvidenceSnapshot(event, context, List.of("bunching:event"), "SIMULATION");
 
         var peakResult = policy.summarize("HEADWAY_DECAY", "PEAK_CONGESTION", List.of("bunching:event"), snapshot);
-        assertThat(peakResult.likelyCause()).contains("Peak arterial traffic friction", "rush hour", "600s", "50s", "stop 44251");
+        assertThat(peakResult.likelyCause()).contains("Rush hour traffic", "Heavy corridor congestion", "600s", "50s", "stop 44251");
 
         var dispatchResult = policy.summarize("HEADWAY_DECAY", "TERMINAL_DISPATCH", List.of("bunching:event"), snapshot);
-        assertThat(dispatchResult.likelyCause()).contains("Terminal dispatch irregularity", "route origin", "stop 44251");
+        assertThat(dispatchResult.likelyCause()).contains("Interchange dispatch gap", "departed the interchange", "stop 44251");
 
         var capacityResult = policy.summarize("HEADWAY_DECAY", "FLEET_CAPACITY_ASYMMETRY", List.of("bunching:event"), snapshot);
-        assertThat(capacityResult.likelyCause()).contains("Fleet capacity asymmetry", "Differing vehicle passenger capacities", "stop 44251");
+        assertThat(capacityResult.likelyCause()).contains("Bus size mismatch", "Differing vehicle passenger capacities", "stop 44251");
 
         var driftResult = policy.summarize("HEADWAY_DECAY", "CUMULATIVE_DRIFT", List.of("bunching:event"), snapshot);
-        assertThat(driftResult.likelyCause()).contains("Cumulative route drift", "Long-distance spacing decay", "stop 44251");
+        assertThat(driftResult.likelyCause()).contains("Route spacing drift", "Trailing bus caught up to", "stop 44251");
     }
 
     @Test

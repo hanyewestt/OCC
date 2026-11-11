@@ -172,10 +172,10 @@ public final class BunchingEvidenceSupportPolicy {
             } else {
                 facts.add("External traffic incident logs lack valid coordinates and show no proximity to the monitored corridor.");
             }
-            limitations.add("External traffic incident logs do not show clear proximity or direct impact to the service route monitored.");
         } else {
             facts.add("No active external traffic incident was identified within the corridor proximity window.");
         }
+        limitations.add("No nearby incidents: No traffic accidents or roadworks reported along this route.");
 
         ZonedDateTime sgtTime = event.firstConfirmedAt() != null
                 ? event.firstConfirmedAt().atZone(ZoneId.of("Asia/Singapore")) : null;
@@ -215,7 +215,6 @@ public final class BunchingEvidenceSupportPolicy {
             facts.add(String.format(Locale.ROOT,
                     "Uniform passenger load category (%s) across arrivals: intra-tier passenger boarding variations (accounting for up to %ds headway deficit) compounded dwell times across corridor stops without shifting telemetry tiers.",
                     leadLoad, headwayDeficit));
-            limitations.add("Passenger load categories (SEA/SDA/LSD) reflect coarse occupancy tiers; intra-tier passenger boarding volumes were estimated from headway variance.");
         }
 
 
