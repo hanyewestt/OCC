@@ -1,0 +1,19 @@
+name: Main verification
+
+# Verification for pushes to main: the exact SHA is checked out by the
+# reusable workflow and the same jobs that guard pull requests run once.
+# The release/deploy pipeline (cd.yml) waits for this workflow to complete.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # The reusable verification downloads artifacts from its own run.
+  actions: read
+
+jobs:
+  verify:
+    name: Main verification
+    uses: ./.github/workflows/ci.yml
