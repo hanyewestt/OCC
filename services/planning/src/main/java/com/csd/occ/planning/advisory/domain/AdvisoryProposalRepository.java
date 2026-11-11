@@ -60,6 +60,9 @@ public interface AdvisoryProposalRepository extends JpaRepository<AdvisoryPropos
     @Query("update AdvisoryProposal p set p.status='EXPIRED',p.version=p.version+1 where p.demoRunId=:runId and p.status='PENDING'")
     int expirePendingByDemoRunId(UUID runId);
     @org.springframework.data.jpa.repository.Modifying
+    @Query("update AdvisoryProposal p set p.status='EXPIRED',p.version=p.version+1 where p.disruptionId=:disruptionId and p.status='PENDING'")
+    int expirePendingByDisruptionId(UUID disruptionId);
+    @org.springframework.data.jpa.repository.Modifying
     @Query("delete from AdvisoryProposal p where p.createdAt<:cutoff and not exists (select i from IssuedInstruction i where i.proposalId=p.id)")
     int deleteUnreferencedBefore(java.time.Instant cutoff);
 }

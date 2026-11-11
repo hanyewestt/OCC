@@ -34,6 +34,7 @@ public class AdvisoryReconciliationService {
             instruction.cancel("SOURCE_WITHDRAWN");
             instructionAudit.recordTransition(instruction, "INSTRUCTION_CANCELLED", null);
         }
+        proposals.expirePendingByDisruptionId(id);
         if (!"NO_LONGER_REPORTED".equals(reason)) notices.withdrawSource(id);
     }
 

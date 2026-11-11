@@ -836,6 +836,7 @@ class AdvisoryPersistenceIT {
     @Test
     void sourceCancellationWithdrawsNoticeAndCancelsInstructionInOneTransaction() {
         var instruction = instructions.decide(proposal(InstructionType.REDUCE_SPEED).id(), null, null, CONTROLLER, null);
+        var pending = proposal(InstructionType.BE_CAUTIOUS);
         var notice = draft(hazard, UUID.randomUUID(), MESSAGE); notices.publish(notice.id(), "controller");
         jdbc.execute("ALTER TABLE planning.public_notice ADD CONSTRAINT test_reject_withdrawal CHECK(status <> 'WITHDRAWN') NOT VALID");
         try {
@@ -845,10 +846,12 @@ class AdvisoryPersistenceIT {
             jdbc.execute("ALTER TABLE planning.public_notice DROP CONSTRAINT test_reject_withdrawal");
         }
         assertThat(issued.findById(instruction.id()).orElseThrow().status()).isEqualTo("ISSUED");
+        assertThat(proposals.findById(pending.id()).orElseThrow().status()).isEqualTo("PENDING");
         assertThat(publications.findById(notice.id()).orElseThrow().status()).isEqualTo("PUBLISHED");
         reconciliation.sourceCleared(hazard.disruptionId(), "SOURCE_CANCELLED");
         reconciliation.sourceCleared(hazard.disruptionId(), "SOURCE_CANCELLED");
         assertThat(issued.findById(instruction.id()).orElseThrow().status()).isEqualTo("CANCELLED");
+        assertThat(proposals.findById(pending.id()).orElseThrow().status()).isEqualTo("EXPIRED");
         assertThat(publications.findById(notice.id()).orElseThrow().status()).isEqualTo("WITHDRAWN");
         assertThat(publications.findById(notice.id()).orElseThrow().withdrawnAt()).isEqualTo(NOW);
         assertThat(jdbc.queryForObject("select count(*) from planning.application_audit_event where source_key=?", Integer.class,
