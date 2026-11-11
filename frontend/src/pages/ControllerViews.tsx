@@ -948,7 +948,7 @@ export function BunchingMap({
             Travel direction
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="inline-flex items-center justify-center size-3.5 text-amber-500 text-xs font-black leading-none" aria-hidden="true">
+            <span className="inline-flex items-center justify-center size-3.5 text-amber-600/80 text-[10px] font-black leading-none" aria-hidden="true">
               ▲
             </span>
             Traffic hazard
@@ -1110,32 +1110,32 @@ export function BunchingMap({
                 role="img"
                 aria-label={label}
                 tabIndex={0}
-                className="pointer-events-auto cursor-pointer outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
+                className="pointer-events-auto cursor-pointer outline-none opacity-60 hover:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
                 onPointerDown={e => e.stopPropagation()}
               >
                 <title>{label}</title>
                 <polygon
-                  points={`${hazard.x},${hazard.y - 13} ${hazard.x + 11},${hazard.y + 7} ${hazard.x - 11},${hazard.y + 7}`}
-                  fill="#f59e0b"
+                  points={`${hazard.x},${hazard.y - 8} ${hazard.x + 7},${hazard.y + 4.5} ${hazard.x - 7},${hazard.y + 4.5}`}
+                  fill="#d97706"
                   stroke="#78350f"
-                  strokeWidth="1.5"
+                  strokeWidth="1"
                   strokeLinejoin="round"
-                  className="drop-shadow-md hover:brightness-110"
+                  className="hover:brightness-110"
                 />
                 <line
                   x1={hazard.x}
-                  y1={hazard.y - 6}
+                  y1={hazard.y - 4}
                   x2={hazard.x}
                   y2={hazard.y}
                   stroke="#78350f"
-                  strokeWidth="2"
+                  strokeWidth="1.2"
                   strokeLinecap="round"
                   className="pointer-events-none select-none"
                 />
                 <circle
                   cx={hazard.x}
-                  cy={hazard.y + 3.5}
-                  r="1"
+                  cy={hazard.y + 2.25}
+                  r="0.65"
                   fill="#78350f"
                   className="pointer-events-none select-none"
                 />

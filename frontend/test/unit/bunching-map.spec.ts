@@ -506,7 +506,7 @@ test('BunchingMap renders hazard markers with warning icons, accessible labels, 
   // Valid hazard marker rendered with warning icon and title
   expect(html).toContain('Hazard: Vehicle Breakdown - Breakdown on Teck Whye Ave')
   expect(html).toContain('polygon')
-  expect(html).toContain('fill="#f59e0b"')
+  expect(html).toContain('fill="#d97706"')
 
   // Invalid hazard is filtered out
   expect(html).not.toContain('Invalid coordinate hazard')
