@@ -392,6 +392,78 @@ export function distanceMeters(lat1: number, lon1: number, lat2: number, lon2: n
   return 2 * r * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
+export type HazardCategory = 'accident' | 'breakdown' | 'roadwork' | 'traffic' | 'flood' | 'other'
+
+export function categorizeHazard(hazard: { incidentType?: string | null; message?: string | null }): HazardCategory {
+  const text = `${hazard.incidentType ?? ''} ${hazard.message ?? ''}`.toLowerCase()
+  if (text.includes('accident') || text.includes('collision') || text.includes('crash')) return 'accident'
+  if (text.includes('breakdown') || text.includes('broken down') || text.includes('stalled')) return 'breakdown'
+  if (text.includes('roadwork') || text.includes('road work') || text.includes('construction') || text.includes('maintenance')) return 'roadwork'
+  if (text.includes('flood') || text.includes('ponding') || text.includes('water')) return 'flood'
+  if (text.includes('heavy traffic') || text.includes('jam') || text.includes('congestion')) return 'traffic'
+  return 'other'
+}
+
+export function renderHazardSvg(x: number, y: number, category: HazardCategory) {
+  switch (category) {
+    case 'roadwork':
+      return (
+        <g transform={`translate(${x}, ${y})`}>
+          <rect x="-6" y="3.5" width="12" height="2" rx="0.5" fill="#ca8a04" stroke="#854d0e" strokeWidth="0.8" />
+          <polygon points="0,-7 4.5,3.5 -4.5,3.5" fill="#ea580c" stroke="#854d0e" strokeWidth="0.8" strokeLinejoin="round" />
+          <polygon points="-1.5,-1 1.5,-1 2.5,1.5 -2.5,1.5" fill="#ffffff" />
+        </g>
+      )
+    case 'breakdown':
+      return (
+        <g transform={`translate(${x}, ${y})`}>
+          <circle r="7.5" fill="#ea580c" stroke="#9a3412" strokeWidth="1" />
+          <path d="M -2.5 3.5 L 1.5 -0.5 M -3 2 L -1.5 3.5" stroke="#ffffff" strokeWidth="1.5" strokeLinecap="round" />
+          <circle cx="2.2" cy="-2.2" r="2.2" fill="none" stroke="#ffffff" strokeWidth="1.3" />
+          <path d="M 1.8 -3.3 L 3.3 -1.8" stroke="#ea580c" strokeWidth="1.2" strokeLinecap="round" />
+        </g>
+      )
+    case 'accident':
+      return (
+        <g transform={`translate(${x}, ${y})`}>
+          <circle r="7.5" fill="#dc2626" stroke="#991b1b" strokeWidth="1" />
+          <path d="M -3.5 -3.5 L 3.5 3.5 M 3.5 -3.5 L -3.5 3.5 M 0 -4.5 L 0 4.5 M -4.5 0 L 4.5 0" stroke="#ffffff" strokeWidth="1.4" strokeLinecap="round" />
+          <circle r="1" fill="#ffffff" />
+        </g>
+      )
+    case 'flood':
+      return (
+        <g transform={`translate(${x}, ${y})`}>
+          <circle r="7.5" fill="#0284c7" stroke="#075985" strokeWidth="1" />
+          <path d="M -4.5 -1.5 Q -2.5 -3.5 0 -1.5 Q 2.5 0.5 4.5 -1.5 M -4.5 1.5 Q -2.5 -0.5 0 1.5 Q 2.5 3.5 4.5 1.5" fill="none" stroke="#ffffff" strokeWidth="1.3" strokeLinecap="round" />
+        </g>
+      )
+    case 'traffic':
+      return (
+        <g transform={`translate(${x}, ${y})`}>
+          <circle r="7.5" fill="#7c3aed" stroke="#5b21b6" strokeWidth="1" />
+          <rect x="-4" y="-3.5" width="8" height="2.5" rx="0.8" fill="#ffffff" />
+          <rect x="-4" y="1" width="8" height="2.5" rx="0.8" fill="#ffffff" />
+        </g>
+      )
+    case 'other':
+    default:
+      return (
+        <g transform={`translate(${x}, ${y})`}>
+          <polygon
+            points="0,-7.5 7,4.5 -7,4.5"
+            fill="#d97706"
+            stroke="#78350f"
+            strokeWidth="1"
+            strokeLinejoin="round"
+          />
+          <line x1="0" y1="-3.5" x2="0" y2="0.5" stroke="#78350f" strokeWidth="1.2" strokeLinecap="round" />
+          <circle cx="0" cy="2.5" r="0.65" fill="#78350f" />
+        </g>
+      )
+  }
+}
+
 export interface MapHazard {
   id: string
   latitude: number
@@ -659,6 +731,43 @@ export function BunchingMap({
     setManualView(null)
   }
 
+  const [showStops, setShowStops] = useState(true)
+  const [showBuses, setShowBuses] = useState(true)
+  const [showHazards, setShowHazards] = useState(true)
+  const [activeHazardTypes, setActiveHazardTypes] = useState<Set<HazardCategory>>(
+    () => new Set(['breakdown', 'roadwork', 'accident', 'traffic', 'flood', 'other'])
+  )
+
+  const toggleHazardType = (cat: HazardCategory) => {
+    setActiveHazardTypes(prev => {
+      const next = new Set(prev)
+      if (next.has(cat)) next.delete(cat)
+      else next.add(cat)
+      return next
+    })
+  }
+
+  const hazardCounts = useMemo(() => {
+    const counts: Record<HazardCategory, number> = {
+      breakdown: 0,
+      roadwork: 0,
+      accident: 0,
+      traffic: 0,
+      flood: 0,
+      other: 0,
+    }
+    for (const h of hazards ?? []) {
+      if (validCoord(h.latitude, h.longitude)) {
+        counts[categorizeHazard(h)]++
+      }
+    }
+    return counts
+  }, [hazards])
+
+  const totalValidHazards = useMemo(() => {
+    return (hazards ?? []).filter(h => validCoord(h.latitude, h.longitude)).length
+  }, [hazards])
+
   const effectiveFit = selectedFit ?? initialFit
   const center = manualView ? manualView.center : effectiveFit.center
   const zoom = manualView ? manualView.zoom : effectiveFit.zoom
@@ -857,24 +966,30 @@ export function BunchingMap({
     }
   }).filter(line => line.count > 1)
 
-  const projectedStops = allStops.map(stop => ({
+
+
+  const projectedStops = showStops ? allStops.map(stop => ({
     ...stop,
     ...project(stop.latitude, stop.longitude),
-  }))
+  })) : []
 
-  const projectedBuses = busMarkers.map(bus => ({
+  const projectedBuses = showBuses ? busMarkers.map(bus => ({
     ...bus,
     ...project(bus.latitude, bus.longitude),
-  }))
+  })) : []
 
-  const projectedHazards = (hazards ?? [])
-    .filter(h => validCoord(h.latitude, h.longitude))
-    .map(hazard => ({
-      ...hazard,
-      ...project(hazard.latitude, hazard.longitude),
-    }))
+  const projectedHazards = showHazards
+    ? (hazards ?? [])
+        .filter(h => validCoord(h.latitude, h.longitude))
+        .filter(h => activeHazardTypes.has(categorizeHazard(h)))
+        .map(hazard => ({
+          ...hazard,
+          category: categorizeHazard(hazard),
+          ...project(hazard.latitude, hazard.longitude),
+        }))
+    : []
 
-  const busClusters = clusterProjectedBuses(projectedBuses, selectedBuses, incidents, 28)
+  const busClusters = showBuses ? clusterProjectedBuses(projectedBuses, selectedBuses, incidents, 28) : []
 
   return (
     <div className="overflow-hidden rounded-lg border bg-muted/10">
@@ -913,7 +1028,7 @@ export function BunchingMap({
                   : 'Stops are sourced from route topology; buses are current position estimates. Click a stop or bus to focus.'}
           </p>
         </div>
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2">
           {onSelectIncident && (
             <Button
               type="button"
@@ -925,8 +1040,94 @@ export function BunchingMap({
               {selectedIncident ? 'Fit corridor' : 'Focus bunched buses'}
             </Button>
           )}
+        </div>
+      </div>
+
+      {/* Layer Toggles & Differentiated Hazard Filter Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/20 px-4 py-2 text-xs">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="font-semibold text-foreground/70 mr-0.5 text-[11px] uppercase tracking-wider">Layers:</span>
+          <button
+            type="button"
+            onClick={() => setShowStops(s => !s)}
+            className={cn(
+              "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-xs font-medium transition-colors",
+              showStops ? "bg-background text-foreground border-border shadow-xs" : "opacity-40 text-muted-foreground border-transparent hover:opacity-70 line-through"
+            )}
+            aria-pressed={showStops}
+            title="Toggle route bus stops on map"
+          >
+            <span className="size-2 rounded-full bg-slate-500" />
+            <span>Stops</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowBuses(b => !b)}
+            className={cn(
+              "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-xs font-medium transition-colors",
+              showBuses ? "bg-background text-foreground border-border shadow-xs" : "opacity-40 text-muted-foreground border-transparent hover:opacity-70 line-through"
+            )}
+            aria-pressed={showBuses}
+            title="Toggle fleet buses on map"
+          >
+            <span className="size-2 rounded-full bg-blue-600" />
+            <span>Buses</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowHazards(h => !h)}
+            className={cn(
+              "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-xs font-medium transition-colors",
+              showHazards ? "bg-background text-foreground border-border shadow-xs" : "opacity-40 text-muted-foreground border-transparent hover:opacity-70 line-through"
+            )}
+            aria-pressed={showHazards}
+            title="Toggle traffic hazards on map"
+          >
+            <span className="text-[11px]">⚠️</span>
+            <span>Hazards {totalValidHazards > 0 && `(${totalValidHazards})`}</span>
+          </button>
+        </div>
+
+        {/* Hazard category filter toggles when hazards exist */}
+        {showHazards && totalValidHazards > 0 && (
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="text-[11px] text-muted-foreground mr-1">Filter:</span>
+            {(['roadwork', 'breakdown', 'accident', 'traffic', 'flood', 'other'] as HazardCategory[])
+              .filter(cat => hazardCounts[cat] > 0)
+              .map(cat => {
+                const active = activeHazardTypes.has(cat)
+                const labelMap: Record<HazardCategory, { name: string; icon: string }> = {
+                  roadwork: { name: 'Roadwork', icon: '🚧' },
+                  breakdown: { name: 'Breakdown', icon: '🔧' },
+                  accident: { name: 'Accident', icon: '💥' },
+                  traffic: { name: 'Jam', icon: '🚗' },
+                  flood: { name: 'Flood', icon: '🌊' },
+                  other: { name: 'Other', icon: '⚠️' },
+                }
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => toggleHazardType(cat)}
+                    className={cn(
+                      "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium border transition-colors",
+                      active ? "bg-background text-foreground border-border shadow-xs" : "opacity-40 text-muted-foreground border-transparent hover:opacity-70 line-through"
+                    )}
+                    aria-pressed={active}
+                    title={`Toggle ${labelMap[cat].name}`}
+                  >
+                    <span>{labelMap[cat].icon}</span>
+                    <span>{labelMap[cat].name} ({hazardCounts[cat]})</span>
+                  </button>
+                )
+              })}
+          </div>
+        )}
+
+        {/* Map Legend */}
+        <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block size-2.5 rounded-full border border-white bg-slate-600 shadow-xs" />
+            <span className="inline-block size-2 rounded-full bg-slate-600" />
             Bus stop
           </span>
           <span className="inline-flex items-center gap-1.5">
@@ -947,12 +1148,34 @@ export function BunchingMap({
             </span>
             Travel direction
           </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="inline-flex items-center justify-center size-3.5 text-amber-600/80 text-[10px] font-black leading-none" aria-hidden="true">
-              ▲
-            </span>
-            Traffic hazard
-          </span>
+          {showHazards && (
+            <>
+              {hazardCounts.breakdown > 0 && (
+                <span className="inline-flex items-center gap-1">
+                  <span>🔧</span>
+                  <span>Vehicle breakdown</span>
+                </span>
+              )}
+              {hazardCounts.roadwork > 0 && (
+                <span className="inline-flex items-center gap-1">
+                  <span>🚧</span>
+                  <span>Roadwork</span>
+                </span>
+              )}
+              {hazardCounts.accident > 0 && (
+                <span className="inline-flex items-center gap-1">
+                  <span>💥</span>
+                  <span>Accident</span>
+                </span>
+              )}
+              {hazardCounts.other > 0 && (
+                <span className="inline-flex items-center gap-1">
+                  <span>⚠️</span>
+                  <span>Traffic hazard</span>
+                </span>
+              )}
+            </>
+          )}
         </div>
       </div>
       <div
@@ -1110,35 +1333,11 @@ export function BunchingMap({
                 role="img"
                 aria-label={label}
                 tabIndex={0}
-                className="pointer-events-auto cursor-pointer outline-none opacity-60 hover:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
+                className="pointer-events-auto cursor-pointer outline-none opacity-80 hover:opacity-100 focus-visible:opacity-100 transition-opacity focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
                 onPointerDown={e => e.stopPropagation()}
               >
                 <title>{label}</title>
-                <polygon
-                  points={`${hazard.x},${hazard.y - 8} ${hazard.x + 7},${hazard.y + 4.5} ${hazard.x - 7},${hazard.y + 4.5}`}
-                  fill="#d97706"
-                  stroke="#78350f"
-                  strokeWidth="1"
-                  strokeLinejoin="round"
-                  className="hover:brightness-110"
-                />
-                <line
-                  x1={hazard.x}
-                  y1={hazard.y - 4}
-                  x2={hazard.x}
-                  y2={hazard.y}
-                  stroke="#78350f"
-                  strokeWidth="1.2"
-                  strokeLinecap="round"
-                  className="pointer-events-none select-none"
-                />
-                <circle
-                  cx={hazard.x}
-                  cy={hazard.y + 2.25}
-                  r="0.65"
-                  fill="#78350f"
-                  className="pointer-events-none select-none"
-                />
+                {renderHazardSvg(hazard.x, hazard.y, hazard.category)}
               </g>
             )
           })}
