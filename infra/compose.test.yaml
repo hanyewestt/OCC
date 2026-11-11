@@ -1,12 +1,15 @@
 # Disposable integration stack. Always pass an isolated Compose project name.
+# Build with the host network so CI runners can resolve Ubuntu package mirrors.
 services:
   db-setup:
     build:
+      network: host
       context: .
       dockerfile: infra/flyway.Dockerfile
 
   ingestion:
     build:
+      network: host
       context: .
       dockerfile: infra/java.Dockerfile
       args:
@@ -20,6 +23,7 @@ services:
 
   disruption:
     build:
+      network: host
       context: .
       dockerfile: infra/java.Dockerfile
       args:
@@ -32,6 +36,7 @@ services:
 
   planning:
     build:
+      network: host
       context: .
       dockerfile: infra/java.Dockerfile
       args:

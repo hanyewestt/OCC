@@ -348,14 +348,14 @@ jobs:
       - name: Build shared Java application image
         if: ${{ !matrix.migration_source }}
         run: >-
-          docker build --pull --file infra/java.Dockerfile
+          docker build --network=host --pull --file infra/java.Dockerfile
           --build-arg OCC_SERVICE=${{ matrix.service }}
           --build-arg OCC_SERVICE_INTERNAL_PORT=${{ matrix.port }}
           --tag ${{ matrix.image }} .
       - name: Build owned-schema migration image
         if: ${{ matrix.migration_source }}
         run: >-
-          docker build --pull --file infra/flyway.Dockerfile
+          docker build --network=host --pull --file infra/flyway.Dockerfile
           --tag ${{ matrix.image }} .
       - name: Fail on HIGH or CRITICAL OS/library findings
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
