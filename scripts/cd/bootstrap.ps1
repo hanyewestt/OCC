@@ -42,6 +42,17 @@ function Invoke-Aws {
     }
 }
 
+function Test-Stack {
+    param([Parameter(Mandatory)][string]$Name)
+    if ($Profile) {
+        & aws cloudformation describe-stacks --stack-name $Name --profile $Profile --region $Region 2>$null | Out-Null
+    }
+    else {
+        & aws cloudformation describe-stacks --stack-name $Name --region $Region 2>$null | Out-Null
+    }
+    return ($LASTEXITCODE -eq 0)
+}
+
 # Verify both identities before any mutation so a missing session fails fast
 # and clearly instead of half-applying.
 if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
@@ -186,15 +197,18 @@ $parameters = @(
 )
 Write-Output "Creating change set for stack $StackName..."
 $changeSet = "occ-bootstrap-" + (Get-Date -Format "yyyyMMddHHmmss")
+$stackExists = Test-Stack $StackName
+$changeSetType = if ($stackExists) { "UPDATE" } else { "CREATE" }
 $templatePath = Join-Path $repoRoot "infra/aws/ec2-cd.yaml"
 $templateUri = "file://" + ($templatePath -replace '\\', '/')
 $changeSetArguments = @(
     "cloudformation", "create-change-set", "--stack-name", $StackName,
-    "--change-set-name", $changeSet, "--template-body", $templateUri,
+    "--change-set-name", $changeSet, "--change-set-type", $changeSetType,
+    "--template-body", $templateUri,
     "--capabilities", "CAPABILITY_NAMED_IAM", "--parameters"
 ) + $parameters
 Invoke-Aws $changeSetArguments
-Write-Output "Change set $changeSet created. Review it with:"
+Write-Output "Change set $changeSet ($changeSetType) created. Review it with:"
 Write-Output "  aws cloudformation describe-change-set --stack-name $StackName --change-set-name $changeSet"
 if (-not $ApplyChangeSet) {
     Write-Output "Apply it with:  pwsh scripts/cd/bootstrap.ps1 -ApplyChangeSet"
@@ -202,8 +216,10 @@ if (-not $ApplyChangeSet) {
 }
 Invoke-Aws @("cloudformation", "execute-change-set", "--stack-name", $StackName, "--change-set-name", $changeSet)
 Write-Output "Executing change set $changeSet; waiting for the stack..."
-Invoke-Aws @("cloudformation", "wait", "stack-update-complete") 2>$null
-if ($LASTEXITCODE -ne 0) {
+if ($stackExists) {
+    Invoke-Aws @("cloudformation", "wait", "stack-update-complete")
+}
+else {
     Invoke-Aws @("cloudformation", "wait", "stack-create-complete")
 }
 

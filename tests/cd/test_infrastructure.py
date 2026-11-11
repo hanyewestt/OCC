@@ -70,6 +70,13 @@ class CloudFormationContractTests(unittest.TestCase):
         self.assertIn("get-managed-prefix-list-entries", bootstrap)
         self.assertIn('"0.0.0.0/0", "::/0"', bootstrap)
 
+    def test_bootstrap_handles_first_install_with_a_create_change_set(self):
+        bootstrap = BOOTSTRAP_PS1.read_text(encoding="utf-8")
+        # create-change-set defaults to UPDATE and rejects a missing stack.
+        self.assertIn("--change-set-type", bootstrap)
+        self.assertIn('"CREATE"', bootstrap)
+        self.assertIn("stack-create-complete", bootstrap)
+
     def test_storage_is_encrypted_versioned_and_private(self):
         text = template_text()
         self.assertRegex(text, r"Encrypted:\s*true")
