@@ -7,6 +7,7 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
+import time
 import urllib.request
 
 SOURCES = {
@@ -52,6 +53,18 @@ def quotas(region: str) -> tuple[int, int]:
             values["security groups per network interface"])
 
 
+def wait_ready(region: str, prefix_id: str, attempts: int = 120) -> dict:
+    for _ in range(attempts):
+        prefix = aws(region, "ec2", "describe-managed-prefix-lists", "--prefix-list-ids", prefix_id)["PrefixLists"][0]
+        status = prefix["State"]
+        if status in ("create-complete", "modify-complete", "restore-complete"):
+            return prefix
+        if status not in ("create-in-progress", "modify-in-progress", "restore-in-progress"):
+            raise ValueError(f"prefix list {prefix_id} is not usable: {status}")
+        time.sleep(2)
+    raise ValueError(f"prefix list {prefix_id} did not finish within the bounded wait")
+
+
 def collect(source_file: str | None, cidrs: list[str], hosts: list[str]) -> tuple[list[str], dict]:
     if source_file:
         documents = json.loads(Path(source_file).read_text(encoding="utf-8"))
@@ -70,7 +83,9 @@ def collect(source_file: str | None, cidrs: list[str], hosts: list[str]) -> tupl
     ranges.extend(p["ipv4Prefix"] for p in documents.get("google", {}).get("prefixes", [])
                   if "ipv4Prefix" in p)
     github = documents.get("github", {})
-    for key in ("web", "api", "git", "packages", "actions", "github_enterprise_importer"):
+    # Hosted Actions runners are outside the EC2 host's network. Their Azure
+    # ranges alone exceed SG capacity and do not permit release asset downloads.
+    for key in ("web", "api", "git", "packages"):
         ranges.extend(c for c in github.get(key, []) if ":" not in c)
     observed = {}
     for host in hosts:
@@ -113,13 +128,12 @@ def main() -> int:
                            "--prefix-list-name", "occ-ec2-cd-egress", "--address-family", "IPv4",
                            "--max-entries", str(len(cidrs)), "--entries",
                            json.dumps([{"Cidr": c, "Description": "Reviewed OCC HTTPS destination"} for c in cidrs[:100]]))
-            prefix = response["PrefixList"]
+            prefix = wait_ready(args.region, response["PrefixList"]["PrefixListId"])
             remaining = cidrs[100:]
         else:
             if not args.prefix_list_id:
                 raise ValueError("update requires --prefix-list-id")
-            prefix = aws(args.region, "ec2", "describe-managed-prefix-lists", "--prefix-list-ids",
-                         args.prefix_list_id)["PrefixLists"][0]
+            prefix = wait_ready(args.region, args.prefix_list_id)
             # Do not shrink/expand capacity while referenced without an explicit reviewed resize.
             validate_capacity(prefix["MaxEntries"], rules, groups, ingress_weight=args.ingress_weight)
             if len(cidrs) > prefix["MaxEntries"]:
@@ -133,7 +147,7 @@ def main() -> int:
             response = aws(args.region, "ec2", "modify-managed-prefix-list", "--prefix-list-id",
                            prefix["PrefixListId"], "--current-version", str(prefix["Version"]),
                            "--add-entries", json.dumps([{"Cidr": c} for c in remaining[start:start + 100]]))
-            prefix = response["PrefixList"]
+            prefix = wait_ready(args.region, response["PrefixList"]["PrefixListId"])
         print(json.dumps({"prefixListId": prefix["PrefixListId"], "maxEntries": prefix["MaxEntries"]}))
         return 0
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:

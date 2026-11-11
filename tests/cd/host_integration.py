@@ -6,19 +6,24 @@ an in-memory S3 boundary. Never reads deployment secrets or production data.
 EC2/systemd/CloudFront acceptance requires the separately reviewed live stack.
 """
 import argparse
+import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import tarfile
 import uuid
 from unittest.mock import patch
+from contextlib import nullcontext
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/'scripts/cd'))
 import backup
 import pipeline
+import host_failure
 
 
 def run(*args, **kwargs):
@@ -100,6 +105,42 @@ RESET ROLE;'''
             if len(checked) != 1:
                 raise RuntimeError('restore verification was not executed')
             print('PASS real PostGIS snapshot, roles, ownership, grants, default ACLs, data and isolated cleanup')
+            # A valid inventory containing an invalid pg_dump payload must fail
+            # inside the real restore client and still remove its owned server.
+            key=next(iter(objects))
+            with tarfile.open(fileobj=io.BytesIO(objects[key]),mode='r:gz') as archive:
+                content={member.name:archive.extractfile(member).read() for member in archive.getmembers()}
+            content['database.dump']=b'invalid synthetic custom dump'
+            metadata=json.loads(content['metadata.json'])
+            metadata['checksums']['database.dump']=hashlib.sha256(content['database.dump']).hexdigest()
+            content['metadata.json']=json.dumps(metadata).encode()
+            output=io.BytesIO()
+            with tarfile.open(fileobj=output,mode='w:gz') as archive:
+                for name,data in content.items():
+                    member=tarfile.TarInfo(name)
+                    member.size=len(data)
+                    archive.addfile(member,io.BytesIO(data))
+            objects[key]=output.getvalue()
+            created=[]
+            def track_restore(args,**kwargs):
+                result=actual_command(args,**kwargs)
+                if args[:2]==['docker','run']:
+                    created.append(result.decode().strip())
+                return result
+            with patch.object(backup,'aws',side_effect=s3), patch.object(backup,'command',side_effect=track_restore):
+                try:
+                    backup.restore(root,'isolated-fixture',key)
+                except subprocess.CalledProcessError:
+                    pass
+                else:
+                    raise RuntimeError('invalid restore unexpectedly succeeded')
+            if len(created)!=1:
+                raise RuntimeError('failure cleanup did not exercise an owned restore server')
+            if subprocess.run(['docker','inspect',created[0]],capture_output=True).returncode==0:
+                raise RuntimeError('failed restore leaked its owned server')
+            if any(p.name.startswith('restore-') for p in root.iterdir()):
+                raise RuntimeError('failed restore leaked temporary dump files')
+            print('PASS real pg_restore failure removes only its owned server and temporary files')
         finally:
             if container:
                 run('docker','rm','--force',container)
@@ -143,9 +184,63 @@ def check_oci():
                 run('docker','buildx','rm',builder)
 
 
+def check_failure():
+    # Exercise the Linux kernel lock separately from the Docker boundary.
+    lock_code = '''import pathlib,tempfile,sys
+sys.path.insert(0,'/code')
+import host_failure
+with tempfile.TemporaryDirectory() as directory:
+    path=pathlib.Path(directory)/'lock'
+    with host_failure.host_lock(path):
+        try:
+            with host_failure.host_lock(path): raise RuntimeError('second lock was admitted')
+        except BlockingIOError: pass
+    with host_failure.host_lock(path): pass
+print('PASS Linux flock excludes overlap and releases ownership')
+'''
+    result=run('docker','run','--rm','--network','none','-v',str(ROOT/'scripts/cd')+':/code:ro',
+               'python:3.13-slim','python','-c',lock_code)
+    print(result.decode().strip())
+    project='occ-failure-proof-'+uuid.uuid4().hex[:12]
+    containers={}
+    with tempfile.TemporaryDirectory(prefix='occ-failure-proof-') as temporary:
+        root=Path(temporary)
+        gate=root/'runtime/nginx-gate/traffic-gate.inc'
+        gate.parent.mkdir(parents=True)
+        gate.write_text('set $occ_traffic_gate "open";\nset $occ_gate_token "synthetic";\n')
+        try:
+            for service in ('nginx','ingestion','disruption','planning','postgres'):
+                image_arguments = ['-e','POSTGRES_USER=occ_admin','-e','POSTGRES_DB=occ',
+                                   '-e','POSTGRES_HOST_AUTH_METHOD=trust',backup.POSTGIS_IMAGE] if service=='postgres' else [
+                    '--entrypoint','nginx',
+                    'nginx:1.30.6-alpine-slim@sha256:f65ed258206d1eb6c4eb6141111715a2cf94ac0a4ec9675fc2da186f7aadb163',
+                    '-g','daemon off;']
+                containers[service]=run('docker','run','--detach','--network','none',
+                    '--label','com.docker.compose.project='+project,
+                    '--label','com.docker.compose.service='+service,
+                    *image_arguments).decode().strip()
+            operation=dict(operationId='failure-proof',action='apply',reference=dict(releaseId='synthetic'))
+            # The host driver is Windows here; real fcntl exclusion was proven above.
+            with patch.dict(os.environ,dict(OCC_HOME=str(root),OCC_PROJECT=project)), \
+                 patch.object(host_failure,'host_lock',return_value=nullcontext()):
+                receipt=host_failure.record_failure(operation,pre_apply=False)
+            if not receipt['gateClosed'] or not receipt['setupRecoveryRequired']:
+                raise RuntimeError('uncertain database outcome was not guarded')
+            for service,container in containers.items():
+                running=run('docker','inspect','--format','{{.State.Running}}',container).decode().strip()
+                if running != ('true' if service=='postgres' else 'false'):
+                    raise RuntimeError('incorrect quiesce state for '+service)
+            if '"closed"' not in gate.read_text():
+                raise RuntimeError('stored gate was not closed')
+            print('PASS real Docker recovery stops edge/writers, preserves PostgreSQL and records guarded failure')
+        finally:
+            for container in containers.values():
+                run('docker','rm','--force',container)
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('suite',choices=('backup','oci','all'))
+    parser.add_argument('suite',choices=('backup','oci','failure','all'))
     args=parser.parse_args()
     run('docker','info')
     os.chdir(ROOT)
@@ -153,6 +248,8 @@ def main():
         check_backup()
     if args.suite in ('oci','all'):
         check_oci()
+    if args.suite in ('failure','all'):
+        check_failure()
 
 
 if __name__ == '__main__':

@@ -211,10 +211,12 @@ def recover_receipt(region: str, instance_id: str, bucket: str, operation: dict)
         raise RemoteError("unsafe receipt operation ID")
     command_id = operation.get("receiptCommandId")
     if not command_id:
-        commands = ["set -eu", f"cat /opt/occ/state/receipts/{operation_id}.json"]
+        failure_source = Path(__file__).with_name('host_failure.py').read_text(encoding='utf-8')
+        fallback = "python3 -c " + shlex.quote(failure_source) + " " + shlex.quote(json.dumps(operation)) + " false"
+        commands = ["set -eu", f"if [ -f /opt/occ/state/receipts/{operation_id}.json ]; then cat /opt/occ/state/receipts/{operation_id}.json; else {fallback}; fi"]
         result = aws(["ssm", "send-command", "--instance-ids", instance_id,
                       "--document-name", "AWS-RunShellScript", "--comment", "occ-receipt:" + operation_id,
-                      "--parameters", json.dumps({"commands": commands, "executionTimeout": ["60"]})], region)
+                      "--parameters", json.dumps({"commands": commands, "executionTimeout": ["600"]})], region)
         try:
             command_id = json.loads(result.stdout)["Command"]["CommandId"]
         except (ValueError, KeyError, TypeError) as error:
@@ -222,6 +224,9 @@ def recover_receipt(region: str, instance_id: str, bucket: str, operation: dict)
         operation = dict(operation, receiptCommandId=command_id)
         _save_operation(bucket, region, operation)
     if wait_terminal(region, instance_id, command_id) != "Success":
+        retry = dict(operation)
+        retry.pop("receiptCommandId", None)
+        _save_operation(bucket, region, retry)
         raise RemoteError("host receipt is unavailable; inspect the host before releasing ownership")
     result = aws(["ssm", "get-command-invocation", "--command-id", command_id,
                   "--instance-id", instance_id], region)

@@ -115,13 +115,14 @@ aws secretsmanager get-secret-value \
 chmod 0600 "$ENV_DIR/env.json"
 python3 - "$ENV_DIR/env.json" "$ENV_DIR/env.rendered" <<'PY'
 import json
+import re
 import sys
 
 settings = json.load(open(sys.argv[1], encoding="utf-8"))
 with open(sys.argv[2], "w", encoding="utf-8", newline="\n") as handle:
     for key, value in sorted(settings.items()):
-        if not key or "=" in key:
-            continue
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            raise ValueError("invalid environment variable name in deployment secret")
         value = str(value).replace("'", "'\\''")
         handle.write(f"export {key}='{value}'\n")
 PY

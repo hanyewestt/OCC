@@ -20,6 +20,9 @@ class BootstrapCliTests(unittest.TestCase):
                     (ROOT / ".env.example").read_text(encoding="utf-8").splitlines()
                     if line and not line.startswith("#") and "=" in line]
             env_file.write_text("\n".join(f"{key}=fixture" for key in keys), encoding="utf-8")
+            with env_file.open('a', encoding='utf-8') as handle:
+                handle.write('\nPOSTGRES_PASSWORD="fixture password # literal" # comment\n')
+                handle.write("OCC_INGESTION_DB_PASSWORD='fixture $literal'\n")
             log = root / "calls.jsonl"
             script = root / "run.ps1"
             script.write_text(r'''
@@ -27,7 +30,12 @@ $ErrorActionPreference = "Stop"
 function global:aws {
     $a = @($args)
     $global:LASTEXITCODE = 0
-    Add-Content $env:OCC_CLI_LOG (ConvertTo-Json -Compress -InputObject @{tool="aws";args=$a})
+    $payload = $null
+    if ($a -contains "--cli-input-json") {
+        $payloadPath = $a[[Array]::IndexOf($a, "--cli-input-json")+1] -replace '^file://',''
+        $payload = Get-Content -Raw $payloadPath | ConvertFrom-Json
+    }
+    Add-Content $env:OCC_CLI_LOG (ConvertTo-Json -Depth 8 -Compress -InputObject @{tool="aws";args=$a;payload=$payload})
     $pair = ($a | Select-Object -First 2) -join " "
     switch ($pair) {
       "sts get-caller-identity" { '{"Account":"123456789012"}' }
@@ -64,7 +72,7 @@ function global:gh {
 }
 function global:python {
     $a = @($args)
-    if ($a[0] -like "*egress-prefix-list.py") {
+    if ($a[0] -like "*egress-prefix-list.py" -or $a[0] -like "*deployment_env.py") {
         & (Get-Command python -CommandType Application | Select-Object -First 1).Source @a
         return
     }
@@ -94,6 +102,11 @@ function global:python {
                              {"protected_branches": False, "custom_branch_policies": True})
             branch = next(c for c in calls if c.get("payload", {}) and c["payload"].get("name") == "main")
             self.assertEqual(branch["payload"]["type"], "branch")
+            secret = next(c['payload'] for c in calls if c['tool']=='aws' and
+                          c['args'][:2]==['secretsmanager','put-secret-value'])
+            settings = json.loads(secret['SecretString'])
+            self.assertEqual(settings['POSTGRES_PASSWORD'], 'fixture password # literal')
+            self.assertEqual(settings['OCC_INGESTION_DB_PASSWORD'], 'fixture $literal')
 
 
 if __name__ == "__main__":

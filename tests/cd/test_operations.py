@@ -132,6 +132,39 @@ class OperationTests(unittest.TestCase):
         self.assertNotIn("deploy.sh", "\n".join(commands))
         self.assertEqual(self.objects["state/last-deployed.json"][0]["releaseId"], "rel-1")
 
+    def test_terminal_missing_receipt_quiesces_and_archives_failure_without_pointer_advance(self):
+        operation=self.completed_operation()
+        self.objects.pop('state/receipts/op-1.json')
+        receipt=dict(operationId='op-1',action='apply',reference=self.reference,
+                     releaseId='rel-1',outcome='failed',phase='failed',gateClosed=True,setupRecoveryRequired=True)
+        commands=[]
+        def aws(args,region,**kwargs):
+            if args[:2]==['ssm','send-command']:
+                parameters=json.loads(args[args.index('--parameters')+1])
+                self.assertEqual(parameters['executionTimeout'],['600'])
+                commands.extend(parameters['commands'])
+                value={'Command':{'CommandId':'failure-inspection'}}
+            else:
+                value={'StandardOutputContent':json.dumps(receipt)}
+            return subprocess.CompletedProcess(args,0,json.dumps(value),'')
+        with patch.object(self.remote,'aws',side_effect=aws), patch.object(self.remote,'wait_terminal',side_effect=['Failed','Success']):
+            with self.assertRaisesRegex(self.remote.RemoteError,'failed'):
+                self.remote.reconcile_operation('us-east-1','i-test','bucket',operation)
+        self.assertIn('setup-recovery-required.json','\n'.join(commands))
+        self.assertNotIn('state/last-deployed.json',self.objects)
+        self.assertEqual(self.objects['state/active-operation.json'][0]['result'],'failed')
+
+    def test_failed_receipt_probe_can_retry_instead_of_caching_a_dead_command(self):
+        operation=self.completed_operation()
+        operation=dict(operation,receiptCommandId='failed-inspection')
+        self.objects['state/active-operation.json']=(operation,'active-etag')
+        with patch.object(self.remote,'wait_terminal',return_value='Failed'):
+            with self.assertRaisesRegex(self.remote.RemoteError,'unavailable'):
+                self.remote.recover_receipt('us-east-1','i-test','bucket',operation)
+        active=self.objects['state/active-operation.json'][0]
+        self.assertNotIn('receiptCommandId',active)
+        self.assertEqual(active['operationId'],'op-1')
+
 
 if __name__ == "__main__":
     unittest.main()

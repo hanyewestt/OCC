@@ -160,16 +160,16 @@ $requiredNames = @(
     "OCC_INGESTION_TO_DISRUPTION_PEER_TOKEN", "PGADMIN_DEFAULT_PASSWORD"
 )
 $placeholderPattern = "^(change-?me|placeholder|synthetic|example|xxx+|<.*>)$"
-foreach ($line in Get-Content $envPath) {
-    $trimmed = $line.Trim()
-    if (-not $trimmed -or $trimmed.StartsWith("#")) { continue }
-    $separator = $trimmed.IndexOf("=")
-    if ($separator -lt 1) { continue }
-    $name = $trimmed.Substring(0, $separator).Trim()
-    $value = $trimmed.Substring($separator + 1).Trim()
-    $envNames[$name] = $value
+${parsedEnvPath} = Join-Path ([System.IO.Path]::GetTempPath()) ("occ-env-" + [guid]::NewGuid().ToString("N") + ".json")
+try {
+    & python (Join-Path $PSScriptRoot "deployment_env.py") --input $envPath --output $parsedEnvPath
+    if ($LASTEXITCODE -ne 0) { throw "Dotenv parsing failed; install scripts/cd/requirements.txt and check the file syntax." }
+    $envNames = Get-Content -Raw $parsedEnvPath | ConvertFrom-Json -AsHashtable
 }
-$missing = $requiredNames | Where-Object { -not $envNames.ContainsKey($_) }
+finally {
+    Remove-Item -LiteralPath $parsedEnvPath -Force -ErrorAction SilentlyContinue
+}
+$missing = $requiredNames | Where-Object { -not $envNames.ContainsKey($_) -or [string]::IsNullOrWhiteSpace($envNames[$_]) }
 if ($missing) {
     throw "Environment file is missing required settings (names only): $($missing -join ', ')"
 }

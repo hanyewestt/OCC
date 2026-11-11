@@ -14,6 +14,10 @@ import pipeline
 
 
 class PipelineTests(unittest.TestCase):
+    def test_packaging_program_and_transfer_tool_invalidate_every_image_owner(self):
+        for path in ('scripts/cd/pipeline.py','scripts/cd/skopeo-image.txt'):
+            self.assertEqual(set(pipeline.release.ownership_for(path)), set(pipeline.release.COMPONENTS))
+
     def test_repository_mapping_keeps_namespace_and_normalizes_setup(self):
         env = {'OCC_'+c.upper().replace('-', '_')+'_REPOSITORY':
                '123.dkr.ecr.us-east-1.amazonaws.com/occ/'+c for c in pipeline.release.COMPONENTS}

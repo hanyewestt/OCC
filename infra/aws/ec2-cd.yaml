@@ -211,10 +211,18 @@ Resources:
               - Effect: Allow
                 Action:
                   - ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
                   - ecr:BatchGetImage
                   - ecr:GetDownloadUrlForLayer
                   - ecr:BatchCheckLayerAvailability
-                Resource: "*"
+                Resource:
+                  - !GetAtt OccIngestionRepository.Arn
+                  - !GetAtt OccDisruptionRepository.Arn
+                  - !GetAtt OccPlanningRepository.Arn
+                  - !GetAtt OccDbSetupRepository.Arn
+                  - !GetAtt OccWebRepository.Arn
               - Effect: Allow
                 Action:
                   - s3:GetObject
@@ -226,7 +234,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - s3:PutObject
-                Resource: !Sub "${OccReleaseBucket.Arn}/state/*"
+                Resource: !Sub "${OccReleaseBucket.Arn}/state/receipts/*"
               - Effect: Allow
                 Action:
                   - s3:PutObject
@@ -486,9 +494,6 @@ Resources:
               - Effect: Allow
                 Action: [s3:ListBucket]
                 Resource: !GetAtt OccReleaseBucket.Arn
-                Condition:
-                  StringLike:
-                    s3:prefix: [state/latest-published.json, "releases/*"]
               - Effect: Allow
                 Action: [s3:GetObject, s3:GetObjectVersion]
                 Resource:
@@ -524,6 +529,9 @@ Resources:
               - Effect: Allow
                 Action:
                   - ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
                   - ecr:BatchCheckLayerAvailability
                   - ecr:GetDownloadUrlForLayer
                   - ecr:PutImage
@@ -532,18 +540,28 @@ Resources:
                   - ecr:CompleteLayerUpload
                   - ecr:BatchGetImage
                   - ecr:DescribeImages
-                Resource: "*"
+                Resource:
+                  - !GetAtt OccIngestionRepository.Arn
+                  - !GetAtt OccDisruptionRepository.Arn
+                  - !GetAtt OccPlanningRepository.Arn
+                  - !GetAtt OccDbSetupRepository.Arn
+                  - !GetAtt OccWebRepository.Arn
+              - Effect: Allow
+                Action: [s3:ListBucket]
+                Resource: !GetAtt OccReleaseBucket.Arn
               - Effect: Allow
                 Action:
                   - s3:GetObject
                   - s3:GetObjectVersion
-                Resource: !Sub "${OccReleaseBucket.Arn}/*"
+                Resource:
+                  - !Sub "${OccReleaseBucket.Arn}/releases/*"
+                  - !Sub "${OccReleaseBucket.Arn}/state/latest-published.json"
               - Effect: Allow
                 Action:
                   - s3:PutObject
                 Resource:
                   - !Sub "${OccReleaseBucket.Arn}/releases/*"
-                  - !Sub "${OccReleaseBucket.Arn}/state/*"
+                  - !Sub "${OccReleaseBucket.Arn}/state/latest-published.json"
               - Effect: Allow
                 Action:
                   - kms:Decrypt

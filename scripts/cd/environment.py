@@ -49,6 +49,31 @@ def wait_online(region, instance_id, attempts=120):
     raise ControlError("SSM is not Online; instance running alone does not prove readiness")
 
 
+def host_ready(region, instance_id):
+    """Read-only proof for a running no-op; boot closes the gate independently of S3."""
+    wait_online(region, instance_id)
+    commands = ['set -eu', '. /opt/occ/env.rendered',
+        '''for service in ingestion disruption planning; do
+case "$service" in ingestion) port=${OCC_INGESTION_INTERNAL_PORT:-8001};; disruption) port=${OCC_DISRUPTION_INTERNAL_PORT:-8002};; planning) port=${OCC_PLANNING_INTERNAL_PORT:-8003};; esac
+ids=$(docker ps --quiet --filter label=com.docker.compose.project=occ-production --filter "label=com.docker.compose.service=$service")
+set -- $ids
+[ "$#" = 1 ]
+docker exec "$1" sh -c "curl --fail --silent --max-time 5 http://127.0.0.1:$port/actuator/health/readiness" >/dev/null
+done''',
+        '''url=${OCC_PUBLIC_URL:-${OCC_ORIGIN_PUBLIC_URL:?missing public URL}}
+for check in _occ_edge_health:204 :200 frontend-config:200 login:200; do
+path=${check%:*}; expected=${check##*:}
+status=$(curl --connect-timeout 5 --max-time 10 --silent --output /dev/null --write-out '%{http_code}' "$url/$path")
+[ "$status" = "$expected" ]
+done''']
+    result = aws(['ssm', 'send-command', '--instance-ids', instance_id,
+                  '--document-name', 'AWS-RunShellScript', '--comment', 'occ-readiness',
+                  '--timeout-seconds', '120', '--parameters',
+                  json.dumps({'commands':commands,'executionTimeout':['120']})], region)
+    command_id = json.loads(result.stdout)['Command']['CommandId']
+    return remote.wait_terminal(region, instance_id, command_id) == 'Success'
+
+
 def pause_commands(bucket, operation_id, region):
     receipt_code = '''import json,os,pathlib,sys
 operation=sys.argv[1]; path=pathlib.Path('/opt/occ/state/receipts')/(operation+'.json')
@@ -113,7 +138,7 @@ def do_start(region, instance_id, bucket, operation_id):
     reference = remote.selected_release(bucket, region)
     deployed = state.read_json(bucket, "state/last-deployed.json", region)["value"]
     actual = instance_state(region, instance_id)
-    if control.get("desiredMode") == "running" and control.get("phase") == "running" and control.get("result") == "success" and actual == "running" and deployed and all(deployed.get(k) == v for k,v in reference.items()):
+    if control.get("desiredMode") == "running" and control.get("phase") == "running" and control.get("result") == "success" and actual == "running" and deployed and all(deployed.get(k) == v for k,v in reference.items()) and host_ready(region, instance_id):
         print("environment already runs the latest verified release")
         return 0
     operation = remote.begin_operation(region, instance_id, bucket, operation_id, "apply", reference)
