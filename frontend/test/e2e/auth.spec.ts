@@ -1347,6 +1347,10 @@ test('recommendation editor closes when the active simulation run changes', asyn
     controllerRefreshIntervalSeconds: 1, ingestionPollIntervalSeconds: 60, routeIncidentGapToleranceSeconds: 20, captainRefreshIntervalSeconds: 5, publicNoticeRefreshIntervalSeconds: 30,
   } }))
   let runId = 'run-1'
+  await context.route('**/api/v1/demo-runs/run-2/route-positions', route => route.fulfill({ json: {
+    serviceId: '190', computedAt: '2026-10-23T04:00:00Z', refreshIntervalSeconds: 60,
+    maxSourceAgeSeconds: 120, directions: [],
+  } }))
   let signalNewRun!: () => void
   const newRunLoaded = new Promise<void>(resolve => { signalNewRun = resolve })
   await context.route('**/api/v1/demo-runs/active', route => {
