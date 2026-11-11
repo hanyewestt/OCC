@@ -33,11 +33,12 @@ class CloudFormationContractTests(unittest.TestCase):
     def test_template_exists_with_required_parameters(self):
         text = template_text()
         self.assertIn("t3.small", text)
+        self.assertIn("Default: pslimmm/OCC", text)
         self.assertNotRegex(text, r"(?i)domainname.*parameter|acmcertificate")
         self.assertNotRegex(text, r"(?i)keyname|keypair")
         bootstrap = BOOTSTRAP_PS1.read_text(encoding="utf-8")
         self.assertIn("us-east-1", bootstrap)
-        self.assertIn("hanyewestt/OCC", bootstrap)
+        self.assertIn("pslimmm/OCC", bootstrap)
 
     def test_no_nat_alb_ssh_or_direct_service_ports(self):
         text = template_text()

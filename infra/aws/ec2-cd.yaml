@@ -9,7 +9,7 @@ Description: >-
 Parameters:
   RepositoryName:
     Type: String
-    Default: hanyewestt/OCC
+    Default: pslimmm/OCC
     Description: GitHub repository allowed to assume the CI/CD roles.
   InstanceType:
     Type: String
