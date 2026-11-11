@@ -171,7 +171,7 @@ public final class DiagnosisSummaryPolicy {
         return new DiagnosisEvidenceDetail(incident.evidenceId(), cleanText(incident.incidentType()),
                 cleanText(incident.message()), incident.observedAt(), incident.fetchedAt(), event.firstConfirmedAt(),
                 secondsBefore, distanceMeters, positionHasCoordinates ? position.evidenceId() : null,
-                event.monitoredStopCode());
+                event.monitoredStopCode(), incident.latitude(), incident.longitude());
     }
 
     private static String cleanText(String value) {

@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type AiAuditRecord, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type EarlyControllerSuggestion, type PageResult, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RoutePositions } from '@/lib/api'
+import { ApiError, apiRequest, enrichBunchingStops, routeDirections, type AiAuditRecord, type Arrival, type BunchingAlert, type BusRoute, type Decision, type DemoRun, type EarlyControllerSuggestion, type PageResult, type PendingRecommendation, type PlanningDiagnosisRequest, type PlanningDiagnosisRequestPage, type RouteDirection, type RoutePositions, type TrafficIncident, type TrafficIncidentPageResponse } from '@/lib/api'
 import { signOut } from '@/lib/auth'
 import { ControllerSidebar, controllerPages } from '@/components/ControllerSidebar'
 import { ControllerOverview, ControllerDisruptions, ControllerAudit } from '@/pages/ControllerViews'
@@ -227,6 +227,25 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       throw error
     }
   }, record => record.invocationId, pathname === '/controller/audit')
+  const trafficIncidentCollection = usePagedCollection<TrafficIncident, TrafficIncidentPageResponse>(
+    token,
+    async (page, signal) => {
+      try {
+        const result = await apiRequest<TrafficIncidentPageResponse>(
+          `/api/v1/disruption/traffic-incidents?page=${page}&size=100`,
+          token,
+          signal
+        )
+        if (!result) throw new Error('Traffic incidents response was empty.')
+        return result
+      } catch (failure) {
+        if (failure instanceof ApiError && failure.status === 401 && !signal.aborted) void signOut(failure.message)
+        throw failure
+      }
+    },
+    incident => incident.id,
+    pathname.endsWith('/disruptions') || pathname.endsWith('/planning')
+  )
   const requestLiveData = useCallback(async (signal: AbortSignal) => {
     const generation = ++liveRequestGenerationRef.current
     return { generation, data: await loadLiveData(token, signal) }
@@ -322,6 +341,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     if (!simulation && (pathname === '/controller' || pathname.endsWith('/disruptions') || pathname.endsWith('/planning'))) requests.push(alertCollection.refresh(signal))
     if (pathname === '/controller/planning') requests.push(recommendationCollection.refresh(signal), diagnosisCollection.refresh(signal))
     if (pathname === '/controller/audit') requests.push(decisionCollection.refresh(signal), suggestionCollection.refresh(signal), aiAuditCollection.refresh(signal))
+    if (pathname.endsWith('/disruptions') || pathname.endsWith('/planning')) requests.push(trafficIncidentCollection.refresh(signal))
     if (pathname !== '/controller') requests.push(refreshAdvisories.current(signal))
     await Promise.allSettled(requests)
   }, loading || collectionsLoading || advisoryPending || planningPending || switching, requestKey)
@@ -482,13 +502,15 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
         </>}
         {pathname.endsWith('/disruptions') && <ControllerDisruptions liveAlerts={alertCollection} run={run} loading={loading}
           routes={routeStops.data ?? []} positions={routePositions.data ?? []} pollIntervalSeconds={pollIntervalSeconds}
-          gapToleranceSeconds={Math.max(30, routeIncidentGapToleranceSeconds)} />}
+          gapToleranceSeconds={Math.max(30, routeIncidentGapToleranceSeconds)}
+          trafficIncidents={trafficIncidentCollection.items} />}
         {pathname.endsWith('/planning') && <ControllerPlanning recommendations={recommendationCollection} diagnosisRequests={diagnosisCollection}
           loading={loading} modeError={run.error} mode={modeValue} demoRunId={simulation?.id ?? null} token={token}
           detectedAlerts={simulation ? simulation.alerts : alertCollection.items}
           positions={routePositions.data ?? []}
           routes={routeStops.data ?? []} pollIntervalSeconds={pollIntervalSeconds}
           gapToleranceSeconds={Math.max(30, routeIncidentGapToleranceSeconds)}
+          trafficIncidents={trafficIncidentCollection.items}
           nowMs={Date.parse(alertCollection.lastSuccessAt || (simulation ? shellRefreshTime.at : '') || '') || 0}
           onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { void requestRefresh('mutation') }} />}
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} suggestions={suggestionCollection} aiAudits={aiAuditCollection} loading={loading} />}
