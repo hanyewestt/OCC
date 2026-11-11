@@ -11,6 +11,8 @@ import { NoticeBoardPage } from '@/pages/NoticeBoardPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { ErrorPage } from '@/components/ErrorPage'
 import { loadConfig, type PublicConfig } from '@/lib/config'
+import { AdminPage } from '@/pages/AdminPage'
+import { adminRoutePaths, adminRoutes } from '@/lib/admin-routes'
 
 export function App() {
   const auth = useAuth()
@@ -20,7 +22,7 @@ export function App() {
   const [publicConfig, setPublicConfig] = useState<PublicConfig | null>(null)
   const [configError, setConfigError] = useState('')
   const token = auth.session?.access_token
-  const pageHome = controllerPages.some(page => page.path === pathname) ? '/controller' : pathname
+  const pageHome = controllerPages.some(page => page.path === pathname) ? '/controller' : pathname.startsWith('/admin/') ? '/admin' : pathname
   const key = `${token}:${pageHome}:${retry}`
   const home = auth.identity ? homeFor(auth.identity.role) : null
 
@@ -48,7 +50,7 @@ export function App() {
 
   if (pathname === '/notices') return <NoticeBoardPage key={search} />
   let content
-  if (pathname === '/404' || !['/', '/login', ...controllerPages.map(page => page.path), '/admin', '/captain', '/401', '/403'].includes(pathname)) {
+  if (pathname === '/404' || !['/', '/login', ...controllerPages.map(page => page.path), ...adminRoutePaths, '/captain', '/401', '/403'].includes(pathname)) {
     content = <NotFoundPage />
   } else if (pathname === '/401') {
     content = <ErrorPage code={401} title="Sign-in required" description="Your session is missing or has expired. Sign in to continue.">
@@ -74,6 +76,8 @@ export function App() {
     content = pathname === '/login' ? <LoginPage message={auth.message} /> : <Navigate to="/login" replace />
   } else if (pathname === '/' || pathname === '/login') {
     content = <Navigate to={home!} replace />
+  } else if (pathname === adminRoutes.root) {
+    content = <Navigate to={adminRoutes.audit} replace />
   } else if (access.key !== key) {
     content = <p role="status" className="text-sm text-muted-foreground">Verifying access…</p>
   } else if (!publicConfig) {
@@ -89,11 +93,8 @@ export function App() {
       controllerRefreshIntervalSeconds={publicConfig!.controllerRefreshIntervalSeconds}
       ingestionPollIntervalSeconds={publicConfig!.ingestionPollIntervalSeconds}
       routeIncidentGapToleranceSeconds={publicConfig!.routeIncidentGapToleranceSeconds} /></main>
-    if (home === '/admin') {
-      content = <div className="space-y-4"><h1 className="text-2xl font-semibold">Admin</h1>
-        <p className="text-sm text-muted-foreground">Signed in as {email}</p>
-        <Button variant="outline" onClick={() => void signOut()}>Sign out</Button></div>
-    } else content = <CaptainPage key={token} email={email} token={token!} refreshIntervalSeconds={publicConfig!.captainRefreshIntervalSeconds} />
+    if (home === '/admin') return <AdminPage key={token} email={email} token={token!} />
+    content = <CaptainPage key={token} email={email} token={token!} refreshIntervalSeconds={publicConfig!.captainRefreshIntervalSeconds} />
   }
   return <main className="flex min-h-svh items-center justify-center px-5 py-12">{content}</main>
 }
