@@ -1148,6 +1148,8 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
   const [editorOpen, setEditorOpen] = useState(false)
   const [discardOpen, setDiscardOpen] = useState(false)
   const hasBusSuggestions = !!selected.suggestedOutcomes?.length
+  const grouped = affectedBuses(selected).length > 1
+  const canApprove = !grouped || affectedBuses(selected).every(bus => selected.suggestedOutcomes?.some(item => item.busReference === bus))
   const showsLegacySuggestion = !hasBusSuggestions && affectedBuses(selected).length === 1
   const [instructions, setInstructions] = useState<BusReplacement[]>(() => initialBusInstructions(selected))
   const [rationale, setRationale] = useState('')
@@ -1268,7 +1270,8 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
         },
       })
       if (!controller.signal.aborted) {
-        onMessage(action === 'APPROVED' ? 'Recommendation approved and instruction issued to the assigned captain.'
+        onMessage(action === 'APPROVED' ? grouped ? 'Suggested outcomes approved and instructions issued to the assigned captains.'
+            : 'Recommendation approved and instruction issued to the assigned captain.'
           : instructions.some(item => item.action !== 'NONE') ? 'Bus outcomes saved and selected instructions issued.' : 'No-instruction outcomes saved for all affected buses.')
         closeEditor(true)
       }
@@ -1299,9 +1302,11 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
         <div><h3 className="text-sm font-medium">Affected buses</h3><p className="mt-1 text-sm text-muted-foreground">{affectedBuses(selected).join(', ')}</p></div>
 
         <div className="flex flex-wrap justify-end gap-2 border-b pb-4">
-          {affectedBuses(selected).length > 1 && <p className="w-full text-right text-xs text-muted-foreground">Review an outcome for every affected bus before saving.</p>}
+          {grouped && <p className="w-full text-right text-xs text-muted-foreground">{canApprove
+            ? 'Approving issues the suggested outcome shown for each bus below.'
+            : 'Review an outcome for every affected bus before saving.'}</p>}
           <Button variant="outline" disabled={pending || !isCurrent} onClick={() => { void refresh() }}>Refresh bus group</Button>
-          <Button disabled={pending || !isCurrent || affectedBuses(selected).length > 1} onClick={() => { void decide('APPROVED') }}>Approve recommendation</Button>
+          <Button disabled={pending || !isCurrent || !canApprove} onClick={() => { void decide('APPROVED') }}>Approve recommendation</Button>
           <Dialog open={editorOpen} onOpenChange={changeEditorOpen}>
           <DialogTrigger asChild><Button variant="outline" disabled={pending}>Enter controller recommendation</Button></DialogTrigger>
             <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl"

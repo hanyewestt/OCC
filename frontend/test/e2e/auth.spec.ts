@@ -926,6 +926,8 @@ test('refresh opens a new review with the changed group and its prediction gaps'
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   await expect(page.getByText(/Current suggestions are unavailable/)).toBeVisible()
   await expect(page.getByText('Hold for 120 seconds at stop B01.')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toBeDisabled()
+  await expect(page.getByText('Review an outcome for every affected bus before saving.')).toBeVisible()
   await page.getByRole('button', { name: 'Refresh bus group' }).click()
   await expect(page.getByText(/Current suggestions are unavailable/)).toHaveCount(0)
   await expect(page.getByText('Expected headway', { exact: true })).toBeVisible()
@@ -937,7 +939,8 @@ test('refresh opens a new review with the changed group and its prediction gaps'
   await expect(page.getByText('Hold for 20 seconds at stop B01.')).toBeVisible()
   await expect(page.getByText('Adjust dwell by 35 seconds at stop B01.')).toBeVisible()
   await expect(page.getByText('No instruction. No preceding gap in the reviewed group.')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toBeEnabled()
+  await expect(page.getByText('Approving issues the suggested outcome shown for each bus below.')).toBeVisible()
   await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })
   await expect(editor.getByLabel('Action for BUS-2')).toHaveValue('NONE')
@@ -956,6 +959,27 @@ test('refresh opens a new review with the changed group and its prediction gaps'
     { busReference: 'BUS-3', action: 'HOLD', adjustmentSeconds: 20 },
     { busReference: 'BUS-4', action: 'DWELL_ADJUSTMENT', adjustmentSeconds: 35 },
   ])
+})
+
+test('controller approves every suggested bus outcome in one click', async ({ page, context }) => {
+  const original = await mockDashboard(context, { affectedBusReferences: ['BUS-2', 'BUS-3'] })
+  const grouped = { ...original, targetBusReference: 'BUS-3', suggestedOutcomes: [
+    { busReference: 'BUS-2', mitigationType: null, adjustmentSeconds: 0, reason: 'No preceding gap in the reviewed group.' },
+    { busReference: 'BUS-3', mitigationType: 'HOLD', adjustmentSeconds: 54, reason: null },
+  ] }
+  await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: {
+    mode: 'DEMO', demoRunId: 'run-1', items: [grouped], page: 0, totalItems: 1, totalPages: 1,
+  } }))
+  await context.route('**/api/v1/planning/recommendations/recommendation-1/decision', route => route.fulfill({ json: {} }))
+  await login(page)
+  await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
+  await expect(page.getByText('Hold for 54 seconds at stop B01.')).toBeVisible()
+  const posted = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/recommendation-1/decision'))
+  await page.getByRole('button', { name: 'Approve recommendation', exact: true }).click()
+  const body = (await posted).postDataJSON()
+  expect(body.action).toBe('APPROVED')
+  expect(body.replacementInstructions).toBeNull()
+  await expect(page.getByText('Suggested outcomes approved and instructions issued to the assigned captains.')).toBeVisible()
 })
 
 test('controller handles conflicting decisions by retrieving the saved result', async ({ page, context }) => {
