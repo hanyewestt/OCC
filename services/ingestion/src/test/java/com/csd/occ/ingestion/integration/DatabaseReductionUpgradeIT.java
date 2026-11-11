@@ -80,7 +80,8 @@ jdbc.execute("insert into ingestion.bus_route_stop values ('00000000-0000-0000-0
                         '2020-01-01', '2020-01-01', '2020-01-01', 'SIMULATION',
                         '00000000-0000-0000-0000-000000000002', 'FLOOD', '{"hazardKind":"FLOOD"}'::jsonb)
                 """);
-        Flyway.configure().dataSource(source).defaultSchema("ingestion").schemas("ingestion").load().migrate();
+        assertThat(Flyway.configure().dataSource(source).defaultSchema("ingestion").schemas("ingestion")
+                .target("030").load().migrate().migrationsExecuted).isEqualTo(10);
         assertThat(jdbc.queryForObject("""
                 SELECT count(*) FROM ingestion.traffic_incident_observation
                 WHERE id = '00000000-0000-0000-0000-000000000010' AND latitude IS NOT NULL AND longitude IS NOT NULL
@@ -108,6 +109,24 @@ jdbc.execute("insert into ingestion.bus_route_stop values ('00000000-0000-0000-0
 assertThat(jdbc.queryForObject("select imported_at::text from ingestion.reference_dataset_version", String.class)).startsWith("2020-01-01");
 assertThat(jdbc.queryForObject("select to_regclass('ingestion.bunching_snapshot') is null", Boolean.class)).isTrue();
 assertThat(jdbc.queryForObject("select count(*) from information_schema.columns where table_schema='ingestion' and table_name in ('bus_stop','bus_service','bus_route_stop') and column_name='imported_at'", Integer.class)).isZero();
-        assertThat(Flyway.configure().dataSource(source).defaultSchema("ingestion").schemas("ingestion").load().migrate().migrationsExecuted).isZero();
+        jdbc.execute("""
+                INSERT INTO ingestion.application_audit_event
+                    (id, occurred_at, recorded_at, category, event_type, outcome, source_service, actor_type,
+                     entity_type, entity_id, summary, details, source_key)
+                VALUES ('00000000-0000-4000-8000-000000000031', '2026-11-01', '2026-11-01', 'OPERATIONS',
+                        'FEED_POLL_COMPLETED', 'SUCCESS', 'INGESTION', 'SYSTEM', 'POLL_RUN', 'v030-poll',
+                        'retained V030 audit event', '{}'::jsonb, 'v030-audit-event')
+                """);
+        assertThat(Flyway.configure().dataSource(source).defaultSchema("ingestion").schemas("ingestion")
+                .load().migrate().migrationsExecuted).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select summary from ingestion.application_audit_event where source_key='v030-audit-event'",
+                String.class)).isEqualTo("retained V030 audit event");
+        for (String column : java.util.List.of("event_type", "outcome", "actor_subject", "run_id", "entity_id")) {
+            assertThat(jdbc.queryForList("""
+                    SELECT indexdef FROM pg_indexes
+                    WHERE schemaname='ingestion' AND tablename='application_audit_event'
+                    """, String.class)).anySatisfy(index -> assertThat(index.toLowerCase())
+                    .contains("(" + column + ", occurred_at desc, id desc)"));
+        }
     }
 }

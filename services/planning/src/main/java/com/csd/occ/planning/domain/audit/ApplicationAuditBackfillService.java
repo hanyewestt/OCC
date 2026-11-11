@@ -4,7 +4,6 @@ import com.csd.occ.planning.diagnosis.domain.ModelInvocationRecord;
 import com.csd.occ.planning.diagnosis.domain.ModelInvocationRecordRepository;
 import com.csd.occ.planning.advisory.domain.AdvisoryModelEvidence;
 import com.csd.occ.planning.advisory.domain.AdvisoryModelEvidenceRepository;
-import com.csd.occ.planning.infrastructure.config.AuditRetentionProperties;
 import java.time.Duration;
 import java.time.Clock;
 import java.time.Instant;
@@ -28,7 +27,7 @@ public class ApplicationAuditBackfillService {
     public ApplicationAuditBackfillService(ModelInvocationRecordRepository legacy,
             AdvisoryModelEvidenceRepository advisoryEvidence,
             ApplicationAuditEventRepository events, ApplicationAuditMetadataRepository metadata, Clock clock,
-            AuditRetentionProperties retention) {
+            AuditRetentionPolicy retention) {
         this.legacy = legacy; this.advisoryEvidence = advisoryEvidence; this.events = events;
         this.metadata = metadata; this.clock = clock; this.retention = retention.retention();
     }

@@ -60,6 +60,13 @@ class AuthorizationBoundaryTest {
     }
 
     @ParameterizedTest
+    @CsvSource({"ADMIN,200", "CONTROLLER,403", "CAPTAIN,403", "UNASSIGNED,403"})
+    void auditListAndDetailAreAdminOnly(String role, int expected) throws Exception {
+        perform("GET", "/api/v1/disruption/admin/audit-events", role, expected);
+        perform("GET", "/api/v1/disruption/admin/audit-events/00000000-0000-0000-0000-000000000001", role, expected);
+    }
+
+    @ParameterizedTest
     @CsvSource({"GET,ADMIN", "POST,ADMIN", "GET,CONTROLLER", "POST,CONTROLLER", "GET,CAPTAIN"})
     void unknownPathsDefaultDeny(String method, String role) throws Exception {
         perform(method, "/api/v1/unknown", role, 403);
@@ -84,7 +91,8 @@ class AuthorizationBoundaryTest {
 
     @RestController
     static class Probe {
-        @RequestMapping({"/api/v1/disruption/traffic-incidents", "/api/v1/disruption/admin/probe"})
+        @RequestMapping({"/api/v1/disruption/traffic-incidents", "/api/v1/disruption/admin/probe",
+                "/api/v1/disruption/admin/audit-events", "/api/v1/disruption/admin/audit-events/{id}"})
         String respond() { return "allowed"; }
     }
 }
