@@ -314,6 +314,72 @@ test('areBusesConfirmedBunched matches multi-bus bunching from alert gaps when s
   expect(areBusesConfirmedBunched(b2, b3, [incident], new Set())).toBe(true)
 })
 
+test('clusterProjectedBuses does not highlight unrelated buses when stripLink resolves to different bus orders', () => {
+  const alertAtStop = {
+    eventId: 'evt-44271',
+    action: 'OPENED',
+    classification: 'OBSERVATION_ONLY',
+    serviceId: '190',
+    stopCode: '44271',
+    directionId: 2,
+    detectedAt: '2026-11-11T14:06:05Z',
+    evidence: JSON.stringify({
+      snapshot: {
+        arrivals: [
+          { observationId: 'obs-lead', visitOrder: 1, estimatedArrivalAt: '2026-11-11T14:08:46Z' },
+          { observationId: 'obs-4', visitOrder: 2, estimatedArrivalAt: '2026-11-11T14:17:23Z' },
+          { observationId: 'obs-5', visitOrder: 3, estimatedArrivalAt: '2026-11-11T14:17:33Z' },
+        ],
+      },
+      groups: [
+        {
+          headways: [
+            { isBunched: false, leadingObservationId: 'obs-lead', followingObservationId: 'obs-4' },
+            { isBunched: true, leadingObservationId: 'obs-4', followingObservationId: 'obs-5' },
+          ],
+        },
+      ],
+    }),
+  } as unknown as BunchingAlert
+
+  const incident = {
+    id: 'inc-190-2',
+    serviceId: '190',
+    directionId: 2,
+    routeKey: '190:SMRT:2',
+    alerts: [alertAtStop],
+    stopCodes: ['44271'],
+    stopNames: ['Bet Blks 13/14'],
+    firstDetectedAt: '2026-11-11T14:06:05Z',
+    latestDetectedAt: '2026-11-11T14:06:05Z',
+    gapSeconds: 10,
+    ageSeconds: 0,
+    historical: false,
+    latestStopIndex: 31,
+    stripLink: { frontOrder: 4, followingOrder: 5, stopCode: '44271', match: 'evidence' as const },
+  }
+
+  const buses = [
+    { serviceId: '190', directionId: 2, order: 2, x: 100, y: 100, label: 'Bus 2', latitude: 1.35, longitude: 103.78 },
+    { serviceId: '190', directionId: 2, order: 3, x: 200, y: 200, label: 'Bus 3', latitude: 1.36, longitude: 103.77 },
+    { serviceId: '190', directionId: 2, order: 4, x: 300, y: 300, label: 'Bus 4', latitude: 1.37, longitude: 103.76 },
+    { serviceId: '190', directionId: 2, order: 5, x: 305, y: 305, label: 'Bus 5', latitude: 1.371, longitude: 103.761 },
+  ]
+
+  const clusters = clusterProjectedBuses(buses, new Set(), [incident], 28)
+
+  const bunched45 = clusters.find(c => c.text === '4 · 5')
+  expect(bunched45).toBeDefined()
+  expect(bunched45?.hasIncident).toBe(true)
+
+  const bus2 = clusters.find(c => c.text === '2')
+  const bus3 = clusters.find(c => c.text === '3')
+  expect(bus2).toBeDefined()
+  expect(bus2?.hasIncident).toBe(false)
+  expect(bus3).toBeDefined()
+  expect(bus3?.hasIncident).toBe(false)
+})
+
 test('filterMapBuses returns all fleet buses when viewing a single corridor', () => {
   const buses = [
     { serviceId: '190', directionId: 1, routeLengthM: 10000, bus: { order: 1, distanceAlongRouteM: 1000 } },

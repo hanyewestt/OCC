@@ -452,3 +452,124 @@ test('ControllerPlanning renders PlanningCorridorMap with control stop, bunched 
   expect(html).toContain('1 · 2 · 3')
   expect(html).toContain('Buses bunching')
 })
+
+test('ControllerPlanning displays linked bunching buses pill in corridor group and diagnosis detail', () => {
+  const sampleRequest: PlanningDiagnosisRequest = {
+    requestId: 'req-live-44271',
+    eventId: 'evt-live-44271',
+    diagnosisId: null,
+    classification: 'OBSERVATION_ONLY',
+    demoRunId: null,
+    serviceId: '190',
+    directionId: 2,
+    stopCode: '44271',
+    status: 'PENDING',
+    createdAt: '2026-11-11T14:06:06Z',
+    affectedBusReferences: [],
+    likelyCause: null,
+    confidence: null,
+    evidenceDetails: [],
+    limitations: [],
+    failureCode: null,
+    policyOutcome: null,
+  }
+
+  const sampleAlert: BunchingAlert = {
+    eventId: 'evt-live-44271',
+    action: 'OPENED',
+    classification: 'OBSERVATION_ONLY',
+    serviceId: '190',
+    stopCode: '44271',
+    directionId: 2,
+    detectedAt: '2026-11-11T14:06:05Z',
+    stopName: 'Bet Blks 13/14',
+    stopRoadName: 'Choa Chu Kang Way',
+    evidence: JSON.stringify({
+      snapshot: {
+        fetchedAt: '2026-11-11T14:06:03Z',
+        arrivals: [
+          { observationId: 'obs-lead', visitOrder: 1, estimatedArrivalAt: '2026-11-11T14:08:46Z' },
+          { observationId: 'obs-4', visitOrder: 2, estimatedArrivalAt: '2026-11-11T14:17:23Z' },
+          { observationId: 'obs-5', visitOrder: 3, estimatedArrivalAt: '2026-11-11T14:17:33Z' },
+        ],
+      },
+      groups: [
+        {
+          headways: [
+            { isBunched: false, leadingObservationId: 'obs-lead', followingObservationId: 'obs-4' },
+            { isBunched: true, leadingObservationId: 'obs-4', followingObservationId: 'obs-5' },
+          ],
+        },
+      ],
+    }),
+  }
+
+  const sampleRoute: RouteDirection = {
+    serviceId: '190',
+    operator: 'SMRT',
+    directionId: 2,
+    stops: [
+      { stopCode: '44269', roadName: 'Choa Chu Kang Way', description: 'Opp Phoenix Stn', latitude: 1.378, longitude: 103.763, stopSequence: 30, distanceKm: 18 },
+      { stopCode: '44271', roadName: 'Choa Chu Kang Way', description: 'Bet Blks 13/14', latitude: 1.380, longitude: 103.762, stopSequence: 31, distanceKm: 19 },
+    ],
+  }
+
+  const samplePositions = [
+    {
+      serviceId: '190',
+      computedAt: '2026-11-11T14:06:05Z',
+      sourceObservedAt: '2026-11-11T14:06:05Z',
+      maxSourceAgeSeconds: 30,
+      refreshIntervalSeconds: 30,
+      directions: [
+        {
+          operator: 'SMRT',
+          directionId: 2,
+          routeLengthM: 20000,
+          buses: [
+            { order: 1, distanceAlongRouteM: 19500, uncertaintyM: 10, speedMps: 8 },
+            { order: 2, distanceAlongRouteM: 19000, uncertaintyM: 10, speedMps: 8 },
+            { order: 3, distanceAlongRouteM: 18500, uncertaintyM: 10, speedMps: 8, positionEvidenceObservationIds: ['obs-lead'] },
+            { order: 4, distanceAlongRouteM: 17500, uncertaintyM: 10, speedMps: 8, positionEvidenceObservationIds: ['obs-4'] },
+            { order: 5, distanceAlongRouteM: 17400, uncertaintyM: 10, speedMps: 8, positionEvidenceObservationIds: ['obs-5'] },
+          ],
+        },
+      ],
+    },
+  ]
+
+  const recommendations = mockPagedCollection<PendingRecommendation, Planning['recommendations']>([], {
+    items: [], page: 0, totalItems: 0, totalPages: 0, mode: 'LIVE', demoRunId: null,
+  })
+  const diagnosisPage: PlanningDiagnosisRequestPage = {
+    items: [sampleRequest], page: 0, totalItems: 1, totalPages: 1, mode: 'LIVE', demoRunId: null,
+  }
+  const diagnosisRequests = mockPagedCollection<PlanningDiagnosisRequest, PlanningDiagnosisRequestPage>(
+    [sampleRequest], diagnosisPage
+  )
+
+  const html = renderToString(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/controller/planning?service=190&request=req-live-44271'] },
+      createElement(ControllerPlanning, {
+        recommendations,
+        diagnosisRequests,
+        loading: false,
+        modeError: '',
+        mode: 'LIVE',
+        demoRunId: null,
+        token: 'test-token',
+        detectedAlerts: [sampleAlert],
+        routes: [sampleRoute],
+        positions: samplePositions,
+        nowMs: Date.parse('2026-11-11T14:06:05Z'),
+        onPendingChange: () => {},
+        onRefresh: () => {},
+        onSaved: () => {},
+      })
+    )
+  )
+
+  expect(html).toMatch(/Buses #\s*(<!-- -->)?\s*4\s*(<!-- -->)?\s*&amp;\s*#\s*(<!-- -->)?\s*5/)
+})

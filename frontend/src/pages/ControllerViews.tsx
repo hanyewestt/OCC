@@ -259,14 +259,15 @@ export function areBusesConfirmedBunched(
       ) {
         return true
       }
-    }
-    for (const alert of inc.alerts) {
-      for (const pair of bunchedArrivalGaps(alert)) {
-        if (
-          (pair.leadingOrder === b1.order && pair.followingOrder === b2.order) ||
-          (pair.leadingOrder === b2.order && pair.followingOrder === b1.order)
-        ) {
-          return true
+    } else {
+      for (const alert of inc.alerts) {
+        for (const pair of bunchedArrivalGaps(alert)) {
+          if (
+            (pair.leadingOrder === b1.order && pair.followingOrder === b2.order) ||
+            (pair.leadingOrder === b2.order && pair.followingOrder === b1.order)
+          ) {
+            return true
+          }
         }
       }
     }
@@ -316,8 +317,8 @@ export function clusterProjectedBuses(
         if (inc.historical && !selectedBuses.has(`${b.serviceId}-${b.order}`)) return false
         if (inc.serviceId !== b.serviceId) return false
         if (inc.directionId !== null && inc.directionId !== b.directionId) return false
-        if (inc.stripLink && (inc.stripLink.frontOrder === b.order || inc.stripLink.followingOrder === b.order)) {
-          return true
+        if (inc.stripLink) {
+          return inc.stripLink.frontOrder === b.order || inc.stripLink.followingOrder === b.order
         }
         return inc.alerts.some(alert =>
           bunchedArrivalGaps(alert).some(pair => pair.leadingOrder === b.order || pair.followingOrder === b.order)
@@ -417,11 +418,12 @@ export function BunchingMap({
         if (inc.stripLink) {
           keys.add(`${inc.serviceId}-${inc.stripLink.frontOrder}`)
           keys.add(`${inc.serviceId}-${inc.stripLink.followingOrder}`)
-        }
-        for (const alert of inc.alerts) {
-          for (const pair of bunchedArrivalGaps(alert)) {
-            keys.add(`${inc.serviceId}-${pair.leadingOrder}`)
-            keys.add(`${inc.serviceId}-${pair.followingOrder}`)
+        } else {
+          for (const alert of inc.alerts) {
+            for (const pair of bunchedArrivalGaps(alert)) {
+              keys.add(`${inc.serviceId}-${pair.leadingOrder}`)
+              keys.add(`${inc.serviceId}-${pair.followingOrder}`)
+            }
           }
         }
       }
@@ -514,11 +516,12 @@ export function BunchingMap({
       if (selectedIncident.stripLink) {
         set.add(`${selectedIncident.serviceId}-${selectedIncident.stripLink.frontOrder}`)
         set.add(`${selectedIncident.serviceId}-${selectedIncident.stripLink.followingOrder}`)
-      }
-      for (const alert of selectedIncident.alerts) {
-        for (const pair of bunchedArrivalGaps(alert)) {
-          set.add(`${selectedIncident.serviceId}-${pair.leadingOrder}`)
-          set.add(`${selectedIncident.serviceId}-${pair.followingOrder}`)
+      } else {
+        for (const alert of selectedIncident.alerts) {
+          for (const pair of bunchedArrivalGaps(alert)) {
+            set.add(`${selectedIncident.serviceId}-${pair.leadingOrder}`)
+            set.add(`${selectedIncident.serviceId}-${pair.followingOrder}`)
+          }
         }
       }
     }
@@ -1864,7 +1867,7 @@ export function ControllerDisruptions({ liveAlerts, run, loading, routes = [], p
           affectedStopCodes={affectedStopCodes}
           buses={mapBuses}
           selectedIncident={selectedIncident}
-          incidents={positionedIncidents}
+          incidents={mapIncidents}
           onSelectIncident={handleSelectIncident}
           isAllCorridors={selectedCorridorKey === 'all'}
         />
