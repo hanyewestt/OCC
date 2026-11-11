@@ -11,10 +11,12 @@ import java.net.http.HttpClient;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.Optional;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.HttpClientErrorException;
 
 @Component
 public class HttpBunchingControlAdapter implements BunchingControlPort {
@@ -58,6 +60,19 @@ public class HttpBunchingControlAdapter implements BunchingControlPort {
                 .map(alert -> new DemoBunchingAlert(alert.eventId(), alert.bunchingEventId(), alert.action(), alert.serviceId(), alert.stopCode(),
                         alert.directionId(), alert.detectedAt(), alert.classification(),
                         alert.leadingObservationId(), alert.followingObservationId(), alert.affectedObservationIds(), alert.evidence())).toList();
+    }
+
+    @Override
+    public Optional<CurrentEvidence> currentEvidence(UUID runId, UUID episodeId) {
+        try {
+            return Optional.ofNullable(bunching.get().uri(
+                    "/internal/v1/disruption/demo-runs/{run}/bunching-groups/{episode}/current-evidence", runId, episodeId)
+                    .retrieve().body(CurrentEvidence.class));
+        } catch (HttpClientErrorException.NotFound absent) {
+            return Optional.empty();
+        } catch (RestClientException failure) {
+            throw new DemoBunchingUnavailableException();
+        }
     }
 
     @Override

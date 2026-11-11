@@ -1,6 +1,7 @@
 package com.csd.occ.planning.advisory.domain;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -44,6 +45,61 @@ class BunchingInstructionServiceTest {
                 "Hold at City Hall for 60 sec.", true);
     }
 
+    @Test
+    void retryWithMissingNoInstructionReasonIsRejectedBeforeHistoryReplay() {
+        var records = mock(RecommendationRecordPort.class);
+        var decisions = mock(RecommendationDecisionService.class);
+        var instructions = mock(IssuedInstructionRepository.class);
+        when(records.findByIdempotencyKey(ID)).thenReturn(Optional.of(record()));
+        when(decisions.findDecision(ID)).thenReturn(Optional.of(new RecommendationDecision(ID,
+                RecommendationDecisionAction.REJECTED, "controller-subject",
+                List.of(new ControllerBusInstruction("SBS5898U", "NO INSTRUCTION: Continue normally")), "reviewed", NOW)));
+
+        var actor = new PlanningActor("controller-subject", PlanningActor.Role.CONTROLLER);
+        assertThatThrownBy(() -> service(records, decisions, instructions).rejectAndIssue(ID, actor,
+                List.of(new BunchingInstructionService.ReplacementBusInstruction("", null, 0, null)), "reviewed"))
+                .isInstanceOf(AdvisoryConflictException.class);
+    }
+
+    @Test
+    void retryWithSkipStopDurationIsRejectedBeforeHistoryReplay() {
+        var records = mock(RecommendationRecordPort.class);
+        var decisions = mock(RecommendationDecisionService.class);
+        var instructions = mock(IssuedInstructionRepository.class);
+        when(records.findByIdempotencyKey(ID)).thenReturn(Optional.of(record()));
+        when(decisions.findDecision(ID)).thenReturn(Optional.of(new RecommendationDecision(ID,
+                RecommendationDecisionAction.REJECTED, "controller-subject",
+                List.of(new ControllerBusInstruction("SBS5898U", "SKIP STOP 44251")), "reviewed", NOW)));
+        var previouslyIssued = mock(IssuedInstruction.class);
+        when(instructions.findByProposalIdOrderByIssuedAtAsc(ID)).thenReturn(List.of(previouslyIssued));
+
+        var actor = new PlanningActor("controller-subject", PlanningActor.Role.CONTROLLER);
+        assertThatThrownBy(() -> service(records, decisions, instructions).rejectAndIssue(ID, actor,
+                List.of(new BunchingInstructionService.ReplacementBusInstruction("", MitigationType.SKIP_STOP, 1)), "reviewed"))
+                .isInstanceOf(AdvisoryConflictException.class);
+    }
+
+    private BunchingInstructionService service(RecommendationRecordPort records, RecommendationDecisionService decisions,
+            IssuedInstructionRepository instructions) {
+        return new BunchingInstructionService(records, decisions, instructions, mock(InstructionService.class),
+                mock(AdvisoryContextPort.class), mock(PlanningScopePort.class), Clock.fixed(NOW, ZoneOffset.UTC),
+                mock(ApplicationAuditEventRepository.class), mock(AssignmentBusGuards.class));
+    }
+
+    private RecommendationRecord record() {
+        var event = new ConfirmedBunchingEvent(ID, "190", 1, "44251", BunchingEventStatus.CONFIRMED,
+                600, List.of(276, 221), NOW, List.of("arrival-1", "arrival-2"));
+        var diagnosis = new BunchingRootCauseDiagnosis(UUID.randomUUID(), "synthetic scenario evidence", null,
+                List.of("scenario-fixture"), List.of("Synthetic demonstration only"));
+        var mitigation = new ValidatedMitigationContext("SBS5898U", "44251", FollowingBusState.READY_TO_DEPART,
+                120, 75, CrowdSafetyStatus.PASSED, MitigationValidationStatus.VALIDATED, List.of("scenario-fixture"));
+        var recommendation = new BunchingRecommendationPolicy().evaluate(ID, SourceClassification.SIMULATION,
+                event, diagnosis, mitigation, new SimulatedImpactEstimate(221, 341, 38, 24,
+                        new BigDecimal("190"), new BigDecimal("128"))).orElseThrow();
+        return new RecommendationRecord(ID, "a".repeat(64), UUID.randomUUID(), SourceClassification.SIMULATION,
+                event, diagnosis, mitigation, recommendation, NOW);
+    }
+
     private void assertIssued(FollowingBusState busState, MitigationType type, String expectedMessage) {
         assertIssued(busState, type, expectedMessage, false);
     }
@@ -76,8 +132,11 @@ class BunchingInstructionServiceTest {
                 null, NOW, null, List.of(), List.of());
         when(records.findByIdempotencyKey(ID)).thenReturn(Optional.of(record));
         when(decisions.findDecision(ID)).thenReturn(Optional.empty());
+        when(records.findByIdempotencyKeyForUpdate(ID)).thenReturn(Optional.of(record));
         when(scopes.current()).thenReturn(new PlanningScope("DEMO", RUN));
         when(context.hazard(ID)).thenReturn(hazard);
+        when(context.currentBunchingGroup(RUN, ID)).thenReturn(new AdvisoryContextPort.CurrentBunchingGroup(
+                RUN, ID, "190", "44251", 1, UUID.randomUUID(), NOW, NOW.plusSeconds(60), List.of("demo-bus-2")));
         when(context.fleet(RUN)).thenReturn(new AdvisoryContextPort.Fleet(RUN, "RUNNING", List.of(bus), 1));
         when(context.route("190")).thenReturn(new AdvisoryContextPort.Route("190", List.of(
                 new AdvisoryContextPort.Operator("SBS Transit", "BUS", List.of(

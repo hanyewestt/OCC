@@ -114,6 +114,19 @@ Keep one entry per environment-variable name. Duplicate example values later
 in `.env` can override real settings. Keep `.env` out of Git. The example file
 contains placeholders, so copying it alone does not configure live providers.
 
+## Existing admin-branch development databases
+
+The merge with main keeps main's migration versions and moves the admin migrations
+later: Ingestion V028–V033, Disruption V013, and Planning V022–V024. Fresh databases
+need only the normal setup. For a local database already migrated by the earlier
+admin branch, stop application services and apply
+`infra/postgres/reconcile-admin-branch-history.sql` with the database owner and
+`ON_ERROR_STOP=1`. This changes only matching Flyway history filenames/versions;
+it preserves checksums and application data. Run the merged `db-setup` image once
+with `FLYWAY_OUT_OF_ORDER=true` to apply main's newly incorporated earlier
+migrations, then use the normal app launcher. Do not run Flyway repair or reset
+the database to resolve these version collisions.
+
 ## App commands
 
 Use the launchers under `scripts/`. They find the repository root automatically,

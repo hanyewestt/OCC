@@ -125,6 +125,8 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
         AlertProcessingState previous = states.findWithLock(runId, service, stop, direction).orElseThrow();
         Instant fetchedAt = evaluation.snapshot().fetchedAt();
         if (!fetchedAt.isAfter(previous.lastFetchedAt())) return;
+        previous.recordCurrentEvidence(result.state().name(), evaluation.snapshot().rawObservationId(),
+                fetchedAt.plus(evaluation.staleAfter()), affectedIds(result));
         Instant selectedAt = selection.current().selectedAt();
         if (runId == null && selectedAt != null && previous.pendingDetectedAt() != null
                 && previous.pendingDetectedAt().isBefore(selectedAt)) previous.clearCandidate();

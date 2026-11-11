@@ -45,6 +45,17 @@ class BunchingPolicyTest {
         assertEquals(List.of(id(1), id(2), id(3)), affected(allBunched.groups().getFirst()));
     }
 
+    @Test
+    void detectsEveryAdjacentGapInAFourBusGroup() {
+        var group = policy.evaluate(snapshot(NOW, arrival(4, 120), arrival(2, 40), arrival(1, 0), arrival(3, 80)),
+                NOW, Duration.ofSeconds(60), FRESHNESS).groups().getFirst();
+
+        assertEquals(State.BUNCHING, group.state());
+        assertEquals(List.of(new Headway(id(1), id(2), Duration.ofSeconds(40), true),
+                new Headway(id(2), id(3), Duration.ofSeconds(40), true),
+                new Headway(id(3), id(4), Duration.ofSeconds(40), true)), group.headways());
+    }
+
     private List<UUID> affected(GroupEvaluation group) {
         return group.headways().stream().filter(Headway::isBunched)
                 .flatMap(headway -> java.util.stream.Stream.of(headway.leadingObservationId(), headway.followingObservationId()))

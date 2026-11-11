@@ -20,6 +20,7 @@ public class DurableBunchingRecommendationService {
     private final Clock clock;
     private final ApplicationAuditCapturePort auditCapture;
     private final ApplicationAuditEventRepository auditEvents;
+    private final BunchingRecommendationRefreshService reviews;
 
     public DurableBunchingRecommendationService(
             BunchingRecommendationService recommendations,
@@ -27,13 +28,14 @@ public class DurableBunchingRecommendationService {
             ModelInvocationRecordPort modelInvocations,
             Clock clock,
             ApplicationAuditEventRepository auditEvents,
-            ApplicationAuditCapturePort auditCapture) {
+            ApplicationAuditCapturePort auditCapture, BunchingRecommendationRefreshService reviews) {
         this.recommendations = recommendations;
         this.records = records;
         this.modelInvocations = modelInvocations;
         this.clock = clock;
         this.auditEvents = auditEvents;
         this.auditCapture = auditCapture;
+        this.reviews = reviews;
     }
 
     @Transactional
@@ -58,7 +60,7 @@ public class DurableBunchingRecommendationService {
 
         return recommendations.evaluate(idempotencyKey, classification, event, diagnosis)
                 .map(decision -> persistOrReplay(
-                        new RecommendationRecord(
+                        reviews.initialReview(new RecommendationRecord(
                                 idempotencyKey,
                                 requestHash,
                                 requestId,
@@ -67,7 +69,7 @@ public class DurableBunchingRecommendationService {
                                 diagnosis,
                                 decision.mitigationContext(),
                                 decision.recommendation(),
-                                Instant.now(clock)),
+                                Instant.now(clock))),
                         decision.modelInvocation()));
     }
 

@@ -83,7 +83,7 @@ class DemoReplayServiceTest {
         when(topology.busRoute(versionId, "972")).thenReturn(Optional.of(route));
         when(runs.save(org.mockito.ArgumentMatchers.any())).thenAnswer(invocation -> invocation.getArgument(0));
         var identities = mock(IdentityProviderPort.class);
-        var captains = List.of(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        var captains = List.of(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
         for (UUID captain : captains) when(identities.get(captain)).thenReturn(Optional.of(
                 new IdentityProviderPort.User(captain, "Captain", "captain@example.test", OccRole.CAPTAIN,
                         true, NOW.minusSeconds(10), null, null)));
@@ -93,14 +93,14 @@ class DemoReplayServiceTest {
                 new DemoReplayConfiguration("multi-route-bunching-v2", 190, Duration.ofSeconds(90)),
                 mock(DemoHazardReplayService.class), mock(ApplicationAuditEventRepository.class), identities);
 
-        service.start(new DemoRunConfiguration("972", 2, 3, Duration.ofSeconds(120),
-                List.of(Duration.ofSeconds(120), Duration.ofSeconds(120)), "44251", DemoScenario.NORMAL, captains));
+        service.start(new DemoRunConfiguration("972", 2, 4, Duration.ofSeconds(120),
+                List.of(Duration.ofSeconds(120), Duration.ofSeconds(120), Duration.ofSeconds(120)), "44251", DemoScenario.NORMAL, captains));
 
         @SuppressWarnings("unchecked") var capture = org.mockito.ArgumentCaptor.forClass(Iterable.class);
         verify(assignments).saveAll(capture.capture());
         @SuppressWarnings("unchecked") List<DemoVehicleAssignment> buses = StreamSupport.stream(capture.getValue().spliterator(), false).toList();
         org.assertj.core.api.Assertions.assertThat(buses).extracting(DemoVehicleAssignment::busId)
-                .containsExactly("demo-972-1", "demo-972-2", "demo-972-3");
+                .containsExactly("demo-972-1", "demo-972-2", "demo-972-3", "demo-972-4");
         org.assertj.core.api.Assertions.assertThat(buses).allSatisfy(bus -> {
             org.assertj.core.api.Assertions.assertThat(bus.serviceId()).isEqualTo("972");
             org.assertj.core.api.Assertions.assertThat(bus.directionId()).isEqualTo(2);
@@ -147,8 +147,8 @@ class DemoReplayServiceTest {
         ReferenceTopologyPort topology = mock(ReferenceTopologyPort.class);
         DemoModeService mode = mock(DemoModeService.class);
         UUID runId = UUID.randomUUID();
-        DemoRun run = new DemoRun(runId, NOW, "route190-bunching-v1", 190, new DemoRunConfiguration("190", 1, 3,
-                Duration.ofSeconds(90), List.of(Duration.ofSeconds(90), Duration.ofSeconds(90)), "12345", DemoScenario.BUNCHING));
+        DemoRun run = new DemoRun(runId, NOW, "route190-bunching-v1", 190, new DemoRunConfiguration("190", 1, 4,
+                Duration.ofSeconds(90), List.of(Duration.ofSeconds(90), Duration.ofSeconds(90), Duration.ofSeconds(90)), "12345", DemoScenario.BUNCHING));
         run.startReplay();
         when(runs.findActive()).thenReturn(Optional.of(run));
         when(runs.findActiveId()).thenReturn(Optional.of(runId));
@@ -180,19 +180,22 @@ class DemoReplayServiceTest {
         assertEquals(List.of(Duration.ofSeconds(90), Duration.ofSeconds(45), Duration.ofSeconds(45)),
                 batches.stream().map(batch -> Duration.between(batch.get(0).getEstimatedArrivalAt(),
                         batch.get(1).getEstimatedArrivalAt())).toList());
-        assertEquals(9, batches.stream().flatMap(List::stream)
+        assertEquals(12, batches.stream().flatMap(List::stream)
                 .filter(row -> "SIMULATION".equals(row.getClassification()) && runId.equals(row.getDemoRunId())).count());
-        assertEquals(List.of("190", "190", "190"),
+        assertEquals(List.of("190", "190", "190", "190"),
                 batches.getFirst().stream().map(BusArrivalObservation::getServiceId).toList());
+        assertEquals(List.of(1, 2, 3, 4), batches.get(1).stream().map(BusArrivalObservation::getVisitOrder).toList());
         assertEquals(List.of(20, 20), batches.getFirst().subList(0, 2).stream()
                 .map(BusArrivalObservation::getRouteStopSequence).toList());
         org.assertj.core.api.Assertions.assertThat(batches.getFirst()).extracting(BusArrivalObservation::getStopCode)
                 .containsOnly("12345");
-        assertEquals(List.of(Duration.ofSeconds(45), Duration.ofSeconds(45)),
+        assertEquals(List.of(Duration.ofSeconds(45), Duration.ofSeconds(45), Duration.ofSeconds(45)),
                 List.of(Duration.between(batches.get(1).get(0).getEstimatedArrivalAt(),
                                 batches.get(1).get(1).getEstimatedArrivalAt()),
                         Duration.between(batches.get(1).get(1).getEstimatedArrivalAt(),
-                                batches.get(1).get(2).getEstimatedArrivalAt())));
+                                batches.get(1).get(2).getEstimatedArrivalAt()),
+                        Duration.between(batches.get(1).get(2).getEstimatedArrivalAt(),
+                                batches.get(1).get(3).getEstimatedArrivalAt())));
         assertEquals("REPLAY_COMPLETE", run.status());
         assertEquals(DemoReplayScenario.STEP_COUNT, run.currentStep());
         verify(pollRuns, times(3)).save(org.mockito.ArgumentMatchers.any(PollRun.class));

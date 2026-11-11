@@ -174,8 +174,8 @@ class DurableBunchingRecommendationServiceTest {
             ModelInvocationRecordPort modelInvocations,
             ApplicationAuditCapturePort auditCapture) {
         Clock clock = Clock.fixed(Instant.parse("2026-09-28T00:00:00Z"), ZoneOffset.UTC);
-        var auditEvents = mock(com.csd.occ.planning.domain.audit.ApplicationAuditEventRepository.class);
-        return new DurableBunchingRecommendationService(recommendations, records, modelInvocations, clock,
-                auditEvents, auditCapture);
+        var reviews = org.mockito.Mockito.mock(BunchingRecommendationRefreshService.class);
+        org.mockito.Mockito.when(reviews.initialReview(org.mockito.ArgumentMatchers.any())).thenAnswer(call -> call.getArgument(0));
+        return new DurableBunchingRecommendationService(recommendations, records, modelInvocations, clock, mock(com.csd.occ.planning.domain.audit.ApplicationAuditEventRepository.class), auditCapture, reviews);
     }
 }

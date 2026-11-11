@@ -52,6 +52,7 @@ public class DemoRun {
     public String classification() { return classification; }
     public int currentStep() { return currentStep; }
     public Instant startedAt() { return startedAt; }
+    public Instant completedAt() { return completedAt; }
     public DemoRunConfiguration configuration() {
         List<java.time.Duration> gaps = busGapSeconds == null ? java.util.stream.IntStream.range(1, busCount)
                 .mapToObj(ignored -> java.time.Duration.ofSeconds(dispatchGapSeconds)).toList()
