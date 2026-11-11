@@ -1,7 +1,9 @@
 """Lifecycle transitions using the real shared operation/conditional-state code."""
 import importlib.util
+import json
 from pathlib import Path
 import sys
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -29,6 +31,26 @@ class EnvironmentTests(unittest.TestCase):
 
     def control(self):
         return self.cloud.read("", "state/control.json", "")["value"]
+
+    def test_noop_readiness_probe_checks_backends_and_public_gate_without_mutations(self):
+        commands=[]
+        def aws(args, region):
+            if args[:2]==['ssm','describe-instance-information']:
+                value={'InstanceInformationList':[{'InstanceId':'i-test','PingStatus':'Online'}]}
+            else:
+                self.assertEqual(args[:2],['ssm','send-command'])
+                parameters=json.loads(args[args.index('--parameters')+1])
+                self.assertEqual(parameters['executionTimeout'],['120'])
+                commands.extend(parameters['commands'])
+                value={'Command':{'CommandId':'readiness-probe'}}
+            return subprocess.CompletedProcess(args,0,json.dumps(value),'')
+        with patch.object(self.env,'aws',side_effect=aws), patch.object(remote,'wait_terminal',return_value='Success'):
+            self.assertTrue(self.env.host_ready('us-east-1','i-test'))
+        script='\n'.join(commands)
+        for fragment in ('actuator/health/readiness','_occ_edge_health:204','frontend-config:200','login:200'):
+            self.assertIn(fragment,script)
+        for fragment in ('docker stop','docker build','compose up','traffic-gate.sh open'):
+            self.assertNotIn(fragment,script)
 
     def test_retry_failed_pause_stops_the_still_running_instance(self):
         self.cloud.seed("state/control.json", {"desiredMode": "paused", "phase": "pause-failed", "result": "failed"})
@@ -75,8 +97,17 @@ class EnvironmentTests(unittest.TestCase):
     def test_a_genuine_running_noop_checks_the_deployed_release(self):
         self.cloud.seed("state/control.json", {"desiredMode": "running", "phase": "running", "result": "success"})
         self.cloud.seed("state/last-deployed.json", self.reference)
-        self.assertEqual(self.env.do_start("us-east-1", "i-test", "bucket", "start-1"), 0)
+        with patch.object(self.env, 'host_ready', return_value=True) as ready:
+            self.assertEqual(self.env.do_start("us-east-1", "i-test", "bucket", "start-1"), 0)
+        ready.assert_called_once_with('us-east-1', 'i-test')
         self.assertEqual(self.cloud.commands, [])
+
+    def test_resume_after_reboot_does_not_trust_stale_running_completion(self):
+        self.cloud.seed('state/control.json', {'desiredMode':'running','phase':'running','result':'success'})
+        self.cloud.seed('state/last-deployed.json', self.reference)
+        with patch.object(self.env, 'host_ready', return_value=False):
+            self.assertEqual(self.env.do_start('us-east-1','i-test','bucket','resume-after-boot'),0)
+        self.assertEqual(len(self.cloud.commands),1)
 
     def test_no_release_does_not_wake_the_instance(self):
         self.cloud.objects.pop("state/latest-published.json")

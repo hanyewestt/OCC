@@ -193,7 +193,7 @@ class CloudFormationContractTests(unittest.TestCase):
         # writes it; both run under this role.
         self.assertIn("s3:GetObject", publish)
         self.assertIn("${OccReleaseBucket.Arn}/releases/*", publish)
-        self.assertIn("${OccReleaseBucket.Arn}/state/*", publish)
+        self.assertIn("${OccReleaseBucket.Arn}/state/latest-published.json", publish)
 
     def test_host_role_can_write_and_prune_backups(self):
         text = template_text()

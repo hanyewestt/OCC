@@ -24,6 +24,10 @@ on:
         description: 'Rollback only: pinned previous release ID, or empty to recover current baseline after a failed candidate'
         type: string
         default: ''
+      recovery-operation-id:
+        description: 'Recover only: existing active operation ID reported by status'
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -59,10 +63,15 @@ jobs:
         env:
           ACTION: ${{ inputs.action }}
           RELEASE_ID: ${{ inputs.release-id }}
+          RECOVERY_OPERATION_ID: ${{ inputs.recovery-operation-id }}
           INSTANCE_ID: ${{ secrets.OCC_INSTANCE_ID }}
         run: |
           set -euo pipefail
           operation="$ACTION-${{ github.run_id }}-${{ github.run_attempt }}"
+          if [[ "$ACTION" == recover ]]; then
+            : "${RECOVERY_OPERATION_ID:?recover requires the existing active operation ID from status}"
+            operation="$RECOVERY_OPERATION_ID"
+          fi
           if [[ "$ACTION" == rollback || "$ACTION" == recover ]]; then
             python3 scripts/cd/deploy_remote.py "$ACTION" --region "$OCC_REGION" \
               --instance-id "$INSTANCE_ID" --bucket "$OCC_RELEASE_BUCKET" \

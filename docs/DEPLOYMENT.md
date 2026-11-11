@@ -9,6 +9,21 @@ EC2 CD work lands.
 
 ## Deployment triggers
 
+Before workstation bootstrap, install `python -m pip install -r
+scripts/cd/requirements.txt`. Dotenv quotes, escapes and comments are parsed;
+dollar-containing credentials remain literal (variable interpolation is disabled).
+Bootstrap transfers parsed settings through private temporary files and never
+prints their values.
+
+Manual `recover` requires the original active operation ID reported by `status`.
+If a terminal command produced no receipt, recovery takes the host lock and
+stops the edge and application writers before recording failure. A running
+setup container or foreign host operation blocks recovery. An uncertain database
+outcome leaves `state/setup-recovery-required.json`; inspect migration history
+and the host journal and perform any required database repair before explicitly
+clearing that marker. Recovery never assumes an uncertain migration can be rerun.
+The original failed deployment remains failed.
+
 Deployments are driven by `main` commits and classified by behavior, not file
 extension:
 
@@ -22,8 +37,9 @@ extension:
 | Compose, CloudFront or deployment runtime wiring | A release runs; only images containing changed inputs rebuild |
 | Docs, tests or local launchers only | Applicable checks run; no release or deployment |
 
-The pipeline builds exactly five OCC images per release: `ingestion`,
-`disruption`, `planning`, `db-setup` and `web`. PostgreSQL/PostGIS is a
+Each release identifies exactly five OCC images: `ingestion`, `disruption`,
+`planning`, `db-setup` and `web`. Only changed or unavailable owners rebuild;
+the remaining components reuse their tested immutable digests. PostgreSQL/PostGIS is a
 separately pinned upstream image and is never built by OCC.
 
 Deployment-affecting commits — including workflow, build-tooling, runtime
@@ -33,6 +49,15 @@ commits carry `[skip ci]`; see [commit convention](commit-convention.md) for
 the full rule and for recovery when a skip marker is used by mistake.
 
 ## Provisioning the EC2 CD deployment
+
+The November 2026 remediation passed local CD, Java, frontend, packaged-image
+system, backup/restore and vulnerability gates. Live Actions/OIDC, EC2 boot,
+CloudFront and t3.small capacity acceptance still require the reviewed rollout.
+The failed stack and networking quotas currently block that rollout: a prefix
+reserving 1,000 entries plus two DNS rules exceeds the per-ENI ceiling. For the
+single-group design, capacity 998, rule quota 1,000 and groups-per-ENI quota 1
+fit mathematically, but the account-wide quota tradeoff needs AWS Support and
+review of existing ENIs. Bootstrap configures GitHub settings after provisioning.
 
 The deployment runs on one **t3.small (2 GiB)** in **us-east-1** behind a
 CloudFront distribution that serves browser HTTPS with the AWS-provided

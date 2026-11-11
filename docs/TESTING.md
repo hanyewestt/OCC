@@ -96,7 +96,8 @@ CD tests run on Linux; Windows also executes portable policy tests and the real
 PowerShell bootstrap CLI fixture. `python tests/cd/host_integration.py all`
 requires Docker and fails when it is unavailable. It exercises real isolated
 PostGIS backup/restore (spatial data, roles, ownership and grants) and Buildx
-OCI transfer/import. Its S3 boundary is a local fixture; AWS IAM, EC2 boot,
+OCI transfer/import, Linux lock exclusion, and terminal-failure quiescing of real
+containers while preserving PostgreSQL. Its S3 boundary is a local fixture; AWS IAM, EC2 boot,
 systemd, CloudFront and quota acceptance require a reviewed live rollout.
 
 Publication has its own queue. Deploy, pause and resume share

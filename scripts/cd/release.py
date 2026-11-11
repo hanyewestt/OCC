@@ -94,7 +94,8 @@ def ownership_for(path: str) -> frozenset:
         return NO_RELEASE
     if path == "LICENSE":
         return NO_RELEASE
-    if path in (".github/workflows/ci.yml", "scripts/cd/stage.py") or \
+    if path in (".github/workflows/ci.yml", "scripts/cd/stage.py", "scripts/cd/pipeline.py",
+                "scripts/cd/skopeo-image.txt") or \
             path.startswith(".github/actions/"):
         return ALL_FIVE
     if path.startswith(".github/"):
