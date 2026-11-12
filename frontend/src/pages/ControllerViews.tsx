@@ -1831,7 +1831,9 @@ export function BunchingMap({
       )}
       {!selectedIncident && !busMarkers.length && (
         <p className="border-t px-4 py-3 text-xs text-muted-foreground">
-          No current bus position estimate is available for this corridor.
+          {isAllCorridors
+            ? 'No bunched bus positions match this view. Select a corridor above to inspect all active fleet buses.'
+            : 'No current bus position estimate is available for this corridor.'}
         </p>
       )}
     </div>

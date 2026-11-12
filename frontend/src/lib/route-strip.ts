@@ -140,6 +140,28 @@ export function tightestArrivalGap(alert: BunchingAlert): number | null {
   return known.length ? Math.min(...known) : null
 }
 
+export function alertFallbackVisitOrders(alert: BunchingAlert): { leadingOrder: number; followingOrder: number } | null {
+  const gaps = bunchedArrivalGaps(alert)
+  if (gaps.length > 0 && gaps[0].leadingOrder && gaps[0].followingOrder) {
+    return { leadingOrder: gaps[0].leadingOrder, followingOrder: gaps[0].followingOrder }
+  }
+  if (!alert.evidence) return null
+  try {
+    const value = JSON.parse(alert.evidence)
+    const arrivals = value?.snapshot?.arrivals as Array<{ visitOrder?: number }> | undefined
+    const orders = (arrivals ?? [])
+      .map(a => a.visitOrder)
+      .filter((v): v is number => typeof v === 'number' && v > 0)
+      .sort((a, b) => a - b)
+    if (orders.length >= 2) {
+      return { leadingOrder: orders[0], followingOrder: orders[1] }
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
 export function estimateRouteHeadways(buses: RoutePositionBus[], etaFallbacks: EtaHeadwayFallback[] = []): EstimatedRouteHeadway[] {
   const ordered = [...buses].sort((first, second) => first.order - second.order)
   return ordered.slice(0, -1).map((front, index) => {
@@ -211,8 +233,12 @@ export function groupRouteIncidents(alerts: BunchingAlert[], routes: RouteDirect
         !Number.isFinite(rightDetectedAt) ||
         left.alert.serviceId !== right.alert.serviceId || left.directionId !== right.directionId ||
         routeKey(left.route) !== routeKey(right.route) || Math.abs(left.stopIndex - right.stopIndex) > 2 ||
-        Math.abs(leftDetectedAt - rightDetectedAt) > windowMs ||
-        !similarGaps(left.gapSeconds, right.gapSeconds, gapToleranceSeconds)) continue
+        Math.abs(leftDetectedAt - rightDetectedAt) > windowMs) continue
+      const stopDistance = Math.abs(left.stopIndex - right.stopIndex)
+      const allowedGapTolerance = stopDistance <= 2
+        ? Math.max(gapToleranceSeconds * 2, 60)
+        : gapToleranceSeconds
+      if (!similarGaps(left.gapSeconds, right.gapSeconds, allowedGapTolerance)) continue
       unite(first, second)
     }
   }
@@ -231,7 +257,7 @@ export function groupRouteIncidents(alerts: BunchingAlert[], routes: RouteDirect
     const latest = ordered.at(-1)!
     const firstDetectedAt = first.alert.detectedAt
     const latestDetectedAt = latest.alert.detectedAt
-    const ageSeconds = Math.max(0, Math.floor((nowMs - Date.parse(firstDetectedAt)) / 1000))
+    const ageSeconds = Math.max(0, Math.floor((nowMs - Date.parse(latestDetectedAt)) / 1000))
     const firstBusEta = bunchingArrivals(latest.alert)[0]
     const firstBusEtaMs = Date.parse(firstBusEta)
     const passedPrediction = Number.isFinite(firstBusEtaMs) && firstBusEtaMs <= nowMs
@@ -567,3 +593,38 @@ function alertEvidence(alert: BunchingAlert): { fetchedAt: number; bunchedPairs:
     return null
   }
 }
+
+export function mergeRoutePositions(
+  previous: RoutePositions[] | null | undefined,
+  incoming: RoutePositions[] | null | undefined,
+  maxRetentionSeconds = 180,
+  nowMs = Date.now()
+): RoutePositions[] {
+  const previousMap = new Map((previous ?? []).map(p => [p.serviceId, p]))
+  const incomingMap = new Map((incoming ?? []).map(p => [p.serviceId, p]))
+  const allServices = new Set([...previousMap.keys(), ...incomingMap.keys()])
+  const result: RoutePositions[] = []
+
+  for (const serviceId of allServices) {
+    const inc = incomingMap.get(serviceId)
+    const prev = previousMap.get(serviceId)
+    const incBusCount = (inc?.directions ?? []).reduce((sum, d) => sum + d.buses.length, 0)
+    const prevBusCount = (prev?.directions ?? []).reduce((sum, d) => sum + d.buses.length, 0)
+
+    if (inc && incBusCount > 0) {
+      result.push(inc)
+    } else if (prev && prevBusCount > 0) {
+      const prevAgeSeconds = Math.max(0, (nowMs - Date.parse(prev.computedAt || '')) / 1000)
+      if (prevAgeSeconds <= maxRetentionSeconds) {
+        result.push(prev)
+      } else if (inc) {
+        result.push(inc)
+      }
+    } else if (inc) {
+      result.push(inc)
+    }
+  }
+
+  return result
+}
+

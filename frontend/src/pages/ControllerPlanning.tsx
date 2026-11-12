@@ -15,7 +15,7 @@ import { groupRouteIncidents, linkIncidentToPosition, routeKey, type IncidentStr
 import type { Planning } from './ControllerPage'
 import type { PagedCollection } from '@/lib/paged-collection'
 import { BunchingMap, DataMessage, distanceMeters, timestamp, validCoord, type MapHazard, type PositionedIncident } from './ControllerViews'
-import { adjacentBunchingGaps, bunchedArrivalGaps, formatGap } from '@/lib/route-strip'
+import { adjacentBunchingGaps, alertFallbackVisitOrders, bunchedArrivalGaps, formatGap } from '@/lib/route-strip'
 
 function seconds(value: number) {
   const minutes = Math.floor(value / 60)
@@ -997,11 +997,22 @@ export function ControllerPlanning({
             <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
               <span className="font-semibold text-foreground">Corridor: {group.stopCodes.length} {group.stopCodes.length === 1 ? 'stop' : 'stops'}</span>
               {group.gapSeconds !== null && <span>· Gap {seconds(group.gapSeconds)}</span>}
-              {group.corridorIncident?.stripLink && (
+              {group.corridorIncident?.stripLink ? (
                 <span className="rounded bg-sky-500/10 px-1.5 py-0.2 font-medium text-sky-700 dark:text-sky-300">
                   Buses #{group.corridorIncident.stripLink.frontOrder} & #{group.corridorIncident.stripLink.followingOrder}
                 </span>
-              )}
+              ) : (() => {
+                const alert = group.corridorIncident?.alerts?.[0]
+                const visitOrders = alert ? alertFallbackVisitOrders(alert) : null
+                if (visitOrders) {
+                  return (
+                    <span className="rounded bg-muted px-1.5 py-0.2 font-medium text-muted-foreground" title="Arrival forecast queue at monitored stop">
+                      NextBus {visitOrders.leadingOrder} & {visitOrders.followingOrder}
+                    </span>
+                  )
+                }
+                return null
+              })()}
             </div>
             {group.stopNames.length > 0 && (
               <p className="line-clamp-1 text-xs text-muted-foreground">
@@ -1193,11 +1204,22 @@ function DiagnosisRequestDetail({ request, corridor, routes, positions, detected
               ? `Lead stop ${request.stopCode ?? 'unknown'} (${corridor.stopCodes.length}-stop corridor) · detected ${timestamp(request.createdAt)}`
               : `Stop ${request.stopCode ?? 'unknown'} · detected ${timestamp(request.createdAt)}`}
           </span>
-          {corridor?.corridorIncident?.stripLink && (
+          {corridor?.corridorIncident?.stripLink ? (
             <span className="rounded bg-sky-500/10 px-1.5 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-300">
               Buses #{corridor.corridorIncident.stripLink.frontOrder} & #{corridor.corridorIncident.stripLink.followingOrder}
             </span>
-          )}
+          ) : (() => {
+            const alert = corridor?.corridorIncident?.alerts?.[0]
+            const visitOrders = alert ? alertFallbackVisitOrders(alert) : null
+            if (visitOrders) {
+              return (
+                <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground" title="Arrival forecast queue at monitored stop">
+                  NextBus {visitOrders.leadingOrder} & {visitOrders.followingOrder}
+                </span>
+              )
+            }
+            return null
+          })()}
         </p>
       </div>
       <span className="text-xs text-muted-foreground">{request.requestId}</span>
