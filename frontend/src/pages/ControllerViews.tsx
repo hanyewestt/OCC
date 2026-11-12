@@ -2001,7 +2001,8 @@ export function ControllerDisruptions({
 
   const selectedIncident = useMemo(() => {
     if (incidentParam) {
-      return positionedIncidents.find(i => i.id === incidentParam) ?? null
+      const paramIds = new Set(incidentParam.split(':').filter(Boolean))
+      return positionedIncidents.find(i => i.id === incidentParam || paramIds.has(i.id) || i.alerts.some(a => paramIds.has(a.eventId))) ?? null
     }
     return null
   }, [incidentParam, positionedIncidents])

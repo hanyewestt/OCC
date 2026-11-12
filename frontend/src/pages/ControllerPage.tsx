@@ -16,7 +16,7 @@ import { ControllerAdvisories } from '@/pages/ControllerAdvisories'
 import { usePagedCollection } from '@/lib/paged-collection'
 import { usePageRefresh } from '@/lib/page-refresh'
 import { PageRefreshStatus } from '@/components/PageRefreshStatus'
-import { bunchedArrivalGaps } from '@/lib/route-strip'
+import { bunchedArrivalGaps, groupRouteIncidents } from '@/lib/route-strip'
 import { haversineDistanceM } from '@/lib/route-geometry'
 import { ControllerCaptainsPage } from '@/pages/ControllerCaptainsPage'
 import { captainDirectoryPath, captainSelectionIsValid, selectedCaptainIds } from '@/pages/controller-captains'
@@ -219,9 +219,10 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     setDismissedAlertIds(prev => {
       const next = new Set(prev)
       next.add(id)
+      id.split(':').filter(Boolean).forEach(part => next.add(part))
       return next
     })
-    setActiveNewIncidentAlert(current => (current?.id === id ? null : current))
+    setActiveNewIncidentAlert(current => (current?.id === id || (current?.id && id.split(':').includes(current.id)) ? null : current))
     setDirectiveAlertOpen(false)
   }, [])
   const isInitialAlertCheckRef = useRef(true)
@@ -437,32 +438,47 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     }
   }, [currentAlerts, currentTraffic, routeStops.data])
 
-  const activeAlerts = useMemo(() => {
-    const decidedBunchingEventIds = new Set<string>()
-    for (const d of decisionCollection.items) {
-      const rec = recommendationCollection.items.find(r => r.recommendationId === d.recommendationId)
-      if (rec?.bunchingEventId) decidedBunchingEventIds.add(rec.bunchingEventId)
-    }
-    return currentAlerts.filter(a => !dismissedAlertIds.has(a.eventId) && !decidedBunchingEventIds.has(a.eventId))
-  }, [currentAlerts, dismissedAlertIds, decisionCollection.items, recommendationCollection.items])
+  const pollIntervalSeconds = routePositions.data?.length
+    ? Math.min(...routePositions.data.map(value => value.refreshIntervalSeconds)) : ingestionPollIntervalSeconds
+  const nowMs = Date.parse(alertCollection.lastSuccessAt || (simulation ? shellRefreshTime.at : '') || currentAlerts[0]?.detectedAt || '') || 0
+  const activeBunchingIncidents = useMemo(() => {
+    if (!currentAlerts.length || !routeStops.data?.length) return []
+    const incidents = groupRouteIncidents(
+      currentAlerts,
+      routeStops.data,
+      nowMs,
+      pollIntervalSeconds,
+      Math.max(30, routeIncidentGapToleranceSeconds),
+      Boolean(simulation)
+    )
+    return incidents.filter(i => !i.historical)
+  }, [currentAlerts, routeStops.data, nowMs, pollIntervalSeconds, routeIncidentGapToleranceSeconds, simulation])
 
-  const awaitingDirectiveCount = activeAlerts.length
-  const topActiveAlert = activeAlerts[0]
-  const topAlertGap = topActiveAlert ? bunchedArrivalGaps(topActiveAlert)[0]?.seconds ?? null : null
+  const awaitingBunchingIncidents = useMemo(() => {
+    return activeBunchingIncidents.filter(incident => {
+      if (dismissedAlertIds.has(incident.id)) return false
+      if (incident.alerts.some(a => dismissedAlertIds.has(a.eventId))) return false
+      return true
+    })
+  }, [activeBunchingIncidents, dismissedAlertIds])
+
+  const awaitingDirectiveCount = awaitingBunchingIncidents.length
+  const topActiveIncident = awaitingBunchingIncidents[0]
+  const topAlertGap = topActiveIncident?.gapSeconds ?? (topActiveIncident?.alerts[0] ? bunchedArrivalGaps(topActiveIncident.alerts[0])[0]?.seconds ?? null : null)
   const displayedAlert = (activeNewIncidentAlert && !dismissedAlertIds.has(activeNewIncidentAlert.id))
     ? activeNewIncidentAlert
-    : (topActiveAlert ? {
-        id: topActiveAlert.eventId,
+    : (topActiveIncident ? {
+        id: topActiveIncident.id,
         kind: 'bunching' as const,
-        title: `Bunching on Service ${topActiveAlert.serviceId}${topActiveAlert.directionId ? ` (Dir ${topActiveAlert.directionId})` : ''}`,
-        subtitle: `Monitored Stop: ${topActiveAlert.stopName || topActiveAlert.stopCode}`,
+        title: `Bunching on Service ${topActiveIncident.serviceId}${topActiveIncident.directionId ? ` (Dir ${topActiveIncident.directionId})` : ''}`,
+        subtitle: `Monitored Stop: ${topActiveIncident.stopNames[0] || topActiveIncident.stopCodes[0]}`,
         detail: `Headway gap degraded to ${topAlertGap ? `${topAlertGap}s` : 'critical threshold'}. Directives required to restore corridor pacing.`,
         severity: (topAlertGap ?? 999) < 60 ? 'critical' : 'warning',
-        serviceId: topActiveAlert.serviceId,
-        directionId: topActiveAlert.directionId,
-        stopCode: topActiveAlert.stopCode,
+        serviceId: topActiveIncident.serviceId,
+        directionId: topActiveIncident.directionId,
+        stopCode: topActiveIncident.stopCodes[0],
         gapSeconds: topAlertGap,
-        detectedAt: topActiveAlert.detectedAt,
+        detectedAt: topActiveIncident.latestDetectedAt,
       } : null)
 
   const requestLiveData = useCallback(async (signal: AbortSignal) => {
@@ -545,8 +561,6 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     return () => controller.abort()
   }, [loadShell])
 
-  const pollIntervalSeconds = routePositions.data?.length
-    ? Math.min(...routePositions.data.map(value => value.refreshIntervalSeconds)) : ingestionPollIntervalSeconds
   const collectionsLoading = pathname === '/controller'
     ? arrivalCollection.isLoading || !simulation && alertCollection.isLoading || recommendationCollection.isLoading
     : pathname.endsWith('/disruptions') ? !simulation && alertCollection.isLoading
