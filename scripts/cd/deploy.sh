@@ -414,14 +414,25 @@ if [ "$GATE_STATE" != "open" ]; then
     sh "$GATE_SCRIPT" open
 fi
 record_phase "gate-open"
+PUBLIC_DEADLINE=$(( $(date +%s) + OCC_READINESS_TIMEOUT ))
 for path in "" "frontend-config" "login"; do
-    STATUS=$(OCC_CURL_PHASE=public curl --connect-timeout 5 --max-time 20 --silent --output /dev/null --write-out '%{http_code}' \
-        "$OCC_PUBLIC_URL/$path" || printf '000')
-    [ "$STATUS" = "200" ] || {
+    while :; do
+        STATUS=$(OCC_CURL_PHASE=public curl --connect-timeout 5 --max-time 20 --silent --output /dev/null --write-out '%{http_code}' \
+            "$OCC_PUBLIC_URL/$path" || true)
+        [ "$STATUS" = "200" ] && break
+        # Reload is asynchronous; transient edge responses must settle within
+        # the existing readiness budget. Other errors fail immediately.
+        case "$STATUS" in
+            000|502|503|504)
+                if [ "$(date +%s)" -lt "$PUBLIC_DEADLINE" ]; then
+                    sleep 2
+                    continue
+                fi ;;
+        esac
         record_phase "public-smoke-failed"
         rm -f "$OUTSTANDING"
         die "public smoke failed: /$path returned $STATUS; the deployment is not accepted"
-    }
+    done
 done
 record_phase "public-smoke-passed"
 
