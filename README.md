@@ -4,6 +4,9 @@ OCC supports Singapore public bus operations by bringing together transit
 telemetry, road incidents, weather hazards and rail disruptions to support
 incident diagnosis and recovery planning.
 
+App: [Open OCC](https://d2n303iretutvz.cloudfront.net/).
+The app is unavailable while the environment is paused.
+
 ## About app
 
 Controllers monitor fleet arrivals and disruptions, review diagnoses and recovery
