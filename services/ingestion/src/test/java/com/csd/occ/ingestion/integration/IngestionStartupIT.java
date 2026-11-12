@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -420,15 +421,37 @@ class IngestionStartupIT {
                 new BunchingControlPort.CurrentEvidence(started.id(), bunchingEventId, "190", "44251", 1, "BUNCHING",
                         latestSnapshot.rawObservationId(), latestSnapshot.fetchedAt(), Instant.now().minusSeconds(1), true, currentIds)));
         mvc.perform(get(currentPath).header("X-OCC-Peer-Token", "test-planning-to-ingestion-token")).andExpect(status().isConflict());
+        mvc.perform(post(currentPath).header("X-OCC-Peer-Token", "test-disruption-to-ingestion-token"))
+                .andExpect(status().isUnauthorized());
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mvc.perform(post(currentPath).header("X-OCC-Peer-Token", "test-planning-to-ingestion-token"))
+                    .andExpect(status().isAccepted());
+        }
+        var refreshedFeed = bunchingFeed.demoPage(started.id(), 0, 100).items();
+        assertThat(refreshedFeed).hasSize(DemoReplayScenario.STEP_COUNT + 1);
+        var refreshedSnapshot = refreshedFeed.getLast();
+        assertThat(refreshedSnapshot.rawObservationId()).isNotEqualTo(latestSnapshot.rawObservationId());
+        assertThat(refreshedSnapshot.fetchedAt()).isAfter(latestSnapshot.fetchedAt());
         when(bunching.currentEvidence(started.id(), bunchingEventId)).thenReturn(java.util.Optional.of(
                 new BunchingControlPort.CurrentEvidence(started.id(), bunchingEventId, "190", "44251", 1, "BUNCHING",
-                        latestSnapshot.rawObservationId(), latestSnapshot.fetchedAt(), Instant.now().plusSeconds(60), true,
-                        List.of(currentIds.getFirst(), UUID.randomUUID()))));
+                        refreshedSnapshot.rawObservationId(), refreshedSnapshot.fetchedAt(), Instant.now().plusSeconds(60), true,
+                        refreshedSnapshot.arrivals().stream().map(BunchingFeedService.Arrival::observationId).toList())));
+        mvc.perform(post(currentPath).header("X-OCC-Peer-Token", "test-planning-to-ingestion-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rawObservationId").value(refreshedSnapshot.rawObservationId().toString()))
+                .andExpect(jsonPath("$.affectedBusReferences[3]").value("demo-190-4"));
+        assertThat(demoRuns.status(started.id()).currentStep()).isEqualTo(completed.currentStep());
+        assertThat(bunchingFeed.demoPage(started.id(), 0, 100).items()).hasSize(DemoReplayScenario.STEP_COUNT + 1);
+        var refreshedIds = refreshedSnapshot.arrivals().stream().map(BunchingFeedService.Arrival::observationId).toList();
+        when(bunching.currentEvidence(started.id(), bunchingEventId)).thenReturn(java.util.Optional.of(
+                new BunchingControlPort.CurrentEvidence(started.id(), bunchingEventId, "190", "44251", 1, "BUNCHING",
+                        refreshedSnapshot.rawObservationId(), refreshedSnapshot.fetchedAt(), Instant.now().plusSeconds(60), true,
+                        List.of(refreshedIds.getFirst(), UUID.randomUUID()))));
         mvc.perform(get(currentPath).header("X-OCC-Peer-Token", "test-planning-to-ingestion-token")).andExpect(status().isConflict());
         when(bunching.currentEvidence(started.id(), bunchingEventId)).thenReturn(java.util.Optional.of(
                 new BunchingControlPort.CurrentEvidence(started.id(), bunchingEventId, "190", "44251", 1, "BUNCHING",
-                        latestSnapshot.rawObservationId(), latestSnapshot.fetchedAt(), Instant.now().plusSeconds(60), true,
-                        List.of(currentIds.getFirst(), currentIds.getFirst()))));
+                        refreshedSnapshot.rawObservationId(), refreshedSnapshot.fetchedAt(), Instant.now().plusSeconds(60), true,
+                        List.of(refreshedIds.getFirst(), refreshedIds.getFirst()))));
         mvc.perform(get(currentPath).header("X-OCC-Peer-Token", "test-planning-to-ingestion-token")).andExpect(status().isConflict());
         assertThat(bunchingFeed.page(0, 100).items())
                 .noneMatch(snapshot -> simulationIds.contains(snapshot.rawObservationId()));
@@ -448,6 +471,8 @@ class IngestionStartupIT {
         DemoRunDetails closed = demoRuns.close(started.id());
 
         assertThat(closed.status()).isEqualTo("CLOSED");
+        mvc.perform(post(currentPath).header("X-OCC-Peer-Token", "test-planning-to-ingestion-token"))
+                .andExpect(status().isConflict());
         assertThat(demoMode.enabled()).isFalse();
         assertThat(demoRuns.active()).isEmpty();
         org.mockito.Mockito.verify(bunching).selectDemo(started.id());

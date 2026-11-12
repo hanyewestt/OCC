@@ -1308,6 +1308,7 @@ class AdvisoryPersistenceIT {
         var reviewedGroup = new AdvisoryContextPort.CurrentBunchingGroup(
                 run, originalId, "190", "44251", 1, snapshotId, NOW, NOW.plusSeconds(60), busReferences, gaps, List.of(true, true));
         when(context.currentBunchingGroup(run, originalId)).thenReturn(reviewedGroup);
+        when(context.refreshBunchingGroup(run, originalId)).thenReturn(java.util.Optional.of(reviewedGroup));
         var progress = new AdvisoryContextPort.Progress("44251", 10, NOW, 30, List.of(5), List.of(300),
                 NOW.plusSeconds(60), NOW.plusSeconds(120));
         var fleet = busReferences.stream().map(id -> new AdvisoryContextPort.Bus(
@@ -1317,6 +1318,7 @@ class AdvisoryPersistenceIT {
         mvc.perform(post("/api/v1/planning/recommendations/{id}/refresh", originalId).with(controller()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.revisionRawObservationId").value(snapshotId.toString()))
+                .andExpect(jsonPath("$.predictionValidUntil").value(NOW.plusSeconds(60).toString()))
                 .andExpect(jsonPath("$.suggestedOutcomes.length()").value(3))
                 .andExpect(jsonPath("$.suggestedOutcomes[0].reason").value("No preceding gap in the reviewed group."))
                 .andExpect(jsonPath("$.suggestedOutcomes[1].reason").value("The preceding gap already meets the recovery target."))
@@ -1325,8 +1327,8 @@ class AdvisoryPersistenceIT {
                 .andExpect(jsonPath("$.currentPredictionGaps[0]").value(590));
         var revisionId = records.findRevision(originalId).orElseThrow().recommendationId();
         var revision = records.findByIdempotencyKey(revisionId).orElseThrow();
-        assertThat(refreshes.refresh(originalId)).isEqualTo(revision);
-        assertThat(refreshes.refresh(revisionId)).isEqualTo(revision);
+        assertThat(refreshes.refresh(originalId)).contains(revision);
+        assertThat(refreshes.refresh(revisionId)).contains(revision);
         assertThat(records.findByIdempotencyKey(revisionId)).contains(revision);
         assertThat(revision.bunchingEvent().observedHeadwaySeconds()).containsExactly(276, 221);
         assertThat(revision.mitigationContext().affectedBusReferences()).containsExactlyElementsOf(busReferences);
@@ -1431,11 +1433,15 @@ class AdvisoryPersistenceIT {
         var group = new AdvisoryContextPort.CurrentBunchingGroup(run, originalId, "190", "44251", 1, UUID.randomUUID(),
                 NOW, NOW.plusSeconds(60), busReferences, List.of(45L, 45L), List.of(true, true));
         when(context.currentBunchingGroup(run, originalId)).thenReturn(group);
+        when(context.refreshBunchingGroup(run, originalId)).thenReturn(java.util.Optional.empty(), java.util.Optional.of(group));
         var progress = new AdvisoryContextPort.Progress("44251", 10, NOW, 30, List.of(5), List.of(300),
                 NOW.plusSeconds(60), NOW.plusSeconds(120));
         var fleet = busReferences.stream().map(id -> new AdvisoryContextPort.Bus(
                 id, id, id, "190", 1, UUID.randomUUID(), "ASSIGNED", progress)).toList();
         when(context.fleet(run)).thenReturn(new AdvisoryContextPort.Fleet(run, "RUNNING", fleet, fleet.size()));
+        mvc.perform(post("/api/v1/planning/recommendations/{id}/refresh", originalId).with(controller()))
+                .andExpect(status().isAccepted());
+        assertThat(records.findRevision(originalId)).isEmpty();
         mvc.perform(post("/api/v1/planning/recommendations/{id}/refresh", originalId).with(controller()))
                 .andExpect(status().isOk());
         var revisionId = records.findRevision(originalId).orElseThrow().recommendationId();

@@ -29,6 +29,8 @@ public record PendingRecommendationResponse(
         RecommendationImpactResponse expectedImpact,
         @Schema(description = "Source observation for a refreshed recommendation", nullable = true)
         UUID revisionRawObservationId,
+        @Schema(description = "Expiry of the reviewed predictions, when known", nullable = true)
+        Instant predictionValidUntil,
         @Schema(description = "Current prediction gaps in seconds between successive affected buses; empty for the original review")
         List<Long> currentPredictionGaps,
         @Schema(description = "Historical confirmation headways in seconds, in confirmation order")
@@ -71,6 +73,7 @@ public record PendingRecommendationResponse(
                 RecommendationExplanationResponse.from(recommendation.explanation(), diagnosisSummary),
                 RecommendationImpactResponse.from(recommendation.expectedImpact()),
                 record.revisionRawObservationId(),
+                record.mitigationContext().predictionValidUntil(),
                 record.mitigationContext().currentPredictionGaps(),
                 observed,
                 recommendation.suggestedOutcomes().stream().map(outcome -> new SuggestedBusOutcomeResponse(

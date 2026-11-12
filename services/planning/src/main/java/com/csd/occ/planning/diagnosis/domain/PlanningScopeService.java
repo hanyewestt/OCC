@@ -53,7 +53,7 @@ public class PlanningScopeService {
                     event == null ? scope.demoRunId() : event.demoRunId(), event == null ? null : event.serviceId(),
                     event == null ? null : Integer.valueOf(event.directionId()), event == null ? null : event.monitoredStopCode(),
                     List.of(),
-                    request.status(), summary == null ? null : summary.likelyCause(),
+                    request.status(), request.isProcessingRequested(), summary == null ? null : summary.likelyCause(),
                     diagnosis == null ? null : diagnosis.confidence(), diagnosis == null ? List.of()
                             : decodeLimitations(diagnosis.limitationsJson()),
                     summary == null ? List.of() : summary.evidenceDetails(), request.failureCode(),

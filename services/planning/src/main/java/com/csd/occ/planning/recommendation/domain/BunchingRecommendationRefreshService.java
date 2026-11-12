@@ -6,6 +6,7 @@ import com.csd.occ.planning.diagnosis.domain.PlanningScopeService;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,7 +29,7 @@ public class BunchingRecommendationRefreshService {
     }
 
     @Transactional
-    public RecommendationRecord refresh(UUID id) {
+    public Optional<RecommendationRecord> refresh(UUID id) {
         var previous = records.findByIdempotencyKeyForUpdate(id)
                 .orElseThrow(() -> new RecommendationDecisionService.RecommendationNotFoundException(id));
         var run = scopes.current().demoRunId();
@@ -40,18 +41,25 @@ public class BunchingRecommendationRefreshService {
         var successor = records.findRevision(id);
         if (successor.isPresent()) {
             var successorId = successor.orElseThrow().recommendationId();
-            return records.findByIdempotencyKey(successorId).orElseThrow();
+            return Optional.of(records.findByIdempotencyKey(successorId).orElseThrow());
         }
         if (decisions.findByRecommendationId(id).isPresent()) {
             throw new AdvisoryConflictException("This recommendation already has a decision");
         }
 
-        var replacement = reviewCurrentGroup(previous, run, UUID.randomUUID());
-        if (replacement == previous) return previous;
+        Optional<AdvisoryContextPort.CurrentBunchingGroup> group;
+        try {
+            group = context.refreshBunchingGroup(run, previous.bunchingEvent().bunchingEventId());
+        } catch (RuntimeException unavailable) {
+            throw new AdvisoryConflictException("Current predictions cannot be refreshed. Check that the simulation is active and try again.");
+        }
+        if (group.isEmpty()) return Optional.empty();
+        var replacement = reviewCurrentGroup(previous, run, UUID.randomUUID(), group.orElseThrow());
+        if (replacement == previous) return Optional.of(previous);
         if (!records.supersede(id, replacement, replacement.revisionRawObservationId())) {
             throw new AdvisoryConflictException("The recommendation changed while it was being refreshed");
         }
-        return replacement;
+        return Optional.of(replacement);
     }
 
     RecommendationRecord initialReview(RecommendationRecord original) {
@@ -59,21 +67,22 @@ public class BunchingRecommendationRefreshService {
                 || original.mitigationContext().affectedBusReferences().size() < 2) return original;
         try {
             var scope = scopes.current();
-            return scope == null || scope.demoRunId() == null ? original
-                    : reviewCurrentGroup(original, scope.demoRunId(), original.idempotencyKey());
+            if (scope == null || scope.demoRunId() == null) return original;
+            AdvisoryContextPort.CurrentBunchingGroup group;
+            try {
+                group = context.currentBunchingGroup(scope.demoRunId(), original.bunchingEvent().bunchingEventId());
+            } catch (RuntimeException unavailable) {
+                return original;
+            }
+            return reviewCurrentGroup(original, scope.demoRunId(), original.idempotencyKey(), group);
         } catch (AdvisoryConflictException | com.csd.occ.planning.diagnosis.domain.PlanningScopePort.UnavailableException unavailable) {
             return original;
         }
     }
 
-    private RecommendationRecord reviewCurrentGroup(RecommendationRecord previous, UUID run, UUID revisionId) {
+    private RecommendationRecord reviewCurrentGroup(RecommendationRecord previous, UUID run, UUID revisionId,
+            AdvisoryContextPort.CurrentBunchingGroup group) {
         var event = previous.bunchingEvent();
-        AdvisoryContextPort.CurrentBunchingGroup group;
-        try {
-            group = context.currentBunchingGroup(run, event.bunchingEventId());
-        } catch (RuntimeException unavailable) {
-            throw new AdvisoryConflictException("Current bunching evidence is unavailable");
-        }
         var now = clock.instant();
         if (group == null || !run.equals(group.demoRunId()) || !event.bunchingEventId().equals(group.bunchingEventId())
                 || !event.serviceId().equals(group.serviceId()) || event.directionId() != group.directionId()
@@ -106,6 +115,7 @@ public class BunchingRecommendationRefreshService {
         var policy = new BunchingRecommendationPolicy();
         var suggestions = policy.suggestOutcomes(group, fleet, route, event.expectedHeadwaySeconds(), now);
         if (group.rawObservationId().equals(previous.revisionRawObservationId())
+                && group.validUntil().equals(previous.mitigationContext().predictionValidUntil())
                 && suggestions.equals(previous.recommendation().suggestedOutcomes())) {
             return previous;
         }
@@ -114,7 +124,7 @@ public class BunchingRecommendationRefreshService {
         var mitigation = new ValidatedMitigationContext(buses.getLast(), buses, group.stopCode(),
                 FollowingBusState.READY_TO_DEPART, BunchingRecommendationPolicy.SIMULATION_MAXIMUM_HOLD_SECONDS,
                 BunchingRecommendationPolicy.SIMULATION_MAXIMUM_DWELL_SECONDS, CrowdSafetyStatus.PASSED,
-                MitigationValidationStatus.VALIDATED, List.of(group.rawObservationId().toString()), gaps);
+                MitigationValidationStatus.VALIDATED, List.of(group.rawObservationId().toString()), gaps, group.validUntil());
         int gap = mitigation.targetHeadwaySeconds(event);
         var impact = new SimulatedImpactEstimate(gap,
                 gap + Math.max(0, Math.min(event.expectedHeadwaySeconds() - gap, mitigation.maximumHoldSeconds())), 0, 0, BigDecimal.ZERO, BigDecimal.ZERO);

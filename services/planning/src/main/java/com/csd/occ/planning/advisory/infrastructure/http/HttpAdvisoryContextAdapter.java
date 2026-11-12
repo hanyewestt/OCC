@@ -3,6 +3,7 @@ package com.csd.occ.planning.advisory.infrastructure.http;
 import com.csd.occ.planning.advisory.domain.AdvisoryContextPort;
 import com.csd.occ.planning.advisory.infrastructure.config.AdvisoryProperties;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
@@ -41,5 +42,14 @@ public class HttpAdvisoryContextAdapter implements AdvisoryContextPort {
         return Objects.requireNonNull(ingestion.get().uri(
                 "/internal/v1/ingestion/demo-runs/{runId}/bunching-groups/{eventId}/current", runId, eventId)
                 .retrieve().body(CurrentBunchingGroup.class));
+    }
+
+    @Override
+    public Optional<CurrentBunchingGroup> refreshBunchingGroup(UUID runId, UUID eventId) {
+        var response = ingestion.post().uri(
+                "/internal/v1/ingestion/demo-runs/{runId}/bunching-groups/{eventId}/current", runId, eventId)
+                .retrieve().toEntity(CurrentBunchingGroup.class);
+        if (response.getStatusCode().value() == 202) return Optional.empty();
+        return Optional.of(Objects.requireNonNull(response.getBody()));
     }
 }

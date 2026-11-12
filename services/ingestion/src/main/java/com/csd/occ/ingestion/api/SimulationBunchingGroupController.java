@@ -3,14 +3,20 @@ package com.csd.occ.ingestion.api;
 import com.csd.occ.ingestion.api.dto.SimulationBunchingGroupResponse;
 import com.csd.occ.ingestion.domain.DemoRunService;
 import com.csd.occ.ingestion.domain.CurrentSimulationBunchingGroupService;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import java.time.Instant;
 import java.util.List;
 import io.swagger.v3.oas.annotations.Operation;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
@@ -46,6 +52,27 @@ public class SimulationBunchingGroupController {
     public CurrentGroupResponse current(@PathVariable UUID runId, @PathVariable UUID eventId) {
         var group = current.find(runId, eventId).orElseThrow(() ->
                 new ResponseStatusException(HttpStatus.CONFLICT, "Current simulation bunching group unavailable"));
+        return response(group);
+    }
+
+    @PostMapping("/{eventId}/current")
+    @Operation(operationId = "refreshCurrentSimulationBunchingGroup",
+            summary = "Review current evidence or request new arrivals for an expired simulation snapshot",
+            description = "Requires the planning peer capability. Repeated requests reuse the same pending snapshot until Disruption evaluates it.",
+            security = @SecurityRequirement(name = "OCCPeerCapability"))
+    @ApiResponse(responseCode = "200", description = "Current affected buses in predicted arrival order")
+    @ApiResponse(responseCode = "202", description = "New simulation predictions are awaiting detector evaluation", content = @Content)
+    @ApiResponse(responseCode = "401", description = "Missing or invalid Planning peer token", content = @Content)
+    @ApiResponse(responseCode = "409", description = "Current evidence is unavailable and the simulation cannot regenerate it",
+            content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
+    public ResponseEntity<CurrentGroupResponse> refresh(@PathVariable UUID runId, @PathVariable UUID eventId) {
+        var group = current.find(runId, eventId);
+        if (group.isPresent()) return ResponseEntity.ok(response(group.orElseThrow()));
+        if (current.requestFreshPredictions(runId, eventId)) return ResponseEntity.accepted().build();
+        throw new ResponseStatusException(HttpStatus.CONFLICT, "Current simulation predictions cannot be refreshed");
+    }
+
+    private static CurrentGroupResponse response(CurrentSimulationBunchingGroupService.Group group) {
         return new CurrentGroupResponse(group.demoRunId(), group.bunchingEventId(), group.serviceId(), group.stopCode(),
                 group.directionId(), group.rawObservationId(), group.fetchedAt(), group.validUntil(), group.affectedBusReferences(),
                 group.adjacentGapSeconds(), group.consecutivePairs());
@@ -53,8 +80,8 @@ public class SimulationBunchingGroupController {
 
     public record CurrentGroupResponse(UUID demoRunId, UUID bunchingEventId, String serviceId, String stopCode,
             int directionId, UUID rawObservationId, Instant fetchedAt, Instant validUntil, List<String> affectedBusReferences,
-            @io.swagger.v3.oas.annotations.media.Schema(description = "Prediction gaps in seconds between successive affected buses, in the same order; other non-affected buses may lie between them")
+            @Schema(description = "Prediction gaps in seconds between successive affected buses, in the same order; other non-affected buses may lie between them")
             List<Long> adjacentGapSeconds,
-            @io.swagger.v3.oas.annotations.media.Schema(description = "Whether each gap connects consecutive buses in the full simulation snapshot")
+            @Schema(description = "Whether each gap connects consecutive buses in the full simulation snapshot")
             List<Boolean> consecutivePairs) {}
 }
