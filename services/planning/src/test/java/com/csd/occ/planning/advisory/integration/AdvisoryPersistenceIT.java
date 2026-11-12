@@ -772,6 +772,8 @@ class AdvisoryPersistenceIT {
         notices.publish(second.id(), "controller");
 
         reconciliation.runClosed(run);
+        assertThat(notices.current("ALL", null, 0, 20).getContent())
+                .extracting(PublicNotice::id).containsExactlyInAnyOrder(live.id(), first.id(), second.id());
         assertThat(notices.current("OBSERVATION_ONLY", null, 0, 20).getContent())
                 .extracting(PublicNotice::id).containsExactly(live.id());
         assertThat(notices.current("SIMULATION", run, 0, 20).getContent())

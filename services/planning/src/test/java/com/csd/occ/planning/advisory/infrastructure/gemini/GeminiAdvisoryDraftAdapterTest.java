@@ -82,9 +82,9 @@ class GeminiAdvisoryDraftAdapterTest {
     @ParameterizedTest
     @MethodSource("invalidSuggestions")
     void unsupportedModelOutputCannotBecomePassengerWording(String output) {
-        assertThatThrownBy(() -> adapter(modelReturning(output), true).suggestNotice(hazard(true, "Water reported.")))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("supported source facts and restrictions");
+        var suggestion = adapter(modelReturning(output), true).suggestNotice(hazard(false, "Water reported."));
+        assertThat(suggestion.generator()).isEqualTo("SOURCE_FACTS");
+        assertThat(suggestion.message()).contains("Water reported.", "Use caution.");
     }
 
     static Stream<String> invalidSuggestions() {

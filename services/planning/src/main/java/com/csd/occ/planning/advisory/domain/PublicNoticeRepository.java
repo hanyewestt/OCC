@@ -20,6 +20,12 @@ public interface PublicNoticeRepository extends JpaRepository<PublicNotice, UUID
         order by n.publishedAt desc,n.id
         """)
     Page<PublicNotice> findCurrent(String classification, UUID runId, Instant now, Pageable page);
+    @Query("""
+        select n from PublicNotice n where n.status='PUBLISHED'
+        and n.effectiveFrom<=:now and n.effectiveUntil>:now
+        order by n.publishedAt desc,n.id
+        """)
+    Page<PublicNotice> findAllCurrent(Instant now, Pageable page);
     @Modifying @Query("delete from PublicNotice n where n.effectiveUntil<:cutoff and n.createdAt<:cutoff")
     int deleteExpiredBefore(Instant cutoff);
 }
