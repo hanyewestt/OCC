@@ -102,12 +102,15 @@ public class DiagnosisRequestController {
 
     @PostMapping("/api/v1/planning/diagnoses/trigger")
     @Operation(operationId = "triggerDiagnosis", summary = "Trigger root-cause diagnosis on-demand for an event or request",
-            description = "Runs root-cause diagnosis and mitigation candidate generation on-demand. If already completed, returns existing result.")
-    @ApiResponse(responseCode = "200", description = "Diagnosis completed or status returned")
+            description = "Durably queues diagnosis and returns its current lifecycle status immediately. The worker processes bunching, traffic and hazard requests using their respective policies, including retries and restart recovery when automatic bunching is disabled. Repeated triggers preserve active leases and retry backoff; completed requests return their existing status, including completion without a diagnosis. Poll GET /api/v1/planning/requests/{requestId} for completion. A terminal failure can be explicitly queued again.")
+    @ApiResponse(responseCode = "200", description = "Diagnosis queued or existing lifecycle status returned")
     @ApiResponse(responseCode = "400", description = "Either eventId or requestId must be provided")
     @ApiResponse(responseCode = "404", description = "Diagnosis request not found")
     public DiagnosisRequestResponse trigger(@RequestBody TriggerDiagnosisRequest body) {
-        return triggerService.trigger(body);
+        var request = body.requestId() != null ? triggerService.trigger(body.requestId())
+                : triggerService.triggerByEvent(body.eventId());
+        return new DiagnosisRequestResponse(request.requestId(), request.diagnosisId(), request.status(),
+                request.failureCode(), request.createdAt(), request.policyOutcome());
     }
 
     @PostMapping("/api/v1/planning/diagnoses/{requestId}/controller-suggestion")
