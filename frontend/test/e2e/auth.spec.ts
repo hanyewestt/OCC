@@ -406,6 +406,7 @@ test('route selection resets to the first route when its route identity disappea
 })
 
 test('partial position refresh publishes successful services while retaining failed services', async ({ page, context }) => {
+  await page.clock.setFixedTime(new Date('2026-10-23T04:01:00Z'))
   await mockAuth(context, 'CONTROLLER')
   let refresh = false
   await context.route('**/api/v1/route-positions?*', route => {
@@ -713,8 +714,7 @@ test('controller can opt into diagnosis from a queued bunching request', async (
     expect(route.request().method()).toBe('POST')
     expect(route.request().postDataJSON()).toEqual({ requestId: 'bunching-request-1' })
     triggered = true
-    completed = true
-    return route.fulfill({ json: { requestId: 'bunching-request-1', diagnosisId: 'diagnosis-1', status: 'COMPLETED', failureCode: null, createdAt: request.createdAt, policyOutcome: null } })
+    return route.fulfill({ json: { requestId: 'bunching-request-1', diagnosisId: null, status: 'PENDING', failureCode: null, createdAt: request.createdAt, policyOutcome: null } })
   })
 
   await login(page)
@@ -726,7 +726,9 @@ test('controller can opt into diagnosis from a queued bunching request', async (
   await expect(page.getByRole('heading', { name: 'Bunching detection', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Generate diagnosis', exact: true }).click()
   await expect.poll(() => triggered).toBe(true)
-  await expect(page.getByText('Diagnosis generated. The recommendation is ready for review.')).toBeVisible()
+  await expect(page.getByText('Diagnosis generation has started. Refresh to see its latest status.')).toBeVisible()
+  completed = true
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'AI diagnosis', exact: true })).toBeVisible()
   await expect(page.getByText('The trailing bus encountered a passenger surge.')).toBeVisible()
   await expect(page.getByText('Confidence: 82%')).toBeVisible()
@@ -1564,6 +1566,47 @@ test('expired persisted session with rejected refresh returns to login', async (
   await expect(page).toHaveURL(/\/login$/)
   await expect(page.getByText('Access verified')).toHaveCount(0)
 })
+
+for (const refreshedRole of ['CONTROLLER', 'CAPTAIN']) {
+  test(`token refresh ${refreshedRole === 'CONTROLLER' ? 'preserves a notice draft for the same identity' : 'clears controller content when the verified role changes'}`, async ({ page, context }) => {
+    await page.clock.install()
+    await mockAuth(context, 'CONTROLLER')
+    const refreshed = session(refreshedRole)
+    let role = 'CONTROLLER'
+    let refreshes = 0
+    let usedRefreshedToken = false
+    page.on('request', request => {
+      if (new URL(request.url()).pathname.startsWith('/api/v1/') &&
+          request.headers().authorization === `Bearer ${refreshed.access_token}`) usedRefreshedToken = true
+    })
+    await context.route('https://example.supabase.co/auth/v1/token**', route => {
+      if (new URL(route.request().url()).searchParams.get('grant_type') === 'refresh_token') {
+        refreshes++
+        role = refreshedRole
+        return route.fulfill({ json: refreshed })
+      }
+      return route.fulfill({ json: session('CONTROLLER', 180) })
+    })
+    await context.route('**/api/v1/auth/**', route => route.fulfill({ json: { subject: userId, role } }))
+    await login(page, '/controller/notices')
+    await page.getByRole('button', { name: 'Draft notice', exact: true }).click()
+    const editor = page.getByRole('dialog', { name: 'New notice draft', exact: true })
+    await editor.getByLabel('Title', { exact: true }).fill('Keep this draft through token refresh')
+
+    await page.clock.runFor(120000)
+    await expect.poll(() => refreshes).toBe(1)
+    await expect.poll(() => usedRefreshedToken).toBe(true)
+    if (refreshedRole === 'CONTROLLER') {
+      await expect(editor).toBeVisible()
+      await expect(editor.getByLabel('Title', { exact: true })).toHaveValue('Keep this draft through token refresh')
+    } else {
+      await expect(page.getByRole('heading', { name: 'Access denied', exact: true })).toBeVisible()
+      await expect(editor).toHaveCount(0)
+      await expect(page.getByRole('link', { name: 'Return to my page', exact: true })).toHaveAttribute('href', '/captain')
+    }
+  })
+}
+
 test('sign-out propagates to another open tab', async ({ page, context }) => {
   await mockAuth(context, 'CONTROLLER')
   await login(page)
@@ -1788,8 +1831,8 @@ test('controller reviews a service-direction broadcast and sends only the review
   await login(page)
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
   const advisories = page.getByRole('region', { name: 'Multi-hazard advisories', exact: true })
-  await expect(advisories.getByRole('heading', { name: 'Service 190 · Direction 1', exact: true })).toBeVisible()
-  await expect(advisories.getByRole('heading', { name: 'Service 190 · Direction 2', exact: true })).toBeVisible()
+  await expect(advisories.getByText('Service 190 · Direction 1', { exact: true })).toBeVisible()
+  await expect(advisories.getByText('Service 190 · Direction 2', { exact: true })).toBeVisible()
   await expect(advisories.getByText('2 affected buses', { exact: false })).toBeVisible()
   await page.screenshot({ path: 'node_modules/.cache/controller-advisory-groups-desktop.png', fullPage: true })
   await page.setViewportSize({ width: 390, height: 844 })
@@ -1803,8 +1846,8 @@ test('controller reviews a service-direction broadcast and sends only the review
   await expect(review.getByText(reverse.busId, { exact: true })).toHaveCount(0)
   expect(sent).toBe(false)
   await review.getByRole('button', { name: 'Approve and send group', exact: true }).click()
-  await expect(advisories.getByRole('heading', { name: 'Service 190 · Direction 1', exact: true })).toHaveCount(0)
-  await expect(advisories.getByRole('heading', { name: 'Service 190 · Direction 2', exact: true })).toBeVisible()
+  await expect(advisories.getByText('Service 190 · Direction 1', { exact: true })).toHaveCount(0)
+  await expect(advisories.getByText('Service 190 · Direction 2', { exact: true })).toBeVisible()
   await expect(advisories.getByRole('region', { name: 'Issued instructions', exact: true }).getByText(issued.message, { exact: true })).toHaveCount(2)
   await expect(advisories.getByText(/^demo-190-b · ISSUED · Awaiting acknowledgement by/)).toBeVisible()
   await expect(advisories.getByText(/^demo-190-c · ISSUED · Awaiting acknowledgement by/)).toBeVisible()

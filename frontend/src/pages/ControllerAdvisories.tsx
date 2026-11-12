@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { MapPin, Construction, CloudRain, TrainFront, Car, AlertTriangle } from 'lucide-react'
+import { MapPin, Construction, CloudRain, TrainFront, Car, AlertTriangle, Check, CheckCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -61,7 +61,7 @@ function getHazardBadgeInfo(kind?: string, title?: string) {
 
 const instructionLabels = { BE_CAUTIOUS: 'Be cautious', REDUCE_SPEED: 'Reduce speed', SLOW_DOWN_NEAR_STOPS: 'Slow down near stops', HOLD: 'Hold', DWELL_ADJUSTMENT: 'Adjust dwell', SKIP_STOP: 'Skip stop' }
 
-export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPendingChange, onRefreshTimeChange, view, selectedHazardId, onLocateHazard, trafficIncidents }: {
+export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPendingChange, onRefreshTimeChange, view, selectedHazardId, onLocateHazard, trafficIncidents, dismissedAlertIds, onDismissAlert, onAcknowledgeAllIncidents }: {
   token: string; registerRefresh: (callback: (signal: AbortSignal) => Promise<void>) => void
   onRefresh: () => void; onPendingChange: (pending: boolean) => void
   onRefreshTimeChange: (at: string | null) => void
@@ -69,6 +69,9 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
   selectedHazardId?: string | null
   onLocateHazard?: (hazardId: string, lat: number, lon: number, hazard: Hazard) => void
   trafficIncidents?: TrafficIncident[]
+  dismissedAlertIds?: Set<string>
+  onDismissAlert?: (id: string) => void
+  onAcknowledgeAllIncidents?: () => void
 }) {
   const [actionError, setActionError] = useState('')
   const [pending, setPending] = useState(false)
@@ -288,9 +291,30 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
         <Button variant="outline" disabled={pending} onClick={() => openDraft({ id: crypto.randomUUID(), disruptionId: '', title: '', message: '', services: '', locations: '', from: '', until: '' })}>Draft notice</Button></div>}</div>
     {actionError && !draft && !groupReview && <p role="alert" className="rounded-lg border p-3 text-sm">{actionError}</p>}
     {view === 'hazards' && <>
-      <div className="max-w-xs space-y-2"><Label htmlFor="hazard-kind">Hazard type</Label><select id="hazard-kind" value={kind} onChange={e => setKind(e.target.value)} className="h-9 w-full rounded-md border bg-background px-3 text-sm">
-        <option value="">All types</option>{[['TRAFFIC_INCIDENT', 'Traffic Incidents'], ['FLOOD', 'Floods'], ['RAIL_DISRUPTION', 'Rail Disruptions'], ['ROADWORKS', 'Roadworks']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-      </select></div>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="max-w-xs space-y-2">
+          <Label htmlFor="hazard-kind">Hazard type</Label>
+          <select id="hazard-kind" value={kind} onChange={e => setKind(e.target.value)} className="h-9 w-full rounded-md border bg-background px-3 text-sm">
+            <option value="">All types</option>
+            {[['TRAFFIC_INCIDENT', 'Traffic Incidents'], ['FLOOD', 'Floods'], ['RAIL_DISRUPTION', 'Rail Disruptions'], ['ROADWORKS', 'Roadworks']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </div>
+        {onAcknowledgeAllIncidents && hazards.items.some(h => {
+          const matched = trafficIncidents?.find(t => t.disruptionId === h.disruptionId || t.id === h.disruptionId)
+          return !dismissedAlertIds?.has(h.disruptionId) && (!matched || !dismissedAlertIds?.has(matched.id))
+        }) && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 text-xs gap-1.5 border-rose-500/50 text-rose-900 dark:text-rose-200 hover:bg-rose-500/10"
+            onClick={onAcknowledgeAllIncidents}
+            title="Acknowledge all incident hazards"
+          >
+            <CheckCheck className="size-3.5 text-rose-600" />
+            <span>Acknowledge all incidents</span>
+          </Button>
+        )}
+      </div>
       {hazards.isLoading && !hazards.latestPage && <p role="status" className="text-sm text-muted-foreground">Loading hazards…</p>}
       {hazards.error !== null && !hazards.items.length && <p role="alert" className="text-sm text-destructive">Hazards are unavailable.</p>}
       {!hazards.isLoading && hazards.error === null && hazards.latestPage && !hazards.items.length && <p className="text-sm text-muted-foreground">{kind ? 'No hazards found for the selected type.' : 'No hazards found.'}</p>}
@@ -305,6 +329,10 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
           const lon = explicitLoc?.longitude ?? matchedTraffic?.longitude ?? null
           const hasCoords = typeof lat === 'number' && typeof lon === 'number' && validCoord(lat, lon)
           const isSelected = selectedHazardId === h.disruptionId || (matchedTraffic && selectedHazardId === matchedTraffic.id)
+          const isAcknowledged = Boolean(
+            dismissedAlertIds?.has(h.disruptionId) ||
+            (matchedTraffic && dismissedAlertIds?.has(matchedTraffic.id))
+          )
 
           return (
             <Card
@@ -314,27 +342,49 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
             >
               <CardContent className="space-y-3">
                 <div className="flex flex-wrap justify-between gap-2">
-                  <h3 className="font-semibold">{h.facts.title}</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold">{h.facts.title}</h3>
+                    {isAcknowledged && (
+                      <span className="rounded-md bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 px-2 py-0.5 text-xs font-medium inline-flex items-center gap-1">
+                        <Check className="size-3" />
+                        Acknowledged
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-muted-foreground">{h.status} · {dataClassificationLabel(h.classification)}</p>
                 </div>
                 <p className="text-sm">{h.facts.description}</p>
                 {h.facts.instruction && <p className="text-sm font-medium">{h.facts.instruction}</p>}
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs text-muted-foreground">
                   <span>Updated {formatSgtDateTime(h.updatedAt)} · Exposure uses simulated progress.</span>
-                  {hasCoords ? (
-                    <Button
-                      type="button"
-                      variant={isSelected ? "secondary" : "outline"}
-                      size="sm"
-                      className={cn("h-7 gap-1.5 text-xs", isSelected && "font-semibold text-amber-700 dark:text-amber-400 border-amber-500/50")}
-                      onClick={() => onLocateHazard?.(h.disruptionId, lat, lon, h)}
-                    >
-                      <MapPin className="h-3.5 w-3.5 text-amber-600" />
-                      {isSelected ? 'Focused on map' : 'Locate on map'}
-                    </Button>
-                  ) : (
-                    <span className="text-[11px] text-muted-foreground/70 italic">Coordinates unmapped</span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {!isAcknowledged && onDismissAlert && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => onDismissAlert(matchedTraffic?.id || h.disruptionId)}
+                        title="Acknowledge this incident hazard"
+                      >
+                        Acknowledge
+                      </Button>
+                    )}
+                    {hasCoords ? (
+                      <Button
+                        type="button"
+                        variant={isSelected ? "secondary" : "outline"}
+                        size="sm"
+                        className={cn("h-7 gap-1.5 text-xs", isSelected && "font-semibold text-amber-700 dark:text-amber-400 border-amber-500/50")}
+                        onClick={() => onLocateHazard?.(h.disruptionId, lat, lon, h)}
+                      >
+                        <MapPin className="h-3.5 w-3.5 text-amber-600" />
+                        {isSelected ? 'Focused on map' : 'Locate on map'}
+                      </Button>
+                    ) : (
+                      <span className="text-[11px] text-muted-foreground/70 italic">Coordinates unmapped</span>
+                    )}
+                  </div>
                 </div>
                 {h.exposures.length > 0 ? (
                   <p className="text-sm">Candidate stops: {h.exposures.map(e => `${e.serviceId} · ${e.stopName} (${e.basis})`).join('; ')}</p>
@@ -398,7 +448,7 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
               <CardContent className="space-y-3.5 pt-5">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-bold text-base text-foreground">Service {group.serviceId} · Direction {group.directionId}</span>
+                    <h3 className="font-bold text-base text-foreground">Service {group.serviceId} · Direction {group.directionId}</h3>
                     <span className={cn("inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold", badgeInfo.className)}>
                       {badgeInfo.icon}
                       {badgeInfo.label}

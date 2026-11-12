@@ -184,6 +184,9 @@ public class JpaBunchingAlertAdapter implements BunchingAlertPort {
         }
 
         BunchingAlertPolicy.Transition transition = policy.transition(result.state(), Optional.of(previous.activeAlertId()));
+        if (previous.activeAlertId() != null && result.reason() == BunchingEvaluation.Reason.PAST_ARRIVAL) {
+            transition = BunchingAlertPolicy.Transition.CLEARED;
+        }
         UUID episode = previous.activeAlertId();
         if (transition == BunchingAlertPolicy.Transition.CLEARED) {
             AlertEvent event = saveEvent(new AlertEvent(episode, transition.name(), service, stop, direction,

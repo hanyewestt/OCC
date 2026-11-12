@@ -16,9 +16,20 @@ import urllib.request
 from collections import Counter
 
 
+ORIGIN_SECRET_HEADERS: dict[str,str] = {}
+
+
+def open_url(base_url: str, path: str):
+    """Open a path with the edge's origin secret when one is configured."""
+    request = urllib.request.Request(base_url + path, headers=ORIGIN_SECRET_HEADERS)
+    return urllib.request.urlopen(request, context=ssl._create_unverified_context(), timeout=10)
+
+
 def request_status(base_url: str, path: str, headers: dict[str, str] | None = None,
                    method: str = "GET") -> int:
-    request = urllib.request.Request(base_url + path, headers=headers or {}, method=method)
+    request = urllib.request.Request(base_url + path,
+                                     headers={**ORIGIN_SECRET_HEADERS, **(headers or {})},
+                                     method=method)
     try:
         with urllib.request.urlopen(request, context=ssl._create_unverified_context(), timeout=10) as response:
             return response.status
@@ -38,7 +49,8 @@ def assert_status(base_url: str, label: str, path: str, expected: int,
 
 
 def assert_pacing_event_stream(base_url: str, token: str,
-                              path: str = "/api/v1/pacing-snapshots/stream") -> None:
+                               path: str = "/api/v1/pacing-snapshots/stream",
+                               max_heartbeat_gap: float | None = None) -> None:
     parts = urllib.parse.urlsplit(base_url)
     context = ssl._create_unverified_context() if parts.scheme == "https" else None
     connection = (
@@ -46,7 +58,9 @@ def assert_pacing_event_stream(base_url: str, token: str,
         if context else http.client.HTTPConnection(parts.hostname, parts.port, timeout=20)
     )
     connection.request("GET", path,
-                       headers={"Authorization": f"Bearer {token}", "Accept": "text/event-stream"})
+                       headers={**ORIGIN_SECRET_HEADERS,
+                                "Authorization": f"Bearer {token}",
+                                "Accept": "text/event-stream"})
     try:
         response = connection.getresponse()
         if response.status != 200:
@@ -64,6 +78,22 @@ def assert_pacing_event_stream(base_url: str, token: str,
         if b"data:" not in received and b"event:" not in received:
             raise AssertionError("pacing SSE: no event was delivered before the idle timeout")
         print("PASS pacing SSE stream is delivered without buffering")
+        if max_heartbeat_gap is not None:
+            # Measure the gap between consecutive events: the CloudFront
+            # origin read timeout must stay well above this cadence.
+            gap_deadline = time.monotonic() + max_heartbeat_gap
+            second_event = b""
+            while b"\n\n" not in second_event and time.monotonic() < gap_deadline:
+                chunk = response.read1(4096)
+                if not chunk:
+                    break
+                second_event += chunk
+            if b"\n\n" not in second_event:
+                raise AssertionError(
+                    f"pacing SSE: no second event arrived within {max_heartbeat_gap:g}s, "
+                    "so the measured heartbeat gap cannot calibrate the origin timeout")
+            print(f"PASS pacing SSE heartbeat gap stayed below {max_heartbeat_gap:g}s "
+                  "through the proxy")
     except (TimeoutError, socket.timeout) as error:
         raise AssertionError("pacing SSE: the stream did not deliver an event before the idle timeout") from error
     finally:
@@ -71,17 +101,22 @@ def assert_pacing_event_stream(base_url: str, token: str,
 
 
 def main() -> int:
+    global ORIGIN_SECRET_HEADERS
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="https://127.0.0.1:18443")
     parser.add_argument("--token-dir", type=Path)
     parser.add_argument("--static-only", action="store_true")
+    parser.add_argument("--origin-secret-file",type=Path)
+    parser.add_argument("--max-heartbeat-gap",type=float)
     args = parser.parse_args()
+    if args.origin_secret_file:
+        ORIGIN_SECRET_HEADERS = {"X-OCC-Origin-Secret":args.origin_secret_file.read_text(encoding="utf-8").strip()}
     base_url = args.base_url.rstrip("/")
 
     root = Path(__file__).resolve().parents[2]
     html = (root / "frontend/dist/index.html").read_bytes()
     try:
-        urllib.request.urlopen(base_url + "/not-a-page", context=ssl._create_unverified_context(), timeout=10)
+        open_url(base_url,"/not-a-page")
         raise AssertionError("Unknown website route did not return 404")
     except urllib.error.HTTPError as response:
         if response.code != 404 or response.read() != (root / "frontend/dist/404.html").read_bytes():
@@ -91,7 +126,7 @@ def main() -> int:
                   "/admin/accounts/new", "/controller", "/controller/disruptions",
                   "/controller/planning", "/controller/notices", "/controller/audit", "/controller/captains",
                   "/captain", "/401", "/403", "/404"):
-        with urllib.request.urlopen(base_url + route, context=ssl._create_unverified_context(), timeout=10) as response:
+        with open_url(base_url,route) as response:
             if response.read() != html or "text/html" not in response.headers.get("Content-Type", ""):
                 raise AssertionError(f"{route}: response differs from the React entry HTML")
             if response.headers.get("X-Content-Type-Options") != "nosniff":
@@ -100,7 +135,7 @@ def main() -> int:
     for asset in (root / "frontend/dist/assets").iterdir():
         if not asset.is_file():
             continue
-        with urllib.request.urlopen(base_url + "/assets/" + asset.name, context=ssl._create_unverified_context(), timeout=10) as response:
+        with open_url(base_url,"/assets/"+asset.name) as response:
             if response.read() != asset.read_bytes():
                 raise AssertionError("Built asset mismatch")
             mime = response.headers.get("Content-Type", "")
@@ -171,10 +206,12 @@ def main() -> int:
                           "/api/v1/planning/public/notices?page=0&size=1", 200,
                           {"Authorization": f"Bearer {token}"})
         assert_pacing_event_stream(base_url,
-                                   (token_dir / "controller.jwt").read_text(encoding="utf-8").strip())
+                                   (token_dir / "controller.jwt").read_text(encoding="utf-8").strip(),
+                                   max_heartbeat_gap=args.max_heartbeat_gap)
         assert_pacing_event_stream(base_url,
                                    (token_dir / "controller.jwt").read_text(encoding="utf-8").strip(),
-                                   "/api/v1/ingestion/pacing-snapshots/stream?serviceId=190")
+                                   "/api/v1/ingestion/pacing-snapshots/stream?serviceId=190",
+                                   max_heartbeat_gap=args.max_heartbeat_gap)
         for role in ("captain", "unassigned"):
             token = (token_dir / f"{role}.jwt").read_text(encoding="utf-8").strip()
             assert_status(base_url, f"valid {role.upper()} JWT is forbidden from Ingestion API",

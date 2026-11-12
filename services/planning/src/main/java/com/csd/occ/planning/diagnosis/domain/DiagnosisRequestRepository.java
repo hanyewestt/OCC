@@ -6,6 +6,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -37,7 +38,7 @@ public interface DiagnosisRequestRepository extends JpaRepository<DiagnosisReque
                   and coalesce(cast(request.input_snapshot as jsonb)->>'demoRunId', '') = :runId
             )
             select id,event_type,producer,event_id,schema_version,status,attempt_count,next_attempt_at,lease_until,
-                   failure_code,policy_outcome,created_at,updated_at,version,input_snapshot
+                   failure_code,policy_outcome,created_at,updated_at,version,input_snapshot,processing_requested
             from ranked where request_rank=1 and status <> 'COMPLETED'
             order by created_at desc,id desc
             """, countQuery = """
@@ -69,7 +70,7 @@ public interface DiagnosisRequestRepository extends JpaRepository<DiagnosisReque
                   and coalesce(cast(request.input_snapshot as jsonb)->>'demoRunId', '') = :runId
             )
             select id,event_type,producer,event_id,schema_version,status,attempt_count,next_attempt_at,lease_until,
-                   failure_code,policy_outcome,created_at,updated_at,version,input_snapshot
+                   failure_code,policy_outcome,created_at,updated_at,version,input_snapshot,processing_requested
             from ranked where request_rank=1 order by updated_at desc,id desc
             """, countQuery = """
             select count(distinct cast(input_snapshot as jsonb)->>'disruptionId')
@@ -105,11 +106,16 @@ public interface DiagnosisRequestRepository extends JpaRepository<DiagnosisReque
     List<DiagnosisRequest> findClaimable(@Param("now") Instant now, @Param("batchSize") int batchSize);
 
     @Query(value = "select * from planning.planning_request where "
-            + "event_type in ('HAZARD','TRAFFIC_INCIDENT') and "
+            + "(event_type in ('HAZARD','TRAFFIC_INCIDENT') or processing_requested or attempt_count > 0) and "
             + "(((status in ('PENDING','FAILED_RETRYABLE') and next_attempt_at <= :now) "
             + "or (status = 'PROCESSING' and lease_until <= :now))) "
             + "order by created_at limit :batchSize for update skip locked", nativeQuery = true)
-    List<DiagnosisRequest> findClaimableHazardsOnly(@Param("now") Instant now, @Param("batchSize") int batchSize);
+    List<DiagnosisRequest> findClaimableRequestedOrHazards(@Param("now") Instant now, @Param("batchSize") int batchSize);
 
+    @Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
     Optional<DiagnosisRequest> findFirstByEventIdOrderByCreatedAtDesc(UUID eventId);
+
+    @Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select request from DiagnosisRequest request where request.id = :id")
+    Optional<DiagnosisRequest> findByIdForUpdate(@Param("id") UUID id);
 }

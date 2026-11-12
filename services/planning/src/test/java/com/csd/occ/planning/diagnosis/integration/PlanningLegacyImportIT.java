@@ -49,12 +49,13 @@ class PlanningLegacyImportIT {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM planning.model_invocation_record", Integer.class)).isEqualTo(2);
 
         assertThat(jdbc.queryForMap("""
-                SELECT status, attempt_count, version, input_snapshot
+                SELECT status, attempt_count, version, input_snapshot, processing_requested
                   FROM planning.planning_request
                  WHERE id = '00000000-0000-0000-0000-000000000001'
                 """))
                 .containsEntry("status", "PENDING")
                 .containsEntry("attempt_count", 2)
+                .containsEntry("processing_requested", true)
                 .containsEntry("version", 7L)
                 .containsEntry("input_snapshot", "{\"captured\":true}");
         assertThat(jdbc.queryForMap("SELECT producer, schema_version FROM planning.planning_request WHERE id = '00000000-0000-0000-0000-000000000001'"))
