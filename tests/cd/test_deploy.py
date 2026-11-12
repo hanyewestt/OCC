@@ -116,6 +116,10 @@ esac
 if [ "${{OCC_CURL_PHASE:-}}" = "public" ] && [ -n "${{OCC_FAKE_PUBLIC_SMOKE_CODE:-}}" ]; then
     code="$OCC_FAKE_PUBLIC_SMOKE_CODE"
 fi
+if [ "${{OCC_CURL_PHASE:-}}" = "public" ] && [ "${{OCC_FAKE_PUBLIC_TRANSIENT:-}}" = "yes" ] && [ ! -f "${{OCC_HOME}}/public-attempted" ]; then
+    touch "${{OCC_HOME}}/public-attempted"
+    code=503
+fi
 echo "$code"
 ''')
         self._stub("df", f'''
@@ -442,6 +446,21 @@ class ApplyTests(DeployTestBase):
         self.assertIn("gate close", self.sandbox.gate_log())
         self.assertNotIn("gate open", self.sandbox.gate_log())
 
+    def test_public_smoke_waits_for_asynchronous_gate_reload(self):
+        release = self.sandbox.write_release("rel-a-1", REVISION_A)
+        self.sandbox.docker_env["OCC_FAKE_PUBLIC_TRANSIENT"] = "yes"
+        result = self.sandbox.deploy(release)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.sandbox.state / "active-release.json").exists())
+        gate_dir = self.sandbox.runtime / "nginx-gate"
+        self.assertEqual(stat.S_IMODE(gate_dir.stat().st_mode), 0o750)
+    def test_persistent_public_unavailability_does_not_advance_state(self):
+        release = self.sandbox.write_release("rel-a-1", REVISION_A)
+        self.sandbox.docker_env.update(OCC_FAKE_PUBLIC_SMOKE_CODE="503", OCC_READINESS_TIMEOUT="1")
+        result = self.sandbox.deploy(release)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.sandbox.state / "active-release.json").exists())
+        self.assertIn('"closed"', (self.sandbox.runtime / "nginx-gate/traffic-gate.inc").read_text())
     def test_failed_public_smoke_does_not_advance_state(self):
         release = self.sandbox.write_release("rel-a-1", REVISION_A)
         self.sandbox.docker_env["OCC_FAKE_PUBLIC_SMOKE_CODE"] = "500"
