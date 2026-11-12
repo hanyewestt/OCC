@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { ControllerDisruptions } from '../../src/pages/ControllerViews'
 import { ControllerAdvisories } from '../../src/pages/ControllerAdvisories'
 import type { PagedCollection, PagedResult } from '../../src/lib/paged-collection'
-import type { BunchingAlert, DemoRun, Hazard, PageResult, RouteDirection, TrafficIncident } from '../../src/lib/api'
+import type { BunchingAlert, DemoRun, PageResult, RouteDirection, TrafficIncident } from '../../src/lib/api'
 import type { Resource } from '../../src/pages/ControllerPage'
 
 function mockPagedCollection<T, P extends PagedResult<T>>(items: T[], page: P | null): PagedCollection<T, P> {
@@ -120,24 +120,6 @@ test('ControllerDisruptions displays Acknowledged badge when incident ID is in d
 })
 
 test('ControllerAdvisories displays Acknowledge all incidents and acknowledges individual hazard cards', () => {
-  const sampleHazard: Hazard = {
-    disruptionId: 'hazard-101',
-    kind: 'TRAFFIC_INCIDENT',
-    status: 'ACTIVE',
-    classification: 'LIVE',
-    demoRunId: null,
-    updatedAt: new Date().toISOString(),
-    facts: {
-      title: 'Accident on Orchard Rd',
-      description: 'Heavy congestion near Orchard Stn.',
-      instruction: 'Exercise caution.',
-      effectiveUntil: null,
-      locations: [{ latitude: 1.304, longitude: 103.832, description: 'Orchard Rd' }],
-    },
-    exposures: [],
-    limitations: [],
-  }
-
   const sampleTraffic: TrafficIncident = {
     id: 'hazard-101',
     disruptionId: 'hazard-101',

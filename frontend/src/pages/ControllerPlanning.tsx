@@ -155,7 +155,7 @@ function extractBusOrders(references: string[], alert?: BunchingAlert): number[]
       if (Number.isInteger(num) && num > 0) orders.add(num)
     }
   }
-  if (!orders.size && alert) {
+  if (!orders.size && alert && alert.classification !== 'OBSERVATION_ONLY') {
     for (const pair of bunchedArrivalGaps(alert)) {
       orders.add(pair.leadingOrder)
       orders.add(pair.followingOrder)
@@ -180,6 +180,7 @@ export function PlanningCorridorMap({
   subtitle,
   evidenceDetails,
   trafficIncidents = [],
+  isHistorical: isHistoricalProp,
 }: {
   routes: RouteDirection[]
   positions?: RoutePositions[]
@@ -196,8 +197,11 @@ export function PlanningCorridorMap({
   subtitle?: React.ReactNode
   evidenceDetails?: DiagnosisEvidenceDetail[]
   trafficIncidents?: TrafficIncident[]
+  isHistorical?: boolean
 }) {
   const [focusIncident, setFocusIncident] = useState(true)
+
+  const isHistorical = corridorIncident ? Boolean(corridorIncident.historical) : Boolean(isHistoricalProp)
 
   const corridorRoutes = useMemo(() => {
     const match = routes.filter(r => r.serviceId === serviceId && (directionId === null || r.directionId === directionId))
@@ -247,10 +251,10 @@ export function PlanningCorridorMap({
       stopNames: [targetStopName],
       firstDetectedAt: alert?.detectedAt ?? new Date().toISOString(),
       latestDetectedAt: alert?.detectedAt ?? new Date().toISOString(),
-      gapSeconds: null,
+      gapSeconds: corridorIncident?.gapSeconds ?? null,
       ageSeconds: 0,
       latestStopIndex: Math.max(0, route.stops.findIndex(s => s.stopCode === monitoredStopCode)),
-      historical: false,
+      historical: isHistorical,
       alerts: alert ? [alert] : [],
     }
     return linkIncidentToPosition(
@@ -260,7 +264,7 @@ export function PlanningCorridorMap({
       (snapshot.sourceObservedAt || snapshot.computedAt) ?? undefined,
       snapshot.maxSourceAgeSeconds
     )
-  }, [corridorIncident, corridorRoutes, serviceId, directionId, targetStopCode, affectedStopCodes, targetStopName, alert, monitoredStopCode, positions])
+  }, [corridorIncident, corridorRoutes, serviceId, directionId, targetStopCode, affectedStopCodes, targetStopName, alert, monitoredStopCode, positions, isHistorical])
 
   const busOrders = useMemo(() => extractBusOrders(busReferences, alert), [busReferences, alert])
 
@@ -274,7 +278,7 @@ export function PlanningCorridorMap({
     for (const order of busOrders) {
       keys.add(`${serviceId}-${order}`)
     }
-    if (!busOrders.length && alert) {
+    if (!busOrders.length && alert && alert.classification !== 'OBSERVATION_ONLY') {
       for (const pair of bunchedArrivalGaps(alert)) {
         keys.add(`${serviceId}-${pair.leadingOrder}`)
         keys.add(`${serviceId}-${pair.followingOrder}`)
@@ -292,13 +296,13 @@ export function PlanningCorridorMap({
     stopNames: [targetStopName],
     firstDetectedAt: alert?.detectedAt ?? new Date().toISOString(),
     latestDetectedAt: alert?.detectedAt ?? new Date().toISOString(),
-    gapSeconds: null,
+    gapSeconds: corridorIncident?.gapSeconds ?? null,
     ageSeconds: 0,
     latestStopIndex: 0,
-    historical: false,
+    historical: isHistorical,
     alerts: alert ? [alert] : [],
     stripLink: computedStripLink,
-  }), [serviceId, directionId, targetStopCode, affectedStopCodes, targetStopName, alert, computedStripLink])
+  }), [serviceId, directionId, targetStopCode, affectedStopCodes, targetStopName, alert, computedStripLink, corridorIncident, isHistorical])
 
   const corridorHazards = useMemo<MapHazard[]>(() => {
     const list: MapHazard[] = []
@@ -1253,6 +1257,7 @@ function DiagnosisRequestDetail({ request, corridor, routes, positions, detected
       alert={corridor?.corridorIncident?.alerts[0] ?? detectedAlerts.find(a => a.eventId === request.eventId || (a.serviceId === request.serviceId && a.stopCode === request.stopCode))}
       evidenceDetails={request.evidenceDetails}
       trafficIncidents={trafficIncidents}
+      isHistorical={corridor ? !corridor.isLive : false}
     />
 
     <div><h3 className="text-sm font-medium">Bunching detection</h3>
@@ -1605,6 +1610,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
           alert={recommendationAlert(selected, detectedAlerts)}
           evidenceDetails={selected.explanation.evidenceDetails}
           trafficIncidents={trafficIncidents}
+          isHistorical={!detectedAlerts.some(a => a.serviceId === selected.serviceId && a.stopCode === selected.monitoredStopCode)}
         />
 
         <section aria-labelledby="affected-buses" className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><h3 id="affected-buses" className="text-sm font-medium">Buses bunching</h3>{showsLegacySuggestion && <span className="text-xs text-muted-foreground">Expected gap {seconds(selected.expectedImpact.headwayAfterSeconds)}</span>}</div>

@@ -595,7 +595,7 @@ export function BunchingMap({
         if (inc.stripLink) {
           keys.add(`${inc.serviceId}-${inc.stripLink.frontOrder}`)
           keys.add(`${inc.serviceId}-${inc.stripLink.followingOrder}`)
-        } else {
+        } else if (!inc.historical) {
           for (const alert of inc.alerts) {
             for (const pair of bunchedArrivalGaps(alert)) {
               keys.add(`${inc.serviceId}-${pair.leadingOrder}`)
@@ -689,7 +689,7 @@ export function BunchingMap({
 
   const selectedBuses = useMemo(() => {
     const set = new Set<string>()
-    if (selectedIncident) {
+    if (selectedIncident && !selectedIncident.historical) {
       if (selectedIncident.stripLink) {
         set.add(`${selectedIncident.serviceId}-${selectedIncident.stripLink.frontOrder}`)
         set.add(`${selectedIncident.serviceId}-${selectedIncident.stripLink.followingOrder}`)

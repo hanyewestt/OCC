@@ -361,6 +361,45 @@ test('incident links only to a plausible same-direction bus pair at the same tim
   expect(linkIncidentToPosition(incident, route, position, '2026-10-23T04:05:00Z', 120)).toBeNull()
 })
 
+test('linkIncidentToPosition rejects distant bus pairs even when a stop lies between them', () => {
+  const route = makeRoute(1, ['A01', 'B01', 'C01'])
+  const alert = makeAlert({ stopCode: 'B01' })
+  const incident = groupRouteIncidents([alert], [route], now, 60, 20)[0]
+  const position: RoutePositionDirection = {
+    operator: 'SMRT', directionId: 1, routeLengthM: 20_000,
+    buses: [
+      { order: 7, distanceAlongRouteM: 18_000, uncertaintyM: 50, speedMps: 10 },
+      { order: 8, distanceAlongRouteM: 12_000, uncertaintyM: 50, speedMps: 10 },
+    ],
+  }
+  const longRoute: RouteDirection = {
+    ...route,
+    stops: [
+      { stopCode: 'A01', roadName: 'Road 1', description: 'Stop A', latitude: 1.30, longitude: 103.70, stopSequence: 1, distanceKm: 0 },
+      { stopCode: 'B01', roadName: 'Road 2', description: 'Stop B', latitude: 1.35, longitude: 103.75, stopSequence: 2, distanceKm: 15.0 },
+      { stopCode: 'C01', roadName: 'Road 3', description: 'Stop C', latitude: 1.40, longitude: 103.80, stopSequence: 3, distanceKm: 20.0 },
+    ],
+  }
+  const computedAt = '2026-10-23T04:00:20Z'
+  expect(linkIncidentToPosition(incident, longRoute, position, computedAt, 120)).toBeNull()
+})
+
+test('linkIncidentToPosition returns null when incident is historical', () => {
+  const route = makeRoute()
+  const alert = makeAlert({ stopCode: 'B01' })
+  const incident = groupRouteIncidents([alert], [route], now, 60, 20)[0]
+  const historicalIncident = { ...incident, historical: true }
+  const position: RoutePositionDirection = {
+    operator: 'SMRT', directionId: 1, routeLengthM: 2_224,
+    buses: [
+      { order: 1, distanceAlongRouteM: 1_800, uncertaintyM: 70, speedMps: 5 },
+      { order: 2, distanceAlongRouteM: 1_000, uncertaintyM: 70, speedMps: 5 },
+    ],
+  }
+  const computedAt = '2026-10-23T04:00:20Z'
+  expect(linkIncidentToPosition(historicalIncident, route, position, computedAt, 120)).toBeNull()
+})
+
 test('projects a reported arrival coordinate onto the nearest route segment', () => {
   const route = makeRoute(1, ['A01', 'B01'])
   const projected = projectCoordinateToRoute(route, 1.385, 103.75, 1_112)
