@@ -11,6 +11,10 @@ Parameters:
     Type: String
     Default: pslimmm/OCC
     Description: GitHub repository allowed to assume the CI/CD roles.
+  GitHubOidcSubjectPrefix:
+    Type: String
+    Default: repo:pslimmm@194585496/OCC@1367310080
+    Description: Exact GitHub OIDC subject prefix, including immutable IDs when enabled.
   InstanceType:
     Type: String
     Default: t3.small
@@ -461,7 +465,7 @@ Resources:
             Condition:
               StringEquals:
                 "token.actions.githubusercontent.com:aud": sts.amazonaws.com
-                "token.actions.githubusercontent.com:sub": !Sub "repo:${RepositoryName}:ref:refs/heads/main"
+                "token.actions.githubusercontent.com:sub": !Sub "${GitHubOidcSubjectPrefix}:ref:refs/heads/main"
       Policies:
         - PolicyName: occ-verify-read-only
           PolicyDocument:
@@ -506,8 +510,8 @@ Resources:
                 "token.actions.githubusercontent.com:aud": sts.amazonaws.com
               ForAnyValue:StringEquals:
                 "token.actions.githubusercontent.com:sub":
-                  - !Sub "repo:${RepositoryName}:ref:refs/heads/main"
-                  - !Sub "repo:${RepositoryName}:environment:production"
+                  - !Sub "${GitHubOidcSubjectPrefix}:ref:refs/heads/main"
+                  - !Sub "${GitHubOidcSubjectPrefix}:environment:production"
       Policies:
         - PolicyName: occ-publish
           PolicyDocument:
@@ -571,8 +575,8 @@ Resources:
                 "token.actions.githubusercontent.com:aud": sts.amazonaws.com
               ForAnyValue:StringEquals:
                 "token.actions.githubusercontent.com:sub":
-                  - !Sub "repo:${RepositoryName}:ref:refs/heads/main"
-                  - !Sub "repo:${RepositoryName}:environment:production"
+                  - !Sub "${GitHubOidcSubjectPrefix}:ref:refs/heads/main"
+                  - !Sub "${GitHubOidcSubjectPrefix}:environment:production"
       Policies:
         - PolicyName: occ-deploy
           PolicyDocument:
