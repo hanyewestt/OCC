@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { BusFront, ChevronDown, ChevronRight, Minus, Plus, RotateCcw, TrainFront, Wrench, X } from 'lucide-react'
+import { BusFront, Check, CheckCheck, ChevronDown, ChevronRight, Minus, Plus, RotateCcw, TrainFront, Wrench, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -595,7 +595,7 @@ export function BunchingMap({
         if (inc.stripLink) {
           keys.add(`${inc.serviceId}-${inc.stripLink.frontOrder}`)
           keys.add(`${inc.serviceId}-${inc.stripLink.followingOrder}`)
-        } else {
+        } else if (!inc.historical) {
           for (const alert of inc.alerts) {
             for (const pair of bunchedArrivalGaps(alert)) {
               keys.add(`${inc.serviceId}-${pair.leadingOrder}`)
@@ -689,7 +689,7 @@ export function BunchingMap({
 
   const selectedBuses = useMemo(() => {
     const set = new Set<string>()
-    if (selectedIncident) {
+    if (selectedIncident && !selectedIncident.historical) {
       if (selectedIncident.stripLink) {
         set.add(`${selectedIncident.serviceId}-${selectedIncident.stripLink.frontOrder}`)
         set.add(`${selectedIncident.serviceId}-${selectedIncident.stripLink.followingOrder}`)
@@ -1831,7 +1831,9 @@ export function BunchingMap({
       )}
       {!selectedIncident && !busMarkers.length && (
         <p className="border-t px-4 py-3 text-xs text-muted-foreground">
-          No current bus position estimate is available for this corridor.
+          {isAllCorridors
+            ? 'No bunched bus positions match this view. Select a corridor above to inspect all active fleet buses.'
+            : 'No current bus position estimate is available for this corridor.'}
         </p>
       )}
     </div>
@@ -1939,6 +1941,9 @@ export function ControllerDisruptions({
   onSelectHazard,
   focusCoord,
   extraHazards = [],
+  dismissedAlertIds,
+  onDismissAlert,
+  onAcknowledgeAllBunching,
 }: {
   liveAlerts: PagedCollection<BunchingAlert, PageResult<BunchingAlert>>
   run: Resource<DemoRun>
@@ -1952,15 +1957,25 @@ export function ControllerDisruptions({
   onSelectHazard?: (hazardId: string | null) => void
   focusCoord?: { lat: number; lng: number } | null
   extraHazards?: MapHazard[]
+  dismissedAlertIds?: Set<string>
+  onDismissAlert?: (id: string) => void
+  onAcknowledgeAllBunching?: () => void
 }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const incidentParam = searchParams.get('incident')
+  const hazardParam = searchParams.get('hazard')
   const serviceParam = searchParams.get('service')
   const directionParam = searchParams.get('direction')
   const statusParam = searchParams.get('status')
   const statusFilter: 'active' | 'all' = statusParam === 'all' ? 'all' : 'active'
   const [viewMode, setViewMode] = useState<'grouped' | 'flat'>('grouped')
   const [expandedIncidents, setExpandedIncidents] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    if (hazardParam && onSelectHazard) {
+      onSelectHazard(hazardParam)
+    }
+  }, [hazardParam, onSelectHazard])
   
   const simulation = run.data && run.data.status !== 'CLOSED' ? run.data : null
   const error = run.error || (!simulation && liveAlerts.error !== null && !liveAlerts.items.length ? 'Unable to load this data.' : '')
@@ -2174,6 +2189,7 @@ export function ControllerDisruptions({
     const severity = gapSeverity(incident.gapSeconds)
     const gapText = incident.gapSeconds !== null ? formatGap(incident.gapSeconds) : 'Unknown gap'
     const bunchedPairs = bunchedArrivalGaps(incident.alerts.at(-1)!)
+    const isAcknowledged = Boolean(dismissedAlertIds?.has(incident.id) || incident.alerts.some(a => dismissedAlertIds?.has(a.eventId)))
     
     return (
       <div
@@ -2241,6 +2257,12 @@ export function ControllerDisruptions({
                   Position unlinked
                 </span>
               ) : null}
+              {isAcknowledged && (
+                <span className="rounded-md bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 px-2 py-0.5 text-xs font-medium inline-flex items-center gap-1">
+                  <Check className="size-3" />
+                  Acknowledged
+                </span>
+              )}
             </div>
             <p className="text-sm text-muted-foreground">
               <span className="font-medium text-foreground">{incident.stopNames[0]}</span>
@@ -2290,6 +2312,17 @@ export function ControllerDisruptions({
                 >
                   View planning →
                 </Link>
+              </Button>
+            )}
+
+            {!isAcknowledged && onDismissAlert && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onDismissAlert(incident.id)}
+                title="Acknowledge this bunching alert"
+              >
+                Acknowledge
               </Button>
             )}
 
@@ -2411,6 +2444,18 @@ export function ControllerDisruptions({
                 All ({positionedIncidents.length})
               </Button>
             </div>
+          )}
+          {viewMode === 'grouped' && onAcknowledgeAllBunching && positionedIncidents.some(i => !i.historical && (!dismissedAlertIds?.has(i.id) && !i.alerts.some(a => dismissedAlertIds?.has(a.eventId)))) && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs gap-1 border-amber-500/50 text-amber-900 dark:text-amber-200 hover:bg-amber-500/10"
+              onClick={onAcknowledgeAllBunching}
+              title="Acknowledge all active bunching detections"
+            >
+              <CheckCheck className="size-3.5 text-amber-600" />
+              <span>Acknowledge all bunching</span>
+            </Button>
           )}
         </div>
         <div className="flex items-center gap-1 rounded-lg border p-1 bg-muted/20">
