@@ -573,3 +573,139 @@ test('ControllerPlanning displays linked bunching buses pill in corridor group a
 
   expect(html).toMatch(/Buses #\s*(<!-- -->)?\s*4\s*(<!-- -->)?\s*&amp;\s*#\s*(<!-- -->)?\s*5/)
 })
+
+test('ControllerPlanning counts active pending recommendations in Active, Today, and All time scope badges', () => {
+  const sampleRecommendation: PendingRecommendation = {
+    recommendationId: 'rec-sim-1',
+    serviceId: '190',
+    directionId: 1,
+    classification: 'SIMULATION',
+    status: 'RECOMMENDED',
+    createdAt: new Date().toISOString(),
+    observedHeadwaySeconds: 60,
+    targetBusReference: 'DEMO-190-01',
+    affectedBusReferences: ['DEMO-190-01', 'DEMO-190-02'],
+    detectedAt: new Date().toISOString(),
+    monitoredStopCode: '40191',
+    controlStopCode: '40191',
+    mitigationType: 'HOLD',
+    adjustmentSeconds: 120,
+    expectedHeadwaySeconds: 180,
+    expectedImpact: {
+      headwayBeforeSeconds: 60,
+      headwayAfterSeconds: 180,
+      passengerMinutesBefore: 40,
+      passengerMinutesAfter: 28,
+      queueBeforePassengers: 20,
+      queueAfterPassengers: 12,
+    },
+    explanation: { rationale: 'Restore spacing.', likelyCause: 'Long-distance spacing decay', diagnosisConfidence: null, tradeOffs: [], limitations: [] },
+  }
+
+  const recommendations = mockPagedCollection<PendingRecommendation, Planning['recommendations']>(
+    [sampleRecommendation],
+    { items: [sampleRecommendation], page: 0, totalItems: 1, totalPages: 1, mode: 'DEMO', demoRunId: 'run-1' }
+  )
+  const diagnosisRequests = mockPagedCollection<PlanningDiagnosisRequest, PlanningDiagnosisRequestPage>(
+    [], { items: [], page: 0, totalItems: 0, totalPages: 0, mode: 'DEMO', demoRunId: 'run-1' }
+  )
+
+  const html = renderToString(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/controller/planning'] },
+      createElement(ControllerPlanning, {
+        recommendations,
+        diagnosisRequests,
+        loading: false,
+        modeError: '',
+        mode: 'DEMO',
+        demoRunId: 'run-1',
+        token: 'test-token',
+        detectedAlerts: [sampleAlert],
+        routes: [sampleRoute],
+        nowMs: Date.now(),
+        onPendingChange: () => {},
+        onRefresh: () => {},
+        onSaved: () => {},
+      })
+    )
+  )
+
+  // Active count should be 1 matching the active bunching recommendation awaiting a decision
+  expect(html).toMatch(/Active\s*\(\s*(<!-- -->)?\s*1\s*(<!-- -->)?\s*\)/)
+  expect(html).toMatch(/Today\s*\(\s*(<!-- -->)?\s*1\s*(<!-- -->)?\s*\)/)
+  expect(html).toMatch(/All time\s*\(\s*(<!-- -->)?\s*1\s*(<!-- -->)?\s*\)/)
+})
+
+test('multiple bunching alerts along the same active corridor are unified into one active corridor in Planning', () => {
+  const now = new Date()
+  const evidence = JSON.stringify({
+    snapshot: {
+      classification: 'OBSERVATION_ONLY',
+      arrivals: [
+        { serviceId: '190', stopCode: '40191', directionId: 2, visitOrder: 1, estimatedArrivalAt: new Date(now.getTime() + 60_000).toISOString() },
+        { serviceId: '190', stopCode: '40191', directionId: 2, visitOrder: 2, estimatedArrivalAt: new Date(now.getTime() + 120_000).toISOString() },
+      ],
+    },
+  })
+  const firstAlert: BunchingAlert = {
+    ...sampleAlert,
+    detectedAt: now.toISOString(),
+    evidence,
+  }
+  const secondEvidence = JSON.stringify({
+    snapshot: {
+      classification: 'OBSERVATION_ONLY',
+      arrivals: [
+        { serviceId: '190', stopCode: '40201', directionId: 2, visitOrder: 1, estimatedArrivalAt: new Date(now.getTime() + 60_000).toISOString() },
+        { serviceId: '190', stopCode: '40201', directionId: 2, visitOrder: 2, estimatedArrivalAt: new Date(now.getTime() + 120_000).toISOString() },
+      ],
+    },
+  })
+  const secondAlert: BunchingAlert = {
+    ...sampleAlert,
+    eventId: 'evt-002',
+    stopCode: '40201',
+    stopName: 'Blk 220',
+    detectedAt: now.toISOString(),
+    evidence: secondEvidence,
+  }
+  const recommendations = mockPagedCollection<PendingRecommendation, Planning['recommendations']>([], {
+    items: [], page: 0, totalItems: 0, totalPages: 0, mode: 'LIVE', demoRunId: null,
+  })
+  const diagnosisPage: PlanningDiagnosisRequestPage = {
+    items: [sampleRequest, sampleCompletedRequest], page: 0, totalItems: 2, totalPages: 1, mode: 'LIVE', demoRunId: null,
+  }
+  const diagnosisRequests = mockPagedCollection<PlanningDiagnosisRequest, PlanningDiagnosisRequestPage>(
+    [sampleRequest, sampleCompletedRequest], diagnosisPage
+  )
+
+  const html = renderToString(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/controller/planning'] },
+      createElement(ControllerPlanning, {
+        recommendations,
+        diagnosisRequests,
+        loading: false,
+        modeError: '',
+        mode: 'LIVE',
+        demoRunId: null,
+        token: 'test-token',
+        detectedAlerts: [firstAlert, secondAlert],
+        routes: [sampleRoute],
+        nowMs: now.getTime(),
+        onPendingChange: () => {},
+        onRefresh: () => {},
+        onSaved: () => {},
+      })
+    )
+  )
+
+  // Despite two raw bunching alerts on stops 40191 and 40201, Active count must be 1 unified corridor
+  expect(html).toMatch(/Active\s*\(\s*(<!-- -->)?\s*1\s*(<!-- -->)?\s*\)/)
+  // When stripLink is absent, fallback badge NextBus 1 & 2 is rendered
+  expect(html).toMatch(/NextBus\s*(<!-- -->)?\s*1\s*(<!-- -->)?\s*&amp;\s*(<!-- -->)?\s*2/)
+})
+

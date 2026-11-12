@@ -73,8 +73,10 @@ retain the last complete projection and checkpoint.
 
 The Supabase SDK handles email/password sign-in, browser-storage persistence
 and token refresh. Reloading/restoring the app requires session verification
-before role content appears. A failed verification grants no access and offers
-retry/sign-out. Session changes clear prior verified content and pending results.
+before role content appears. A failed initial verification grants no access and
+offers retry/sign-out. A token refresh for the same verified account and role
+keeps the workspace mounted so unsaved drafts survive. Account or role changes
+clear the prior workspace and require page-access verification.
 
 Sign-out uses Supabase's `local` scope, clears app state and updates other open
 tabs. Other devices remain signed in. If provider sign-out fails, the app hides

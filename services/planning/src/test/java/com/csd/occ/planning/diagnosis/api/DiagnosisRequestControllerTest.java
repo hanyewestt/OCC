@@ -12,8 +12,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.csd.occ.planning.api.error.GlobalExceptionHandler;
-import com.csd.occ.planning.diagnosis.api.dto.DiagnosisRequestResponse;
-import com.csd.occ.planning.diagnosis.api.dto.TriggerDiagnosisRequest;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisQueryService;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisFailureException;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisRequest;
@@ -316,8 +314,8 @@ class DiagnosisRequestControllerTest {
         UUID eventId = UUID.randomUUID();
         UUID requestId = UUID.randomUUID();
         UUID diagnosisId = UUID.randomUUID();
-        when(triggerService.trigger(any(TriggerDiagnosisRequest.class))).thenReturn(
-                new DiagnosisRequestResponse(requestId, diagnosisId, DiagnosisRequestStatus.COMPLETED,
+        when(triggerService.triggerByEvent(eventId)).thenReturn(
+                new DiagnosisRequestView(requestId, diagnosisId, DiagnosisRequestStatus.COMPLETED,
                         null, Instant.parse("2026-11-05T07:00:00Z"), null));
 
         mvc.perform(post("/api/v1/planning/diagnoses/trigger")
@@ -331,7 +329,16 @@ class DiagnosisRequestControllerTest {
                 .andExpect(jsonPath("$.diagnosisId").value(diagnosisId.toString()))
                 .andExpect(jsonPath("$.status").value("COMPLETED"));
 
-        verify(triggerService).trigger(new TriggerDiagnosisRequest(eventId, null));
+        verify(triggerService).triggerByEvent(eventId);
+    }
+
+    @Test
+    void triggerWithoutAnIdentifierIsRejectedBeforeQueuing() throws Exception {
+        mvc.perform(post("/api/v1/planning/diagnoses/trigger")
+                        .with(jwt().authorities(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_CONTROLLER")))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest());
+        verifyNoInteractions(triggerService);
     }
 
     @Test

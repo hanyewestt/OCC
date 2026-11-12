@@ -140,6 +140,13 @@ while running another complete application stack; restart it afterward.
 For the same zero-skips run as Core CI, add `-Docc.exportOpenapi=true` to
 include the opt-in Ingestion contract export test (quote the flag in PowerShell).
 
+Planning regression tests cover concurrent on-demand triggers, persisted manual
+queue requests, retries and expired-lease recovery with automatic bunching off.
+The trigger returns lifecycle status immediately; provider calls run in the
+worker, which selects the appropriate bunching or hazard processor. Completed
+requests, including traffic/hazard requests without a diagnosis row, are replayed
+without changing their outcome.
+
 ## React authentication app
 
 Browser E2E tests do not run automatically on PRs or pushes to main. Run them
@@ -152,6 +159,8 @@ From `frontend/`, run `npm ci`, `npm run lint`, `npm run typecheck`,
 `npm run build`, `npx playwright install chromium`, then `npm test`.
 The browser journeys mock Supabase and API responses; they prove frontend
 behavior and session lifecycle, not live provider or backend authorization.
+Token-refresh journeys verify that same-account refresh preserves an unsaved
+notice draft and that a verified role change removes the prior role's content.
 Ingestion tests independently enforce the controller/captain role matrix. See
 [development guide](DEVELOPMENT.md) for Nginx-targeted browser runs and
 [authentication](AUTHENTICATION.md) for opt-in live checks.
