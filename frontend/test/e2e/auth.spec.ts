@@ -934,33 +934,41 @@ test('controller reviews an outcome for every bus in a four-bus group', async ({
   ])
 })
 
-test('refresh opens a new review with the changed group and its prediction gaps', async ({ page, context }) => {
-  const original = await mockDashboard(context, { affectedBusReferences: ['SAMPLE-BUS', 'BUS-2'] })
+test('refresh replaces expired predictions and opens a new review with the current bus group', async ({ page, context }) => {
+  const original = { ...await mockDashboard(context, { affectedBusReferences: ['SAMPLE-BUS', 'BUS-2'] }),
+    predictionValidUntil: new Date(Date.now() - 1000).toISOString(), suggestedOutcomes: [
+      { busReference: 'SAMPLE-BUS', mitigationType: null, adjustmentSeconds: 0, reason: 'No preceding gap in the reviewed group.' },
+      { busReference: 'BUS-2', mitigationType: 'HOLD', adjustmentSeconds: 60, reason: null },
+    ] }
   const revision = { ...original, recommendationId: 'recommendation-2', revisionRawObservationId: 'snapshot-2',
     affectedBusReferences: ['BUS-2', 'BUS-3', 'BUS-4'], targetBusReference: 'BUS-4', currentPredictionGaps: [25, 35],
+    predictionValidUntil: new Date(Date.now() + 120000).toISOString(),
     confirmationGaps: [55, 60], adjustmentSeconds: 45, suggestedOutcomes: [
       { busReference: 'BUS-2', mitigationType: null, adjustmentSeconds: 0, reason: 'No preceding gap in the reviewed group.' },
       { busReference: 'BUS-3', mitigationType: 'HOLD', adjustmentSeconds: 20, reason: null },
       { busReference: 'BUS-4', mitigationType: 'DWELL_ADJUSTMENT', adjustmentSeconds: 35, reason: null },
     ] }
   let refreshed = false
+  let refreshAttempts = 0
   await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: {
     mode: 'DEMO', demoRunId: 'run-1', items: [refreshed ? revision : original], page: 0, totalItems: 1, totalPages: 1,
   } }))
   await context.route('**/api/v1/planning/recommendations/recommendation-1/refresh', route => {
     expect(route.request().method()).toBe('POST')
+    if (++refreshAttempts === 1) return route.fulfill({ status: 202 })
     refreshed = true
     return route.fulfill({ json: revision })
   })
   await context.route('**/api/v1/planning/recommendations/recommendation-2/decision', route => route.fulfill({ json: {} }))
   await login(page)
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
-  await expect(page.getByText(/Current suggestions are unavailable/)).toBeVisible()
+  await expect(page.getByText('Hold for 60 seconds at stop B01.')).toBeVisible()
   await expect(page.getByText('Hold for 120 seconds at stop B01.')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toBeDisabled()
-  await expect(page.getByText('Review an outcome for every affected bus before saving.')).toBeVisible()
+  await expect(page.getByText('Predictions expired. Refresh bus group to review again.')).toBeVisible()
   await page.getByRole('button', { name: 'Refresh bus group' }).click()
-  await expect(page.getByText(/Current suggestions are unavailable/)).toHaveCount(0)
+  await expect(page.getByText('Waiting for the new simulation predictions…')).toBeVisible()
+  await expect(page.getByText('Hold for 60 seconds at stop B01.')).toHaveCount(0)
   await expect(page.getByText('Expected headway', { exact: true })).toBeVisible()
   await expect(page.getByText('BUS-2 to BUS-3 · 25s')).toBeVisible()
   await expect(page.getByText('45s projected')).toBeVisible()
@@ -971,6 +979,7 @@ test('refresh opens a new review with the changed group and its prediction gaps'
   await expect(page.getByText('Adjust dwell by 35 seconds at stop B01.')).toBeVisible()
   await expect(page.getByText('No instruction. No preceding gap in the reviewed group.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toBeEnabled()
+  await expect(page.getByText(/Predictions valid until/)).toBeVisible()
   await expect(page.getByText('Approving issues the suggested outcome shown for each bus below.')).toBeVisible()
   await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })

@@ -1329,7 +1329,17 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
   const [discardOpen, setDiscardOpen] = useState(false)
   const hasBusSuggestions = !!selected.suggestedOutcomes?.length
   const grouped = affectedBuses(selected).length > 1
+  const [predictionCheckedAt, setPredictionCheckedAt] = useState(Date.now)
+  const predictionDeadline = selected.predictionValidUntil ? Date.parse(selected.predictionValidUntil) : null
+  const predictionsExpired = predictionDeadline !== null && predictionDeadline <= predictionCheckedAt
+  const predictionsNeedReview = grouped && selected.predictionValidUntil === null
+  const canReview = !predictionsExpired && !predictionsNeedReview
   const canApprove = !grouped || affectedBuses(selected).every(bus => selected.suggestedOutcomes?.some(item => item.busReference === bus))
+  useEffect(() => {
+    if (predictionDeadline === null) return
+    const timer = window.setTimeout(() => setPredictionCheckedAt(Date.now()), Math.max(0, predictionDeadline - Date.now()))
+    return () => window.clearTimeout(timer)
+  }, [predictionDeadline])
   const showsLegacySuggestion = !hasBusSuggestions && affectedBuses(selected).length === 1
   const [instructions, setInstructions] = useState<BusReplacement[]>(() => initialBusInstructions(selected))
   const [rationale, setRationale] = useState('')
@@ -1398,11 +1408,20 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
     const controller = new AbortController()
     mutationRef.current = controller
     try {
-      const item = await apiRequest<PendingRecommendation>(
-        `/api/v1/planning/recommendations/${encodeURIComponent(selected.recommendationId)}/refresh`,
-        token, controller.signal, { method: 'POST' },
-      )
-      if (item && !controller.signal.aborted) onRefreshed(item)
+      const path = `/api/v1/planning/recommendations/${encodeURIComponent(selected.recommendationId)}/refresh`
+      // An accepted refresh can be retried while the detector evaluates the same new snapshot.
+      for (let attempt = 0; attempt < 10 && !controller.signal.aborted; attempt++) {
+        const item = await apiRequest<PendingRecommendation>(path, token, controller.signal, { method: 'POST' })
+        if (controller.signal.aborted) return
+        if (item) {
+          setMessage('')
+          onRefreshed(item)
+          return
+        }
+        setMessage('Waiting for the new simulation predictions…')
+        await new Promise(resolve => window.setTimeout(resolve, 1000))
+      }
+      if (!controller.signal.aborted) setMessage('New predictions are still being evaluated. Select Refresh bus group to check again.')
     } catch (error) {
       if (controller.signal.aborted) return
       if (error instanceof ApiError && error.status === 401) void signOut(error.message)
@@ -1417,7 +1436,11 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
   }
 
   async function decide(action: Decision['action']) {
-    if (submitting.current || !isCurrent) return
+    if (submitting.current || !isCurrent || !canReview) return
+    if (predictionDeadline !== null && Date.now() >= predictionDeadline) {
+      setPredictionCheckedAt(Date.now())
+      return
+    }
     if (action === 'REJECTED') {
       const unassignedWithAction = instructions.find(item => !isBusCaptainAssigned(item.busReference, selected) && item.action !== 'NONE')
       if (unassignedWithAction) {
@@ -1482,13 +1505,18 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
         <div><h3 className="text-sm font-medium">Affected buses</h3><p className="mt-1 text-sm text-muted-foreground">{affectedBuses(selected).join(', ')}</p></div>
 
         <div className="flex flex-wrap justify-end gap-2 border-b pb-4">
-          {grouped && <p className="w-full text-right text-xs text-muted-foreground">{canApprove
+          {predictionsExpired || predictionsNeedReview
+            ? <p role="status" className="w-full text-right text-sm font-medium text-destructive">{predictionsExpired
+                ? 'Predictions expired. Refresh bus group to review again.'
+                : 'Refresh bus group to verify predictions before approving.'}</p>
+            : selected.predictionValidUntil && <p className="w-full text-right text-xs text-muted-foreground">Predictions valid until {timestamp(selected.predictionValidUntil)}</p>}
+          {grouped && canReview && <p className="w-full text-right text-xs text-muted-foreground">{canApprove
             ? 'Approving issues the suggested outcome shown for each bus below.'
             : 'Review an outcome for every affected bus before saving.'}</p>}
           <Button variant="outline" disabled={pending || !isCurrent} onClick={() => { void refresh() }}>Refresh bus group</Button>
-          <Button disabled={pending || !isCurrent || !canApprove} onClick={() => { void decide('APPROVED') }}>Approve recommendation</Button>
+          <Button disabled={pending || !isCurrent || !canReview || !canApprove} onClick={() => { void decide('APPROVED') }}>Approve recommendation</Button>
           <Dialog open={editorOpen} onOpenChange={changeEditorOpen}>
-          <DialogTrigger asChild><Button variant="outline" disabled={pending}>Enter controller recommendation</Button></DialogTrigger>
+          <DialogTrigger asChild><Button variant="outline" disabled={pending || !canReview}>Enter controller recommendation</Button></DialogTrigger>
             <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl"
               onOpenAutoFocus={event => { event.preventDefault(); firstAction.current?.focus() }}
               onEscapeKeyDown={event => { if (pending) event.preventDefault() }}
@@ -1569,7 +1597,7 @@ function RecommendationDetail({ selected, identity, scopeIdentity, token, detect
                 <DialogFooter>
                   <DialogClose asChild><Button type="button" variant="outline" disabled={pending}>Close</Button></DialogClose>
                   <Button type="button" variant="outline" disabled={pending} onClick={requestClose}>Cancel</Button>
-                  <Button type="submit" disabled={pending || !isCurrent}>{pending ? 'Saving…' : hasBusSuggestions ? 'Save reviewed outcomes' : 'Reject AI suggestion & save instructions'}</Button>
+                  <Button type="submit" disabled={pending || !isCurrent || !canReview}>{pending ? 'Saving…' : hasBusSuggestions ? 'Save reviewed outcomes' : 'Reject AI suggestion & save instructions'}</Button>
                 </DialogFooter>
               </form>
             </DialogContent>

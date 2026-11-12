@@ -153,6 +153,18 @@ public class DemoReplayService {
 
     private void emit(DemoRun run) {
         Instant now = clock.instant(); int step = run.currentStep();
+        emitArrivals(run, step, now, "DEMO", "demo:" + run.id() + ":" + step);
+        hazards.emit(run, step, now);
+        run.advance(); if (run.currentStep() >= DemoReplayScenario.STEP_COUNT) run.complete(now);
+    }
+
+    /** Replays the final arrival pattern under the caller's run lock. */
+    void refreshArrivals(DemoRun run, UUID previousObservation, Instant now) {
+        emitArrivals(run, DemoReplayScenario.STEP_COUNT - 1, now, "DEMO_ARRIVALS",
+                "demo:" + run.id() + ":refresh:" + previousObservation);
+    }
+
+    private void emitArrivals(DemoRun run, int step, Instant now, String source, String idempotencyKey) {
         var configuration = run.configuration();
         java.time.Duration defaultHeadway = DemoReplayScenario.headway(step, configuration.dispatchGap(),
                 settings.bunchingThreshold(), configuration.scenario());
@@ -161,8 +173,8 @@ public class DemoReplayService {
                 ? configuration.busGaps()
                 : java.util.Collections.nCopies(configuration.busCount() - 1, defaultHeadway);
         UUID pollId = UUID.randomUUID();
-        PollRun poll = new PollRun(); poll.setId(pollId); poll.setSource("DEMO"); poll.setScopeKey("demo:" + run.id());
-        poll.setIdempotencyKey("demo:" + run.id() + ":" + step); poll.setStartedAt(now); poll.setCompletedAt(now);
+        PollRun poll = new PollRun(); poll.setId(pollId); poll.setSource(source); poll.setScopeKey("demo:" + run.id());
+        poll.setIdempotencyKey(idempotencyKey); poll.setStartedAt(now); poll.setCompletedAt(now);
         poll.setOutcome("SUCCESS"); poll.setHttpStatus(200); poll.setRecordsReceived(configuration.busCount()); poll.setClassification("SIMULATION"); poll.setDemoRunId(run.id()); pollRuns.save(poll);
         String payload = payload();
         RawObservation raw = new RawObservation(); raw.setId(UUID.randomUUID()); raw.setPollRunId(pollId); raw.setSource("DEMO");
@@ -180,8 +192,6 @@ public class DemoReplayService {
             if (number < configuration.busCount()) eta = eta.plus(headways.get(number - 1));
         }
         arrivals.saveAll(emittedArrivals);
-        hazards.emit(run, step, now);
-        run.advance(); if (run.currentStep() >= DemoReplayScenario.STEP_COUNT) run.complete(now);
     }
 
     private DemoVehicleAssignment assignment(UUID runId, DemoRunConfiguration configuration, String seed, int number) {

@@ -76,6 +76,12 @@ bus instructions and a rationale; both are stored with the authenticated
 controller subject. `/api/v1/planning/recommendations/decisions` returns the
 persisted decision history, newest first, for the controller audit screen.
 
+Planning shows when reviewed simulation predictions expire. Use **Refresh bus
+group** to review the current predictions. If a completed bunching replay has
+expired, the refresh generates new arrivals in the same run and waits for
+Disruption to evaluate them. The controller must review and approve the updated
+outcomes before any instructions are issued to the assigned captains.
+
 The controller can check `/api/v1/planning/requests/by-event/{eventId}` when work
 is not yet complete. This authenticated lookup reports pending, retryable and
 terminal states even if no diagnosis result was created. It defaults to
