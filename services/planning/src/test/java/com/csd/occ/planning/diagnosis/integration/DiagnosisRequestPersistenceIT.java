@@ -17,6 +17,8 @@ import com.csd.occ.planning.diagnosis.domain.RootCauseContext;
 import com.csd.occ.planning.diagnosis.domain.SnapshotCodecPort;
 import com.csd.occ.planning.diagnosis.domain.ConfidenceComponents;
 import com.csd.occ.planning.diagnosis.domain.DiagnosisCompletionService;
+import com.csd.occ.planning.diagnosis.domain.DiagnosisTriggerService;
+import com.csd.occ.planning.diagnosis.domain.DiagnosisRequestStatus;
 import com.csd.occ.planning.domain.audit.ApplicationAuditRetentionService;
 import com.csd.occ.planning.domain.audit.ApplicationAuditBackfillService;
 import com.csd.occ.planning.diagnosis.domain.ModelInvocationDetails;
@@ -53,7 +55,7 @@ import tools.jackson.databind.json.JsonMapper;
 @DataJpaTest(properties = "spring.flyway.enabled=true")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import({DiagnosisRequestService.class, DiagnosisRequestPersistenceService.class, DiagnosisCompletionService.class,
+@Import({DiagnosisRequestService.class, DiagnosisRequestPersistenceService.class, DiagnosisCompletionService.class, DiagnosisTriggerService.class,
         ApplicationAuditRetentionService.class, ApplicationAuditBackfillService.class,
         JacksonSnapshotCodecAdapter.class, JacksonEventSubmissionFingerprintAdapter.class,
         DiagnosisRequestPersistenceIT.ClockConfiguration.class})
@@ -67,6 +69,7 @@ class DiagnosisRequestPersistenceIT {
             .withInitScript("db/create-planning-schema.sql");
 
     @Autowired DiagnosisRequestService requests;
+    @Autowired DiagnosisTriggerService triggers;
     @Autowired DiagnosisRequestRepository repository;
     @Autowired RootCauseDiagnosisRepository diagnoses;
     @Autowired RecommendationDeliveryRepository deliveries;
@@ -689,6 +692,73 @@ class DiagnosisRequestPersistenceIT {
         assertThat(claimed).isEmpty();
         var claimedWithBunching = requests.claimDueRequests(10, Duration.ofMinutes(1), true);
         assertThat(claimedWithBunching).hasSize(1);
+    }
+
+    @Test
+    void manualRequestSurvivesReloadAndRecoversAnExpiredLeaseWithAutomaticBunchingOff() {
+        UUID id = UUID.randomUUID();
+        requests.enqueue(EventType.BUS_BUNCHING, PRODUCER, UUID.randomUUID(), id);
+        assertThat(triggers.trigger(id).status()).isEqualTo(DiagnosisRequestStatus.PENDING);
+        assertThat(repository.findById(id).orElseThrow().isProcessingRequested()).isTrue();
+        assertThat(requests.claimDueRequests(1, Duration.ofMinutes(1), false)).containsExactly(id);
+
+        var first = repository.findById(id).orElseThrow();
+        triggers.trigger(id);
+        assertThat(repository.findById(id).orElseThrow().leaseUntil()).isEqualTo(first.leaseUntil());
+        assertThat(requests.claimDueRequests(1, Duration.ofMinutes(1), false)).isEmpty();
+
+        // An older instance can start work during rollout without setting the new marker.
+        jdbc.update("update planning.planning_request set lease_until=?, processing_requested=false where id=?",
+                java.sql.Timestamp.from(NOW.minusSeconds(1)), id);
+        assertThat(requests.claimDueRequests(1, Duration.ofMinutes(1), false)).containsExactly(id);
+        assertThat(repository.findById(id).orElseThrow().attemptCount()).isEqualTo(2);
+        assertThat(repository.findById(id).orElseThrow().isProcessingRequested()).isTrue();
+    }
+
+    @Test
+    void requestedBunchingRetriesOnlyWhenDueWithAutomaticBunchingOff() {
+        UUID id = UUID.randomUUID();
+        requests.enqueue(EventType.BUS_BUNCHING, PRODUCER, UUID.randomUUID(), id);
+        triggers.trigger(id);
+        requests.claimDueRequests(1, Duration.ofMinutes(1), false);
+        completion.fail(id, "MODEL_PROVIDER_FAILURE", true, true, NOW.plusSeconds(30), List.of(), null);
+
+        assertThat(triggers.trigger(id).status()).isEqualTo(DiagnosisRequestStatus.FAILED_RETRYABLE);
+        assertThat(requests.claimDueRequests(1, Duration.ofMinutes(1), false)).isEmpty();
+        jdbc.update("update planning.planning_request set next_attempt_at=? where id=?",
+                java.sql.Timestamp.from(NOW), id);
+        assertThat(requests.claimDueRequests(1, Duration.ofMinutes(1), false)).containsExactly(id);
+        assertThat(repository.findById(id).orElseThrow().attemptCount()).isEqualTo(2);
+    }
+
+    @Test
+    void simultaneousTriggersQueueOneAttemptAndDoNotTakeOverTheWorkerLease() throws Exception {
+        UUID id = UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
+        requests.enqueue(EventType.BUS_BUNCHING, PRODUCER, eventId, id);
+        var ready = new CountDownLatch(2);
+        var start = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> {
+                ready.countDown();
+                if (!start.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("triggers did not synchronize");
+                return triggers.trigger(id);
+            });
+            var second = executor.submit(() -> {
+                ready.countDown();
+                if (!start.await(5, TimeUnit.SECONDS)) throw new IllegalStateException("triggers did not synchronize");
+                return triggers.triggerByEvent(eventId);
+            });
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            assertThat(first.get(10, TimeUnit.SECONDS).status()).isEqualTo(DiagnosisRequestStatus.PENDING);
+            assertThat(second.get(10, TimeUnit.SECONDS).status()).isEqualTo(DiagnosisRequestStatus.PENDING);
+        }
+        assertThat(repository.findById(id).orElseThrow().attemptCount()).isZero();
+        assertThat(requests.claimDueRequests(1, Duration.ofMinutes(1), false)).containsExactly(id);
+        triggers.triggerByEvent(eventId);
+        assertThat(requests.claimDueRequests(1, Duration.ofMinutes(1), false)).isEmpty();
+        assertThat(repository.findById(id).orElseThrow().attemptCount()).isEqualTo(1);
     }
 
     private ModelInvocationDetails invocation(String model) {
