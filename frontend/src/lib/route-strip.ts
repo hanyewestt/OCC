@@ -517,6 +517,7 @@ export function etaFallbacksForRoute(route: RouteDirection, routes: RouteDirecti
 
 export function linkIncidentToPosition(incident: RouteIncident, route: RouteDirection,
   position: RoutePositionDirection | undefined, positionComputedAt: string | undefined, maxSourceAgeSeconds: number): IncidentStripLink | null {
+  if (incident.historical) return null
   if (!position || incident.routeKey !== routeKey(route) || incident.latestStopIndex === null ||
     position.buses.length < 2 || !routeStopDistances(route, position.routeLengthM).hasGeometry) return null
   const computedAt = Date.parse(positionComputedAt ?? '')
@@ -562,16 +563,35 @@ export function linkIncidentToPosition(incident: RouteIncident, route: RouteDire
   const comparisonTime = sourceFetchedAt ?? (latestAlert?.fetchedAt ? Date.parse(latestAlert.fetchedAt) : Date.parse(incident.latestDetectedAt))
   if (!Number.isFinite(comparisonTime) || Math.abs(computedAt - comparisonTime) > maxSourceAgeSeconds * 1_000) return null
   const ageAtSnapshotSeconds = Math.max(0, (computedAt - comparisonTime) / 1000)
+
+  let bestCandidate: { frontOrder: number; followingOrder: number; distanceToStop: number } | null = null
   for (let index = 0; index < ordered.length - 1; index++) {
     const front = ordered[index]
     const following = ordered[index + 1]
     const frontAtDetection = front.distanceAlongRouteM - (front.speedMps ?? 0) * ageAtSnapshotSeconds
     const followingAtDetection = following.distanceAlongRouteM - (following.speedMps ?? 0) * ageAtSnapshotSeconds
+
+    // Consecutive buses must be within bunching distance threshold. Fleet pairs separated
+    // by miles (e.g. normal 10-15 minute headway) are never a bunched pair.
+    const busSeparationM = Math.abs(frontAtDetection - followingAtDetection)
+    const maxSeparationM = Math.min(2000, Math.max(1000, (incident.gapSeconds ?? 90) * 15))
+    if (busSeparationM > maxSeparationM) continue
+
     const low = Math.min(frontAtDetection, followingAtDetection) - front.uncertaintyM - following.uncertaintyM
     const high = Math.max(frontAtDetection, followingAtDetection) + front.uncertaintyM + following.uncertaintyM
-    if (stopDistance >= low && stopDistance <= high) {
-      return { frontOrder: front.order, followingOrder: following.order, stopCode: stop.stopCode, match: 'approximate' }
+    const pairMidpoint = (frontAtDetection + followingAtDetection) / 2
+    const distanceToStop = Math.abs(pairMidpoint - stopDistance)
+
+    // The bunched pair must be adjacent to the monitored stop (stop lies between the pair or within 800m of midpoint)
+    if ((stopDistance >= low && stopDistance <= high) || distanceToStop <= 800) {
+      if (!bestCandidate || distanceToStop < bestCandidate.distanceToStop) {
+        bestCandidate = { frontOrder: front.order, followingOrder: following.order, distanceToStop }
+      }
     }
+  }
+
+  if (bestCandidate) {
+    return { frontOrder: bestCandidate.frontOrder, followingOrder: bestCandidate.followingOrder, stopCode: stop.stopCode, match: 'approximate' }
   }
   return null
 }
