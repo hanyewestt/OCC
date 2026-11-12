@@ -320,7 +320,7 @@ test('adjacent alerts with a matching time and gap are grouped, but separated al
   expect(incidents.find(incident => incident.alerts.length === 2)?.historical).toBe(false)
 })
 
-test('incidents become historical after three poll cycles or after Bus 1 ETA passes', () => {
+test('incidents become historical after three poll cycles or after bunched bus ETAs pass', () => {
   const route = makeRoute(1, ['A01'])
   const aged = makeAlert({ eventId: 'aged', detectedAt: '2026-10-23T03:55:00Z', evidence: JSON.stringify({
     snapshot: { classification: 'OBSERVATION_ONLY', arrivals: [1, 2, 3].map(visitOrder => ({
@@ -338,6 +338,58 @@ test('incidents become historical after three poll cycles or after Bus 1 ETA pas
 
   expect(incidents.find(incident => incident.id === 'aged')?.historical).toBe(true)
   expect(incidents.find(incident => incident.id === 'passed')?.historical).toBe(true)
+})
+
+test('incidents remain active while the trailing bunched bus has not yet arrived even if leading bus ETA has passed', () => {
+  const route = makeRoute()
+  // Leading bus (order 1) ETA is at 04:00:10Z (10s in the past relative to now 04:00:20Z).
+  // Trailing bunched bus (order 2) ETA is at 04:00:50Z (30s in the future).
+  const alert = makeAlert({
+    eventId: 'trailing-active',
+    detectedAt: '2026-10-23T04:00:00Z',
+    evidence: JSON.stringify({
+      snapshot: {
+        classification: 'OBSERVATION_ONLY',
+        arrivals: [
+          { observationId: 'obs-1', serviceId: '190', stopCode: 'A01', directionId: 1, visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:00:10Z' },
+          { observationId: 'obs-2', serviceId: '190', stopCode: 'A01', directionId: 1, visitOrder: 2, estimatedArrivalAt: '2026-10-23T04:00:50Z' },
+        ],
+      },
+      groups: [{
+        headways: [{
+          leadingObservationId: 'obs-1',
+          followingObservationId: 'obs-2',
+          isBunched: true,
+        }],
+      }],
+    }),
+  })
+  const incidents = groupRouteIncidents([alert], [route], now, 60, 20)
+
+  expect(incidents).toHaveLength(1)
+  expect(incidents[0].historical).toBe(false)
+})
+
+test('cleared alerts are always flagged historical', () => {
+  const route = makeRoute()
+  const alert = makeAlert({
+    eventId: 'cleared-alert',
+    action: 'CLEARED',
+    detectedAt: '2026-10-23T04:00:00Z',
+    evidence: JSON.stringify({
+      snapshot: {
+        classification: 'OBSERVATION_ONLY',
+        arrivals: [
+          { observationId: 'obs-1', serviceId: '190', stopCode: 'A01', directionId: 1, visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:05:00Z' },
+          { observationId: 'obs-2', serviceId: '190', stopCode: 'A01', directionId: 1, visitOrder: 2, estimatedArrivalAt: '2026-10-23T04:05:10Z' },
+        ],
+      },
+    }),
+  })
+  const incidents = groupRouteIncidents([alert], [route], now, 60, 20)
+
+  expect(incidents).toHaveLength(1)
+  expect(incidents[0].historical).toBe(true)
 })
 
 test('incident links only to a plausible same-direction bus pair at the same time', () => {

@@ -1,5 +1,5 @@
 import type { Arrival, BunchingAlert, RouteDirection, RoutePositionBus, RoutePositionDirection, RoutePositions } from './api'
-import { allBunchingArrivals, bunchingArrivals } from './bunching'
+import { allBunchingArrivals } from './bunching'
 
 export const ROUTE_STRIP_GAP_SEVERITY = {
   close: {
@@ -258,13 +258,19 @@ export function groupRouteIncidents(alerts: BunchingAlert[], routes: RouteDirect
     const firstDetectedAt = first.alert.detectedAt
     const latestDetectedAt = latest.alert.detectedAt
     const ageSeconds = Math.max(0, Math.floor((nowMs - Date.parse(latestDetectedAt)) / 1000))
-    const firstBusEta = bunchingArrivals(latest.alert)[0]
-    const firstBusEtaMs = Date.parse(firstBusEta)
-    const passedPrediction = Number.isFinite(firstBusEtaMs) && firstBusEtaMs <= nowMs
+    const bunchedPairs = bunchedArrivalGaps(latest.alert)
+    const arrivals = allBunchingArrivals(latest.alert)
+    const targetOrder = bunchedPairs.length
+      ? Math.max(...bunchedPairs.map(p => p.followingOrder))
+      : (arrivals.length >= 2 ? 2 : 1)
+    const trailingEta = arrivals[targetOrder - 1] ?? arrivals[0]
+    const trailingEtaMs = Date.parse(trailingEta)
+    const passedPrediction = Number.isFinite(trailingEtaMs) && trailingEtaMs <= nowMs
     const gaps = ordered.flatMap(event => event.gapSeconds === null ? [] : [event.gapSeconds])
     const gapSeconds = gaps.length ? Math.round(gaps.reduce((sum, value) => sum + value, 0) / gaps.length) : null
     const uniqueStops = [...new Map(ordered.map(event => [event.alert.stopCode, event])).values()]
       .sort((left, right) => (left.stopIndex ?? Number.MAX_SAFE_INTEGER) - (right.stopIndex ?? Number.MAX_SAFE_INTEGER))
+    const isCleared = latest.alert.action === 'CLEARED'
     return {
       id: ordered.map(event => event.alert.eventId).sort().join(':'),
       serviceId: first.alert.serviceId,
@@ -277,7 +283,7 @@ export function groupRouteIncidents(alerts: BunchingAlert[], routes: RouteDirect
       latestDetectedAt,
       gapSeconds,
       ageSeconds,
-      historical: isSimulation ? false : (ageSeconds > pollIntervalSeconds * 3 || passedPrediction),
+      historical: isSimulation ? false : (isCleared || ageSeconds > pollIntervalSeconds * 3 || passedPrediction),
       latestStopIndex: latest.stopIndex,
     }
   }).sort((first, second) => Date.parse(second.latestDetectedAt) - Date.parse(first.latestDetectedAt))
