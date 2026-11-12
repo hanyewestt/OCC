@@ -7,9 +7,17 @@ on:
         description: 'smoke, contracts or extended; selected by the calling workflow'
         required: true
         type: string
+      artifact-run-id:
+        description: 'Run whose verified candidate images and dist to reuse; empty builds everything from source'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
+  # Candidate-image runs download artifacts from the producing run, which
+  # requires the Actions (read) permission on private repositories.
+  actions: read
 
 jobs:
   system:
@@ -17,30 +25,58 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       OCC_SYSTEM_SUITE: ${{ inputs.suite }}
+      OCC_CANDIDATE_ARTIFACTS: ${{ inputs.artifact-run-id }}
+      ARTIFACT_RUN_ID: ${{ inputs.artifact-run-id }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Load verified candidate images and dist
+        if: inputs.artifact-run-id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/occ-candidates"
+          for component in ingestion disruption planning db-setup web; do
+            gh run download "$ARTIFACT_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+              --name "occ-image-${component}" --dir "$RUNNER_TEMP/occ-candidates"
+            docker load --input "$RUNNER_TEMP/occ-candidates/occ-image-${component}.tar"
+            test "$(docker image inspect --format '{{.Id}}' "occ-${component}:ci")" =               "$(cat "$RUNNER_TEMP/occ-candidates/occ-image-${component}.id")"
+            docker tag "occ-${component}:ci" "occ-${component}:local"
+          done
+          gh run download "$ARTIFACT_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "occ-web-dist" --dir "$RUNNER_TEMP/occ-candidates/dist"
+          rm -rf frontend/dist
+          mkdir -p frontend/dist
+          tar --extract --gzip --file "$RUNNER_TEMP/occ-candidates/dist/web-dist.tar.gz" \
+            --directory frontend/dist
       - name: Set up Node 22
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Build React static assets
+      # Candidate runs reuse the verified dist but still need the checked-in
+      # dependencies for the Playwright startup check.
+      - name: Install frontend dependencies
         if: inputs.suite != 'contracts'
         working-directory: frontend
-        run: |
-          npm ci
-          npm run build
+        run: npm ci
+      - name: Build React static assets
+        if: inputs.suite != 'contracts' && inputs.artifact-run-id == ''
+        working-directory: frontend
+        run: npm run build
       - name: Configure hosted runner DNS for image builds
         run: bash .github/scripts/configure-ci-dns.sh
       - name: Start isolated application stack
         run: |
           set -euo pipefail
           compose=(docker compose -p occ-edge-ci --env-file .env.example -f compose.yaml -f infra/compose.test.yaml)
-          "${compose[@]}" --profile setup build
+          if [[ -z "$OCC_CANDIDATE_ARTIFACTS" ]]; then
+            "${compose[@]}" --profile setup build
+          fi
           "${compose[@]}" up -d --wait postgres
           "${compose[@]}" run --rm --no-deps db-setup
           test -z "$("${compose[@]}" ps -a -q db-setup)"
@@ -111,6 +147,13 @@ jobs:
             -out "$RUNNER_TEMP/occ-edge-test.crt" \
             -subj "/CN=localhost"
           chmod 644 "$RUNNER_TEMP/occ-edge-test.key" "$RUNNER_TEMP/occ-edge-test.crt"
+          web_image=occ-web:ci
+          web_mounts=()
+          if [[ -z "$OCC_CANDIDATE_ARTIFACTS" ]]; then
+            web_image=nginx:1.30.6-alpine-slim@sha256:f65ed258206d1eb6c4eb6141111715a2cf94ac0a4ec9675fc2da186f7aadb163
+            web_mounts+=(--mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/routes.inc.template,target=/etc/nginx/templates/routes.inc.template,readonly"
+                         --mount "type=bind,source=$GITHUB_WORKSPACE/frontend/dist,target=/usr/share/nginx/html,readonly")
+          fi
           docker run --detach --name occ-edge-ci-nginx \
             --user 101:101 --read-only --security-opt no-new-privileges --cap-drop ALL \
             --tmpfs /etc/nginx/conf.d:uid=101,gid=101,mode=1777 \
@@ -130,13 +173,12 @@ jobs:
             --env OCC_NGINX_PROXY_CONNECT_TIMEOUT=5s \
             --env OCC_NGINX_PROXY_READ_TIMEOUT=30s \
             --env OCC_NGINX_PROXY_SEND_TIMEOUT=30s \
-            --mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/routes.inc.template,target=/etc/nginx/templates/routes.inc.template,readonly" \
-            --mount "type=bind,source=$GITHUB_WORKSPACE/frontend/dist,target=/usr/share/nginx/html,readonly" \
+            "${web_mounts[@]}" \
             --mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/default.conf.template,target=/etc/nginx/templates/default.conf.template,readonly" \
             --mount "type=bind,source=$RUNNER_TEMP/occ-edge-nginx.conf,target=/etc/nginx/nginx.conf,readonly" \
             --mount "type=bind,source=$RUNNER_TEMP/occ-edge-test.crt,target=/run/secrets/occ_tls_certificate,readonly" \
             --mount "type=bind,source=$RUNNER_TEMP/occ-edge-test.key,target=/run/secrets/occ_tls_private_key,readonly" \
-            nginx:1.30.6-alpine-slim@sha256:f65ed258206d1eb6c4eb6141111715a2cf94ac0a4ec9675fc2da186f7aadb163
+            "$web_image"
           for attempt in $(seq 1 30); do
             status=$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' \
               https://127.0.0.1:18443/_occ_edge_health || true)
@@ -219,6 +261,62 @@ jobs:
         run: >-
           python3 tests/system/nginx_edge_smoke.py --base-url https://127.0.0.1:18443
           --token-dir "$RUNNER_TEMP/occ-edge-jwks"
+      - name: Verify the CloudFront origin edge with a synthetic secret
+        if: inputs.suite == 'smoke'
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'synthetic-origin-secret' > "$RUNNER_TEMP/occ-edge-origin-secret"
+          chmod 600 "$RUNNER_TEMP/occ-edge-origin-secret"
+          # The CloudFront server block includes the deployment's traffic gate;
+          # the smoke deployment supplies an open gate with a synthetic token.
+          mkdir -p "$RUNNER_TEMP/occ-edge-gate"
+          printf 'set $occ_traffic_gate "open";\nset $occ_gate_token "synthetic-gate-token";\n' \
+            > "$RUNNER_TEMP/occ-edge-gate/traffic-gate.inc"
+          chmod 755 "$RUNNER_TEMP/occ-edge-gate"
+          chmod 644 "$RUNNER_TEMP/occ-edge-gate/traffic-gate.inc"
+          web_image=occ-web:ci
+          web_mounts=()
+          if [[ -z "$OCC_CANDIDATE_ARTIFACTS" ]]; then
+            web_image=nginx:1.30.6-alpine-slim@sha256:f65ed258206d1eb6c4eb6141111715a2cf94ac0a4ec9675fc2da186f7aadb163
+            web_mounts+=(--mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/routes.inc.template,target=/etc/nginx/templates/routes.inc.template,readonly"
+                         --mount "type=bind,source=$GITHUB_WORKSPACE/frontend/dist,target=/usr/share/nginx/html,readonly")
+          fi
+          docker run --detach --name occ-edge-ci-cfnginx \
+            --user 101:101 --read-only --security-opt no-new-privileges --cap-drop ALL \
+            --tmpfs /etc/nginx/conf.d:uid=101,gid=101,mode=1777 \
+            --tmpfs /var/cache/nginx:uid=101,gid=101,mode=1777 \
+            --tmpfs /var/run:uid=101,gid=101,mode=1777 \
+            --tmpfs /tmp:uid=101,gid=101,mode=1777 \
+            --network occ-edge-ci_app --publish 127.0.0.1:18080:18080 \
+            --env 'NGINX_ENVSUBST_FILTER=^(OCC_INGESTION_INTERNAL_URL|OCC_DISRUPTION_INTERNAL_URL|OCC_PLANNING_INTERNAL_URL|OCC_NGINX_HTTP_INTERNAL_PORT|OCC_ORIGIN_SECRET)$' \
+            --env OCC_INGESTION_INTERNAL_URL=http://ingestion:8001 \
+            --env OCC_DISRUPTION_INTERNAL_URL=http://disruption:8002 \
+            --env OCC_PLANNING_INTERNAL_URL=http://planning:8003 \
+            --env OCC_NGINX_HTTP_INTERNAL_PORT=18080 \
+            --env OCC_ORIGIN_SECRET=synthetic-origin-secret \
+            "${web_mounts[@]}" \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/infra/nginx/cloudfront.conf.template,target=/etc/nginx/templates/cloudfront.conf.template,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/occ-edge-nginx.conf,target=/etc/nginx/nginx.conf,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/occ-edge-gate,target=/etc/nginx/gate,readonly" \
+            "$web_image"
+          for attempt in $(seq 1 30); do
+            status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              --header 'X-OCC-Origin-Secret: synthetic-origin-secret' \
+              http://127.0.0.1:18080/_occ_edge_health || true)
+            if [[ "$status" == 204 ]]; then
+              break
+            fi
+            if [[ "$attempt" == 30 ]]; then
+              docker logs occ-edge-ci-cfnginx
+              exit 1
+            fi
+            sleep 2
+          done
+          python3 tests/system/nginx_edge_smoke.py --base-url http://127.0.0.1:18080 \
+            --token-dir "$RUNNER_TEMP/occ-edge-jwks" \
+            --origin-secret-file "$RUNNER_TEMP/occ-edge-origin-secret" \
+            --max-heartbeat-gap 120
       - name: Verify proxy rewrites and trusted header forwarding
         if: inputs.suite == 'smoke'
         run: python3 tests/system/nginx_proxy_smoke.py
@@ -257,10 +355,12 @@ jobs:
         if: always()
         run: |
           docker rm --force occ-edge-ci-nginx 2>/dev/null || true
+          docker rm --force occ-edge-ci-cfnginx 2>/dev/null || true
           docker rm --force occ-edge-ci-http 2>/dev/null || true
           docker rm --force occ-edge-ci-jwks 2>/dev/null || true
           docker compose -p occ-edge-ci --env-file .env.example \
             -f compose.yaml -f infra/compose.test.yaml -f infra/compose.workflow-test.yaml \
             -f infra/compose.dispatch-test.yaml down --remove-orphans
           rm -rf "$RUNNER_TEMP/occ-edge-jwks" \
-            "$RUNNER_TEMP/occ-edge-test.key" "$RUNNER_TEMP/occ-edge-test.crt"
+            "$RUNNER_TEMP/occ-edge-test.key" "$RUNNER_TEMP/occ-edge-test.crt" \
+            "$RUNNER_TEMP/occ-edge-origin-secret"

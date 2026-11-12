@@ -1,0 +1,125 @@
+name: Environment control
+
+# Manual lifecycle controls for the EC2 deployment: start/resume, pause and
+# status. Mutating controls share the production mutation queue with the
+# release/deploy workflow and reconcile outstanding remote operations before
+# acting; status is read-only. There is no recurring schedule and no implicit
+# wake: only explicit start/resume runs the instance.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Lifecycle action: start (alias: resume), pause or status'
+        required: true
+        type: choice
+        options:
+          - start
+          - resume
+          - pause
+          - rollback
+          - recover
+          - status
+        default: status
+      release-id:
+        description: 'Rollback only: pinned previous release ID, or empty to recover current baseline after a failed candidate'
+        type: string
+        default: ''
+      recovery-operation-id:
+        description: 'Recover only: existing active operation ID reported by status'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  OCC_REGION: ${{ secrets.OCC_REGION }}
+  OCC_RELEASE_BUCKET: ${{ secrets.OCC_RELEASE_BUCKET }}
+
+jobs:
+  control:
+    if: inputs.action != 'status'
+    concurrency:
+      group: occ-production-mutation
+      cancel-in-progress: false
+      queue: max
+    name: Environment control (${{ inputs.action }})
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - name: Check out the CD tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Assume the deploy role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.OCC_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ secrets.OCC_REGION }}
+
+      - name: Run the lifecycle action
+        env:
+          ACTION: ${{ inputs.action }}
+          RELEASE_ID: ${{ inputs.release-id }}
+          RECOVERY_OPERATION_ID: ${{ inputs.recovery-operation-id }}
+          INSTANCE_ID: ${{ secrets.OCC_INSTANCE_ID }}
+        run: |
+          set -euo pipefail
+          operation="$ACTION-${{ github.run_id }}-${{ github.run_attempt }}"
+          if [[ "$ACTION" == recover ]]; then
+            : "${RECOVERY_OPERATION_ID:?recover requires the existing active operation ID from status}"
+            operation="$RECOVERY_OPERATION_ID"
+          fi
+          if [[ "$ACTION" == rollback || "$ACTION" == recover ]]; then
+            python3 scripts/cd/deploy_remote.py "$ACTION" --region "$OCC_REGION" \
+              --instance-id "$INSTANCE_ID" --bucket "$OCC_RELEASE_BUCKET" \
+              --operation-id "$operation" --release-id "$RELEASE_ID"
+          else
+            python3 scripts/cd/environment.py "$ACTION" --region "$OCC_REGION" \
+              --instance-id "$INSTANCE_ID" --bucket "$OCC_RELEASE_BUCKET" --operation-id "$operation"
+          fi
+
+      - name: Summarize the control outcome
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            echo "## Environment control: ${{ inputs.action }}"
+            echo "- outcome: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  status:
+    if: inputs.action == 'status'
+    name: Environment control (${{ inputs.action }})
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - name: Check out the CD tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Assume the deploy role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.OCC_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ secrets.OCC_REGION }}
+
+      - name: Run the lifecycle action
+        run: >-
+          python3 scripts/cd/environment.py "${{ inputs.action }}"
+          --region "${{ secrets.OCC_REGION }}"
+          --instance-id "${{ secrets.OCC_INSTANCE_ID }}"
+          --bucket "${{ secrets.OCC_RELEASE_BUCKET }}"
+          --operation-id "${{ inputs.action }}-${{ github.run_id }}-${{ github.run_attempt }}"
+
+      - name: Summarize the control outcome
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            echo "## Environment control: ${{ inputs.action }}"
+            echo "- outcome: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"

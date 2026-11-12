@@ -1,0 +1,8 @@
+misconfigurations:
+  - id: AWS-0104
+    paths:
+      - infra/aws/ec2-cd.yaml
+    statement: >-
+      This host intentionally needs outbound TCP 443 to dynamic external APIs
+      and registries. Egress remains restricted to TCP 443 and VPC DNS, while
+      inbound access remains limited to the CloudFront origin prefix list.

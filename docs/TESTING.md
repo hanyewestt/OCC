@@ -37,6 +37,77 @@ and select the branch. GitHub requires a dispatchable workflow to exist on the
 default branch before its manual-run control is available. No workflow pushes
 code or deploys the app.
 
+## Commit triggers and the deployment path
+
+Commit classification follows [commit convention](commit-convention.md):
+classify by behavior, not file extension. Deployment-affecting commits —
+workflows, Dockerfiles and build tooling, runtime Compose/Nginx/CloudFront
+configuration, database setup/migrations and CD/lifecycle scripts — always run
+CI/CD on `main`, even with no service or frontend source edits.
+
+Commits that are exclusively documentation, agent prose or local launchers
+keep the `[skip ci]` marker. GitHub suppresses push workflows for those
+commits; there is no privileged bypass. If a marker is used by mistake on a
+deployment-affecting commit, manually dispatch the verification workflow for
+that commit. If a docs-only skipped run leaves required checks pending on a
+pull request, add a normal non-skipped commit or validate manually according
+to branch protection.
+
+### Branch protection migration for the CD pipeline
+
+Pushes to `main` no longer run `Core CI` directly: they run
+**Main verification**, which invokes the same reusable verification once for
+the exact pushed SHA. Pull requests continue to run `Core CI` with unchanged
+job names. In branch protection:
+
+- Pull-request required checks keep their existing `Core CI` names (including
+  the two system caller jobs' `System verification` checks).
+- Required checks for pushes to `main`, if your protection rules target them,
+  move from the `Core CI` names to the same names under the
+  `Main verification` caller workflow. Workflow files do not change
+  branch-protection settings automatically; update the rules in the
+  repository settings when adopting the CD pipeline.
+- The **Release and deploy** workflow runs after every successful Main
+  verification on `main`. Its publish, scan and deploy jobs use the
+  `production` environment (main-only, no per-push reviewers) and the
+  deployment role secrets; pull-request jobs never see them. Its mutation
+  runs are serialized in one concurrency group and are never cancelled.
+
+The path-filtered Extended verification workflow still builds from source.
+Core CI additionally runs `Candidate workflows and recovery / System
+verification` against the complete candidate images. Main verification must
+finish that check before CD can publish. This adds a required-check name;
+inspect one actual PR and main run before changing branch protection.
+
+The packaging job uses the main-only `OCC_VERIFY_ROLE_ARN` repository variable
+for read-only published-baseline/ECR access. Pull requests build all five
+images without assuming production roles. `occ-candidate` freezes the producing
+run, SHA, owner plan, input hashes, reused sources and OCI/config/archive
+digests. The post-verification pipeline publishes built OCI bytes with
+`--preserve-digests`, verifies all final ECR digests, then scans and produces an
+SBOM for each exact final digest. Failed, skipped or incomplete scan jobs block
+publication. Main's manual `refresh` is `none`, `rescan` or `rebuild`.
+
+Infrastructure checks use `cfn-lint infra/aws/ec2-cd.yaml` and
+`cfn-guard validate -d infra/aws/ec2-cd.yaml -r infra/aws/ec2-cd.guard`.
+Run the outbound-boundary mutation cases with
+`cfn-guard test -r infra/aws/ec2-cd.guard -t tests/cd/egress.guard-tests.yaml`.
+
+CD tests run on Linux; Windows also executes portable policy tests and the real
+PowerShell bootstrap CLI fixture. `python tests/cd/host_integration.py all`
+requires Docker and fails when it is unavailable. It exercises real isolated
+PostGIS backup/restore (spatial data, roles, ownership and grants) and Buildx
+OCI transfer/import, Linux lock exclusion, and terminal-failure quiescing of real
+containers while preserving PostgreSQL. Its S3 boundary is a local fixture; AWS IAM, EC2 boot,
+systemd, CloudFront and provider connectivity require a reviewed live rollout.
+
+Publication has its own queue. Deploy, pause and resume share
+`occ-production-mutation`, `cancel-in-progress: false`, `queue: max`; status is
+outside it. GitHub permits 100 pending entries; overflow/cancelled jobs must be
+retried explicitly. Durable S3 operation ownership still applies after runner
+loss. Actionlint 1.7.12 has no `queue` support: ignore only that exact diagnostic
+when running it, and check the parsed concurrency contracts separately.
+
 All system jobs reuse
 [`system-verification.yml`](../.github/workflows/system-verification.yml).
 Only the extended suite enables provider-backed workers and the fault proxy.
