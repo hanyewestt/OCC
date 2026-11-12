@@ -260,3 +260,5 @@ against the built HTTPS site. This verifies that production JavaScript actually
 renders sign-in without an uncaught exception; asset-byte checks and successful
 Vite compilation alone cannot establish that. The full browser journeys remain
 available through the documented manual workflow and local Playwright commands.
+
+Public notice regression checks: the anonymous board requests `classification=ALL` and displays both live and simulation notices with scope labels, including when opened through an older simulation preview URL. Explicit API scope filters remain supported. Rejected AI notice wording returns source facts for controller review and retains the rejection audit.
