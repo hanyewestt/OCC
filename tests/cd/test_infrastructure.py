@@ -158,8 +158,9 @@ class CloudFormationContractTests(unittest.TestCase):
 
     def test_oidc_subjects_are_scoped_to_repository_and_environment(self):
         text = template_text()
-        self.assertIn("repo:${RepositoryName}:ref:refs/heads/main", text)
-        self.assertIn("repo:${RepositoryName}:environment:production", text)
+        self.assertIn("Default: repo:pslimmm@194585496/OCC@1367310080", text)
+        self.assertIn("${GitHubOidcSubjectPrefix}:ref:refs/heads/main", text)
+        self.assertIn("${GitHubOidcSubjectPrefix}:environment:production", text)
         self.assertNotRegex(text, r'"StringLike"\s*,\s*"token\.actions\.githubusercontent\.com:sub"')
 
     def test_cloudfront_uses_default_certificate_http_origin_and_no_caching(self):
