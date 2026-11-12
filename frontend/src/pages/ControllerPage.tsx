@@ -16,7 +16,7 @@ import { ControllerAdvisories } from '@/pages/ControllerAdvisories'
 import { usePagedCollection } from '@/lib/paged-collection'
 import { usePageRefresh } from '@/lib/page-refresh'
 import { PageRefreshStatus } from '@/components/PageRefreshStatus'
-import { bunchedArrivalGaps, groupRouteIncidents } from '@/lib/route-strip'
+import { bunchedArrivalGaps, groupRouteIncidents, mergeRoutePositions } from '@/lib/route-strip'
 import { haversineDistanceM } from '@/lib/route-geometry'
 import { ControllerCaptainsPage } from '@/pages/ControllerCaptainsPage'
 import { captainDirectoryPath, captainSelectionIsValid, selectedCaptainIds } from '@/pages/controller-captains'
@@ -529,10 +529,11 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     if (live && !activeSimulation) {
       setRouteArrivals(previous => live.routeArrivals.error && previous.data ? { ...previous, error: live.routeArrivals.error } : live.routeArrivals)
       setRoutePositions(previous => {
-        if (!live.positions.error) return live.positions
-        const snapshots = new Map((previous.data ?? []).map(snapshot => [snapshot.serviceId, snapshot]))
-        for (const snapshot of live.positions.data ?? []) snapshots.set(snapshot.serviceId, snapshot)
-        return { data: snapshots.size ? [...snapshots.values()] : null, error: live.positions.error }
+        const mergedData = mergeRoutePositions(previous.data, live.positions.data, 180)
+        return {
+          data: mergedData.length ? mergedData : null,
+          error: live.positions.error,
+        }
       })
     }
     runState.current = resolvedRun

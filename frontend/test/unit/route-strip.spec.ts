@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import type { Arrival, BunchingAlert, RouteDirection, RoutePositionDirection, RoutePositions, RouteStop } from '../../src/lib/api'
 import {
   alignArrivalsToPositionEvidence, arrivalDirectionMatches, arrivalGaps, bunchedArrivalGaps, estimateRouteHeadways, etaFallbacksForRoute, formatGap, gapSeverity,
-  groupRouteIncidents, linkIncidentToPosition, oldestStopDataAgeSeconds, placeArrivalAtPositionEvidence,
+  groupRouteIncidents, linkIncidentToPosition, mergeRoutePositions, oldestStopDataAgeSeconds, placeArrivalAtPositionEvidence,
   positionSourceFreshness, positionSourceIsStale, projectCoordinateToRoute, routePositionEvidenceDescription,
   routeDestination, routePositionSnapshotIsDisplayed, routeStopDistances, tightestArrivalGap,
 } from '../../src/lib/route-strip'
@@ -551,3 +551,118 @@ test('repeated-route evidence uses the backend-selected occurrence while retaini
   expect(placement?.rawProjection?.offsetMeters).toBeLessThan(20)
   expect(placement!.displayDistanceAlongRouteM - placement!.rawProjection!.distanceAlongRouteM).toBeGreaterThan(30_000)
 })
+
+test('mergeRoutePositions retains recent bus positions when incoming snapshot has zero buses during cycle rollover', () => {
+  const previousTime = '2026-10-23T04:00:00Z'
+  const previousPositions: RoutePositions[] = [{
+    serviceId: '190',
+    computedAt: previousTime,
+    refreshIntervalSeconds: 60,
+    maxSourceAgeSeconds: 120,
+    directions: [{
+      operator: 'SMRT',
+      directionId: 1,
+      routeLengthM: 20000,
+      buses: [
+        { order: 1, distanceAlongRouteM: 10000, uncertaintyM: 50, speedMps: 10 },
+        { order: 2, distanceAlongRouteM: 9500, uncertaintyM: 50, speedMps: 10 },
+      ],
+    }],
+  }]
+
+  // Incoming has zero buses (e.g. transient rollover gap)
+  const incomingEmpty: RoutePositions[] = [{
+    serviceId: '190',
+    computedAt: '2026-10-23T04:01:00Z',
+    refreshIntervalSeconds: 60,
+    maxSourceAgeSeconds: 120,
+    directions: [{
+      operator: 'SMRT',
+      directionId: 1,
+      routeLengthM: 20000,
+      buses: [],
+    }],
+  }]
+
+  const nowMs = Date.parse('2026-10-23T04:01:10Z')
+  const merged = mergeRoutePositions(previousPositions, incomingEmpty, 180, nowMs)
+  expect(merged).toHaveLength(1)
+  expect(merged[0].serviceId).toBe('190')
+  // Retained the 2 buses from previous snapshot
+  expect(merged[0].directions[0].buses).toHaveLength(2)
+})
+
+test('mergeRoutePositions updates to incoming snapshot when fresh buses are present', () => {
+  const previousPositions: RoutePositions[] = [{
+    serviceId: '190',
+    computedAt: '2026-10-23T04:00:00Z',
+    refreshIntervalSeconds: 60,
+    maxSourceAgeSeconds: 120,
+    directions: [{
+      operator: 'SMRT',
+      directionId: 1,
+      routeLengthM: 20000,
+      buses: [{ order: 1, distanceAlongRouteM: 10000, uncertaintyM: 50, speedMps: 10 }],
+    }],
+  }]
+
+  const incomingNew: RoutePositions[] = [{
+    serviceId: '190',
+    computedAt: '2026-10-23T04:01:00Z',
+    refreshIntervalSeconds: 60,
+    maxSourceAgeSeconds: 120,
+    directions: [{
+      operator: 'SMRT',
+      directionId: 1,
+      routeLengthM: 20000,
+      buses: [
+        { order: 1, distanceAlongRouteM: 11000, uncertaintyM: 50, speedMps: 10 },
+        { order: 2, distanceAlongRouteM: 10500, uncertaintyM: 50, speedMps: 10 },
+      ],
+    }],
+  }]
+
+  const merged = mergeRoutePositions(previousPositions, incomingNew, 180, Date.parse('2026-10-23T04:01:10Z'))
+  expect(merged).toHaveLength(1)
+  expect(merged[0].computedAt).toBe('2026-10-23T04:01:00Z')
+  expect(merged[0].directions[0].buses[0].distanceAlongRouteM).toBe(11000)
+})
+
+test('groupRouteIncidents unifies adjacent corridor stops even when headway gap degrades significantly', () => {
+  const route = makeRoute(2, ['STOP-31', 'STOP-32', 'STOP-33', 'STOP-34'])
+  // Stop 33: gap 57s at 04:00:00
+  const alert33 = makeAlert({
+    eventId: 'alert-33',
+    serviceId: '190',
+    directionId: 2,
+    stopCode: 'STOP-33',
+    detectedAt: '2026-10-23T04:00:00Z',
+    evidence: JSON.stringify({
+      snapshot: { classification: 'OBSERVATION_ONLY', arrivals: [
+        { serviceId: '190', stopCode: 'STOP-33', directionId: 2, visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:05:00Z' },
+        { serviceId: '190', stopCode: 'STOP-33', directionId: 2, visitOrder: 2, estimatedArrivalAt: '2026-10-23T04:05:57Z' },
+      ] },
+    }),
+  })
+  // Stop 32 (adjacent!): gap compressed to 24s at 04:01:00 (1 minute later, 33s delta)
+  const alert32 = makeAlert({
+    eventId: 'alert-32',
+    serviceId: '190',
+    directionId: 2,
+    stopCode: 'STOP-32',
+    detectedAt: '2026-10-23T04:01:00Z',
+    evidence: JSON.stringify({
+      snapshot: { classification: 'OBSERVATION_ONLY', arrivals: [
+        { serviceId: '190', stopCode: 'STOP-32', directionId: 2, visitOrder: 1, estimatedArrivalAt: '2026-10-23T04:05:00Z' },
+        { serviceId: '190', stopCode: 'STOP-32', directionId: 2, visitOrder: 2, estimatedArrivalAt: '2026-10-23T04:05:24Z' },
+      ] },
+    }),
+  })
+
+  const incidents = groupRouteIncidents([alert33, alert32], [route], Date.parse('2026-10-23T04:01:15Z'), 60, 30)
+  // Should unify into 1 corridor incident instead of splitting into two
+  expect(incidents).toHaveLength(1)
+  expect(incidents[0].stopCodes).toEqual(['STOP-32', 'STOP-33'])
+  expect(incidents[0].historical).toBe(false)
+})
+
