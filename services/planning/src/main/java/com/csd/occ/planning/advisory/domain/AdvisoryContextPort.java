@@ -3,6 +3,7 @@ package com.csd.occ.planning.advisory.domain;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface AdvisoryContextPort {
@@ -12,6 +13,8 @@ public interface AdvisoryContextPort {
     Limits limits();
     BunchingGroup bunchingGroup(UUID demoRunId, UUID bunchingEventId);
     CurrentBunchingGroup currentBunchingGroup(UUID demoRunId, UUID bunchingEventId);
+    /** Empty while new simulation predictions are awaiting detector evaluation. */
+    Optional<CurrentBunchingGroup> refreshBunchingGroup(UUID demoRunId, UUID bunchingEventId);
     record BunchingGroup(UUID demoRunId, UUID bunchingEventId, String serviceId, int directionId, String stopCode,
                          List<String> affectedBusReferences, String followingBusReference) {}
     record CurrentBunchingGroup(UUID demoRunId, UUID bunchingEventId, String serviceId, String stopCode, int directionId,
