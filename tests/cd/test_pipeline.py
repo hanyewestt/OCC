@@ -14,6 +14,23 @@ import pipeline
 
 
 class PipelineTests(unittest.TestCase):
+    def test_skopeo_login_and_transfer_use_runner_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(pipeline.os, 'getuid', return_value=1001, create=True), \
+                 patch.object(pipeline.os, 'getgid', return_value=1002, create=True), \
+                 patch.object(pipeline, 'run', return_value='password') as run, \
+                 patch.object(pipeline.subprocess, 'run') as docker, \
+                 patch.object(pipeline.os, 'chmod') as chmod:
+                pipeline.login(root, 'registry.example', 'us-east-1')
+                args = docker.call_args.args[0]
+                self.assertEqual(args[args.index('--user') + 1], '1001:1002')
+                self.assertNotIn('password', args)
+                chmod.assert_called_once_with(root/'auth.json', 0o600)
+                pipeline.skopeo(root, 'inspect', 'docker://registry.example/image')
+                args = run.call_args.args
+                self.assertEqual(args[args.index('--user') + 1], '1001:1002')
+
     def test_packaging_program_and_transfer_tool_invalidate_every_image_owner(self):
         for path in ('scripts/cd/pipeline.py','scripts/cd/skopeo-image.txt'):
             self.assertEqual(set(pipeline.release.ownership_for(path)), set(pipeline.release.COMPONENTS))
