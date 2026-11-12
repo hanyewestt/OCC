@@ -159,6 +159,8 @@ printf "export OCC_GATE_TOKEN='%s'\n" "$GATE_TOKEN_VALUE" >> "$ENV_DIR/env.rende
 unset GATE_TOKEN_VALUE
 # The gate include lives in the runtime dir deploy.sh hands to the gate.
 mkdir -p "$ENV_DIR/runtime/nginx-gate"
+chown 0:101 "$ENV_DIR/runtime/nginx-gate"
+chmod 0750 "$ENV_DIR/runtime/nginx-gate"
 cp /run/occ/gate-token "$ENV_DIR/runtime/nginx-gate/gate-token"
 chmod 0600 "$ENV_DIR/runtime/nginx-gate/gate-token"
 

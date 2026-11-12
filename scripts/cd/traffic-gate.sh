@@ -18,6 +18,9 @@ OCC_GATE_LOG="${OCC_GATE_LOG:-$OCC_GATE_DIR/gate.log}"
 [ "$#" -eq 1 ] || { echo "usage: traffic-gate.sh close|open" >&2; exit 2; }
 
 mkdir -p "$OCC_GATE_DIR"
+# The unprivileged web image needs directory traversal as well as file access.
+chown 0:101 "$OCC_GATE_DIR" 2>/dev/null || true
+chmod 0750 "$OCC_GATE_DIR"
 TOUCH_TERM="101:101"
 
 case "$1" in
