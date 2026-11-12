@@ -1,5 +1,7 @@
 # Agent Instructions
 
+- Do not add AI coauthors or AI `Co-authored-by` trailers to commits.
+
 ## Engineering Standards
 
 - Deliver final, durable fixes rather than temporary workarounds.
