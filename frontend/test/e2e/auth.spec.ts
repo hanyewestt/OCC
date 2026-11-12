@@ -697,10 +697,12 @@ test('controller keeps the awaiting decision panel visible before a simulation r
   await expect(page.getByText('No bunching requests in this time window.', { exact: true })).toBeVisible()
 })
 
-test('controller can opt into diagnosis from a queued bunching request', async ({ page, context }) => {
+test('controller sees a requested diagnosis progress automatically', async ({ page, context }) => {
+  await page.clock.install()
   await mockDashboard(context)
-  let completed = false
-  let triggered = false
+  let status = 'PENDING'
+  let triggerCount = 0
+  let processingRequested = false
   const request = {
     requestId: 'bunching-request-1', eventId: 'bunching-event-1', diagnosisId: null, classification: 'SIMULATION', demoRunId: 'run-1',
     serviceId: '190', directionId: 1, stopCode: '44251', status: 'PENDING', likelyCause: null, confidence: null,
@@ -708,12 +710,15 @@ test('controller can opt into diagnosis from a queued bunching request', async (
     policyOutcome: null, createdAt: '2026-10-22T01:00:00Z',
   }
   await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: {
-    mode: 'DEMO', demoRunId: 'run-1', items: completed ? [{ ...request, status: 'COMPLETED', likelyCause: 'The trailing bus encountered a passenger surge.', confidence: 0.82, limitations: ['Crowding data was unavailable.'] }] : [request], page: 0, totalItems: completed ? 0 : 1, totalPages: 1,
+    mode: 'DEMO', demoRunId: 'run-1', items: [{
+      ...request, status, processingRequested,
+      ...(status === 'COMPLETED' && { likelyCause: 'The trailing bus encountered a passenger surge.', confidence: 0.82, limitations: ['Crowding data was unavailable.'] }),
+    }], page: 0, totalItems: 1, totalPages: 1,
   } }))
   await context.route('**/api/v1/planning/diagnoses/trigger', route => {
     expect(route.request().method()).toBe('POST')
     expect(route.request().postDataJSON()).toEqual({ requestId: 'bunching-request-1' })
-    triggered = true
+    triggerCount++
     return route.fulfill({ json: { requestId: 'bunching-request-1', diagnosisId: null, status: 'PENDING', failureCode: null, createdAt: request.createdAt, policyOutcome: null } })
   })
 
@@ -724,15 +729,28 @@ test('controller can opt into diagnosis from a queued bunching request', async (
   await expect(queue).toContainText('Stop 44251')
   await queue.getByRole('option').filter({ hasText: 'Stop 44251' }).click()
   await expect(page.getByRole('heading', { name: 'Bunching detection', exact: true })).toBeVisible()
+  const firstRefresh = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/planning/diagnoses')
   await page.getByRole('button', { name: 'Generate diagnosis', exact: true }).click()
-  await expect.poll(() => triggered).toBe(true)
-  await expect(page.getByText('Diagnosis generation has started. Refresh to see its latest status.')).toBeVisible()
-  completed = true
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await firstRefresh
+  const refresh = page.getByRole('button', { name: 'Refresh', exact: true })
+  await expect(refresh).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Diagnosis queued', exact: true })).toBeDisabled()
+  await expect(queue).toContainText('Diagnosis is queued.')
+  processingRequested = true
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Diagnosis queued', exact: true })).toBeDisabled()
+  await expect(refresh).toBeEnabled()
+  status = 'PROCESSING'
+  await page.clock.fastForward(30_000)
+  await expect(page.getByRole('button', { name: 'Generating diagnosis…', exact: true })).toBeDisabled()
+  await expect(refresh).toBeEnabled()
+  status = 'COMPLETED'
+  await page.clock.fastForward(30_000)
   await expect(page.getByRole('heading', { name: 'AI diagnosis', exact: true })).toBeVisible()
   await expect(page.getByText('The trailing bus encountered a passenger surge.')).toBeVisible()
   await expect(page.getByText('Confidence: 82%')).toBeVisible()
   await expect(page.getByText('Crowding data was unavailable.')).toBeVisible()
+  expect(triggerCount).toBe(1)
 })
 
 test('early controller suggestions show identified bus registrations, not observation UUIDs', async ({ page, context }) => {

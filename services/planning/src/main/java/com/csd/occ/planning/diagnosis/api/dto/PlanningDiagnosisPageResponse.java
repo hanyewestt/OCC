@@ -14,7 +14,10 @@ public record PlanningDiagnosisPageResponse(String mode, UUID demoRunId, List<Di
             @io.swagger.v3.oas.annotations.media.ArraySchema(maxItems = 3,
                     arraySchema = @io.swagger.v3.oas.annotations.media.Schema(description = "Detected bus references"))
             List<String> affectedBusReferences,
-            String status, String likelyCause, Double confidence,
+            String status,
+            @io.swagger.v3.oas.annotations.media.Schema(description = "Whether diagnosis processing has been requested or started")
+            boolean processingRequested,
+            String likelyCause, Double confidence,
             List<String> limitations,
             @io.swagger.v3.oas.annotations.media.ArraySchema(maxItems = 50,
                     arraySchema = @io.swagger.v3.oas.annotations.media.Schema(
@@ -25,7 +28,8 @@ public record PlanningDiagnosisPageResponse(String mode, UUID demoRunId, List<Di
     public static PlanningDiagnosisPageResponse from(ScopedDiagnosisPage page) {
         return new PlanningDiagnosisPageResponse(page.mode(), page.demoRunId(), page.items().stream().map(item ->
                 new DiagnosisItem(item.requestId(), item.eventId(), item.diagnosisId(), item.classification(), item.demoRunId(),
-                        item.serviceId(), item.directionId(), item.stopCode(), item.affectedBusReferences(), item.status().name(), item.likelyCause(),
+                        item.serviceId(), item.directionId(), item.stopCode(), item.affectedBusReferences(),
+                        item.status().name(), item.processingRequested(), item.likelyCause(),
                         item.confidence(), item.limitations(), item.evidenceDetails().stream()
                                 .map(DiagnosisEvidenceDetailResponse::from).toList(),
                         item.failureCode(), item.policyOutcome(), item.createdAt())).toList(),

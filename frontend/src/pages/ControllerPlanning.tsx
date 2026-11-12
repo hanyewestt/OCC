@@ -391,7 +391,19 @@ export type CorridorDiagnosisGroup = {
   latestDetectedAt: string
   gapSeconds: number | null
   isLive: boolean
-  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'
+  status: 'PENDING' | 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED'
+}
+
+function isDiagnosisQueued(request: PlanningDiagnosisRequest) {
+  return request.processingRequested && (request.status === 'PENDING' || request.status === 'FAILED_RETRYABLE')
+}
+
+function corridorDiagnosisStatus(requests: PlanningDiagnosisRequest[]): CorridorDiagnosisGroup['status'] {
+  if (requests.every(request => request.status === 'COMPLETED')) return 'COMPLETED'
+  if (requests.some(request => request.status === 'PROCESSING')) return 'PROCESSING'
+  if (requests.some(isDiagnosisQueued)) return 'QUEUED'
+  if (requests.some(request => request.status.startsWith('FAILED'))) return 'FAILED'
+  return 'PENDING'
 }
 
 function buildCorridorGroups(
@@ -423,11 +435,6 @@ function buildCorridorGroups(
     // Keep it on Disruptions rather than selecting an empty planning detail.
     if (!matchingRequests.length) continue
 
-    const isCompleted = matchingRequests.length > 0 && matchingRequests.every(r => r.status === 'COMPLETED')
-    const isProcessing = matchingRequests.some(r => r.status === 'PROCESSING')
-    const isFailed = matchingRequests.some(r => r.status.startsWith('FAILED'))
-    const status: CorridorDiagnosisGroup['status'] = isCompleted ? 'COMPLETED' : isProcessing ? 'PROCESSING' : isFailed ? 'FAILED' : 'PENDING'
-
     groups.push({
       id: corridor.id,
       serviceId: corridor.serviceId,
@@ -441,7 +448,7 @@ function buildCorridorGroups(
       latestDetectedAt: corridor.latestDetectedAt,
       gapSeconds: corridor.gapSeconds,
       isLive: !corridor.historical,
-      status,
+      status: corridorDiagnosisStatus(matchingRequests),
     })
   }
 
@@ -467,10 +474,6 @@ function buildCorridorGroups(
     const route = routes.find(r => r.serviceId === service && (direction === null || r.directionId === direction))
     const stopNames = stopCodes.map(code => route?.stops.find((s: RouteStop) => s.stopCode === code)?.description || `Stop ${code}`)
 
-    const isCompleted = bucket.every(r => r.status === 'COMPLETED')
-    const isProcessing = bucket.some(r => r.status === 'PROCESSING')
-    const isFailed = bucket.some(r => r.status.startsWith('FAILED'))
-    const status: CorridorDiagnosisGroup['status'] = isCompleted ? 'COMPLETED' : isProcessing ? 'PROCESSING' : isFailed ? 'FAILED' : 'PENDING'
     const id = bucket.length === 1 ? bucket[0].requestId : bucket.map(r => r.eventId).sort().join(':') || bucket[0].requestId
 
     groups.push({
@@ -486,7 +489,7 @@ function buildCorridorGroups(
       latestDetectedAt: bucket.at(-1)!.createdAt,
       gapSeconds: null,
       isLive: false,
-      status,
+      status: corridorDiagnosisStatus(bucket),
     })
   }
 
@@ -529,7 +532,7 @@ export function ControllerPlanning({
   nowMs?: number
   gapToleranceSeconds?: number
   trafficIncidents?: TrafficIncident[]
-  onRefresh: () => void
+  onRefresh: (reason?: 'mutation') => void
   onSaved: () => void
   onPendingChange: (pending: boolean) => void
 }) {
@@ -555,6 +558,7 @@ export function ControllerPlanning({
   const [message, setMessage] = useState('')
   const [editingRecommendation, setEditingRecommendation] = useState<EditingRecommendation | null>(null)
   const [triggeringRequestId, setTriggeringRequestId] = useState<string | null>(null)
+  const [submittedRequestIds, setSubmittedRequestIds] = useState<ReadonlySet<string>>(() => new Set())
   const [suggestingRequestId, setSuggestingRequestId] = useState<string | null>(null)
   const [selectedCorridorId, setSelectedCorridorId] = useState<string | null>(null)
 
@@ -622,8 +626,11 @@ export function ControllerPlanning({
   // Build corridor groups from diagnosis requests + live corridors
   const allCorridorGroups = useMemo(() => {
     if (diagnosisError || !diagnosisScopeMatches) return []
-    return buildCorridorGroups(diagnosisRequests.items, positionedLiveCorridors, routes)
-  }, [diagnosisError, diagnosisScopeMatches, diagnosisRequests.items, positionedLiveCorridors, routes])
+    // A refresh that started before submission can still contain the old pending row.
+    const items = diagnosisRequests.items.map(item => !item.processingRequested && submittedRequestIds.has(item.requestId)
+      ? { ...item, processingRequested: true } : item)
+    return buildCorridorGroups(items, positionedLiveCorridors, routes)
+  }, [diagnosisError, diagnosisScopeMatches, diagnosisRequests.items, positionedLiveCorridors, routes, submittedRequestIds])
 
   // Locate matched corridor from deep-link parameters
   const matchedCorridor = useMemo(() => {
@@ -892,7 +899,7 @@ export function ControllerPlanning({
   }
 
   async function generateDiagnosis(request: PlanningDiagnosisRequest) {
-    if (triggeringRequestId) return
+    if (triggeringRequestId || isDiagnosisQueued(request) || request.status === 'PROCESSING') return
     setSearchParams(prev => {
       const next = new URLSearchParams(prev)
       next.set('request', request.requestId)
@@ -903,12 +910,12 @@ export function ControllerPlanning({
     const controller = new AbortController()
     try {
       const result = await triggerDiagnosis({ requestId: request.requestId }, token, controller.signal)
-      if (!controller.signal.aborted) {
-        setMessage(result?.status === 'COMPLETED' && hasAdvisoryOnlyDiagnosis(request)
-          ? 'Diagnosis generated from live observations. AI mitigation is unavailable because validated operational context is not available.'
-          : result?.status === 'COMPLETED'
-          ? 'Diagnosis generated. The recommendation is ready for review.'
-          : 'Diagnosis generation has started. Refresh to see its latest status.')
+      if (!result) throw new Error('Diagnosis trigger response was empty.')
+      if (result.status === 'PENDING' || result.status === 'PROCESSING' || result.status === 'FAILED_RETRYABLE') {
+        setSubmittedRequestIds(ids => new Set(ids).add(request.requestId))
+        if (request.status === 'FAILED_TERMINAL') {
+          diagnosisRequests.updateItem({ ...request, status: result.status, processingRequested: true, failureCode: result.failureCode })
+        }
       }
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) void signOut(error.message)
@@ -917,7 +924,7 @@ export function ControllerPlanning({
         : 'Unable to generate a diagnosis. Try again.')
     } finally {
       setTriggeringRequestId(null)
-      onRefresh()
+      onRefresh('mutation')
     }
   }
 
@@ -1026,7 +1033,9 @@ export function ControllerPlanning({
             )}
             <p className="text-sm">{group.status === 'COMPLETED'
               ? 'Diagnosis generated; keeping this corridor open for review.'
-              : group.status === 'PROCESSING' ? 'Diagnosis is being generated.' : group.status === 'FAILED' ? 'Diagnosis needs to be retried.' : 'Diagnosis has not been generated yet.'}</p>
+              : group.status === 'PROCESSING' ? 'Diagnosis is being generated.'
+              : group.status === 'QUEUED' ? 'Diagnosis is queued.'
+              : group.status === 'FAILED' ? 'Diagnosis needs to be retried.' : 'Diagnosis has not been generated yet.'}</p>
           </button>)}
           {visible.map(item => <button type="button" role="option" aria-selected={selected?.recommendationId === item.recommendationId} key={item.recommendationId} onClick={() => select(item.recommendationId)}
             className="min-h-28 w-full space-y-2 px-4 py-4 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring aria-selected:bg-muted">
@@ -1150,6 +1159,7 @@ function DiagnosisRequestDetail({ request, corridor, routes, positions, detected
   trafficIncidents?: TrafficIncident[]; onSuggestionPending: (pending: boolean) => void; onSaved: () => void; onGenerate: () => void
 }) {
   const retry = request.status.startsWith('FAILED')
+  const queued = isDiagnosisQueued(request)
   const processing = request.status === 'PROCESSING'
   const completed = request.status === 'COMPLETED'
   const advisoryOnly = hasAdvisoryOnlyDiagnosis(request)
@@ -1261,11 +1271,13 @@ function DiagnosisRequestDetail({ request, corridor, routes, positions, detected
     />
 
     <div><h3 className="text-sm font-medium">Bunching detection</h3>
-      <p className="mt-1 text-sm text-muted-foreground">{completed
+      <p role="status" className="mt-1 text-sm text-muted-foreground">{generating ? 'Submitting diagnosis request…' : completed
         ? advisoryOnly
           ? 'Diagnosis generated from live observations. AI mitigation is unavailable because validated operational context is not available; you can still record controller actions below.'
           : 'Diagnosis generated. This incident remains open here while you review it or wait for the AI mitigation recommendation.'
-        : processing ? 'Diagnosis is being generated.' : retry ? 'The previous diagnosis attempt needs to be retried.' : 'Generate a diagnosis to receive an AI mitigation recommendation for this detected bunching event.'}</p>
+        : processing ? 'Diagnosis is being generated.'
+        : queued ? (retry ? 'The previous diagnosis attempt failed. Retrying automatically.' : 'Diagnosis is queued.')
+        : retry ? 'The previous diagnosis attempt needs to be retried.' : 'Generate a diagnosis to receive an AI mitigation recommendation for this detected bunching event.'}</p>
       {request.failureCode && <p className="mt-2 text-sm text-destructive">Last attempt: {request.failureCode}</p>}</div>
     {completed && <div className="rounded-lg border p-4 space-y-3">
       <div>
@@ -1306,8 +1318,8 @@ function DiagnosisRequestDetail({ request, corridor, routes, positions, detected
         </DialogContent>
       </Dialog>
       {!detectedBusReferences.length && <p className="self-center text-xs text-muted-foreground">Detected bus references are unavailable.</p>}
-      {!completed && <Button disabled={generating || processing || suggesting} onClick={onGenerate}>
-        {generating ? 'Generating diagnosis…' : retry ? 'Retry diagnosis' : 'Generate diagnosis'}
+      {!completed && <Button disabled={generating || queued || processing || suggesting} onClick={onGenerate}>
+        {generating ? 'Submitting…' : processing ? 'Generating diagnosis…' : queued ? 'Diagnosis queued' : retry ? 'Retry diagnosis' : 'Generate diagnosis'}
       </Button>}
     </div>
   </CardContent></Card>
