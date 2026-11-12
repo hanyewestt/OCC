@@ -692,23 +692,44 @@ export function ControllerPlanning({
 
   // Accurate counter metrics
   const activeCount = useMemo(() => {
-    return allCorridorGroups.filter(g => g.isLive && (!filter.trim() || g.serviceId.includes(filter.trim()))).length
-  }, [allCorridorGroups, filter])
+    const corridorCount = allCorridorGroups.filter(g => g.isLive && (!filter.trim() || g.serviceId.includes(filter.trim()))).length
+    const recommendationCount = recommendationItems.filter(item => {
+      const matchFilter = !filter.trim() || item.serviceId.includes(filter.trim())
+      return matchFilter && detectedAlerts.some(a => a.serviceId === item.serviceId && a.stopCode === item.monitoredStopCode)
+    }).length
+    return corridorCount + recommendationCount
+  }, [allCorridorGroups, recommendationItems, filter, detectedAlerts])
 
   const todayCount = useMemo(() => {
-    return allCorridorGroups.filter(g => isSgtToday(g.latestDetectedAt, nowMs) && (!filter.trim() || g.serviceId.includes(filter.trim()))).length
-  }, [allCorridorGroups, filter, nowMs])
+    const corridorCount = allCorridorGroups.filter(g => isSgtToday(g.latestDetectedAt, nowMs) && (!filter.trim() || g.serviceId.includes(filter.trim()))).length
+    const recommendationCount = recommendationItems.filter(item => {
+      const matchFilter = !filter.trim() || item.serviceId.includes(filter.trim())
+      return matchFilter && isSgtToday(item.detectedAt, nowMs)
+    }).length
+    return corridorCount + recommendationCount
+  }, [allCorridorGroups, recommendationItems, filter, nowMs])
 
   const allCount = useMemo(() => {
-    return allCorridorGroups.filter(g => !filter.trim() || g.serviceId.includes(filter.trim())).length
-  }, [allCorridorGroups, filter])
+    const corridorCount = allCorridorGroups.filter(g => !filter.trim() || g.serviceId.includes(filter.trim())).length
+    const recommendationCount = recommendationItems.filter(item => !filter.trim() || item.serviceId.includes(filter.trim())).length
+    return corridorCount + recommendationCount
+  }, [allCorridorGroups, recommendationItems, filter])
 
   const outdatedCount = useMemo(() => {
     const candidateGroups = allCorridorGroups.filter(g => !filter.trim() || g.serviceId.includes(filter.trim()))
-    if (scopeFilter === 'active') return candidateGroups.filter(g => !g.isLive).length
-    if (scopeFilter === 'today') return candidateGroups.filter(g => !isSgtToday(g.latestDetectedAt, nowMs)).length
+    const candidateRecs = recommendationItems.filter(item => !filter.trim() || item.serviceId.includes(filter.trim()))
+    if (scopeFilter === 'active') {
+      const corridorOutdated = candidateGroups.filter(g => !g.isLive).length
+      const recOutdated = candidateRecs.filter(item => !detectedAlerts.some(a => a.serviceId === item.serviceId && a.stopCode === item.monitoredStopCode)).length
+      return corridorOutdated + recOutdated
+    }
+    if (scopeFilter === 'today') {
+      const corridorOutdated = candidateGroups.filter(g => !isSgtToday(g.latestDetectedAt, nowMs)).length
+      const recOutdated = candidateRecs.filter(item => !isSgtToday(item.detectedAt, nowMs)).length
+      return corridorOutdated + recOutdated
+    }
     return 0
-  }, [allCorridorGroups, filter, scopeFilter, nowMs])
+  }, [allCorridorGroups, recommendationItems, filter, scopeFilter, nowMs, detectedAlerts])
 
   // Recommendations matching and filtering
   const matchedRecommendation = useMemo(() => {
