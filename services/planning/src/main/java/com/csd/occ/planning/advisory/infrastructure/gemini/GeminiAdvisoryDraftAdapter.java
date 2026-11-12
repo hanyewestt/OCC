@@ -165,7 +165,9 @@ public class GeminiAdvisoryDraftAdapter implements AdvisoryDraftPort {
         {
             audit.recordAi("AI_NOTICE_SUGGESTION_VALIDATION", "INVALID", hazard.disruptionId(), hazard.demoRunId(), null,
                     "NOTICE_SUGGESTION", modelName, "OUTPUT_POLICY_REJECTED", null, null);
-            throw new IllegalArgumentException("Notice model output must retain supported source facts and restrictions");
+            // Rejected generated content must never be shown. The provider facts remain
+            // a valid suggestion; a model policy failure is not a malformed user request.
+            return fallback;
         }
         audit.recordAi("AI_NOTICE_SUGGESTION_VALIDATION", "VALID", hazard.disruptionId(), hazard.demoRunId(), null,
                 "NOTICE_SUGGESTION", modelName, null, null, null, aiMetrics(response, startedNanos, "notice-prompt-v1", "notice-schema-v1"));

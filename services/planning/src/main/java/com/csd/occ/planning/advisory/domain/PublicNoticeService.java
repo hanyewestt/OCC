@@ -107,6 +107,8 @@ public class PublicNoticeService {
     public Page<PublicNotice> managed(int page, int size) { validatePage(page, size); return notices.findAllByOrderByCreatedAtDesc(PageRequest.of(page, size)); }
     public Page<PublicNotice> current(String classification, UUID runId, int page, int size) {
         validatePage(page, size);
+        if ("ALL".equals(classification) && runId == null)
+            return notices.findAllCurrent(clock.instant(), PageRequest.of(page, size));
         if (!(classification.equals("OBSERVATION_ONLY") && runId == null || classification.equals("SIMULATION") && runId != null))
             throw new IllegalArgumentException("Simulation notice reads require a run ID; observation-only reads do not accept one");
         return notices.findCurrent(classification, runId, clock.instant(), PageRequest.of(page, size));
