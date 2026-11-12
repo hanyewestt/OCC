@@ -1,5 +1,5 @@
 import type { Arrival, BunchingAlert, RouteDirection, RoutePositionBus, RoutePositionDirection, RoutePositions } from './api'
-import { allBunchingArrivals, bunchingArrivals } from './bunching'
+import { allBunchingArrivals } from './bunching'
 
 export const ROUTE_STRIP_GAP_SEVERITY = {
   close: {
@@ -140,6 +140,28 @@ export function tightestArrivalGap(alert: BunchingAlert): number | null {
   return known.length ? Math.min(...known) : null
 }
 
+export function alertFallbackVisitOrders(alert: BunchingAlert): { leadingOrder: number; followingOrder: number } | null {
+  const gaps = bunchedArrivalGaps(alert)
+  if (gaps.length > 0 && gaps[0].leadingOrder && gaps[0].followingOrder) {
+    return { leadingOrder: gaps[0].leadingOrder, followingOrder: gaps[0].followingOrder }
+  }
+  if (!alert.evidence) return null
+  try {
+    const value = JSON.parse(alert.evidence)
+    const arrivals = value?.snapshot?.arrivals as Array<{ visitOrder?: number }> | undefined
+    const orders = (arrivals ?? [])
+      .map(a => a.visitOrder)
+      .filter((v): v is number => typeof v === 'number' && v > 0)
+      .sort((a, b) => a - b)
+    if (orders.length >= 2) {
+      return { leadingOrder: orders[0], followingOrder: orders[1] }
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
 export function estimateRouteHeadways(buses: RoutePositionBus[], etaFallbacks: EtaHeadwayFallback[] = []): EstimatedRouteHeadway[] {
   const ordered = [...buses].sort((first, second) => first.order - second.order)
   return ordered.slice(0, -1).map((front, index) => {
@@ -211,8 +233,12 @@ export function groupRouteIncidents(alerts: BunchingAlert[], routes: RouteDirect
         !Number.isFinite(rightDetectedAt) ||
         left.alert.serviceId !== right.alert.serviceId || left.directionId !== right.directionId ||
         routeKey(left.route) !== routeKey(right.route) || Math.abs(left.stopIndex - right.stopIndex) > 2 ||
-        Math.abs(leftDetectedAt - rightDetectedAt) > windowMs ||
-        !similarGaps(left.gapSeconds, right.gapSeconds, gapToleranceSeconds)) continue
+        Math.abs(leftDetectedAt - rightDetectedAt) > windowMs) continue
+      const stopDistance = Math.abs(left.stopIndex - right.stopIndex)
+      const allowedGapTolerance = stopDistance <= 2
+        ? Math.max(gapToleranceSeconds * 2, 60)
+        : gapToleranceSeconds
+      if (!similarGaps(left.gapSeconds, right.gapSeconds, allowedGapTolerance)) continue
       unite(first, second)
     }
   }
@@ -231,14 +257,20 @@ export function groupRouteIncidents(alerts: BunchingAlert[], routes: RouteDirect
     const latest = ordered.at(-1)!
     const firstDetectedAt = first.alert.detectedAt
     const latestDetectedAt = latest.alert.detectedAt
-    const ageSeconds = Math.max(0, Math.floor((nowMs - Date.parse(firstDetectedAt)) / 1000))
-    const firstBusEta = bunchingArrivals(latest.alert)[0]
-    const firstBusEtaMs = Date.parse(firstBusEta)
-    const passedPrediction = Number.isFinite(firstBusEtaMs) && firstBusEtaMs <= nowMs
+    const ageSeconds = Math.max(0, Math.floor((nowMs - Date.parse(latestDetectedAt)) / 1000))
+    const bunchedPairs = bunchedArrivalGaps(latest.alert)
+    const arrivals = allBunchingArrivals(latest.alert)
+    const targetOrder = bunchedPairs.length
+      ? Math.max(...bunchedPairs.map(p => p.followingOrder))
+      : (arrivals.length >= 2 ? 2 : 1)
+    const trailingEta = arrivals[targetOrder - 1] ?? arrivals[0]
+    const trailingEtaMs = Date.parse(trailingEta)
+    const passedPrediction = Number.isFinite(trailingEtaMs) && trailingEtaMs <= nowMs
     const gaps = ordered.flatMap(event => event.gapSeconds === null ? [] : [event.gapSeconds])
     const gapSeconds = gaps.length ? Math.round(gaps.reduce((sum, value) => sum + value, 0) / gaps.length) : null
     const uniqueStops = [...new Map(ordered.map(event => [event.alert.stopCode, event])).values()]
       .sort((left, right) => (left.stopIndex ?? Number.MAX_SAFE_INTEGER) - (right.stopIndex ?? Number.MAX_SAFE_INTEGER))
+    const isCleared = latest.alert.action === 'CLEARED'
     return {
       id: ordered.map(event => event.alert.eventId).sort().join(':'),
       serviceId: first.alert.serviceId,
@@ -251,7 +283,7 @@ export function groupRouteIncidents(alerts: BunchingAlert[], routes: RouteDirect
       latestDetectedAt,
       gapSeconds,
       ageSeconds,
-      historical: isSimulation ? false : (ageSeconds > pollIntervalSeconds * 3 || passedPrediction),
+      historical: isSimulation ? false : (isCleared || ageSeconds > pollIntervalSeconds * 3 || passedPrediction),
       latestStopIndex: latest.stopIndex,
     }
   }).sort((first, second) => Date.parse(second.latestDetectedAt) - Date.parse(first.latestDetectedAt))
@@ -491,6 +523,7 @@ export function etaFallbacksForRoute(route: RouteDirection, routes: RouteDirecti
 
 export function linkIncidentToPosition(incident: RouteIncident, route: RouteDirection,
   position: RoutePositionDirection | undefined, positionComputedAt: string | undefined, maxSourceAgeSeconds: number): IncidentStripLink | null {
+  if (incident.historical) return null
   if (!position || incident.routeKey !== routeKey(route) || incident.latestStopIndex === null ||
     position.buses.length < 2 || !routeStopDistances(route, position.routeLengthM).hasGeometry) return null
   const computedAt = Date.parse(positionComputedAt ?? '')
@@ -536,16 +569,35 @@ export function linkIncidentToPosition(incident: RouteIncident, route: RouteDire
   const comparisonTime = sourceFetchedAt ?? (latestAlert?.fetchedAt ? Date.parse(latestAlert.fetchedAt) : Date.parse(incident.latestDetectedAt))
   if (!Number.isFinite(comparisonTime) || Math.abs(computedAt - comparisonTime) > maxSourceAgeSeconds * 1_000) return null
   const ageAtSnapshotSeconds = Math.max(0, (computedAt - comparisonTime) / 1000)
+
+  let bestCandidate: { frontOrder: number; followingOrder: number; distanceToStop: number } | null = null
   for (let index = 0; index < ordered.length - 1; index++) {
     const front = ordered[index]
     const following = ordered[index + 1]
     const frontAtDetection = front.distanceAlongRouteM - (front.speedMps ?? 0) * ageAtSnapshotSeconds
     const followingAtDetection = following.distanceAlongRouteM - (following.speedMps ?? 0) * ageAtSnapshotSeconds
+
+    // Consecutive buses must be within bunching distance threshold. Fleet pairs separated
+    // by miles (e.g. normal 10-15 minute headway) are never a bunched pair.
+    const busSeparationM = Math.abs(frontAtDetection - followingAtDetection)
+    const maxSeparationM = Math.min(2000, Math.max(1000, (incident.gapSeconds ?? 90) * 15))
+    if (busSeparationM > maxSeparationM) continue
+
     const low = Math.min(frontAtDetection, followingAtDetection) - front.uncertaintyM - following.uncertaintyM
     const high = Math.max(frontAtDetection, followingAtDetection) + front.uncertaintyM + following.uncertaintyM
-    if (stopDistance >= low && stopDistance <= high) {
-      return { frontOrder: front.order, followingOrder: following.order, stopCode: stop.stopCode, match: 'approximate' }
+    const pairMidpoint = (frontAtDetection + followingAtDetection) / 2
+    const distanceToStop = Math.abs(pairMidpoint - stopDistance)
+
+    // The bunched pair must be adjacent to the monitored stop (stop lies between the pair or within 800m of midpoint)
+    if ((stopDistance >= low && stopDistance <= high) || distanceToStop <= 800) {
+      if (!bestCandidate || distanceToStop < bestCandidate.distanceToStop) {
+        bestCandidate = { frontOrder: front.order, followingOrder: following.order, distanceToStop }
+      }
     }
+  }
+
+  if (bestCandidate) {
+    return { frontOrder: bestCandidate.frontOrder, followingOrder: bestCandidate.followingOrder, stopCode: stop.stopCode, match: 'approximate' }
   }
   return null
 }
@@ -567,3 +619,38 @@ function alertEvidence(alert: BunchingAlert): { fetchedAt: number; bunchedPairs:
     return null
   }
 }
+
+export function mergeRoutePositions(
+  previous: RoutePositions[] | null | undefined,
+  incoming: RoutePositions[] | null | undefined,
+  maxRetentionSeconds = 180,
+  nowMs = Date.now()
+): RoutePositions[] {
+  const previousMap = new Map((previous ?? []).map(p => [p.serviceId, p]))
+  const incomingMap = new Map((incoming ?? []).map(p => [p.serviceId, p]))
+  const allServices = new Set([...previousMap.keys(), ...incomingMap.keys()])
+  const result: RoutePositions[] = []
+
+  for (const serviceId of allServices) {
+    const inc = incomingMap.get(serviceId)
+    const prev = previousMap.get(serviceId)
+    const incBusCount = (inc?.directions ?? []).reduce((sum, d) => sum + d.buses.length, 0)
+    const prevBusCount = (prev?.directions ?? []).reduce((sum, d) => sum + d.buses.length, 0)
+
+    if (inc && incBusCount > 0) {
+      result.push(inc)
+    } else if (prev && prevBusCount > 0) {
+      const prevAgeSeconds = Math.max(0, (nowMs - Date.parse(prev.computedAt || '')) / 1000)
+      if (prevAgeSeconds <= maxRetentionSeconds) {
+        result.push(prev)
+      } else if (inc) {
+        result.push(inc)
+      }
+    } else if (inc) {
+      result.push(inc)
+    }
+  }
+
+  return result
+}
+

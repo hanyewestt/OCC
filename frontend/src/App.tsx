@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Navigate, useLocation, Link } from 'react-router-dom'
-import { ApiError, homeFor, identityRequest } from '@/lib/api'
+import { ApiError, homeFor, identityRequest, type Identity } from '@/lib/api'
 import { retryAuth, signOut, useAuth } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 import { LoginPage } from '@/pages/LoginPage'
@@ -18,12 +18,13 @@ export function App() {
   const auth = useAuth()
   const { pathname, search } = useLocation()
   const [retry, setRetry] = useState(0)
-  const [access, setAccess] = useState({ key: '', status: '' })
+  const [access, setAccess] = useState<{ key: string; identity: Identity | null; status: string }>({ key: '', identity: null, status: '' })
   const [publicConfig, setPublicConfig] = useState<PublicConfig | null>(null)
   const [configError, setConfigError] = useState('')
   const token = auth.session?.access_token
   const pageHome = controllerPages.some(page => page.path === pathname) ? '/controller' : pathname.startsWith('/admin/') ? '/admin' : pathname
-  const key = `${token}:${pageHome}:${retry}`
+  const key = `${auth.identity?.subject}:${auth.identity?.role}:${pageHome}:${retry}`
+  const accessMatches = access.key === key && access.identity === auth.identity
   const home = auth.identity ? homeFor(auth.identity.role) : null
 
   useEffect(() => {
@@ -39,11 +40,11 @@ export function App() {
     void identityRequest(`/api/v1/auth/access/${pageHome.slice(1)}`, token, controller.signal)
       .then(identity => {
         if (controller.signal.aborted) return
-        setAccess({ key, status: identity.subject === auth.identity?.subject && identity.role === auth.identity?.role ? 'allowed' : 'error' })
+        setAccess({ key, identity: auth.identity, status: identity.subject === auth.identity?.subject && identity.role === auth.identity?.role ? 'allowed' : 'error' })
       }).catch(error => {
         if (controller.signal.aborted) return
         if (error instanceof ApiError && error.status === 401) void signOut(error.message)
-        else setAccess({ key, status: error instanceof ApiError && error.status === 403 ? 'denied' : 'error' })
+        else setAccess({ key, identity: auth.identity, status: error instanceof ApiError && error.status === 403 ? 'denied' : 'error' })
       })
     return () => controller.abort()
   }, [auth.status, auth.identity, token, pageHome, home, key])
@@ -58,7 +59,7 @@ export function App() {
     </ErrorPage>
   } else if (pathname === '/403' || (auth.status === 'ready' && (
     !home || (pathname !== '/' && pathname !== '/login' && pageHome !== home) ||
-    (access.key === key && access.status === 'denied')
+    (accessMatches && access.status === 'denied')
   ))) {
     content = <ErrorPage code={403} title="Access denied" description="This page isn’t available for your account.">
       {home && <Button variant="outline" asChild><Link to={home}>Return to my page</Link></Button>}
@@ -78,7 +79,7 @@ export function App() {
     content = <Navigate to={home!} replace />
   } else if (pathname === adminRoutes.root) {
     content = <Navigate to={adminRoutes.audit} replace />
-  } else if (access.key !== key) {
+  } else if (!accessMatches) {
     content = <p role="status" className="text-sm text-muted-foreground">Verifying access…</p>
   } else if (!publicConfig) {
     content = configError ? <div className="space-y-3"><p role="alert">{configError}</p><Button onClick={() => setRetry(value => value + 1)}>Try again</Button></div>
@@ -89,12 +90,13 @@ export function App() {
       <Button className="ml-2" variant="outline" onClick={() => void signOut()}>Sign out</Button></div>
   } else {
     const email = auth.session?.user.email ?? auth.identity?.subject ?? ''
-    if (home === '/controller') return <main><ControllerPage key={token} email={email} token={token!}
+    const identityKey = `${auth.identity!.subject}:${auth.identity!.role}`
+    if (home === '/controller') return <main><ControllerPage key={identityKey} email={email} token={token!}
       controllerRefreshIntervalSeconds={publicConfig!.controllerRefreshIntervalSeconds}
       ingestionPollIntervalSeconds={publicConfig!.ingestionPollIntervalSeconds}
       routeIncidentGapToleranceSeconds={publicConfig!.routeIncidentGapToleranceSeconds} /></main>
-    if (home === '/admin') return <AdminPage key={token} email={email} token={token!} />
-    content = <CaptainPage key={token} email={email} token={token!} refreshIntervalSeconds={publicConfig!.captainRefreshIntervalSeconds} />
+    if (home === '/admin') return <AdminPage key={identityKey} email={email} token={token!} />
+    content = <CaptainPage key={identityKey} email={email} token={token!} refreshIntervalSeconds={publicConfig!.captainRefreshIntervalSeconds} />
   }
   return <main className="flex min-h-svh items-center justify-center px-5 py-12">{content}</main>
 }

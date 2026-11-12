@@ -26,14 +26,20 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, UUID> {
             where state.activeAlertId is not null
               and event.action = 'OPENED'
               and state.demoRunId is null
+              and (state.currentEvidenceValidUntil is null or state.currentEvidenceValidUntil >= :now)
             order by event.triggeredAt desc
             """, countQuery = """
             select count(event) from AlertProcessingState state join AlertEvent event on event.alertId = state.activeAlertId
             where state.activeAlertId is not null
               and event.action = 'OPENED'
               and state.demoRunId is null
+              and (state.currentEvidenceValidUntil is null or state.currentEvidenceValidUntil >= :now)
             """)
-    Page<AlertEvent> findCurrentLiveOpenAlerts(Pageable pageable);
+    Page<AlertEvent> findCurrentLiveOpenAlerts(@Param("now") java.time.Instant now, Pageable pageable);
+
+    default Page<AlertEvent> findCurrentLiveOpenAlerts(Pageable pageable) {
+        return findCurrentLiveOpenAlerts(java.time.Instant.now(), pageable);
+    }
     @Query(value = "select pg_notify('bunching_alert', :payload)", nativeQuery = true)
     Object notifyListeners(@Param("payload") String payload);
 }

@@ -90,7 +90,7 @@ public class DiagnosisRequestPersistenceService {
         Instant now = clock.instant();
         List<DiagnosisRequest> claimable = includeBunching
                 ? requests.findClaimable(now, batchSize)
-                : requests.findClaimableHazardsOnly(now, batchSize);
+                : requests.findClaimableRequestedOrHazards(now, batchSize);
         return claimable.stream().map(request -> {
             request.claim(now.plus(leaseDuration), now);
             return request.id();

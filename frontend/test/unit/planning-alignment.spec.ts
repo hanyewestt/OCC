@@ -705,4 +705,7 @@ test('multiple bunching alerts along the same active corridor are unified into o
 
   // Despite two raw bunching alerts on stops 40191 and 40201, Active count must be 1 unified corridor
   expect(html).toMatch(/Active\s*\(\s*(<!-- -->)?\s*1\s*(<!-- -->)?\s*\)/)
+  // When stripLink is absent, fallback badge NextBus 1 & 2 is rendered
+  expect(html).toMatch(/NextBus\s*(<!-- -->)?\s*1\s*(<!-- -->)?\s*&amp;\s*(<!-- -->)?\s*2/)
 })
+
