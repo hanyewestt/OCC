@@ -413,3 +413,9 @@ deployment-time check.
 Actual provisioning requires verified AWS permissions and a
 reviewed change set. Cost qualification is excluded from the current remediation
 acceptance at the user's request.
+
+GitHub OIDC trust uses the CloudFormation parameter `GitHubOidcSubjectPrefix`.
+Its default matches the immutable subject prefix for `pslimmm/OCC`. When
+deploying another repository, obtain its prefix from `gh api repos/OWNER/REPO/actions/oidc/customization/sub`
+and set that parameter to match before applying the stack. Keep the exact
+`main` and `production` suffix restrictions; do not use wildcard trust.
