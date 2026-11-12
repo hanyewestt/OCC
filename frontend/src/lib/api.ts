@@ -238,6 +238,7 @@ export type PlanningDiagnosisRequest = {
   serviceId: string | null; directionId: number | null; stopCode: string | null
   affectedBusReferences: string[]
   status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED_RETRYABLE' | 'FAILED_TERMINAL'
+  processingRequested: boolean
   likelyCause: string | null; confidence: number | null; limitations: string[]
   evidenceDetails: DiagnosisEvidenceDetail[]; failureCode: string | null; policyOutcome: string | null
   createdAt: string

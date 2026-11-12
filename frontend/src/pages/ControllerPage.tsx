@@ -1264,7 +1264,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           gapToleranceSeconds={Math.max(30, routeIncidentGapToleranceSeconds)}
           trafficIncidents={currentTraffic}
           nowMs={Date.parse(alertCollection.lastSuccessAt || (simulation ? shellRefreshTime.at : '') || '') || 0}
-          onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { if (displayedAlert?.id) { handleDismissAlert(displayedAlert.id) } void requestRefresh('mutation') }} />}
+          onPendingChange={setPlanningPending} onRefresh={reason => { void requestRefresh(reason) }} onSaved={() => { if (displayedAlert?.id) { handleDismissAlert(displayedAlert.id) } void requestRefresh('mutation') }} />}
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} suggestions={suggestionCollection} aiAudits={aiAuditCollection} loading={loading} />}
         {pathname !== '/controller' && !pathname.endsWith('/captains') && loaded === requestKey && <ControllerAdvisories key={`${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
           registerRefresh={registerAdvisoryRefresh} onRefresh={() => { void requestRefresh('mutation') }} onPendingChange={setAdvisoryPending} onRefreshTimeChange={reportAdvisoryRefresh}

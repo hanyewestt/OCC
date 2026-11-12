@@ -122,6 +122,7 @@ class PlanningScopeServiceTest {
         UUID firstRequestId = UUID.randomUUID();
         UUID secondRequestId = UUID.randomUUID();
         var firstRequest = request(firstRequestId, UUID.randomUUID(), "input-snapshot");
+        firstRequest.queue(firstRequest.createdAt());
         var legacyRequest = request(secondRequestId, UUID.randomUUID(), "corrupt-input");
         var pageable = PageRequest.of(0, 10);
         when(scopes.current()).thenReturn(new PlanningScope("DEMO", RUN_ID));
@@ -141,6 +142,9 @@ class PlanningScopeServiceTest {
         var page = service.list(0, 10);
 
         assertThat(page.items()).hasSize(2);
+        assertThat(page.items()).extracting(PlanningDiagnosisSummary::status)
+                .containsExactly(DiagnosisRequestStatus.PENDING, DiagnosisRequestStatus.PENDING);
+        assertThat(page.items()).extracting(PlanningDiagnosisSummary::processingRequested).containsExactly(true, false);
         assertThat(page.items().getFirst().likelyCause()).contains("Vehicle Breakdown", "Teck Whye Avenue");
         assertThat(page.items().getFirst().evidenceDetails()).hasSize(1);
         assertThat(page.items().getFirst().serviceId()).isEqualTo("190");
