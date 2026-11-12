@@ -42,9 +42,9 @@ export function CaptainPage({ email, token, refreshIntervalSeconds }: { email: s
       </div>
     </header>
 
-    <CaptainInstructions key={token} token={token} registerRefresh={callback => { instructionRefresh.current = callback }}
+    <CaptainInstructions token={token} registerRefresh={callback => { instructionRefresh.current = callback }}
       onPendingChange={setInstructionPending} onSaved={() => { void requestRefresh('mutation') }} onRefreshTimeChange={setLastInstructionRefresh} />
-    <CaptainRouteView key={`route-${token}`} token={token} registerRefresh={callback => { routeRefresh.current = callback }} />
+    <CaptainRouteView token={token} registerRefresh={callback => { routeRefresh.current = callback }} />
     <footer className="space-y-1 border-t pt-4 text-sm text-muted-foreground">
       <p>Route stops come from LTA route data; bus position, pacing and controller instructions come from the current simulation run.</p>
       <p className="break-all">Signed in as {email} · Role: Captain</p>

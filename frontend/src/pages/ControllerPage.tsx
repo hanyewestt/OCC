@@ -257,7 +257,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
   const modeRequestRef = useRef<AbortController | null>(null)
   const liveRequestGenerationRef = useRef(0)
   const switchingRef = useRef(false)
-  const requestKey = `${token}:${pathname}`
+  const requestKey = pathname
   const loading = loaded !== requestKey || switching
   const scopeVerified = loaded === requestKey && !run.error
   const simulation = run.data && run.data.status !== 'CLOSED' ? run.data : null
@@ -1266,7 +1266,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
           nowMs={Date.parse(alertCollection.lastSuccessAt || (simulation ? shellRefreshTime.at : '') || '') || 0}
           onPendingChange={setPlanningPending} onRefresh={() => { void requestRefresh() }} onSaved={() => { if (displayedAlert?.id) { handleDismissAlert(displayedAlert.id) } void requestRefresh('mutation') }} />}
         {pathname.endsWith('/audit') && <ControllerAudit decisions={decisionCollection} suggestions={suggestionCollection} aiAudits={aiAuditCollection} loading={loading} />}
-        {pathname !== '/controller' && !pathname.endsWith('/captains') && loaded === requestKey && <ControllerAdvisories key={`${token}:${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
+        {pathname !== '/controller' && !pathname.endsWith('/captains') && loaded === requestKey && <ControllerAdvisories key={`${pathname}:${simulation?.id ?? 'LIVE'}`} token={token}
           registerRefresh={registerAdvisoryRefresh} onRefresh={() => { void requestRefresh('mutation') }} onPendingChange={setAdvisoryPending} onRefreshTimeChange={reportAdvisoryRefresh}
           view={pathname.endsWith('/disruptions') ? 'hazards' : pathname.endsWith('/planning') ? 'planning' : pathname.endsWith('/notices') ? 'notices' : 'audit'}
           selectedHazardId={selectedHazardId}

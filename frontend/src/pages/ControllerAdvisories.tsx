@@ -448,7 +448,7 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
               <CardContent className="space-y-3.5 pt-5">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-bold text-base text-foreground">Service {group.serviceId} · Direction {group.directionId}</span>
+                    <h3 className="font-bold text-base text-foreground">Service {group.serviceId} · Direction {group.directionId}</h3>
                     <span className={cn("inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold", badgeInfo.className)}>
                       {badgeInfo.icon}
                       {badgeInfo.label}
