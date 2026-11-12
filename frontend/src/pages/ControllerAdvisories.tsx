@@ -629,7 +629,7 @@ export function ControllerAdvisories({ token, registerRefresh, onRefresh, onPend
             {n.status === 'PUBLISHED' && <><Button variant="outline" disabled={pending} onClick={() => void submit(`/api/v1/planning/notices/${n.id}/withdrawals`)}>Withdraw notice</Button>
               <Button variant="outline" disabled={pending} onClick={() => openDraft({ id: crypto.randomUUID(), previousId: n.id, disruptionId: n.disruptionId, title: n.title, message: n.message, services: n.services.join(', '), locations: n.locations.join(', '),
                 from: sgtDateTimeInputFromUtc(new Date().toISOString()), until: expired ? '' : sgtDateTimeInputFromUtc(n.effectiveUntil) })}>Correct notice</Button></>}
-            {n.classification === 'SIMULATION' && n.demoRunId && <Button asChild variant="outline"><Link target="_blank" rel="noreferrer" to={`/notices?classification=SIMULATION&demoRunId=${encodeURIComponent(n.demoRunId)}`}>Preview simulation board</Link></Button>}
+            {n.classification === 'SIMULATION' && n.demoRunId && <Button asChild variant="outline"><Link target="_blank" rel="noreferrer" to="/notices">Preview public board</Link></Button>}
           </div>
         </CardContent></Card>})}</div></ScrollArea>}
       <PagedCollectionControls label="managed notices" hasItems={!!notices.items.length} hasMore={notices.hasMore}
