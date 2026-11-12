@@ -34,7 +34,9 @@ async function verify(session: Session | null) {
     const identity = await identityRequest('/api/v1/auth/session', session.access_token, verification.signal)
     if (attempt !== revision) return
     if (identity.subject !== session.user.id) throw new Error('Session identity does not match.')
-    publish({ status: 'ready', session, identity, message: '' })
+    // Page-access verification follows this identity reference across token refreshes, but not new sign-ins or role changes.
+    publish({ status: 'ready', session,
+      identity: verified?.identity?.role === identity.role ? verified.identity : identity, message: '' })
   } catch (error) {
     if (attempt !== revision) return
     if (error instanceof ApiError && error.status === 401) {

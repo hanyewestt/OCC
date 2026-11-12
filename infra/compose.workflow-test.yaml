@@ -22,7 +22,7 @@ services:
     environment:
       OCC_PLANNING_GEMINI_API_KEY: synthetic-workflow-test-key
       OCC_PLANNING_GEMINI_BASE_URL: http://jwks-test:8080
-      OCC_PLANNING_DIAGNOSIS_WORKER_ENABLED: "true"
+      OCC_PLANNING_DIAGNOSIS_WORKER_ENABLED: ${OCC_PLANNING_DIAGNOSIS_WORKER_ENABLED:-true}
       # The recovery smoke verifies the durable automatic bunching-to-recommendation workflow.
       # Production keeps this opt-in so controllers can trigger diagnosis on demand.
       OCC_PLANNING_DIAGNOSIS_AUTO_PROCESS_BUNCHING: "true"

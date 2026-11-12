@@ -9,9 +9,14 @@
   wrapper. Add abstractions only when they provide meaningful behavior or clarity.
 - Follow [docs/CONVENTIONS.md](docs/CONVENTIONS.md) for all service work.
 - Follow [docs/commit-convention.md](docs/commit-convention.md) for commits.
-  Append `[skip ci]` to the commit subject when no service or frontend code is
-  edited, including documentation-only and local development launcher changes.
-  Still run checks relevant to the changed files.
+  Classify by behavior, not file extension. Do not append `[skip ci]` to
+  deployment-affecting commits: CI workflows, Dockerfiles and build tooling,
+  runtime Compose/Nginx/CloudFront configuration, database setup and
+  migrations, and CD/lifecycle scripts must run CI/CD even when no service or
+  frontend source is edited. Keep the marker only for changes that are
+  exclusively documentation, agent prose or local launchers with no
+  deployment effect; mixed commits follow the deployment-affecting rule.
+  Still run checks relevant to the changed files in every case.
 - Before reporting work complete, run the relevant automated test suites and
   make sure all applicable tests pass. Investigate every failed or skipped test;
   fix failures and determine whether skips are intentional, documenting any

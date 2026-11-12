@@ -27,6 +27,7 @@ test('slow refresh coalesces clicks, queues one mutation follow-up, and restarts
 
 test('a scope change cancels obsolete refresh and discards its queued mutation', async ({ page }) => {
   await page.clock.install()
+  await page.clock.pauseAt(new Date(Date.now() + 1000))
   let held: Route | undefined
   const scopes: string[] = []
   await page.route('**/__test/refresh?*', async route => {

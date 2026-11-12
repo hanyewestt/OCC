@@ -1,13 +1,21 @@
 name: Core CI
 
+# Reusable verification: pull requests and manual dispatches run it directly,
+# pushes to main run it through the Main verification caller (verify.yml).
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      refresh:
+        type: string
+        default: none
 
 permissions:
   contents: read
+  # The packaging and scan jobs download artifacts from the producing run,
+  # which requires the Actions (read) permission on private repositories.
+  actions: read
 
 concurrency:
   group: core-${{ github.workflow }}-${{ github.ref }}
@@ -26,6 +34,23 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install CD test dependencies
+        run: python -m pip install -r tests/cd/requirements.txt
+      - name: Verify CD contracts on Linux
+        if: runner.os == 'Linux'
+        run: python -m unittest discover -s tests/cd -p "test_*.py"
+      - name: Exercise real PostGIS restore and OCI transfer on Linux
+        if: runner.os == 'Linux'
+        run: python tests/cd/host_integration.py all
+      - name: Verify portable CD contracts on Windows
+        if: runner.os == 'Windows'
+        # Shell/container host checks run on Linux above; Windows exercises the
+        # real PowerShell bootstrap CLI plus pure release/state/volume policy.
+        run: |
+          python -m unittest discover -s tests/cd -p test_bootstrap_cli.py
+          python -m unittest discover -s tests/cd -p test_release.py
+          python -m unittest discover -s tests/cd -p test_state.py
+          python -m unittest discover -s tests/cd -p test_volume.py
       - name: Verify launchers and setup failure handling without live resources
         run: python -m unittest discover -s tests/system -p "test_*.py"
 
@@ -102,6 +127,68 @@ jobs:
           if failed:
               sys.exit("A required test suite was missing, skipped, or failed.")
           PY
+      - name: Package verified service JARs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/occ-jars"
+          for service in ingestion disruption planning; do
+            # The repackaged Spring Boot JAR only; the .original intermediate is excluded.
+            cp "services/${service}/target/${service}-0.0.1-SNAPSHOT.jar" \
+               "$RUNNER_TEMP/occ-jars/${service}.jar"
+            (cd "$RUNNER_TEMP/occ-jars" && sha256sum "${service}.jar" > "${service}.jar.sha256")
+          done
+      - name: Inspect packaged JARs for required runtime content
+        run: |
+          python3 scripts/cd/inspect_jar.py "$RUNNER_TEMP/occ-jars/ingestion.jar" --service ingestion
+          python3 scripts/cd/inspect_jar.py "$RUNNER_TEMP/occ-jars/disruption.jar" --service disruption
+          python3 scripts/cd/inspect_jar.py "$RUNNER_TEMP/occ-jars/planning.jar" --service planning
+      - name: Record artifact provenance
+        run: |
+          python3 - <<'PY'
+          import datetime
+          import json
+          import os
+          import pathlib
+
+          directory = pathlib.Path(os.environ["RUNNER_TEMP"]) / "occ-jars"
+          metadata = {
+              "revision": os.environ["GITHUB_SHA"],
+              "runId": os.environ["GITHUB_RUN_ID"],
+              "producedAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+          }
+          (directory / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+          PY
+      - name: Upload the ingestion JAR artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: occ-jar-ingestion
+          path: |
+            ${{ runner.temp }}/occ-jars/ingestion.jar
+            ${{ runner.temp }}/occ-jars/ingestion.jar.sha256
+            ${{ runner.temp }}/occ-jars/metadata.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the disruption JAR artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: occ-jar-disruption
+          path: |
+            ${{ runner.temp }}/occ-jars/disruption.jar
+            ${{ runner.temp }}/occ-jars/disruption.jar.sha256
+            ${{ runner.temp }}/occ-jars/metadata.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the planning JAR artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: occ-jar-planning
+          path: |
+            ${{ runner.temp }}/occ-jars/planning.jar
+            ${{ runner.temp }}/occ-jars/planning.jar.sha256
+            ${{ runner.temp }}/occ-jars/metadata.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Upload sanitized test and coverage reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -136,6 +223,167 @@ jobs:
           npm run lint
           npm run typecheck
           npm run build
+      - name: Package the verified frontend build
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The dist contents sit at the archive root; scripts/cd/stage.py relies on it.
+          tar --create --gzip --file "$RUNNER_TEMP/web-dist.tar.gz" -C dist .
+          (cd "$RUNNER_TEMP" && sha256sum web-dist.tar.gz > web-dist.tar.gz.sha256)
+          python3 - <<'PY'
+          import datetime
+          import json
+          import os
+          import pathlib
+
+          metadata = {
+              "revision": os.environ["GITHUB_SHA"],
+              "runId": os.environ["GITHUB_RUN_ID"],
+              "producedAt": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+          }
+          (pathlib.Path(os.environ["RUNNER_TEMP"]) / "metadata.json").write_text(
+              json.dumps(metadata), encoding="utf-8")
+          PY
+      - name: Upload the frontend dist artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: occ-web-dist
+          path: |
+            ${{ runner.temp }}/web-dist.tar.gz
+            ${{ runner.temp }}/web-dist.tar.gz.sha256
+            ${{ runner.temp }}/metadata.json
+          if-no-files-found: error
+          retention-days: 7
+
+  package-images:
+    name: Package and save verified release images
+    runs-on: ubuntu-24.04
+    needs: [verify, frontend]
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      OCC_REGION: ${{ vars.OCC_REGION }}
+      OCC_RELEASE_BUCKET: ${{ vars.OCC_RELEASE_BUCKET }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Assume read-only verification role on trusted main
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.OCC_VERIFY_ROLE_ARN }}
+          aws-region: ${{ vars.OCC_REGION }}
+      - name: Snapshot the candidate plan before integration testing
+        env:
+          REFRESH_MODE: ${{ inputs.refresh || 'none' }}
+        run: |
+          set -euo pipefail
+          trusted=()
+          if [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_EVENT_NAME" != pull_request ]]; then
+            trusted=(--trusted)
+          fi
+          python3 scripts/cd/pipeline.py plan --directory "$RUNNER_TEMP"             --refresh "$REFRESH_MODE" "${trusted[@]}"
+      - name: Restore component build caches
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/cache-*
+          key: oci-amd64-${{ runner.os }}-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: oci-amd64-${{ runner.os }}-
+      - name: Download the verified build artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bundle" "$RUNNER_TEMP/artifacts"
+          for name in occ-jar-ingestion occ-jar-disruption occ-jar-planning occ-web-dist; do
+            gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+              --name "$name" --dir "$RUNNER_TEMP/artifacts/$name"
+            cp -n "$RUNNER_TEMP/artifacts/$name"/* "$RUNNER_TEMP/bundle/"
+          done
+      - name: Verify the artifact bundle against this run and SHA
+        run: >-
+          python3 scripts/cd/stage.py verify-bundle --bundle "$RUNNER_TEMP/bundle"
+          --revision "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID" --max-age-hours 24
+      - name: Stage narrow build contexts
+        run: |
+          python3 scripts/cd/stage.py runtime-context --bundle "$RUNNER_TEMP/bundle" \
+            --service ingestion --output "$RUNNER_TEMP/context-ingestion"
+          python3 scripts/cd/stage.py runtime-context --bundle "$RUNNER_TEMP/bundle" \
+            --service disruption --output "$RUNNER_TEMP/context-disruption"
+          python3 scripts/cd/stage.py runtime-context --bundle "$RUNNER_TEMP/bundle" \
+            --service planning --output "$RUNNER_TEMP/context-planning"
+          python3 scripts/cd/stage.py web-context --bundle "$RUNNER_TEMP/bundle" \
+            --output "$RUNNER_TEMP/context-web"
+      - name: Configure hosted runner DNS for image builds
+        run: bash .github/scripts/configure-ci-dns.sh
+      - name: Package changed owners and import the complete candidate
+        run: |
+          set -euo pipefail
+          docker buildx create --use --driver docker-container
+          python3 scripts/cd/pipeline.py package --directory "$RUNNER_TEMP"
+      - name: Upload the frozen run-bound candidate plan
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: occ-candidate
+          path: ${{ runner.temp }}/candidate.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the ingestion image archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: occ-image-ingestion
+          path: |
+            ${{ runner.temp }}/occ-image-ingestion.tar
+            ${{ runner.temp }}/occ-image-ingestion.id
+            ${{ runner.temp }}/occ-image-ingestion.oci.tar
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the disruption image archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: occ-image-disruption
+          path: |
+            ${{ runner.temp }}/occ-image-disruption.tar
+            ${{ runner.temp }}/occ-image-disruption.id
+            ${{ runner.temp }}/occ-image-disruption.oci.tar
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the planning image archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: occ-image-planning
+          path: |
+            ${{ runner.temp }}/occ-image-planning.tar
+            ${{ runner.temp }}/occ-image-planning.id
+            ${{ runner.temp }}/occ-image-planning.oci.tar
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the db-setup image archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: occ-image-db-setup
+          path: |
+            ${{ runner.temp }}/occ-image-db-setup.tar
+            ${{ runner.temp }}/occ-image-db-setup.id
+            ${{ runner.temp }}/occ-image-db-setup.oci.tar
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload the web image archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: occ-image-web
+          path: |
+            ${{ runner.temp }}/occ-image-web.tar
+            ${{ runner.temp }}/occ-image-web.id
+            ${{ runner.temp }}/occ-image-web.oci.tar
+          if-no-files-found: error
+          retention-days: 7
 
   config-and-contracts:
     name: Configuration and API contract checks
@@ -155,6 +403,16 @@ jobs:
           printf 'synthetic-invalid-provider-key' > "$secret_source"
           OCC_IDENTITY_ENABLED=true OCC_IDENTITY_SECRET_SOURCE_FILE="$secret_source" \
             docker compose --env-file .env.example -f compose.yaml -f infra/compose.identity.yaml config -q
+      - name: Validate the immutable-image overlay with placeholder digests
+        env:
+          OCC_INGESTION_IMAGE: 123456789012.dkr.ecr.us-east-1.amazonaws.com/occ/ingestion@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          OCC_DISRUPTION_IMAGE: 123456789012.dkr.ecr.us-east-1.amazonaws.com/occ/disruption@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          OCC_PLANNING_IMAGE: 123456789012.dkr.ecr.us-east-1.amazonaws.com/occ/planning@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          OCC_DB_SETUP_IMAGE: 123456789012.dkr.ecr.us-east-1.amazonaws.com/occ/db-setup@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          OCC_WEB_IMAGE: 123456789012.dkr.ecr.us-east-1.amazonaws.com/occ/web@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        run: >-
+          docker compose --env-file .env.example
+          -f compose.yaml -f infra/compose.images.yaml config -q
       - name: Validate generated contracts and source-to-target migration map
         shell: bash
         env:
@@ -311,58 +569,58 @@ jobs:
 
   nginx-edge-smoke:
     name: Nginx and authentication smoke
+    needs: package-images
     uses: ./.github/workflows/system-verification.yml
     with:
       suite: smoke
+      artifact-run-id: ${{ github.run_id }}
 
   live-contracts:
     name: Live API contract comparison
+    needs: package-images
     uses: ./.github/workflows/system-verification.yml
     with:
       suite: contracts
+      artifact-run-id: ${{ github.run_id }}
+
+  candidate-workflows:
+    name: Candidate workflows and recovery
+    needs: package-images
+    uses: ./.github/workflows/system-verification.yml
+    with:
+      suite: extended
+      artifact-run-id: ${{ github.run_id }}
 
   container-scan:
-    name: Build and scan ${{ matrix.service }}
+    name: Scan packaged ${{ matrix.service }} image
     runs-on: ubuntu-24.04
+    needs: package-images
     strategy:
       fail-fast: false
       matrix:
         include:
           - service: ingestion
-            port: 8001
-            image: occ-ingestion:ci
           - service: disruption
-            port: 8002
-            image: occ-disruption:ci
           - service: planning
-            port: 8003
-            image: occ-planning:ci
           - service: db-setup
-            migration_source: all
-            image: occ-db-setup:ci
+          - service: web
     steps:
-      - name: Check out source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Configure hosted runner DNS for image builds
-        run: bash .github/scripts/configure-ci-dns.sh
-      - name: Build shared Java application image
-        if: ${{ !matrix.migration_source }}
-        run: >-
-          docker build --pull --file infra/java.Dockerfile
-          --build-arg OCC_SERVICE=${{ matrix.service }}
-          --build-arg OCC_SERVICE_INTERNAL_PORT=${{ matrix.port }}
-          --tag ${{ matrix.image }} .
-      - name: Build owned-schema migration image
-        if: ${{ matrix.migration_source }}
-        run: >-
-          docker build --pull --file infra/flyway.Dockerfile
-          --tag ${{ matrix.image }} .
+      - name: Download the packaged image artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "occ-image-${{ matrix.service }}" --dir "$RUNNER_TEMP/image"
+      - name: Load the exact packaged image and verify its recorded ID
+        run: |
+          docker load --input "$RUNNER_TEMP/image/occ-image-${{ matrix.service }}.tar"
+          loaded="$(docker image inspect --format '{{.Id}}' occ-${{ matrix.service }}:ci)"
+          recorded="$(cat "$RUNNER_TEMP/image/occ-image-${{ matrix.service }}.id")"
+          test "$loaded" = "$recorded"
       - name: Fail on HIGH or CRITICAL OS/library findings
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ matrix.image }}
+          image-ref: occ-${{ matrix.service }}:ci
           version: v0.76.0
           format: table
           output: ${{ runner.temp }}/trivy-${{ matrix.service }}.txt
@@ -374,7 +632,7 @@ jobs:
         if: always()
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ matrix.image }}
+          image-ref: occ-${{ matrix.service }}:ci
           version: v0.76.0
           format: cyclonedx
           output: ${{ runner.temp }}/sbom-${{ matrix.service }}.json
@@ -410,6 +668,7 @@ jobs:
           scan-type: fs
           scan-ref: .
           version: v0.76.0
+          trivyignores: .trivyignore.yaml
           scanners: secret,misconfig
           severity: HIGH,CRITICAL
           format: json

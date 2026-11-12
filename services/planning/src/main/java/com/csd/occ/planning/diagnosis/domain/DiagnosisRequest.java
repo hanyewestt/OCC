@@ -33,6 +33,7 @@ public class DiagnosisRequest {
     private String schemaVersion;
     private String status;
     private int attemptCount;
+    private boolean processingRequested;
     private Instant nextAttemptAt;
     private Instant leaseUntil;
     private String failureCode;
@@ -52,6 +53,7 @@ public class DiagnosisRequest {
     public String schemaVersion() { return schemaVersion; }
     public DiagnosisRequestStatus status() { return DiagnosisRequestStatus.valueOf(status); }
     public int attemptCount() { return attemptCount; }
+    public boolean isProcessingRequested() { return processingRequested; }
     public Instant nextAttemptAt() { return nextAttemptAt; }
     public Instant leaseUntil() { return leaseUntil; }
     public String failureCode() { return failureCode; }
@@ -59,7 +61,18 @@ public class DiagnosisRequest {
     public Instant createdAt() { return createdAt; }
     public Instant updatedAt() { return updatedAt; }
 
+    public void queue(Instant now) {
+        if (status() == DiagnosisRequestStatus.COMPLETED || status() == DiagnosisRequestStatus.PROCESSING
+                || processingRequested && status() != DiagnosisRequestStatus.FAILED_TERMINAL) return;
+        processingRequested = true;
+        status = DiagnosisRequestStatus.PENDING.name();
+        failureCode = null;
+        nextAttemptAt = now;
+        updatedAt = now;
+    }
+
     public void claim(Instant until, Instant now) {
+        processingRequested = true;
         status = DiagnosisRequestStatus.PROCESSING.name();
         leaseUntil = until;
         attemptCount++;

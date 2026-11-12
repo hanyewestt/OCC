@@ -1,0 +1,196 @@
+name: Release and deploy
+
+on:
+  workflow_run:
+    workflows: ["Main verification"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+env:
+  OCC_REGION: ${{ vars.OCC_REGION }}
+  OCC_RELEASE_BUCKET: ${{ vars.OCC_RELEASE_BUCKET }}
+  OCC_INGESTION_REPOSITORY: ${{ secrets.OCC_INGESTION_REPOSITORY }}
+  OCC_DISRUPTION_REPOSITORY: ${{ secrets.OCC_DISRUPTION_REPOSITORY }}
+  OCC_PLANNING_REPOSITORY: ${{ secrets.OCC_PLANNING_REPOSITORY }}
+  OCC_DB_SETUP_REPOSITORY: ${{ secrets.OCC_DB_SETUP_REPOSITORY }}
+  OCC_WEB_REPOSITORY: ${{ secrets.OCC_WEB_REPOSITORY }}
+
+jobs:
+  release:
+    name: Prepare the tested immutable candidate
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    environment: production
+    outputs:
+      release-id: ${{ steps.prepare.outputs.release-id }}
+      deploy-required: ${{ steps.prepare.outputs.deploy-required }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Assume publish role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.OCC_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ vars.OCC_REGION }}
+      - name: Download only the successful producing run's candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFIED_RUN: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/candidate"
+          gh run download "$VERIFIED_RUN" --repo "$GITHUB_REPOSITORY" --name occ-candidate --dir "$RUNNER_TEMP/candidate"
+          for component in ingestion disruption planning db-setup web; do
+            gh run download "$VERIFIED_RUN" --repo "$GITHUB_REPOSITORY" --name "occ-image-$component" --dir "$RUNNER_TEMP/candidate"
+          done
+      - name: Publish only built OCI archives with their tested digests
+        id: prepare
+        env:
+          VERIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
+          VERIFIED_RUN: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          release_id="$VERIFIED_SHA-$VERIFIED_RUN-${{ github.run_id }}-${{ github.run_attempt }}"
+          python3 scripts/cd/pipeline.py prepare --directory "$RUNNER_TEMP/candidate" \
+            --revision "$VERIFIED_SHA" --run-id "$VERIFIED_RUN" --release-id "$release_id"
+          echo "release-id=$release_id" >> "$GITHUB_OUTPUT"
+          required=$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["plan"]["deployRequired"]).lower())' "$RUNNER_TEMP/candidate/candidate.json")
+          echo "deploy-required=$required" >> "$GITHUB_OUTPUT"
+      - name: Upload prepared manifest
+        if: steps.prepare.outputs.deploy-required == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: prepared-manifest
+          path: ${{ runner.temp }}/candidate/manifest.json
+          if-no-files-found: error
+
+  scan:
+    name: Scan final ${{ matrix.component }} manifest digest
+    needs: release
+    if: needs.release.outputs.deploy-required == 'true'
+    runs-on: ubuntu-24.04
+    environment: production
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [ingestion, disruption, planning, db-setup, web]
+    steps:
+      - name: Assume publish role for exact-digest reads
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.OCC_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ vars.OCC_REGION }}
+      - name: Download the final manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name prepared-manifest --dir "$RUNNER_TEMP/release"
+      - name: Resolve the exact scan subject
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+          reference=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["images"][sys.argv[2]])' "$RUNNER_TEMP/release/manifest.json" "$COMPONENT")
+          aws ecr get-login-password --region "$OCC_REGION" | docker login --username AWS --password-stdin "${reference%%/*}"
+          docker pull "$reference"
+          echo "reference=$reference" >> "$GITHUB_ENV"
+      - name: Fail on HIGH or CRITICAL OS/library findings
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.reference }}
+          version: v0.76.0
+          format: json
+          output: ${{ runner.temp }}/release/scan-${{ matrix.component }}.json
+          exit-code: '1'
+          ignore-unfixed: 'false'
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - name: Generate SBOM for the same subject
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.reference }}
+          version: v0.76.0
+          format: cyclonedx
+          output: ${{ runner.temp }}/release/sbom-${{ matrix.component }}.json
+          exit-code: '0'
+      - name: Upload exact-digest evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-scan-${{ matrix.component }}
+          path: |
+            ${{ runner.temp }}/release/scan-${{ matrix.component }}.json
+            ${{ runner.temp }}/release/sbom-${{ matrix.component }}.json
+          if-no-files-found: error
+
+  publish:
+    name: Advance the published manifest with a compare-and-set
+    needs: [release, scan]
+    if: needs.release.outputs.deploy-required == 'true'
+    runs-on: ubuntu-24.04
+    environment: production
+    concurrency:
+      group: occ-production-publication
+      cancel-in-progress: false
+      queue: max
+    outputs:
+      release-id: ${{ needs.release.outputs.release-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.OCC_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ vars.OCC_REGION }}
+      - name: Download complete successful scan evidence and manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name prepared-manifest --dir "$RUNNER_TEMP/release"
+          for component in ingestion disruption planning db-setup web; do
+            gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "release-scan-$component" --dir "$RUNNER_TEMP/release"
+          done
+      - name: Upload append-only bundle and CAS latest-published
+        run: python3 scripts/cd/pipeline.py publish --directory "$RUNNER_TEMP/release"
+
+  deploy:
+    name: Deploy to the EC2 host
+    needs: publish
+    runs-on: ubuntu-24.04
+    environment: production
+    concurrency:
+      group: occ-production-mutation
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.OCC_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.OCC_REGION }}
+      - name: Select newest eligible release under durable ownership and apply
+        run: >-
+          python3 scripts/cd/deploy_remote.py deploy
+          --region "${{ vars.OCC_REGION }}"
+          --instance-id "${{ secrets.OCC_INSTANCE_ID }}"
+          --bucket "${{ vars.OCC_RELEASE_BUCKET }}"
+          --release-id "${{ needs.publish.outputs.release-id }}"
+          --operation-id "deploy-${{ github.run_id }}-${{ github.run_attempt }}"
+          --sequence "${{ github.run_id }}"
