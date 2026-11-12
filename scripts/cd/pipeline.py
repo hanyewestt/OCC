@@ -90,14 +90,14 @@ def skopeo(directory, *arguments):
     # The image is pinned by repository digest in skopeo-image.txt. No host
     # installation or plaintext registry password in command arguments.
     image = Path('scripts/cd/skopeo-image.txt').read_text().strip()
-    return run('docker', 'run', '--rm', '--user', f'{os.getuid()}:{os.getgid()}', '--network', 'host',
+    return run('docker', 'run', '--rm', *(['--user', f'{os.getuid()}:{os.getgid()}'] if hasattr(os, 'getuid') else []), '--network', 'host',
                '-v', str(directory.resolve())+':/work', image, *arguments, capture=True)
 
 
 def login(directory, registry, region):
     password = run('aws', '--region', region, 'ecr', 'get-login-password', capture=True)
     image = Path('scripts/cd/skopeo-image.txt').read_text().strip()
-    subprocess.run(['docker', 'run', '--rm', '-i', '--user', f'{os.getuid()}:{os.getgid()}', '--network', 'host',
+    subprocess.run(['docker', 'run', '--rm', '-i', *(['--user', f'{os.getuid()}:{os.getgid()}'] if hasattr(os, 'getuid') else []), '--network', 'host',
                     '-v', str(directory.resolve())+':/work', image,
                     'login', '--authfile', '/work/auth.json', '--username', 'AWS',
                     '--password-stdin', registry], input=password, text=True, check=True,
