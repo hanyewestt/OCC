@@ -697,10 +697,12 @@ test('controller keeps the awaiting decision panel visible before a simulation r
   await expect(page.getByText('No bunching requests in this time window.', { exact: true })).toBeVisible()
 })
 
-test('controller can opt into diagnosis from a queued bunching request', async ({ page, context }) => {
+test('controller sees a requested diagnosis progress automatically', async ({ page, context }) => {
+  await page.clock.install()
   await mockDashboard(context)
-  let completed = false
-  let triggered = false
+  let status = 'PENDING'
+  let triggerCount = 0
+  let processingRequested = false
   const request = {
     requestId: 'bunching-request-1', eventId: 'bunching-event-1', diagnosisId: null, classification: 'SIMULATION', demoRunId: 'run-1',
     serviceId: '190', directionId: 1, stopCode: '44251', status: 'PENDING', likelyCause: null, confidence: null,
@@ -708,12 +710,15 @@ test('controller can opt into diagnosis from a queued bunching request', async (
     policyOutcome: null, createdAt: '2026-10-22T01:00:00Z',
   }
   await context.route('**/api/v1/planning/diagnoses?*', route => route.fulfill({ json: {
-    mode: 'DEMO', demoRunId: 'run-1', items: completed ? [{ ...request, status: 'COMPLETED', likelyCause: 'The trailing bus encountered a passenger surge.', confidence: 0.82, limitations: ['Crowding data was unavailable.'] }] : [request], page: 0, totalItems: completed ? 0 : 1, totalPages: 1,
+    mode: 'DEMO', demoRunId: 'run-1', items: [{
+      ...request, status, processingRequested,
+      ...(status === 'COMPLETED' && { likelyCause: 'The trailing bus encountered a passenger surge.', confidence: 0.82, limitations: ['Crowding data was unavailable.'] }),
+    }], page: 0, totalItems: 1, totalPages: 1,
   } }))
   await context.route('**/api/v1/planning/diagnoses/trigger', route => {
     expect(route.request().method()).toBe('POST')
     expect(route.request().postDataJSON()).toEqual({ requestId: 'bunching-request-1' })
-    triggered = true
+    triggerCount++
     return route.fulfill({ json: { requestId: 'bunching-request-1', diagnosisId: null, status: 'PENDING', failureCode: null, createdAt: request.createdAt, policyOutcome: null } })
   })
 
@@ -724,15 +729,28 @@ test('controller can opt into diagnosis from a queued bunching request', async (
   await expect(queue).toContainText('Stop 44251')
   await queue.getByRole('option').filter({ hasText: 'Stop 44251' }).click()
   await expect(page.getByRole('heading', { name: 'Bunching detection', exact: true })).toBeVisible()
+  const firstRefresh = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/planning/diagnoses')
   await page.getByRole('button', { name: 'Generate diagnosis', exact: true }).click()
-  await expect.poll(() => triggered).toBe(true)
-  await expect(page.getByText('Diagnosis generation has started. Refresh to see its latest status.')).toBeVisible()
-  completed = true
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await firstRefresh
+  const refresh = page.getByRole('button', { name: 'Refresh', exact: true })
+  await expect(refresh).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Diagnosis queued', exact: true })).toBeDisabled()
+  await expect(queue).toContainText('Diagnosis is queued.')
+  processingRequested = true
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Diagnosis queued', exact: true })).toBeDisabled()
+  await expect(refresh).toBeEnabled()
+  status = 'PROCESSING'
+  await page.clock.fastForward(30_000)
+  await expect(page.getByRole('button', { name: 'Generating diagnosis…', exact: true })).toBeDisabled()
+  await expect(refresh).toBeEnabled()
+  status = 'COMPLETED'
+  await page.clock.fastForward(30_000)
   await expect(page.getByRole('heading', { name: 'AI diagnosis', exact: true })).toBeVisible()
   await expect(page.getByText('The trailing bus encountered a passenger surge.')).toBeVisible()
   await expect(page.getByText('Confidence: 82%')).toBeVisible()
   await expect(page.getByText('Crowding data was unavailable.')).toBeVisible()
+  expect(triggerCount).toBe(1)
 })
 
 test('early controller suggestions show identified bus registrations, not observation UUIDs', async ({ page, context }) => {
@@ -934,33 +952,41 @@ test('controller reviews an outcome for every bus in a four-bus group', async ({
   ])
 })
 
-test('refresh opens a new review with the changed group and its prediction gaps', async ({ page, context }) => {
-  const original = await mockDashboard(context, { affectedBusReferences: ['SAMPLE-BUS', 'BUS-2'] })
+test('refresh replaces expired predictions and opens a new review with the current bus group', async ({ page, context }) => {
+  const original = { ...await mockDashboard(context, { affectedBusReferences: ['SAMPLE-BUS', 'BUS-2'] }),
+    predictionValidUntil: new Date(Date.now() - 1000).toISOString(), suggestedOutcomes: [
+      { busReference: 'SAMPLE-BUS', mitigationType: null, adjustmentSeconds: 0, reason: 'No preceding gap in the reviewed group.' },
+      { busReference: 'BUS-2', mitigationType: 'HOLD', adjustmentSeconds: 60, reason: null },
+    ] }
   const revision = { ...original, recommendationId: 'recommendation-2', revisionRawObservationId: 'snapshot-2',
     affectedBusReferences: ['BUS-2', 'BUS-3', 'BUS-4'], targetBusReference: 'BUS-4', currentPredictionGaps: [25, 35],
+    predictionValidUntil: new Date(Date.now() + 120000).toISOString(),
     confirmationGaps: [55, 60], adjustmentSeconds: 45, suggestedOutcomes: [
       { busReference: 'BUS-2', mitigationType: null, adjustmentSeconds: 0, reason: 'No preceding gap in the reviewed group.' },
       { busReference: 'BUS-3', mitigationType: 'HOLD', adjustmentSeconds: 20, reason: null },
       { busReference: 'BUS-4', mitigationType: 'DWELL_ADJUSTMENT', adjustmentSeconds: 35, reason: null },
     ] }
   let refreshed = false
+  let refreshAttempts = 0
   await context.route('**/api/v1/planning/recommendations/pending?*', route => route.fulfill({ json: {
     mode: 'DEMO', demoRunId: 'run-1', items: [refreshed ? revision : original], page: 0, totalItems: 1, totalPages: 1,
   } }))
   await context.route('**/api/v1/planning/recommendations/recommendation-1/refresh', route => {
     expect(route.request().method()).toBe('POST')
+    if (++refreshAttempts === 1) return route.fulfill({ status: 202 })
     refreshed = true
     return route.fulfill({ json: revision })
   })
   await context.route('**/api/v1/planning/recommendations/recommendation-2/decision', route => route.fulfill({ json: {} }))
   await login(page)
   await page.getByRole('link', { name: 'Planning & mitigation', exact: true }).click()
-  await expect(page.getByText(/Current suggestions are unavailable/)).toBeVisible()
+  await expect(page.getByText('Hold for 60 seconds at stop B01.')).toBeVisible()
   await expect(page.getByText('Hold for 120 seconds at stop B01.')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toBeDisabled()
-  await expect(page.getByText('Review an outcome for every affected bus before saving.')).toBeVisible()
+  await expect(page.getByText('Predictions expired. Refresh bus group to review again.')).toBeVisible()
   await page.getByRole('button', { name: 'Refresh bus group' }).click()
-  await expect(page.getByText(/Current suggestions are unavailable/)).toHaveCount(0)
+  await expect(page.getByText('Waiting for the new simulation predictions…')).toBeVisible()
+  await expect(page.getByText('Hold for 60 seconds at stop B01.')).toHaveCount(0)
   await expect(page.getByText('Expected headway', { exact: true })).toBeVisible()
   await expect(page.getByText('BUS-2 to BUS-3 · 25s')).toBeVisible()
   await expect(page.getByText('45s projected')).toBeVisible()
@@ -971,6 +997,7 @@ test('refresh opens a new review with the changed group and its prediction gaps'
   await expect(page.getByText('Adjust dwell by 35 seconds at stop B01.')).toBeVisible()
   await expect(page.getByText('No instruction. No preceding gap in the reviewed group.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Approve recommendation', exact: true })).toBeEnabled()
+  await expect(page.getByText(/Predictions valid until/)).toBeVisible()
   await expect(page.getByText('Approving issues the suggested outcome shown for each bus below.')).toBeVisible()
   await page.getByRole('button', { name: 'Enter controller recommendation', exact: true }).click()
   const editor = page.getByRole('dialog', { name: 'Enter controller recommendation', exact: true })

@@ -1,5 +1,6 @@
 package com.csd.occ.planning.recommendation.domain;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 
@@ -13,7 +14,8 @@ public record ValidatedMitigationContext(
         CrowdSafetyStatus crowdSafetyStatus,
         MitigationValidationStatus validationStatus,
         List<String> evidenceIds,
-        List<Long> currentPredictionGaps) {
+        List<Long> currentPredictionGaps,
+        Instant predictionValidUntil) {
 
     public ValidatedMitigationContext {
         followingBusReference = requireNonBlank(followingBusReference, "followingBusReference");
@@ -44,6 +46,14 @@ public record ValidatedMitigationContext(
         if (evidenceIds.isEmpty()) {
             throw new IllegalArgumentException("evidenceIds must not be empty");
         }
+    }
+
+    public ValidatedMitigationContext(String followingBusReference, List<String> affectedBusReferences,
+            String approvedControlStopCode, FollowingBusState followingBusState, int maximumHoldSeconds,
+            int maximumDwellAdjustmentSeconds, CrowdSafetyStatus crowdSafetyStatus,
+            MitigationValidationStatus validationStatus, List<String> evidenceIds, List<Long> currentPredictionGaps) {
+        this(followingBusReference, affectedBusReferences, approvedControlStopCode, followingBusState, maximumHoldSeconds,
+                maximumDwellAdjustmentSeconds, crowdSafetyStatus, validationStatus, evidenceIds, currentPredictionGaps, null);
     }
 
     public ValidatedMitigationContext(String followingBusReference, List<String> affectedBusReferences,

@@ -145,6 +145,7 @@ export type PendingRecommendation = {
   controlStopCode: string; adjustmentSeconds: number
   explanation: RecommendationExplanation; expectedImpact: RecommendationImpact
   revisionRawObservationId?: string | null; currentPredictionGaps?: number[]; confirmationGaps?: number[]
+  predictionValidUntil?: string | null
   suggestedOutcomes?: { busReference: string; mitigationType: 'HOLD' | 'DWELL_ADJUSTMENT' | null;
     adjustmentSeconds: number; reason: string | null }[]
 }
@@ -200,7 +201,8 @@ export async function apiRequest<T>(path: string, token: string | undefined, sig
     const { detail, ...extensions } = problem ?? {}
     throw new ApiError(response.status, typeof detail === 'string' ? detail : undefined, extensions)
   }
-  return response.status === 204 ? null : await response.json() as T
+  return response.status === 204 || (response.status === 202 && !response.headers.has('Content-Type'))
+    ? null : await response.json() as T
 }
 
 export async function enrichBunchingStops(alerts: BunchingAlert[], token: string, signal: AbortSignal): Promise<BunchingAlert[]> {
@@ -236,6 +238,7 @@ export type PlanningDiagnosisRequest = {
   serviceId: string | null; directionId: number | null; stopCode: string | null
   affectedBusReferences: string[]
   status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED_RETRYABLE' | 'FAILED_TERMINAL'
+  processingRequested: boolean
   likelyCause: string | null; confidence: number | null; limitations: string[]
   evidenceDetails: DiagnosisEvidenceDetail[]; failureCode: string | null; policyOutcome: string | null
   createdAt: string
