@@ -398,70 +398,6 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     })
   }, [trafficIncidentCollection.items, simulation])
 
-  useEffect(() => {
-    if (isInitialAlertCheckRef.current) {
-      if (currentAlerts.length > 0 || currentTraffic.length > 0) {
-        currentAlerts.forEach(a => knownAlertIdsRef.current.add(a.eventId))
-        currentTraffic.forEach((t: TrafficIncident) => knownTrafficIdsRef.current.add(t.id))
-        isInitialAlertCheckRef.current = false
-      }
-      return
-    }
-
-    const newAlerts = currentAlerts.filter(a => !knownAlertIdsRef.current.has(a.eventId))
-    if (newAlerts.length > 0) {
-      newAlerts.forEach(a => knownAlertIdsRef.current.add(a.eventId))
-      const sorted = newAlerts.slice().sort((a, b) => {
-        const gapA = bunchedArrivalGaps(a)[0]?.seconds ?? 999
-        const gapB = bunchedArrivalGaps(b)[0]?.seconds ?? 999
-        return gapA - gapB
-      })
-      const top = sorted[0]
-      const topGap = bunchedArrivalGaps(top)[0]?.seconds ?? null
-      setActiveNewIncidentAlert({
-        id: top.eventId,
-        kind: 'bunching',
-        title: `Bunching on Service ${top.serviceId}${top.directionId ? ` (Dir ${top.directionId})` : ''}`,
-        subtitle: `Monitored Stop: ${top.stopName || top.stopCode}`,
-        detail: `Headway gap degraded to ${topGap ? `${topGap}s` : 'critical threshold'}. Directives required to restore corridor pacing.`,
-        severity: (topGap ?? 999) < 60 ? 'critical' : 'warning',
-        serviceId: top.serviceId,
-        directionId: top.directionId,
-        stopCode: top.stopCode,
-        gapSeconds: topGap,
-        detectedAt: top.detectedAt,
-      })
-      setDirectiveAlertOpen(true)
-      return
-    }
-
-    const newTraffic = currentTraffic.filter((t: TrafficIncident) => !knownTrafficIdsRef.current.has(t.id))
-    if (newTraffic.length > 0) {
-      newTraffic.forEach((t: TrafficIncident) => knownTrafficIdsRef.current.add(t.id))
-      const routes = routeStops.data ?? []
-      for (const candidate of newTraffic) {
-        const nearest = findNearestCorridorStop(candidate.latitude, candidate.longitude, routes, 2500)
-        if (nearest) {
-          setActiveNewIncidentAlert({
-            id: candidate.id,
-            kind: 'traffic',
-            title: `${candidate.incidentType || 'Traffic Hazard'} Reported`,
-            subtitle: `Near ${nearest.description || nearest.stopCode} (Service ${nearest.serviceId} corridor ~${nearest.distanceM}m away)`,
-            detail: candidate.message || 'Traffic disruption reported along transit corridor.',
-            severity: 'warning',
-            serviceId: nearest.serviceId,
-            directionId: nearest.directionId,
-            stopCode: nearest.stopCode,
-            incidentType: candidate.incidentType,
-            detectedAt: candidate.observedAt ?? candidate.updatedAt ?? undefined,
-          })
-          setDirectiveAlertOpen(true)
-          break
-        }
-      }
-    }
-  }, [currentAlerts, currentTraffic, routeStops.data])
-
   const pollIntervalSeconds = routePositions.data?.length
     ? Math.min(...routePositions.data.map(value => value.refreshIntervalSeconds)) : ingestionPollIntervalSeconds
   const nowMs = Date.parse(alertCollection.lastSuccessAt || (simulation ? shellRefreshTime.at : '') || currentAlerts[0]?.detectedAt || '') || 0
@@ -508,8 +444,77 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
     return findNearestCorridorStop(topActiveTraffic.latitude, topActiveTraffic.longitude, routeStops.data ?? [], 2500)
   }, [topActiveTraffic, routeStops.data])
 
+  useEffect(() => {
+    if (isInitialAlertCheckRef.current) {
+      if (currentAlerts.length > 0 || currentTraffic.length > 0) {
+        currentAlerts.forEach(a => knownAlertIdsRef.current.add(a.eventId))
+        currentTraffic.forEach((t: TrafficIncident) => knownTrafficIdsRef.current.add(t.id))
+        isInitialAlertCheckRef.current = false
+      }
+      return
+    }
+
+    const activeEventIds = new Set(activeBunchingIncidents.flatMap(i => i.alerts.map(a => a.eventId)))
+    const newAlerts = currentAlerts.filter(a => !knownAlertIdsRef.current.has(a.eventId) && activeEventIds.has(a.eventId))
+    if (newAlerts.length > 0) {
+      newAlerts.forEach(a => knownAlertIdsRef.current.add(a.eventId))
+      const sorted = newAlerts.slice().sort((a, b) => {
+        const gapA = bunchedArrivalGaps(a)[0]?.seconds ?? 999
+        const gapB = bunchedArrivalGaps(b)[0]?.seconds ?? 999
+        return gapA - gapB
+      })
+      const top = sorted[0]
+      const topGap = bunchedArrivalGaps(top)[0]?.seconds ?? null
+      setActiveNewIncidentAlert({
+        id: top.eventId,
+        kind: 'bunching',
+        title: `Bunching on Service ${top.serviceId}${top.directionId ? ` (Dir ${top.directionId})` : ''}`,
+        subtitle: `Monitored Stop: ${top.stopName || top.stopCode}`,
+        detail: `Headway gap degraded to ${topGap ? `${topGap}s` : 'critical threshold'}. Directives required to restore corridor pacing.`,
+        severity: (topGap ?? 999) < 60 ? 'critical' : 'warning',
+        serviceId: top.serviceId,
+        directionId: top.directionId,
+        stopCode: top.stopCode,
+        gapSeconds: topGap,
+        detectedAt: top.detectedAt,
+      })
+      setDirectiveAlertOpen(true)
+      return
+    }
+
+    const awaitingTrafficIds = new Set(awaitingTrafficIncidents.map(t => t.id))
+    const newTraffic = currentTraffic.filter((t: TrafficIncident) => !knownTrafficIdsRef.current.has(t.id) && awaitingTrafficIds.has(t.id))
+    if (newTraffic.length > 0) {
+      newTraffic.forEach((t: TrafficIncident) => knownTrafficIdsRef.current.add(t.id))
+      const routes = routeStops.data ?? []
+      for (const candidate of newTraffic) {
+        const nearest = findNearestCorridorStop(candidate.latitude, candidate.longitude, routes, 2500)
+        if (nearest) {
+          setActiveNewIncidentAlert({
+            id: candidate.id,
+            kind: 'traffic',
+            title: `${candidate.incidentType || 'Traffic Hazard'} Reported`,
+            subtitle: `Near ${nearest.description || nearest.stopCode} (Service ${nearest.serviceId} corridor ~${nearest.distanceM}m away)`,
+            detail: candidate.message || 'Traffic disruption reported along transit corridor.',
+            severity: 'warning',
+            serviceId: nearest.serviceId,
+            directionId: nearest.directionId,
+            stopCode: nearest.stopCode,
+            incidentType: candidate.incidentType,
+            detectedAt: candidate.observedAt ?? candidate.updatedAt ?? undefined,
+          })
+          setDirectiveAlertOpen(true)
+          break
+        }
+      }
+    }
+  }, [currentAlerts, currentTraffic, routeStops.data, activeBunchingIncidents, awaitingTrafficIncidents])
+
   const displayedAlert = useMemo(() => {
-    if (activeNewIncidentAlert && !dismissedAlertIds.has(activeNewIncidentAlert.id)) {
+    if (activeNewIncidentAlert && !dismissedAlertIds.has(activeNewIncidentAlert.id) &&
+        (activeNewIncidentAlert.kind === 'bunching'
+          ? awaitingBunchingIncidents.some(i => i.id === activeNewIncidentAlert.id || i.alerts.some(a => a.eventId === activeNewIncidentAlert.id))
+          : awaitingTrafficIncidents.some(t => t.id === activeNewIncidentAlert.id))) {
       return activeNewIncidentAlert
     }
     if (topActiveIncident) {
@@ -545,7 +550,7 @@ export function ControllerPage({ email, token, controllerRefreshIntervalSeconds,
       }
     }
     return null
-  }, [activeNewIncidentAlert, dismissedAlertIds, topActiveIncident, topAlertGap, topActiveTraffic, topActiveTrafficNearest])
+  }, [activeNewIncidentAlert, dismissedAlertIds, awaitingBunchingIncidents, topActiveIncident, topAlertGap, topActiveTraffic, awaitingTrafficIncidents, topActiveTrafficNearest])
 
   const handleAcknowledgeAllBunching = useCallback(() => {
     setDismissedAlertIds(prev => {
