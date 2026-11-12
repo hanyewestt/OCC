@@ -163,6 +163,20 @@ def set_disruption_delivery_worker(project: str, enabled: bool) -> None:
     print(f"PASS Disruption Planning-delivery worker is {'enabled' if enabled else 'paused'}")
 
 
+def set_planning_diagnosis_worker(project: str, enabled: bool) -> None:
+    # Gate the diagnosis worker so the restart always lands before the single
+    # permitted attempt is claimed; the durable request is then processed only
+    # after the retry and delivery have been observed.
+    environment = os.environ.copy()
+    environment["SUPABASE_PROJECT_URL"] = "http://jwks-test:8080"
+    environment["SUPABASE_JWKS_URL"] = "http://jwks-test:8080/auth/v1/.well-known/jwks.json"
+    environment["OCC_PLANNING_DIAGNOSIS_WORKER_ENABLED"] = str(enabled).lower()
+    compose(project, "up", "-d", "--no-deps", "--force-recreate", "planning",
+            timeout=90, environment=environment)
+    wait_healthy(project, "planning")
+    print(f"PASS Planning diagnosis worker is {'enabled' if enabled else 'paused'}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="https://127.0.0.1:18443")
@@ -183,6 +197,7 @@ def main() -> int:
     # Freeze the sender before creating an event so its durable outbox commit can
     # be observed independently of the receiver's later commit/drop scenario.
     set_disruption_delivery_worker(args.compose_project, False)
+    set_planning_diagnosis_worker(args.compose_project, False)
 
     status, run = request(base_url, "/api/v1/demo-runs", token, "POST")
     if status != 201 or not isinstance(run, dict) or not run.get("id"):
@@ -270,14 +285,45 @@ def main() -> int:
         raise AssertionError("the completed simulation is missing its stable event identity")
     print("PASS retry reuses the same key, fingerprint, payload and single durable Planning request")
 
+    set_planning_diagnosis_worker(args.compose_project, True)
+
     recommendation_path = f"{run_path}/recommendation"
-    recommendation = wait_until(
-        "queryable recommendation after restart recovery",
-        lambda: (lambda result: result[1] if result[0] == 200 and isinstance(result[1], dict)
-                 and result[1].get("recommendationId") and isinstance(result[1].get("expectedImpact"), dict)
-                 else None)(request(base_url, recommendation_path, token)),
-        args.timeout,
-    )
+    try:
+        recommendation = wait_until(
+            "queryable recommendation after restart recovery",
+            lambda: (lambda result: result[1] if result[0] == 200 and isinstance(result[1], dict)
+                     and result[1].get("recommendationId") and isinstance(result[1].get("expectedImpact"), dict)
+                     else None)(request(base_url, recommendation_path, token)),
+            args.timeout,
+        )
+    except AssertionError:
+        key = str(request_id)
+        query = f"""
+            SELECT COALESCE((
+                SELECT request.status || '|' || request.attempt_count::text || '|'
+                    || COALESCE(request.failure_code, '') || '|'
+                    || COALESCE(diagnosis.id::text, '')
+                FROM planning.planning_request request
+                LEFT JOIN planning.diagnosis_result diagnosis ON diagnosis.request_id = request.id
+                WHERE request.id = '{key}'::uuid
+            ), 'MISSING') || '|' || COALESCE((
+                SELECT job.status || '|' || job.attempt_count::text || '|'
+                    || COALESCE(job.failure_code, '') || '|'
+                    || COALESCE(job.last_http_status::text, '')
+                FROM planning.recommendation_job job
+                JOIN planning.diagnosis_result diagnosis ON diagnosis.id = job.diagnosis_id
+                WHERE diagnosis.request_id = '{key}'::uuid
+            ), 'NO_JOB')
+        """
+        try:
+            state = compose(args.compose_project, "exec", "-T", "postgres", "psql", "--no-psqlrc",
+                            "--username=occ_admin", "--dbname=occ", "--set=ON_ERROR_STOP=1",
+                            "--tuples-only", "--no-align", f"--command={query}", timeout=20)
+        except (RuntimeError, subprocess.SubprocessError) as error:
+            print(f"DIAGNOSTIC planning lifecycle query unavailable: {error}")
+        else:
+            print(f"DIAGNOSTIC planning request/diagnosis/recommendation status: {state}")
+        raise
     if recommendation.get("status") not in {"RECOMMENDED", "NO_ACTIONABLE_RECOMMENDATION"}:
         raise AssertionError(f"unexpected recovered recommendation status: {recommendation.get('status')!r}")
     recommendation_id = recommendation["recommendationId"]

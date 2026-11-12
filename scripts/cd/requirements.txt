@@ -1,0 +1,2 @@
+# Workstation bootstrap only. Host/release runtime code uses the standard library.
+python-dotenv>=1.1.1,<2

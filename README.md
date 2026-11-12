@@ -45,4 +45,5 @@ independently enforce access to operational data and actions.
 - [Development](docs/DEVELOPMENT.md): setup, startup commands, local routes, frontend development and checks.
 - [Authentication](docs/AUTHENTICATION.md): role checks and session behavior.
 - [Testing](docs/TESTING.md): automated tests and CI checks.
+- [Deployment](docs/DEPLOYMENT.md): EC2/CloudFront CD setup, first release and pause/resume controls.
 - [Service conventions](docs/CONVENTIONS.md) and [frontend conventions](docs/frontend-convention.md): engineering standards.

@@ -17,6 +17,8 @@ on:
 
 permissions:
   contents: read
+  # The reusable workflow is allowed to download artifacts from a verified run.
+  actions: read
 
 concurrency:
   group: extended-${{ github.workflow }}-${{ github.ref }}
